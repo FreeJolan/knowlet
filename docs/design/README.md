@@ -11,3 +11,4 @@
 - [`organization.md`](./organization.md) — 知识组织策略:AI 托底 + 人工点睛
 - [`tech-stack.md`](./tech-stack.md) — 技术选型当前倾向与竞品参考
 - [`voice.md`](./voice.md) — 语音 / TTS 设计(阶段一不实现,留存供后续参考)
+- [`mvp-slice.md`](./mvp-slice.md) — MVP 切片实现规划(关键库 / 模块划分 / 第一里程碑 M0)

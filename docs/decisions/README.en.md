@@ -14,6 +14,7 @@ This directory records important architectural and product decisions for Knowlet
 - [0004 — AI Compose, Code Execute](./0004-ai-compose-code-execute.en.md)
 - [0005 — LLM Integration Strategy](./0005-llm-integration-strategy.en.md)
 - [0006 — Storage and Sync Strategy](./0006-storage-and-sync.en.md)
+- [0007 — MVP Slice Scope and Tech Stack](./0007-mvp-slice.en.md)
 
 ## ADR Template
 

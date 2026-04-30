@@ -11,3 +11,4 @@ This directory holds Knowlet's living docs, evolving with implementation. They d
 - [`organization.en.md`](./organization.en.md) — Knowledge organization strategy: AI floor + human spotlight
 - [`tech-stack.en.md`](./tech-stack.en.md) — Current tech-stack leanings and competitor reference
 - [`voice.en.md`](./voice.en.md) — Voice / TTS design (not implemented in stage 1; preserved for later reference)
+- [`mvp-slice.en.md`](./mvp-slice.en.md) — MVP slice implementation plan (key libraries / module layout / first milestone M0)

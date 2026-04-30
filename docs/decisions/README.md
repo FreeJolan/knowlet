@@ -14,6 +14,7 @@
 - [0004 — AI 编排 + 原子执行(AI compose, code execute)](./0004-ai-compose-code-execute.md)
 - [0005 — LLM 接入策略](./0005-llm-integration-strategy.md)
 - [0006 — 数据存储与同步策略](./0006-storage-and-sync.md)
+- [0007 — MVP 切片范围与技术栈](./0007-mvp-slice.md)
 
 ## ADR 模板
 
