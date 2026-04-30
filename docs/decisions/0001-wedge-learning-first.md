@@ -1,6 +1,8 @@
 # 0001 — 选择"学习型"作为 Wedge 破局点
 
-- Status: Accepted
+> [English](./0001-wedge-learning-first.en.md) | **中文**
+
+- Status: Superseded by [0003](./0003-wedge-pivot-ai-memory-layer.md)
 - Date: 2026-04-30
 
 ## Context
