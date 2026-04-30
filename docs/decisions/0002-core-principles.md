@@ -1,5 +1,7 @@
 # 0002 — 三条核心原则
 
+> [English](./0002-core-principles.en.md) | **中文**
+
 - Status: Accepted
 - Date: 2026-04-30
 
