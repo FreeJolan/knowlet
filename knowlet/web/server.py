@@ -38,6 +38,7 @@ from knowlet.config import KnowletConfig, find_vault, load_config
 from knowlet.core.card import Card, parse_due
 from knowlet.core.events import ErrorEvent, event_to_dict
 from knowlet.core.fsrs_wrap import initial_state, schedule_next
+from knowlet.core.i18n import SUPPORTED_LANGUAGES, all_keys, set_language
 from knowlet.core.index import IndexDimensionMismatchError
 from knowlet.core.llm import LLMClient
 from knowlet.core.mining.runner import run_task
@@ -236,6 +237,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Activate the configured UI language for any backend-rendered strings.
+        set_language(config.general.language)
         # Eager-initialize the runtime so the scheduler can share its LLMClient.
         # If api_key is empty (test fixtures, fresh installs), skip — endpoints
         # will surface ChatNotReadyError on first call.
@@ -263,7 +266,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "version": __version__,
             "vault": str(vault.root),
             "model": config.llm.model,
+            "language": config.general.language,
+            "supported_languages": list(SUPPORTED_LANGUAGES),
         }
+
+    @app.get("/api/i18n/{lang}")
+    def i18n_catalog(lang: str) -> dict[str, str]:
+        return all_keys(lang)
 
     # ---------------- chat ----------------
 

@@ -9,6 +9,31 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
+// ---------- i18n ----------
+let I18N = {};
+function tt(key) {
+  return I18N[key] || key;
+}
+async function loadI18n(lang) {
+  try {
+    const r = await fetch(`/api/i18n/${encodeURIComponent(lang || "en")}`);
+    if (r.ok) I18N = await r.json();
+  } catch (_) {
+    I18N = {};
+  }
+  applyI18n();
+}
+function applyI18n() {
+  $$('[data-i18n]').forEach((el) => {
+    const key = el.dataset.i18n;
+    if (I18N[key]) el.textContent = I18N[key];
+  });
+  $$('[data-i18n-placeholder]').forEach((el) => {
+    const key = el.dataset.i18nPlaceholder;
+    if (I18N[key]) el.placeholder = I18N[key];
+  });
+}
+
 const messagesEl = $("#messages");
 const inputEl = $("#input");
 const composerEl = $("#composer");
@@ -241,7 +266,7 @@ $("#clear-btn").addEventListener("click", async () => {
   try {
     await api("POST", "/api/chat/clear");
     messagesEl.innerHTML = "";
-    toast("history cleared", "ok");
+    toast(tt("web.toast.cleared"), "ok");
   } catch (exc) {
     toast(exc.message, "error");
   }
@@ -268,13 +293,13 @@ $("#draft-commit").addEventListener("click", async () => {
     .filter(Boolean);
   const body = $("#draft-body").value.trim();
   if (!title || !body) {
-    toast("title and body are required", "error");
+    toast(tt("web.toast.required_fields"), "error");
     return;
   }
   try {
     await api("POST", "/api/notes", { title, tags, body });
     draftModal.hidden = true;
-    toast("note saved", "ok");
+    toast(tt("web.toast.note_saved"), "ok");
     await refreshNotes();
   } catch (exc) {
     toast(exc.message, "error");
@@ -301,7 +326,7 @@ $("#profile-save").addEventListener("click", async () => {
   try {
     await api("PUT", "/api/profile", { name, body });
     profileModal.hidden = true;
-    toast("profile saved", "ok");
+    toast(tt("web.toast.profile_saved"), "ok");
   } catch (exc) {
     toast(exc.message, "error");
   }
@@ -362,10 +387,10 @@ async function refreshCards() {
     const status = $("#cards-status");
     const btn = $("#review-btn");
     if (!due.length) {
-      status.textContent = "nothing due — make some cards in chat";
+      status.textContent = tt("web.cards.empty");
       btn.hidden = true;
     } else {
-      status.textContent = `${due.length} card${due.length === 1 ? "" : "s"} due`;
+      status.textContent = `${due.length} ${tt("web.cards.due")}`;
       btn.hidden = false;
     }
   } catch (exc) {
@@ -377,7 +402,7 @@ async function openReview() {
   try {
     const due = await api("GET", "/api/cards/due?limit=50");
     if (!due.length) {
-      toast("nothing due", "ok");
+      toast(tt("web.cards.empty"), "ok");
       return;
     }
     reviewState.queue = due;
@@ -406,7 +431,7 @@ function finishReview() {
   reviewState.queue = [];
   reviewState.current = 0;
   refreshCards();
-  toast("review done", "ok");
+  toast(tt("web.toast.review_done"), "ok");
 }
 
 $("#review-btn").addEventListener("click", openReview);
@@ -443,10 +468,10 @@ async function refreshDrafts() {
     const status = $("#drafts-status");
     const btn = $("#drafts-btn");
     if (!drafts.length) {
-      status.textContent = "inbox empty — run mining or wait for the schedule";
+      status.textContent = tt("web.drafts.empty");
       btn.hidden = true;
     } else {
-      status.textContent = `${drafts.length} draft${drafts.length === 1 ? "" : "s"} pending`;
+      status.textContent = `${drafts.length} ${tt("web.drafts.inbox")}`;
       btn.hidden = false;
     }
   } catch (exc) {
@@ -484,7 +509,7 @@ async function openDraftsReview() {
   try {
     const drafts = await api("GET", "/api/drafts");
     if (!drafts.length) {
-      toast("inbox empty", "ok");
+      toast(tt("web.toast.empty_inbox"), "ok");
       return;
     }
     draftsState.queue = drafts;
@@ -548,12 +573,16 @@ $("#run-mining-btn").addEventListener("click", async () => {
 // --------------------------------------------------------- bootstrap
 
 async function bootstrap() {
+  let lang = "en";
   try {
     const h = await api("GET", "/api/health");
-    metaEl.textContent = `vault: ${h.vault.split("/").pop()}  ·  model: ${h.model}`;
+    metaEl.textContent = `vault: ${h.vault.split("/").pop()}  ·  model: ${h.model}  ·  lang: ${h.language}`;
+    lang = h.language || "en";
+    document.documentElement.lang = lang;
   } catch (exc) {
     metaEl.textContent = `(health check failed: ${exc.message})`;
   }
+  await loadI18n(lang);
   await refreshNotes();
   await refreshCards();
   await refreshDrafts();

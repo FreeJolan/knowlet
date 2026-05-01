@@ -38,7 +38,19 @@ class RetrievalConfig(BaseModel):
     rrf_k: int = 60
 
 
+class GeneralConfig(BaseModel):
+    """Top-level / cross-cutting settings.
+
+    `language` is the UI / CLI / template language (ADR-0010). It does not
+    affect chat reply language — the assistant still mirrors whatever
+    language the user types in.
+    """
+
+    language: str = "en"  # "en" | "zh" (extend in core/i18n.py)
+
+
 class KnowletConfig(BaseModel):
+    general: GeneralConfig = Field(default_factory=GeneralConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)

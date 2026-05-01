@@ -24,6 +24,7 @@ from knowlet.config import (
     save_config,
 )
 from knowlet.core.embedding import make_backend
+from knowlet.core.i18n import set_language, t
 from knowlet.core.index import Index, reindex_vault
 from knowlet.core.llm import LLMClient
 from knowlet.core.tools._registry import ToolContext, default_registry
@@ -77,7 +78,10 @@ def _resolve_vault_or_die() -> Vault:
 
 
 def _load_config_or_default(vault: Vault) -> KnowletConfig:
-    return load_config(vault.root)
+    cfg = load_config(vault.root)
+    # Activate the configured UI language for everything downstream.
+    set_language(cfg.general.language)
+    return cfg
 
 
 def _make_index(vault: Vault, cfg: KnowletConfig) -> Index:
@@ -140,13 +144,13 @@ def vault_init(
     cfg_path = config_path(vault.root)
     if not cfg_path.exists():
         save_config(vault.root, KnowletConfig())
+    # Apply the (just-saved or pre-existing) language for the success banner.
+    cfg = load_config(vault.root)
+    set_language(cfg.general.language)
     console.print(
         Panel.fit(
-            f"vault initialized at [bold]{vault.root}[/bold]\n"
-            f"  notes/                ← put or sediment Notes here\n"
-            f"  .knowlet/index.sqlite ← FTS5 + sqlite-vec index\n"
-            f"  .knowlet/config.toml  ← run `knowlet config init` to set the LLM",
-            title="vault init",
+            t("vault.init.banner", root=str(vault.root)),
+            title=t("vault.init.title"),
         )
     )
 
@@ -160,19 +164,25 @@ def config_init() -> None:
     vault = _resolve_vault_or_die()
     cfg = _load_config_or_default(vault)
 
+    # Language first — every subsequent prompt rendering will follow it.
+    console.print(f"[bold]{t('config.lang.title')}[/bold]")
+    cfg.general.language = Prompt.ask(
+        t("config.lang.prompt"),
+        default=cfg.general.language,
+        choices=["en", "zh"],
+    )
+    set_language(cfg.general.language)
+
     console.print(
         Panel.fit(
-            "Point knowlet at any OpenAI-compatible HTTP service.\n"
-            "Examples: OpenAI, Anthropic-via-OpenAI shim, OpenRouter, Ollama, "
-            "or a local wrapper that fronts your AI tool of choice.\n"
-            "knowlet does not proxy or store credentials beyond this file.",
-            title="LLM backend",
+            t("config.llm.intro"),
+            title=t("config.llm.title"),
         )
     )
-    cfg.llm.base_url = Prompt.ask("base URL", default=cfg.llm.base_url)
-    cfg.llm.model = Prompt.ask("model name", default=cfg.llm.model)
+    cfg.llm.base_url = Prompt.ask(t("config.base_url.prompt"), default=cfg.llm.base_url)
+    cfg.llm.model = Prompt.ask(t("config.model.prompt"), default=cfg.llm.model)
     api_key = Prompt.ask(
-        "API key",
+        t("config.api_key.prompt"),
         default=(_mask(cfg.llm.api_key) if cfg.llm.api_key else ""),
         password=True,
     )
@@ -180,21 +190,19 @@ def config_init() -> None:
         cfg.llm.api_key = api_key
 
     console.print()
-    console.print("[bold]Embedding[/bold] (local)")
+    console.print(f"[bold]{t('config.embed.title')}[/bold]")
     cfg.embedding.backend = Prompt.ask(
-        "backend (sentence_transformers/dummy)",
+        t("config.embed.backend.prompt"),
         default=cfg.embedding.backend,
         choices=["sentence_transformers", "dummy"],
     )
-    cfg.embedding.model = Prompt.ask("model", default=cfg.embedding.model)
+    cfg.embedding.model = Prompt.ask(t("config.embed.model.prompt"), default=cfg.embedding.model)
 
     save_config(vault.root, cfg)
     console.print(
         Panel.fit(
-            f"config saved → {config_path(vault.root)}\n\n"
-            "Next: run [bold]knowlet doctor[/bold] to verify the backend is reachable\n"
-            "and tool-calling works, then [bold]knowlet chat[/bold] to start a session.",
-            title="config init",
+            t("config.saved", path=str(config_path(vault.root))) + "\n\n" + t("config.next"),
+            title=t("vault.init.title"),
         )
     )
 
@@ -220,10 +228,10 @@ def config_set(
     vault = _resolve_vault_or_die()
     cfg = _load_config_or_default(vault)
     parts = key.split(".")
-    if len(parts) != 2 or parts[0] not in {"llm", "embedding", "retrieval"}:
+    if len(parts) != 2 or parts[0] not in {"general", "llm", "embedding", "retrieval"}:
         err_console.print(
             f"[red]invalid key {key!r}; expected <section>.<field> "
-            f"where section is llm | embedding | retrieval[/red]"
+            f"where section is general | llm | embedding | retrieval[/red]"
         )
         raise typer.Exit(code=2)
     section_name, field = parts
@@ -250,6 +258,9 @@ def config_set(
 
     setattr(section, field, coerced)
     save_config(vault.root, cfg)
+    # If language changed, re-apply immediately so the success line uses it.
+    if section_name == "general" and field == "language":
+        set_language(str(coerced))
     shown = _mask(str(coerced)) if field == "api_key" else coerced
     console.print(f"[green]✓[/green] {key} = {shown}")
 
@@ -1068,17 +1079,19 @@ def _run_chat(*, save_after: bool) -> None:
 
     console.print(
         Panel.fit(
-            f"[bold]knowlet[/bold]  vault={runtime.vault.root.name}  "
-            f"model={runtime.config.llm.model}\n"
-            ":save :ls :reindex :doctor :config :clear :help :quit",
-            title=f"knowlet {__version__}",
+            t(
+                "chat.banner.body",
+                vault=runtime.vault.root.name,
+                model=runtime.config.llm.model,
+            ),
+            title=t("chat.banner.title", version=__version__),
         )
     )
 
     try:
         while True:
             try:
-                user_text = Prompt.ask("[bold cyan]you[/bold cyan]").strip()
+                user_text = Prompt.ask(t("chat.prompt")).strip()
             except (EOFError, KeyboardInterrupt):
                 console.print()
                 break
@@ -1129,7 +1142,7 @@ def _handle_slash(text: str, runtime) -> tuple[bool, bool]:
         return True, False
     if name == "clear":
         runtime.session.history = runtime.session.history[:1]
-        console.print("[dim]history cleared[/dim]")
+        console.print(f"[dim]{t('chat.history.cleared')}[/dim]")
         return True, False
     if name == "save":
         _do_sediment(runtime)
@@ -1194,13 +1207,18 @@ def _handle_slash(text: str, runtime) -> tuple[bool, bool]:
                 table.add_column("name")
                 table.add_column("schedule")
                 table.add_column("on?")
-                for t in tasks:
+                for task in tasks:
                     sched = (
-                        (t.schedule.every and f"every {t.schedule.every}")
-                        or (t.schedule.cron and f"cron {t.schedule.cron}")
+                        (task.schedule.every and f"every {task.schedule.every}")
+                        or (task.schedule.cron and f"cron {task.schedule.cron}")
                         or "—"
                     )
-                    table.add_row(t.id[:8] + "…", t.name, sched, "yes" if t.enabled else "no")
+                    table.add_row(
+                        task.id[:8] + "…",
+                        task.name,
+                        sched,
+                        "yes" if task.enabled else "no",
+                    )
                 console.print(table)
         elif sub == "run":
             if len(args) < 2:
@@ -1217,12 +1235,12 @@ def _handle_slash(text: str, runtime) -> tuple[bool, bool]:
         elif sub == "run-all":
             from knowlet.core.mining.runner import run_task as _run
 
-            tasks = [t for t in runtime.ctx.tasks.list() if t.enabled]
+            tasks = [task for task in runtime.ctx.tasks.list() if task.enabled]
             if not tasks:
                 console.print("[dim]no enabled tasks[/dim]")
-            for t in tasks:
-                console.print(f"[bold]{t.name}[/bold] ({t.id[:8]}…)")
-                report = _run(t, runtime.vault, runtime.llm, drafts=runtime.ctx.drafts)
+            for task in tasks:
+                console.print(f"[bold]{task.name}[/bold] ({task.id[:8]}…)")
+                report = _run(task, runtime.vault, runtime.llm, drafts=runtime.ctx.drafts)
                 _render_run_report(report)
         else:
             console.print(
@@ -1409,25 +1427,7 @@ def _stream_turn_to_console(runtime, user_text: str) -> None:
 
 def _print_help() -> None:
     console.print(
-        Panel.fit(
-            ":save              draft a Note from this chat and review it\n"
-            ":ls [-r]           list Notes (created_at; -r for updated_at)\n"
-            ":reindex           re-scan vault notes from disk\n"
-            ":doctor            run diagnostics on backend + embedding\n"
-            ":config show       print the current config (key masked)\n"
-            ":user [edit]       show or edit your profile (users/me.md)\n"
-            ":cards due         list cards due now\n"
-            ":cards review      run an interactive review session\n"
-            ":mining list       show configured mining tasks\n"
-            ":mining run-all    run every enabled mining task now\n"
-            ":drafts list       drafts pending review\n"
-            ":drafts approve <id> / reject <id>   review a draft\n"
-            ":tools             list LLM-callable tools\n"
-            ":clear             reset chat history (keeps system prompt)\n"
-            ":help              this help (also  ?)\n"
-            ":quit              exit  (also  :q  :exit  Ctrl-D)\n",
-            title="slash commands",
-        )
+        Panel.fit(t("slash.help.body"), title=t("slash.help.title"))
     )
 
 
@@ -1509,18 +1509,17 @@ def _ensure_ready_or_wizard() -> tuple[Vault, KnowletConfig]:
         cwd = Path.cwd().resolve()
         console.print(
             Panel.fit(
-                f"No vault found in {cwd} or any parent.\n"
-                "Initialize one here so you can start chatting?",
-                title="welcome",
+                t("vault.notfound", cwd=str(cwd)),
+                title=t("vault.welcome.title"),
             )
         )
         proceed = Prompt.ask(
-            "initialize vault here?", choices=["y", "n"], default="y"
+            t("vault.init.prompt"), choices=["y", "n"], default="y"
         )
         if proceed != "y":
             raise typer.Exit(code=0)
         target = Path(
-            Prompt.ask("vault directory", default=str(cwd))
+            Prompt.ask(t("vault.dir.prompt"), default=str(cwd))
         ).expanduser().resolve()
         target.mkdir(parents=True, exist_ok=True)
         vault = Vault(target)
@@ -1528,25 +1527,26 @@ def _ensure_ready_or_wizard() -> tuple[Vault, KnowletConfig]:
         save_config(vault.root, KnowletConfig())
         os.environ["KNOWLET_VAULT"] = str(vault.root)
         vault_root = vault.root
-        console.print(f"[green]vault initialized at {vault.root}[/green]\n")
+        console.print(f"[green]{t('vault.created', root=str(vault.root))}[/green]\n")
 
     vault = Vault(vault_root)
     cfg = _load_config_or_default(vault)
     if not cfg.llm.api_key:
         console.print(
             Panel.fit(
-                "LLM is not configured yet — let's do that now.\n"
-                "knowlet talks to any OpenAI-compatible HTTP service.",
-                title="LLM setup",
+                t("config.llm_setup.intro"),
+                title=t("config.llm_setup.title"),
             )
         )
-        cfg.llm.base_url = Prompt.ask("base URL", default=cfg.llm.base_url)
-        cfg.llm.model = Prompt.ask("model", default=cfg.llm.model)
-        api_key = Prompt.ask("API key", password=True)
+        cfg.llm.base_url = Prompt.ask(t("config.base_url.prompt"), default=cfg.llm.base_url)
+        cfg.llm.model = Prompt.ask(t("config.model.prompt"), default=cfg.llm.model)
+        api_key = Prompt.ask(t("config.api_key.prompt"), password=True)
         if api_key:
             cfg.llm.api_key = api_key
         save_config(vault.root, cfg)
-        console.print(f"[green]config saved → {config_path(vault.root)}[/green]\n")
+        console.print(
+            f"[green]{t('config.saved', path=str(config_path(vault.root)))}[/green]\n"
+        )
     return vault, cfg
 
 
