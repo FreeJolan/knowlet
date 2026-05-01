@@ -41,7 +41,7 @@ from knowlet.core.fsrs_wrap import initial_state, schedule_next
 from knowlet.core.i18n import SUPPORTED_LANGUAGES, all_keys, set_language
 from knowlet.core.index import IndexDimensionMismatchError
 from knowlet.core.llm import LLMClient
-from knowlet.core.mining.runner import run_task
+from knowlet.core.mining.runner import reset_task_state, run_task
 from knowlet.core.mining.scheduler import MiningScheduler
 from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
 from knowlet.core.user_profile import (
@@ -623,6 +623,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     @app.post("/api/mining/tasks/{task_id}/run")
     def run_mining_now(
         task_id: str,
+        max_items: int | None = None,
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> dict[str, Any]:
         t = runtime.ctx.tasks.get(task_id)
@@ -637,11 +638,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             runtime.llm,
             drafts=runtime.ctx.drafts,
             default_output_language=runtime.config.general.language,
+            max_items=max_items,
         )
         return report.to_dict()
 
     @app.post("/api/mining/run-all")
     def run_all_mining(
+        max_items: int | None = None,
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
@@ -654,9 +657,29 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 runtime.llm,
                 drafts=runtime.ctx.drafts,
                 default_output_language=runtime.config.general.language,
+                max_items=max_items,
             )
             out.append(report.to_dict())
         return out
+
+    @app.post("/api/mining/tasks/{task_id}/reset")
+    def reset_mining_task(
+        task_id: str,
+        delete_drafts: bool = False,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """Clear the seen-set so the next run re-extracts everything.
+        Optionally also delete drafts produced by this task.
+        Useful for re-running with a different output_language / prompt."""
+        t = runtime.ctx.tasks.get(task_id)
+        if t is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"task not found: {task_id}",
+            )
+        return reset_task_state(
+            runtime.vault, t.id, drafts=runtime.ctx.drafts, delete_drafts=delete_drafts
+        )
 
     # ---------------- drafts ----------------
 
