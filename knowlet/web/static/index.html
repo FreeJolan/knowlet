@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>knowlet</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <header>
+    <span class="logo">knowlet</span>
+    <span id="meta" class="meta"></span>
+    <button id="profile-btn" title="Edit profile">profile</button>
+    <button id="clear-btn" title="Reset chat history">clear</button>
+    <button id="save-btn" title="Sediment chat into a Note">save</button>
+  </header>
+
+  <main>
+    <section id="chat-pane">
+      <div id="messages" aria-live="polite"></div>
+      <form id="composer">
+        <textarea
+          id="input"
+          rows="3"
+          placeholder="Ask, discuss, or paste — Cmd+Enter to send."
+          autofocus
+        ></textarea>
+        <button type="submit" id="send-btn">send</button>
+      </form>
+    </section>
+
+    <aside id="side-pane">
+      <h2>recent notes</h2>
+      <ul id="notes-list"></ul>
+      <p id="notes-empty" class="hint" hidden>
+        no notes yet — save a chat to create the first one.
+      </p>
+    </aside>
+  </main>
+
+  <!-- Modal: sediment draft preview -->
+  <div id="draft-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h3>save this chat as a Note</h3>
+      <label>title<input type="text" id="draft-title" /></label>
+      <label>tags (comma-separated)<input type="text" id="draft-tags" /></label>
+      <label>body<textarea id="draft-body" rows="14"></textarea></label>
+      <div class="modal-actions">
+        <button id="draft-cancel">cancel</button>
+        <button id="draft-commit" class="primary">save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: profile editor -->
+  <div id="profile-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h3>your profile</h3>
+      <p class="hint">
+        knowlet reads this on every chat session. edit freely.
+      </p>
+      <label>name (optional)<input type="text" id="profile-name" /></label>
+      <label>body (Markdown)<textarea id="profile-body" rows="20"></textarea></label>
+      <div class="modal-actions">
+        <button id="profile-cancel">cancel</button>
+        <button id="profile-save" class="primary">save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: full note view -->
+  <div id="note-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h3 id="note-title"></h3>
+      <p class="hint" id="note-meta"></p>
+      <div id="note-body" class="rendered"></div>
+      <div class="modal-actions">
+        <button id="note-close" class="primary">close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

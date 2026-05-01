@@ -1,0 +1,117 @@
+"""Thin wrapper over the OpenAI SDK for OpenAI-compatible endpoints.
+
+knowlet does not store or proxy LLM credentials anywhere outside the local
+config file. The same client speaks to OpenAI / Anthropic-via-compat /
+Ollama / OpenRouter — anything that implements the OpenAI Chat Completions
+shape with tool-calls.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from typing import Any, Iterable
+
+from openai import OpenAI
+
+from knowlet.config import LLMConfig
+
+
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass
+class AssistantMessage:
+    content: str
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    raw: Any = None
+
+
+class LLMClient:
+    def __init__(self, cfg: LLMConfig):
+        self.cfg = cfg
+        self._client: OpenAI | None = None
+
+    def _ensure(self) -> OpenAI:
+        if self._client is None:
+            if not self.cfg.api_key:
+                raise RuntimeError(
+                    "LLM api_key is empty. Run `knowlet config init` to configure."
+                )
+            self._client = OpenAI(base_url=self.cfg.base_url, api_key=self.cfg.api_key)
+        return self._client
+
+    def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> AssistantMessage:
+        client = self._ensure()
+        kwargs: dict[str, Any] = {
+            "model": self.cfg.model,
+            "messages": messages,
+            "max_tokens": max_tokens or self.cfg.max_tokens,
+            "temperature": self.cfg.temperature if temperature is None else temperature,
+        }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+
+        resp = client.chat.completions.create(**kwargs)
+        choice = resp.choices[0].message
+        tool_calls: list[ToolCall] = []
+        for tc in choice.tool_calls or []:
+            try:
+                args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+            except json.JSONDecodeError:
+                args = {"_raw": tc.function.arguments}
+            tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
+        return AssistantMessage(
+            content=choice.content or "",
+            tool_calls=tool_calls,
+            raw=resp,
+        )
+
+
+def messages_with_assistant(
+    messages: list[dict[str, Any]],
+    assistant: AssistantMessage,
+) -> list[dict[str, Any]]:
+    """Append an assistant turn (with tool_calls) to the message log."""
+    msg: dict[str, Any] = {"role": "assistant", "content": assistant.content or None}
+    if assistant.tool_calls:
+        msg["tool_calls"] = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.name,
+                    "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                },
+            }
+            for tc in assistant.tool_calls
+        ]
+    return [*messages, msg]
+
+
+def messages_with_tool_results(
+    messages: list[dict[str, Any]],
+    results: Iterable[tuple[str, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Append tool-result turns. results is an iterable of (tool_call_id, payload)."""
+    out = list(messages)
+    for tc_id, payload in results:
+        out.append(
+            {
+                "role": "tool",
+                "tool_call_id": tc_id,
+                "content": json.dumps(payload, ensure_ascii=False),
+            }
+        )
+    return out

@@ -4,6 +4,19 @@
 
 > Living doc. The engineering unfolding of [ADR-0007](../decisions/0007-mvp-slice.en.md), updated as MVP implementation progresses.
 
+## Implementation progress (2026-05-01)
+
+- ✅ **M0** — End-to-end CLI: `vault init` / `config init|set|show` / `doctor` / `chat` (embedded chat REPL + LLM-driven retrieval + AI draft + user review + Note commit) / `ls` / `reindex`. Atomic tools: `search_notes` / `get_note` / `list_recent_notes`.
+- ✅ **M0+ refactor** — `bootstrap_chat()` extracted as the single session entry; bare `knowlet` drops into the chat REPL with slash commands (`:save :ls :reindex :doctor :config show :user :tools :clear :help :quit`).
+- ✅ **M1** — User-context layer: `<vault>/users/me.md` (0600 perms) + system-prompt injection + `get_user_profile` atomic tool (fallback for backends that ignore role:'system') + `knowlet user show/edit` + `:user` slash.
+- ✅ **M2** — Minimal web UI: FastAPI + static single page (dark theme, Markdown rendering, recent-notes sidebar, draft-review modal, profile editor modal). `knowlet web` starts the server. Every endpoint is a thin shell over backend functions (see [ADR-0008](../decisions/0008-cli-parity-discipline.en.md)).
+- ⏳ M2 phase 2 — SSE streaming responses.
+- ⏳ M3 — Card entity + FSRS SRS submodule (enters scenario C).
+- ⏳ M4 — Knowledge mining tasks (enters scenario B).
+- ⏳ M5 — Tauri desktop shell + mobile PWA.
+
+Test footprint: 57 tests, primarily targeting backend modules + the HTTP API. CLI / slash / web all share the same business logic.
+
 ## Scope at a Glance
 
 Only the end-to-end minimum usable version of **Scenario A (research / paper reading)**. See [ADR-0007 — MVP Scope](../decisions/0007-mvp-slice.en.md#mvp-scope).
