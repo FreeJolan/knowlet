@@ -19,7 +19,7 @@ from typing import Any
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -35,6 +35,7 @@ from knowlet.chat.sediment import (
     draft_from_conversation,
 )
 from knowlet.config import KnowletConfig, find_vault, load_config
+from knowlet.core.events import ErrorEvent, event_to_dict
 from knowlet.core.index import IndexDimensionMismatchError
 from knowlet.core.user_profile import (
     UserProfile,
@@ -201,6 +202,36 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail=f"LLM error: {exc}",
             ) from exc
         return ChatTurnResponse(reply=reply, tool_calls=traces)
+
+    @app.post("/api/chat/stream")
+    def chat_stream(
+        req: ChatTurnRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> StreamingResponse:
+        """SSE stream of structured chat events for one user turn.
+
+        Per ADR-0008, this is the primary chat path. The frontend reads it via
+        `fetch` + ReadableStream + manual SSE parsing. The non-streaming
+        `/api/chat/turn` is kept as a fallback for non-browser callers.
+        """
+
+        def event_source():
+            try:
+                for event in runtime.session.user_turn_stream(req.text):
+                    payload = json.dumps(event_to_dict(event), ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
+            except Exception as exc:  # noqa: BLE001
+                err = ErrorEvent(message=f"server error: {exc}")
+                yield f"data: {json.dumps(event_to_dict(err))}\n\n"
+
+        return StreamingResponse(
+            event_source(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",  # disable proxy buffering if any
+            },
+        )
 
     @app.post("/api/chat/clear")
     def chat_clear(runtime: ChatRuntime = Depends(runtime_dep)) -> dict[str, Any]:

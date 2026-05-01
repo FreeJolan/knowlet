@@ -102,21 +102,115 @@ function appendBubble(role, text, toolCalls = []) {
 
 // --------------------------------------------------------- chat
 
+async function* parseSSE(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const dataLines = block
+        .split("\n")
+        .filter((l) => l.startsWith("data: "))
+        .map((l) => l.slice(6));
+      const json = dataLines.join("");
+      if (!json) continue;
+      try {
+        yield JSON.parse(json);
+      } catch (err) {
+        console.error("SSE parse error", err, json);
+      }
+    }
+  }
+}
+
 async function sendMessage(text) {
   if (!text.trim()) return;
   inputEl.value = "";
   inputEl.disabled = true;
   appendBubble("user", text);
 
-  const placeholder = appendBubble("assistant", "…thinking");
+  // Build an empty assistant bubble we'll fill as events arrive.
+  const wrap = document.createElement("div");
+  wrap.className = "bubble assistant";
+  const roleEl = document.createElement("div");
+  roleEl.className = "role";
+  roleEl.textContent = "assistant";
+  wrap.appendChild(roleEl);
+  const contentEl = document.createElement("div");
+  contentEl.className = "content";
+  contentEl.dataset.raw = "";
+  wrap.appendChild(contentEl);
+  messagesEl.appendChild(wrap);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  // Track tool calls so we can update their displayed result line in place.
+  const toolEls = new Map(); // id → element
+
+  function renderContent() {
+    contentEl.innerHTML = renderMarkdown(contentEl.dataset.raw);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
 
   try {
-    const data = await api("POST", "/api/chat/turn", { text });
-    placeholder.remove();
-    appendBubble("assistant", data.reply, data.tool_calls || []);
+    const r = await fetch("/api/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!r.ok) {
+      let detail = `${r.status} ${r.statusText}`;
+      try {
+        const d = await r.json();
+        if (d.detail) detail = d.detail;
+      } catch (_) {}
+      throw new Error(detail);
+    }
+
+    for await (const ev of parseSSE(r)) {
+      if (ev.type === "reply_chunk") {
+        contentEl.dataset.raw += ev.text;
+        renderContent();
+      } else if (ev.type === "tool_call") {
+        const trace = document.createElement("div");
+        trace.className = "tool-trace";
+        const args = JSON.stringify(ev.arguments).slice(0, 120);
+        trace.textContent = `· ${ev.name}(${args})`;
+        wrap.appendChild(trace);
+        toolEls.set(ev.id, trace);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      } else if (ev.type === "tool_result") {
+        const trace = toolEls.get(ev.id);
+        if (trace) {
+          const isErr = ev.payload && ev.payload.error;
+          const summary = isErr
+            ? `error: ${ev.payload.error}`
+            : ev.payload && ev.payload.count != null
+            ? `${ev.payload.count} hit(s)`
+            : "ok";
+          trace.textContent = `· ${ev.name} → ${summary}`;
+          if (isErr) trace.classList.add("error");
+        }
+      } else if (ev.type === "turn_done") {
+        // Final assembly: ensure full markdown render.
+        if (ev.final_text) {
+          contentEl.dataset.raw = ev.final_text;
+          renderContent();
+        }
+      } else if (ev.type === "error") {
+        contentEl.dataset.raw += `\n\n**Error:** ${ev.message}`;
+        renderContent();
+        toast(ev.message, "error");
+      }
+    }
   } catch (exc) {
-    placeholder.remove();
-    appendBubble("assistant", `**Error:** ${exc.message}`);
+    contentEl.dataset.raw += `\n\n**Error:** ${exc.message}`;
+    renderContent();
     toast(exc.message, "error");
   } finally {
     inputEl.disabled = false;

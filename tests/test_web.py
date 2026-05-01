@@ -5,12 +5,18 @@ delegates to backend functions (single-source-of-truth discipline) and that
 error paths produce structured responses.
 """
 
+import json
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from knowlet.config import KnowletConfig, save_config
+from knowlet.core.events import (
+    ReplyChunkEvent,
+    ReplyDoneEvent,
+    ToolCallEvent,
+)
 from knowlet.core.llm import AssistantMessage, ToolCall
 from knowlet.core.note import Note, new_id
 from knowlet.core.user_profile import UserProfile, write_profile
@@ -248,3 +254,99 @@ def test_root_serves_index_html(tmp_path: Path):
     r = client.get("/")
     assert r.status_code == 200
     assert "knowlet" in r.text.lower()
+
+
+# ------------------------------------------------------- SSE streaming
+
+
+class StreamStubLLM:
+    def __init__(self, scripts):
+        self.scripts = list(scripts)
+
+    def chat_stream(self, messages, tools=None, max_tokens=None, temperature=None):
+        events = self.scripts.pop(0)
+        for ev in events:
+            yield ev
+
+
+def _parse_sse(raw: str) -> list[dict]:
+    events: list[dict] = []
+    for block in raw.split("\n\n"):
+        block = block.strip()
+        if not block:
+            continue
+        data_lines = [
+            line[len("data: "):]
+            for line in block.split("\n")
+            if line.startswith("data: ")
+        ]
+        if not data_lines:
+            continue
+        events.append(json.loads("".join(data_lines)))
+    return events
+
+
+def test_chat_stream_yields_events(tmp_path: Path):
+    v, cfg = _ready_vault(tmp_path)
+    app = create_app(v, cfg)
+    client = TestClient(app)
+    state = app.state.web_state
+    runtime = state.runtime_or_init()
+    runtime.session.llm = StreamStubLLM(  # type: ignore[assignment]
+        [
+            [
+                ReplyChunkEvent(text="hello "),
+                ReplyChunkEvent(text="world"),
+                ReplyDoneEvent(final_text="hello world"),
+            ]
+        ]
+    )
+    with client.stream(
+        "POST", "/api/chat/stream", json={"text": "hi"}
+    ) as r:
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/event-stream")
+        body = "".join(r.iter_text())
+    events = _parse_sse(body)
+    types = [e["type"] for e in events]
+    assert types == ["reply_chunk", "reply_chunk", "turn_done"]
+    assert events[-1]["final_text"] == "hello world"
+
+
+def test_chat_stream_with_tool_call(tmp_path: Path):
+    v, cfg = _ready_vault(tmp_path)
+    n = Note(id=new_id(), title="Note A", body="some body")
+    v.write_note(n)
+
+    app = create_app(v, cfg)
+    client = TestClient(app)
+    state = app.state.web_state
+    runtime = state.runtime_or_init()
+    runtime.session.llm = StreamStubLLM(  # type: ignore[assignment]
+        [
+            [
+                ToolCallEvent(
+                    id="c1", name="search_notes", arguments={"query": "x", "limit": 1}
+                ),
+                ReplyDoneEvent(final_text=""),
+            ],
+            [
+                ReplyChunkEvent(text="answer"),
+                ReplyDoneEvent(final_text="answer"),
+            ],
+        ]
+    )
+    with client.stream(
+        "POST", "/api/chat/stream", json={"text": "search for x"}
+    ) as r:
+        body = "".join(r.iter_text())
+    events = _parse_sse(body)
+    types = [e["type"] for e in events]
+    assert types == [
+        "tool_call",
+        "tool_result",
+        "reply_chunk",
+        "turn_done",
+    ]
+    assert events[1]["name"] == "search_notes"
+    assert "results" in events[1]["payload"]
