@@ -1,78 +1,12 @@
 /**
- * knowlet web UI — minimal vanilla JS over the FastAPI backend.
+ * knowlet web UI — Alpine-based, three-column notes-first layout (M6.1).
  *
- * Discipline: no business logic here. Every action is a fetch() to a backend
- * endpoint that has a CLI mirror. Rendering, event handling, modal state —
- * those are this file's only job.
+ * Discipline (ADR-0008): no business logic here. Every action is a fetch()
+ * to a backend endpoint that has a CLI mirror. Rendering, event handling,
+ * modal state — those are this file's only job.
  */
 
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => Array.from(document.querySelectorAll(sel));
-
-// ---------- i18n ----------
-let I18N = {};
-function tt(key) {
-  return I18N[key] || key;
-}
-async function loadI18n(lang) {
-  try {
-    const r = await fetch(`/api/i18n/${encodeURIComponent(lang || "en")}`);
-    if (r.ok) I18N = await r.json();
-  } catch (_) {
-    I18N = {};
-  }
-  applyI18n();
-}
-function applyI18n() {
-  $$('[data-i18n]').forEach((el) => {
-    const key = el.dataset.i18n;
-    if (I18N[key]) el.textContent = I18N[key];
-  });
-  $$('[data-i18n-placeholder]').forEach((el) => {
-    const key = el.dataset.i18nPlaceholder;
-    if (I18N[key]) el.placeholder = I18N[key];
-  });
-}
-
-const messagesEl = $("#messages");
-const inputEl = $("#input");
-const composerEl = $("#composer");
-const notesListEl = $("#notes-list");
-const notesEmptyEl = $("#notes-empty");
-const metaEl = $("#meta");
-
-const draftModal = $("#draft-modal");
-const profileModal = $("#profile-modal");
-const noteModal = $("#note-modal");
-
-// --------------------------------------------------------- helpers
-
-function renderMarkdown(text) {
-  // marked is loaded from CDN. If it failed to load, fall back to <pre>.
-  if (typeof marked !== "undefined") {
-    const html = marked.parse(text || "");
-    // Make every link open in a new tab so the user keeps their place in knowlet.
-    return html.replace(
-      /<a (?![^>]*\btarget=)/gi,
-      '<a target="_blank" rel="noopener noreferrer" '
-    );
-  }
-  const pre = document.createElement("pre");
-  pre.textContent = text || "";
-  return pre.outerHTML;
-}
-
-function toast(msg, kind = "") {
-  const el = document.createElement("div");
-  el.className = `toast ${kind}`;
-  el.textContent = msg;
-  document.body.appendChild(el);
-  requestAnimationFrame(() => el.classList.add("show"));
-  setTimeout(() => {
-    el.classList.remove("show");
-    setTimeout(() => el.remove(), 200);
-  }, 3000);
-}
+// ---------- shared helpers ----------
 
 async function api(method, path, body) {
   const opts = { method, headers: { "Content-Type": "application/json" } };
@@ -89,48 +23,6 @@ async function api(method, path, body) {
   if (r.status === 204) return null;
   return await r.json();
 }
-
-function appendBubble(role, text, toolCalls = []) {
-  const wrap = document.createElement("div");
-  wrap.className = `bubble ${role}`;
-
-  const roleEl = document.createElement("div");
-  roleEl.className = "role";
-  roleEl.textContent = role;
-  wrap.appendChild(roleEl);
-
-  if (role === "assistant") {
-    const content = document.createElement("div");
-    content.className = "content";
-    content.innerHTML = renderMarkdown(text);
-    wrap.appendChild(content);
-  } else {
-    const content = document.createElement("div");
-    content.className = "content";
-    content.textContent = text;
-    wrap.appendChild(content);
-  }
-
-  for (const tc of toolCalls) {
-    const trace = document.createElement("div");
-    const isErr = tc.result && tc.result.error;
-    trace.className = `tool-trace ${isErr ? "error" : ""}`;
-    const args = JSON.stringify(tc.arguments).slice(0, 120);
-    const summary = isErr
-      ? `error: ${tc.result.error}`
-      : tc.result && tc.result.count != null
-      ? `${tc.result.count} hit(s)`
-      : "ok";
-    trace.textContent = `· ${tc.name}(${args}) → ${summary}`;
-    wrap.appendChild(trace);
-  }
-
-  messagesEl.appendChild(wrap);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-  return wrap;
-}
-
-// --------------------------------------------------------- chat
 
 async function* parseSSE(response) {
   const reader = response.body.getReader();
@@ -159,573 +51,653 @@ async function* parseSSE(response) {
   }
 }
 
-async function sendMessage(text) {
-  if (!text.trim()) return;
-  inputEl.value = "";
-  inputEl.disabled = true;
-  appendBubble("user", text);
-
-  // Build an empty assistant bubble we'll fill as events arrive.
-  const wrap = document.createElement("div");
-  wrap.className = "bubble assistant";
-  const roleEl = document.createElement("div");
-  roleEl.className = "role";
-  roleEl.textContent = "assistant";
-  wrap.appendChild(roleEl);
-  const contentEl = document.createElement("div");
-  contentEl.className = "content";
-  contentEl.dataset.raw = "";
-  wrap.appendChild(contentEl);
-  messagesEl.appendChild(wrap);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-
-  // Track tool calls so we can update their displayed result line in place.
-  const toolEls = new Map(); // id → element
-
-  function renderContent() {
-    contentEl.innerHTML = renderMarkdown(contentEl.dataset.raw);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-  }
-
-  try {
-    const r = await fetch("/api/chat/stream", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    if (!r.ok) {
-      let detail = `${r.status} ${r.statusText}`;
-      try {
-        const d = await r.json();
-        if (d.detail) detail = d.detail;
-      } catch (_) {}
-      throw new Error(detail);
-    }
-
-    for await (const ev of parseSSE(r)) {
-      if (ev.type === "reply_chunk") {
-        contentEl.dataset.raw += ev.text;
-        renderContent();
-      } else if (ev.type === "tool_call") {
-        const trace = document.createElement("div");
-        trace.className = "tool-trace";
-        const args = JSON.stringify(ev.arguments).slice(0, 120);
-        trace.textContent = `· ${ev.name}(${args})`;
-        wrap.appendChild(trace);
-        toolEls.set(ev.id, trace);
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-      } else if (ev.type === "tool_result") {
-        const trace = toolEls.get(ev.id);
-        if (trace) {
-          const isErr = ev.payload && ev.payload.error;
-          const summary = isErr
-            ? `error: ${ev.payload.error}`
-            : ev.payload && ev.payload.count != null
-            ? `${ev.payload.count} hit(s)`
-            : "ok";
-          trace.textContent = `· ${ev.name} → ${summary}`;
-          if (isErr) trace.classList.add("error");
-        }
-      } else if (ev.type === "turn_done") {
-        // Final assembly: ensure full markdown render.
-        if (ev.final_text) {
-          contentEl.dataset.raw = ev.final_text;
-          renderContent();
-        }
-      } else if (ev.type === "error") {
-        contentEl.dataset.raw += `\n\n**Error:** ${ev.message}`;
-        renderContent();
-        toast(ev.message, "error");
-      }
-    }
-  } catch (exc) {
-    contentEl.dataset.raw += `\n\n**Error:** ${exc.message}`;
-    renderContent();
-    toast(exc.message, "error");
-  } finally {
-    inputEl.disabled = false;
-    inputEl.focus();
-    // The LLM may have created a card or processed drafts; reflect that.
-    refreshCards();
-    refreshDrafts();
-    refreshNotes();
-  }
+function debounce(fn, wait) {
+  let t = null;
+  return function (...args) {
+    clearTimeout(t);
+    t = setTimeout(() => fn.apply(this, args), wait);
+  };
 }
 
-composerEl.addEventListener("submit", (ev) => {
-  ev.preventDefault();
-  sendMessage(inputEl.value);
-});
+// ---------- top-level toast ----------
 
-// IME (Chinese / Japanese pinyin etc.) composition state. While composing,
-// Enter belongs to the IME (selecting a candidate) — never to "send".
-let imeComposing = false;
-inputEl.addEventListener("compositionstart", () => (imeComposing = true));
-inputEl.addEventListener("compositionend", () => (imeComposing = false));
-
-inputEl.addEventListener("keydown", (ev) => {
-  // Industry convention (Slack / ChatGPT / Claude): Enter sends,
-  // Shift+Enter inserts a newline. Cmd/Ctrl+Enter also sends as a power-user
-  // alternative. Never act while the IME is composing.
-  if (ev.key !== "Enter") return;
-  if (imeComposing || ev.isComposing || ev.keyCode === 229) return;
-  if (ev.shiftKey) return; // explicit newline
-  ev.preventDefault();
-  sendMessage(inputEl.value);
-});
-
-// --------------------------------------------------------- fullscreen editor
-
-const editorModal = $("#editor-modal");
-const editorTextarea = $("#editor-textarea");
-const editorPreview = $("#editor-preview");
-const editorBody = $("#editor-body");
-const editorToggleBtn = $("#editor-toggle-split");
-let editorSplit = false;
-
-function openEditor() {
-  // Sync from small input → modal textarea so the user can keep typing.
-  editorTextarea.value = inputEl.value;
-  editorModal.hidden = false;
-  setEditorSplit(editorSplit); // re-apply current mode
-  editorTextarea.focus();
-  // Move caret to the end (continuation feel).
-  const len = editorTextarea.value.length;
-  editorTextarea.setSelectionRange(len, len);
-  renderEditorPreview();
+function toast(msg, kind) {
+  const el = document.createElement("div");
+  el.className = `toast ${kind || ""}`;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 200);
+  }, 3000);
 }
 
-function closeEditor(syncBack) {
-  if (syncBack) inputEl.value = editorTextarea.value;
-  editorModal.hidden = true;
-}
+// ---------- i18n ----------
 
-function setEditorSplit(on) {
-  editorSplit = !!on;
-  editorBody.classList.toggle("split", editorSplit);
-  editorBody.classList.toggle("single", !editorSplit);
-  editorPreview.hidden = !editorSplit;
-  editorToggleBtn.textContent = editorSplit
-    ? tt("web.editor.split_off")
-    : tt("web.editor.split_on");
-  if (editorSplit) renderEditorPreview();
-}
-
-function renderEditorPreview() {
-  if (!editorSplit) return;
-  editorPreview.innerHTML = renderMarkdown(editorTextarea.value);
-}
-
-editorTextarea.addEventListener("input", renderEditorPreview);
-editorToggleBtn.addEventListener("click", () => setEditorSplit(!editorSplit));
-$("#editor-cancel").addEventListener("click", () => closeEditor(true));
-$("#editor-send").addEventListener("click", () => {
-  const text = editorTextarea.value;
-  closeEditor(false); // don't sync back; we're sending and emptying
-  inputEl.value = "";
-  sendMessage(text);
-});
-
-// IME-aware Cmd/Ctrl+Enter from inside the editor sends; Esc closes.
-let editorImeComposing = false;
-editorTextarea.addEventListener(
-  "compositionstart",
-  () => (editorImeComposing = true)
-);
-editorTextarea.addEventListener(
-  "compositionend",
-  () => (editorImeComposing = false)
-);
-editorTextarea.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape") {
-    ev.preventDefault();
-    closeEditor(true);
-    return;
-  }
-  if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
-    if (editorImeComposing || ev.isComposing || ev.keyCode === 229) return;
-    ev.preventDefault();
-    $("#editor-send").click();
-  }
-});
-
-$("#expand-btn").addEventListener("click", openEditor);
-
-// Cmd/Ctrl+Shift+E from anywhere opens the editor.
-document.addEventListener("keydown", (ev) => {
-  if (
-    (ev.metaKey || ev.ctrlKey) &&
-    ev.shiftKey &&
-    (ev.key === "E" || ev.key === "e")
-  ) {
-    ev.preventDefault();
-    if (editorModal.hidden) openEditor();
-    else closeEditor(true);
-  }
-});
-
-// --------------------------------------------------------- header buttons
-
-$("#clear-btn").addEventListener("click", async () => {
+let I18N = {};
+async function loadI18n(lang) {
   try {
-    await api("POST", "/api/chat/clear");
-    messagesEl.innerHTML = "";
-    toast(tt("web.toast.cleared"), "ok");
-  } catch (exc) {
-    toast(exc.message, "error");
-  }
-});
-
-$("#save-btn").addEventListener("click", async () => {
-  // Sediment can take 20-30s on Opus. Without visible feedback the user
-  // assumes the click did nothing.
-  const btn = $("#save-btn");
-  const original = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = tt("web.save.drafting");
-  try {
-    const draft = await api("POST", "/api/chat/draft");
-    $("#draft-title").value = draft.title;
-    $("#draft-tags").value = (draft.tags || []).join(", ");
-    $("#draft-body").value = draft.body;
-    draftModal.hidden = false;
-  } catch (exc) {
-    toast(exc.message, "error");
-  } finally {
-    btn.disabled = false;
-    btn.textContent = original;
-  }
-});
-
-$("#draft-cancel").addEventListener("click", () => (draftModal.hidden = true));
-$("#draft-commit").addEventListener("click", async () => {
-  const title = $("#draft-title").value.trim();
-  const tags = $("#draft-tags").value
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const body = $("#draft-body").value.trim();
-  if (!title || !body) {
-    toast(tt("web.toast.required_fields"), "error");
-    return;
-  }
-  try {
-    await api("POST", "/api/notes", { title, tags, body });
-    draftModal.hidden = true;
-    toast(tt("web.toast.note_saved"), "ok");
-    await refreshNotes();
-  } catch (exc) {
-    toast(exc.message, "error");
-  }
-});
-
-// --------------------------------------------------------- profile
-
-$("#profile-btn").addEventListener("click", async () => {
-  try {
-    const p = await api("GET", "/api/profile");
-    $("#profile-name").value = p.exists ? p.name || "" : "";
-    $("#profile-body").value = p.exists ? p.body : "";
-    profileModal.hidden = false;
-  } catch (exc) {
-    toast(exc.message, "error");
-  }
-});
-
-$("#profile-cancel").addEventListener("click", () => (profileModal.hidden = true));
-$("#profile-save").addEventListener("click", async () => {
-  const name = $("#profile-name").value.trim() || null;
-  const body = $("#profile-body").value;
-  try {
-    await api("PUT", "/api/profile", { name, body });
-    profileModal.hidden = true;
-    toast(tt("web.toast.profile_saved"), "ok");
-  } catch (exc) {
-    toast(exc.message, "error");
-  }
-});
-
-// --------------------------------------------------------- notes sidebar
-
-async function refreshNotes() {
-  try {
-    const rows = await api("GET", "/api/notes?limit=20&recent=true");
-    notesListEl.innerHTML = "";
-    if (!rows.length) {
-      notesEmptyEl.hidden = false;
-      return;
-    }
-    notesEmptyEl.hidden = true;
-    for (const r of rows) {
-      const li = document.createElement("li");
-      li.dataset.id = r.id;
-      li.innerHTML = `<span class="note-title"></span><span class="note-meta"></span>`;
-      li.querySelector(".note-title").textContent = r.title;
-      const tagBlurb = r.tags.length ? ` · ${r.tags.join(", ")}` : "";
-      li.querySelector(".note-meta").textContent = `${r.updated_at}${tagBlurb}`;
-      li.addEventListener("click", () => openNote(r.id));
-      notesListEl.appendChild(li);
-    }
-  } catch (exc) {
-    toast(exc.message, "error");
-  }
-}
-
-async function openNote(noteId) {
-  try {
-    const n = await api("GET", `/api/notes/${encodeURIComponent(noteId)}`);
-    $("#note-title").textContent = n.title;
-    const tagBlurb = n.tags.length ? ` · ${n.tags.join(", ")}` : "";
-    $("#note-meta").textContent = `${n.updated_at}${tagBlurb}`;
-    $("#note-body").innerHTML = renderMarkdown(n.body);
-    noteModal.hidden = false;
-  } catch (exc) {
-    toast(exc.message, "error");
-  }
-}
-
-$("#note-close").addEventListener("click", () => (noteModal.hidden = true));
-
-// --------------------------------------------------------- cards review
-
-const reviewModal = $("#review-modal");
-const reviewState = {
-  queue: [],
-  current: 0,
-};
-
-async function refreshCards() {
-  try {
-    const due = await api("GET", "/api/cards/due?limit=50");
-    const status = $("#cards-status");
-    const btn = $("#review-btn");
-    if (!due.length) {
-      status.textContent = tt("web.cards.empty");
-      btn.hidden = true;
-    } else {
-      status.textContent = `${due.length} ${tt("web.cards.due")}`;
-      btn.hidden = false;
-    }
-  } catch (exc) {
-    $("#cards-status").textContent = `(error: ${exc.message})`;
-  }
-}
-
-async function openReview() {
-  try {
-    const due = await api("GET", "/api/cards/due?limit=50");
-    if (!due.length) {
-      toast(tt("web.cards.empty"), "ok");
-      return;
-    }
-    reviewState.queue = due;
-    reviewState.current = 0;
-    reviewModal.hidden = false;
-    showCurrentCard();
-  } catch (exc) {
-    toast(exc.message, "error");
-  }
-}
-
-function showCurrentCard() {
-  const card = reviewState.queue[reviewState.current];
-  if (!card) return finishReview();
-  $("#review-progress").textContent = `card ${reviewState.current + 1} / ${reviewState.queue.length}`;
-  $("#review-front").innerHTML = renderMarkdown(card.front);
-  $("#review-back").innerHTML = renderMarkdown(card.back);
-  $("#review-back").hidden = true;
-  $("#review-tags").textContent = card.tags.length ? `tags: ${card.tags.join(", ")}` : "";
-  $("#review-actions").hidden = false;
-  $("#review-rate-row").hidden = true;
-}
-
-function finishReview() {
-  reviewModal.hidden = true;
-  reviewState.queue = [];
-  reviewState.current = 0;
-  refreshCards();
-  toast(tt("web.toast.review_done"), "ok");
-}
-
-$("#review-btn").addEventListener("click", openReview);
-$("#review-reveal").addEventListener("click", () => {
-  $("#review-back").hidden = false;
-  $("#review-actions").hidden = true;
-  $("#review-rate-row").hidden = false;
-});
-$("#review-quit").addEventListener("click", () => (reviewModal.hidden = true));
-for (const btn of $$('#review-rate-row button[data-rating]')) {
-  btn.addEventListener("click", async () => {
-    const card = reviewState.queue[reviewState.current];
-    if (!card) return;
-    try {
-      await api("POST", `/api/cards/${encodeURIComponent(card.id)}/review`, {
-        rating: parseInt(btn.dataset.rating, 10),
-      });
-      reviewState.current += 1;
-      showCurrentCard();
-    } catch (exc) {
-      toast(exc.message, "error");
-    }
-  });
-}
-
-// --------------------------------------------------------- drafts review
-
-const draftsModal = $("#drafts-modal");
-const draftsState = { queue: [], current: 0 };
-
-async function refreshDrafts() {
-  try {
-    const drafts = await api("GET", "/api/drafts");
-    const status = $("#drafts-status");
-    const btn = $("#drafts-btn");
-    if (!drafts.length) {
-      status.textContent = tt("web.drafts.empty");
-      btn.hidden = true;
-    } else {
-      status.textContent = `${drafts.length} ${tt("web.drafts.inbox")}`;
-      btn.hidden = false;
-    }
-  } catch (exc) {
-    $("#drafts-status").textContent = `(error: ${exc.message})`;
-  }
-}
-
-async function showDraftAt(index) {
-  const drafts = draftsState.queue;
-  if (index >= drafts.length) {
-    draftsModal.hidden = true;
-    refreshDrafts();
-    refreshNotes();
-    toast("done", "ok");
-    return;
-  }
-  draftsState.current = index;
-  try {
-    const full = await api(
-      "GET",
-      `/api/drafts/${encodeURIComponent(drafts[index].id)}`
-    );
-    $("#drafts-progress").textContent = `draft ${index + 1} / ${drafts.length}`;
-    $("#drafts-title").textContent = full.title;
-    const sourceLink = full.source
-      ? `<a href="${full.source}" target="_blank" rel="noopener noreferrer">${full.source}</a>`
-      : "—";
-    const tagBlurb = full.tags.length
-      ? `  ·  tags: ${full.tags.join(", ")}`
-      : "";
-    $("#drafts-source").innerHTML =
-      `source: ${sourceLink}  ·  task: ${full.task_id || "—"}${tagBlurb}`;
-    $("#drafts-body").innerHTML = renderMarkdown(full.body);
-  } catch (exc) {
-    toast(exc.message, "error");
-  }
-}
-
-async function openDraftsReview() {
-  try {
-    const drafts = await api("GET", "/api/drafts");
-    if (!drafts.length) {
-      toast(tt("web.toast.empty_inbox"), "ok");
-      return;
-    }
-    draftsState.queue = drafts;
-    draftsState.current = 0;
-    draftsModal.hidden = false;
-    showDraftAt(0);
-  } catch (exc) {
-    toast(exc.message, "error");
-  }
-}
-
-$("#drafts-btn").addEventListener("click", openDraftsReview);
-$("#drafts-quit").addEventListener("click", async () => {
-  draftsModal.hidden = true;
-  // Reflect any approve/reject from this session in the sidebar.
-  await refreshDrafts();
-  await refreshNotes();
-});
-$("#drafts-skip").addEventListener("click", () =>
-  showDraftAt(draftsState.current + 1)
-);
-$("#drafts-reject").addEventListener("click", async () => {
-  const card = draftsState.queue[draftsState.current];
-  try {
-    await api("POST", `/api/drafts/${encodeURIComponent(card.id)}/reject`);
-    refreshDrafts(); // update sidebar count immediately, no await needed
-    showDraftAt(draftsState.current + 1);
-  } catch (exc) {
-    toast(exc.message, "error");
-  }
-});
-$("#drafts-approve").addEventListener("click", async () => {
-  const card = draftsState.queue[draftsState.current];
-  try {
-    await api("POST", `/api/drafts/${encodeURIComponent(card.id)}/approve`);
-    refreshDrafts();
-    refreshNotes();
-    showDraftAt(draftsState.current + 1);
-  } catch (exc) {
-    toast(exc.message, "error");
-  }
-});
-
-$("#run-mining-btn").addEventListener("click", async () => {
-  $("#run-mining-btn").disabled = true;
-  $("#drafts-status").textContent = "running mining tasks…";
-  try {
-    const reports = await api("POST", "/api/mining/run-all");
-    const totals = reports.reduce(
-      (acc, r) => {
-        acc.fetched += r.fetched;
-        acc.drafts += r.drafts_created;
-        return acc;
-      },
-      { fetched: 0, drafts: 0 }
-    );
-    toast(
-      `mining: ${totals.fetched} fetched, ${totals.drafts} drafts`,
-      "ok"
-    );
-  } catch (exc) {
-    toast(exc.message, "error");
-  } finally {
-    $("#run-mining-btn").disabled = false;
-    refreshDrafts();
-  }
-});
-
-// --------------------------------------------------------- bootstrap
-
-async function bootstrap() {
-  let lang = "en";
-  try {
-    const h = await api("GET", "/api/health");
-    metaEl.textContent = `vault: ${h.vault.split("/").pop()}  ·  model: ${h.model}  ·  lang: ${h.language}`;
-    lang = h.language || "en";
-    document.documentElement.lang = lang;
-  } catch (exc) {
-    metaEl.textContent = `(health check failed: ${exc.message})`;
-  }
-  await loadI18n(lang);
-  await refreshNotes();
-  await refreshCards();
-  await refreshDrafts();
-  // Show the "run mining now" button only if at least one task exists.
-  try {
-    const tasks = await api("GET", "/api/mining/tasks");
-    if (tasks.length) $("#run-mining-btn").hidden = false;
-  } catch (_) {}
-  // Restore any prior conversation in the running session.
-  try {
-    const data = await api("GET", "/api/chat/history");
-    for (const m of data.history || []) {
-      appendBubble(m.role, m.content || "");
-    }
+    const r = await fetch(`/api/i18n/${encodeURIComponent(lang || "en")}`);
+    if (r.ok) I18N = await r.json();
   } catch (_) {
-    // Non-fatal — likely no runtime yet.
+    I18N = {};
   }
 }
+function tt(key) {
+  return I18N[key] || key;
+}
 
-bootstrap();
+// ---------- markdown render with link-target=_blank ----------
+
+function renderMarkdown(text) {
+  if (typeof marked !== "undefined") {
+    const html = marked.parse(text || "");
+    return html.replace(
+      /<a (?![^>]*\btarget=)/gi,
+      '<a target="_blank" rel="noopener noreferrer" '
+    );
+  }
+  const pre = document.createElement("pre");
+  pre.textContent = text || "";
+  return pre.outerHTML;
+}
+
+// ---------- main UI factory ----------
+
+function ui() {
+  return {
+    // ---- meta / health ----
+    meta: { vault: "", model: "", language: "en" },
+
+    // ---- notes / tabs ----
+    notes: [],
+    notesLoading: true,
+    treeFilter: "",
+    openTabs: [],         // [{id, title, path, tags, body, updated_at, dirty, saving}]
+    currentNoteId: null,
+    editorMode: "preview",
+
+    // ---- right rail ----
+    rightOpen: true,
+    rightTab: "outline",  // 'outline' | 'backlinks' | 'ai'
+
+    // ---- AI dock chat ----
+    chatHistory: [],      // [{role: 'user'|'assistant', content, tool_calls?}]
+    chatScope: "note",    // 'note' | 'vault' | 'none'
+    chatStreaming: false,
+    chatDraft: "",
+    imeComposing: false,
+
+    // ---- footer counters ----
+    draftsCount: 0,
+    cardsCount: 0,
+    miningTaskName: "",
+    miningRunning: false,
+
+    // ---- modals ----
+    modal: null,          // null | 'sediment' | 'profile' | 'drafts' | 'cards'
+
+    // ---- sediment state ----
+    sedimentDrafting: false,
+    sediment: { title: "", tagsStr: "", body: "" },
+
+    // ---- profile state ----
+    profile: { name: "", body: "" },
+
+    // ---- drafts state ----
+    draftsState: { queue: [], current: 0, full: null },
+
+    // ---- cards state ----
+    cardsState: { queue: [], current: 0, revealed: false },
+
+    // ============================================================ init
+
+    async init() {
+      // health → language → i18n catalog
+      try {
+        const h = await api("GET", "/api/health");
+        this.meta = {
+          vault: h.vault.split("/").pop(),
+          model: h.model,
+          language: h.language || "en",
+        };
+        document.documentElement.lang = h.language || "en";
+        await loadI18n(h.language || "en");
+      } catch (exc) {
+        toast(`health: ${exc.message}`, "error");
+      }
+
+      // wire Split.js for left vs (center+right). Right rail is collapsed by Alpine,
+      // so we don't include it in Split — center should reflow.
+      this.$nextTick(() => {
+        try {
+          window._knowletSplit = Split(["#pane-left", "#pane-center"], {
+            sizes: [20, 80],
+            minSize: [200, 320],
+            gutterSize: 4,
+            onDragEnd: (sizes) => {
+              try { localStorage.setItem("knowlet:sizes", JSON.stringify(sizes)); } catch (_) {}
+            },
+          });
+          // restore preference
+          const saved = localStorage.getItem("knowlet:sizes");
+          if (saved) {
+            try {
+              const sizes = JSON.parse(saved);
+              if (Array.isArray(sizes) && sizes.length === 2) {
+                window._knowletSplit.setSizes(sizes);
+              }
+            } catch (_) {}
+          }
+        } catch (e) {
+          console.warn("Split.js init failed", e);
+        }
+      });
+
+      // initial data
+      await Promise.all([
+        this.refreshNotes(),
+        this.refreshDraftsCount(),
+        this.refreshCardsCount(),
+        this.refreshMining(),
+        this.fetchChatHistory(),
+      ]);
+
+      // bind debounced save
+      this.debouncedSave = debounce(() => this.saveCurrent(), 800);
+
+      // restore last open notes from localStorage
+      try {
+        const ids = JSON.parse(localStorage.getItem("knowlet:openTabs") || "[]");
+        for (const id of ids) await this.openNote(id, false);
+        const cur = localStorage.getItem("knowlet:currentNoteId");
+        if (cur && this.openTabs.find((t) => t.id === cur)) this.currentNoteId = cur;
+      } catch (_) {}
+    },
+
+    // ============================================================ notes / tree
+
+    async refreshNotes() {
+      this.notesLoading = true;
+      try {
+        const rows = await api("GET", "/api/notes?limit=200&recent=true");
+        this.notes = rows;
+      } catch (exc) {
+        toast(exc.message, "error");
+      } finally {
+        this.notesLoading = false;
+      }
+    },
+
+    filteredNotes() {
+      const q = this.treeFilter.trim().toLowerCase();
+      if (!q) return this.notes;
+      return this.notes.filter((n) => n.title.toLowerCase().includes(q));
+    },
+
+    async openNote(id, focus) {
+      // already open?
+      const existing = this.openTabs.find((t) => t.id === id);
+      if (existing) {
+        this.currentNoteId = id;
+        this.persistTabs();
+        return;
+      }
+      try {
+        const n = await api("GET", `/api/notes/${encodeURIComponent(id)}`);
+        this.openTabs.push({
+          id: n.id,
+          title: n.title,
+          path: n.path,
+          tags: n.tags || [],
+          body: n.body || "",
+          updated_at: n.updated_at,
+          dirty: false,
+          saving: false,
+        });
+        if (focus !== false) this.currentNoteId = n.id;
+        this.persistTabs();
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    closeTab(id) {
+      const i = this.openTabs.findIndex((t) => t.id === id);
+      if (i < 0) return;
+      this.openTabs.splice(i, 1);
+      if (this.currentNoteId === id) {
+        this.currentNoteId =
+          this.openTabs[i]?.id || this.openTabs[i - 1]?.id || null;
+      }
+      this.persistTabs();
+    },
+
+    currentTab() {
+      return this.openTabs.find((t) => t.id === this.currentNoteId) || null;
+    },
+
+    persistTabs() {
+      try {
+        localStorage.setItem(
+          "knowlet:openTabs",
+          JSON.stringify(this.openTabs.map((t) => t.id))
+        );
+        if (this.currentNoteId) localStorage.setItem("knowlet:currentNoteId", this.currentNoteId);
+      } catch (_) {}
+    },
+
+    markDirty() {
+      const tab = this.currentTab();
+      if (!tab) return;
+      tab.dirty = true;
+      this.debouncedSave();
+    },
+
+    async saveCurrent() {
+      const tab = this.currentTab();
+      if (!tab || !tab.dirty) return;
+      tab.saving = true;
+      try {
+        const payload = {
+          title: tab.title,
+          tags: tab.tags || [],
+          body: tab.body || "",
+        };
+        const updated = await api(
+          "PUT",
+          `/api/notes/${encodeURIComponent(tab.id)}`,
+          payload
+        );
+        tab.updated_at = updated.updated_at;
+        tab.path = updated.path;
+        tab.dirty = false;
+        // refresh sidebar list to reflect updated_at
+        this.refreshNotes();
+      } catch (exc) {
+        toast(`保存失败: ${exc.message}`, "error");
+      } finally {
+        tab.saving = false;
+      }
+    },
+
+    async newNote() {
+      const title = prompt("新 Note 标题") || "";
+      if (!title.trim()) return;
+      try {
+        const r = await api("POST", "/api/notes", {
+          title: title.trim(),
+          tags: [],
+          body: `# ${title.trim()}\n\n`,
+        });
+        await this.refreshNotes();
+        await this.openNote(r.note_id);
+        this.editorMode = "edit";
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    outline() {
+      const text = this.currentTab()?.body || "";
+      const headings = [];
+      for (const line of text.split("\n")) {
+        const m = /^(#{1,4})\s+(.+?)\s*$/.exec(line);
+        if (m) headings.push({ level: m[1].length, text: m[2] });
+      }
+      return headings;
+    },
+
+    // ============================================================ AI dock chat
+
+    async fetchChatHistory() {
+      try {
+        const data = await api("GET", "/api/chat/history");
+        // map to lightweight {role, content}
+        this.chatHistory = (data.history || []).map((m) => ({
+          role: m.role,
+          content: m.content || "",
+          tool_calls: (m.tool_calls || []).map((tc) => ({
+            id: tc.id,
+            name: tc.function?.name,
+            args: tc.function?.arguments,
+          })),
+        }));
+        this.scrollChatToBottom();
+      } catch (_) {}
+    },
+
+    handleChatKey(ev) {
+      if (ev.key !== "Enter") return;
+      if (this.imeComposing || ev.isComposing || ev.keyCode === 229) return;
+      if (ev.shiftKey) return;
+      ev.preventDefault();
+      this.sendChat();
+    },
+
+    async sendChat() {
+      const text = (this.chatDraft || "").trim();
+      if (!text || this.chatStreaming) return;
+      this.chatStreaming = true;
+      this.chatDraft = "";
+
+      // user bubble
+      this.chatHistory.push({ role: "user", content: text });
+      // assistant placeholder
+      const asst = { role: "assistant", content: "", tool_calls: [] };
+      this.chatHistory.push(asst);
+      this.scrollChatToBottom();
+
+      // augment with scope context as a prelude when scope = note
+      const cur = this.currentTab();
+      let payloadText = text;
+      if (this.chatScope === "note" && cur) {
+        payloadText =
+          `(scope: 这条 Note "${cur.title}")\n\n` +
+          `--- Note 内容 ---\n${cur.body}\n--- end ---\n\n` +
+          text;
+      }
+      // scope=vault and scope=none: send as-is; system prompt + tools handle rest.
+
+      try {
+        const r = await fetch("/api/chat/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: payloadText }),
+        });
+        if (!r.ok) {
+          let detail = `${r.status} ${r.statusText}`;
+          try {
+            const d = await r.json();
+            if (d.detail) detail = d.detail;
+          } catch (_) {}
+          throw new Error(detail);
+        }
+        for await (const ev of parseSSE(r)) {
+          if (ev.type === "reply_chunk") {
+            asst.content += ev.text;
+          } else if (ev.type === "tool_call") {
+            asst.tool_calls.push({
+              id: ev.id,
+              name: ev.name,
+              args: ev.arguments,
+            });
+          } else if (ev.type === "tool_result") {
+            // could enrich the tool_call entry; skip for M6.1
+          } else if (ev.type === "turn_done") {
+            if (ev.final_text) asst.content = ev.final_text;
+          } else if (ev.type === "error") {
+            asst.content += `\n\n**Error:** ${ev.message}`;
+          }
+          this.scrollChatToBottom();
+        }
+        // refresh side counts in case tools touched drafts/cards/notes
+        this.refreshDraftsCount();
+        this.refreshCardsCount();
+        this.refreshNotes();
+      } catch (exc) {
+        asst.content += `\n\n**Error:** ${exc.message}`;
+        toast(exc.message, "error");
+      } finally {
+        this.chatStreaming = false;
+      }
+    },
+
+    async clearChat() {
+      try {
+        await api("POST", "/api/chat/clear");
+        this.chatHistory = [];
+        toast(tt("web.toast.cleared") || "history cleared", "ok");
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    scrollChatToBottom() {
+      this.$nextTick(() => {
+        const el = this.$refs.chatScroll;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    },
+
+    // ============================================================ sediment / save chat as note
+
+    async openSediment() {
+      this.modal = "sediment";
+      this.sediment = { title: "", tagsStr: "", body: "" };
+      this.sedimentDrafting = true;
+      try {
+        const draft = await api("POST", "/api/chat/draft");
+        this.sediment.title = draft.title;
+        this.sediment.tagsStr = (draft.tags || []).join(", ");
+        this.sediment.body = draft.body;
+      } catch (exc) {
+        toast(exc.message, "error");
+        this.modal = null;
+      } finally {
+        this.sedimentDrafting = false;
+      }
+    },
+
+    async commitSediment() {
+      const title = this.sediment.title.trim();
+      const body = this.sediment.body.trim();
+      if (!title || !body) {
+        toast("title 和 body 都需要填", "error");
+        return;
+      }
+      const tags = this.sediment.tagsStr
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      try {
+        await api("POST", "/api/notes", { title, tags, body });
+        this.modal = null;
+        toast("已保存", "ok");
+        await this.refreshNotes();
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    // ============================================================ profile
+
+    async openProfile() {
+      try {
+        const p = await api("GET", "/api/profile");
+        this.profile = {
+          name: p.exists ? p.name || "" : "",
+          body: p.exists ? p.body : "",
+        };
+        this.modal = "profile";
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    async saveProfile() {
+      try {
+        await api("PUT", "/api/profile", {
+          name: this.profile.name.trim() || null,
+          body: this.profile.body,
+        });
+        this.modal = null;
+        toast("档案已保存", "ok");
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    // ============================================================ drafts review
+
+    async refreshDraftsCount() {
+      try {
+        const drafts = await api("GET", "/api/drafts");
+        this.draftsCount = drafts.length;
+      } catch (_) {}
+    },
+
+    draftsLabel() {
+      if (this.draftsCount === 0) return "0";
+      if (this.draftsCount > 50) return "满";
+      if (this.draftsCount > 9) return "9+";
+      return String(this.draftsCount);
+    },
+
+    draftsCountClass() {
+      if (this.draftsCount > 50) return "text-danger";
+      if (this.draftsCount > 30) return "text-warn";
+      return "text-ok";
+    },
+
+    async openDraftsReview() {
+      try {
+        const drafts = await api("GET", "/api/drafts");
+        if (!drafts.length) {
+          toast("收件箱为空", "ok");
+          return;
+        }
+        this.draftsState = { queue: drafts, current: 0, full: null };
+        this.modal = "drafts";
+        await this.loadCurrentDraft();
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    async loadCurrentDraft() {
+      const d = this.draftsState.queue[this.draftsState.current];
+      if (!d) {
+        this.modal = null;
+        await this.refreshDraftsCount();
+        await this.refreshNotes();
+        toast("done", "ok");
+        return;
+      }
+      try {
+        this.draftsState.full = await api(
+          "GET",
+          `/api/drafts/${encodeURIComponent(d.id)}`
+        );
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    async actDraft(action) {
+      const d = this.draftsState.queue[this.draftsState.current];
+      if (!d) return;
+      try {
+        if (action === "approve") {
+          await api("POST", `/api/drafts/${encodeURIComponent(d.id)}/approve`);
+        } else if (action === "reject") {
+          await api("POST", `/api/drafts/${encodeURIComponent(d.id)}/reject`);
+        }
+        // skip just advances
+        this.draftsState.current += 1;
+        await this.loadCurrentDraft();
+        await this.refreshDraftsCount();
+        if (action === "approve") await this.refreshNotes();
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    // ============================================================ cards review
+
+    async refreshCardsCount() {
+      try {
+        const due = await api("GET", "/api/cards/due?limit=50");
+        this.cardsCount = due.length;
+      } catch (_) {}
+    },
+
+    async openCardsReview() {
+      try {
+        const due = await api("GET", "/api/cards/due?limit=50");
+        if (!due.length) {
+          toast("没有到期的卡片", "ok");
+          return;
+        }
+        this.cardsState = { queue: due, current: 0, revealed: false };
+        this.modal = "cards";
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    async rateCard(rating) {
+      const card = this.cardsState.queue[this.cardsState.current];
+      if (!card) return;
+      try {
+        await api("POST", `/api/cards/${encodeURIComponent(card.id)}/review`, { rating });
+        this.cardsState.current += 1;
+        this.cardsState.revealed = false;
+        if (this.cardsState.current >= this.cardsState.queue.length) {
+          this.modal = null;
+          await this.refreshCardsCount();
+          toast("复习完成", "ok");
+        }
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    // ============================================================ mining
+
+    async refreshMining() {
+      try {
+        const tasks = await api("GET", "/api/mining/tasks");
+        this.miningTaskName = tasks.length
+          ? tasks[0].name + (tasks.length > 1 ? ` (+${tasks.length - 1})` : "")
+          : "";
+      } catch (_) {}
+    },
+
+    async runMiningNow() {
+      this.miningRunning = true;
+      try {
+        const reports = await api("POST", "/api/mining/run-all");
+        const totals = reports.reduce(
+          (a, r) => ({
+            fetched: a.fetched + r.fetched,
+            new_items: a.new_items + r.new_items,
+            drafts: a.drafts + r.drafts_created,
+          }),
+          { fetched: 0, new_items: 0, drafts: 0 }
+        );
+        if (totals.drafts === 0) {
+          const reason =
+            totals.new_items === 0
+              ? "无新内容(seen-set 已覆盖全部)"
+              : `${totals.new_items} 条新内容但抽取产出 0 条草稿`;
+          toast(`${totals.fetched} 拉取 · ${reason}`, "ok");
+        } else {
+          toast(`${totals.fetched} 拉取 · ${totals.drafts} 条新草稿`, "ok");
+        }
+        await this.refreshDraftsCount();
+      } catch (exc) {
+        toast(exc.message, "error");
+      } finally {
+        this.miningRunning = false;
+      }
+    },
+
+    // ============================================================ overlays
+
+    closeAllOverlays() {
+      if (this.modal) this.modal = null;
+    },
+
+    // ============================================================ helpers exposed to template
+
+    renderMarkdown(text) {
+      return renderMarkdown(text);
+    },
+
+    tt(key) {
+      return tt(key);
+    },
+  };
+}
