@@ -7,7 +7,30 @@
 
 Knowlet 是一个先自用、后开源的 AI 长期记忆层 + 减负型 PKM。AI 替你承担总结、分类、沉淀、检索这些低 ROI 的整理工作,你保留意图、思考、判断;同时,任何 AI 工具(Claude / Cursor / 其他)在跟你对话时,都可以从这个知识库主动检索你的私人累积知识 —— 不仅在 knowlet 内可见,也在你所有的 AI 工作流中可见。
 
-> Knowlet 当前处于设计阶段,代码尚未开始实现。本仓库目前仅维护设计文档与路线图。
+> Knowlet 已完成 MVP(M0 端到端 CLI / M1 用户上下文层 / M2 极简 web UI),处于"先自用"阶段,真实使用反馈会驱动后续路线。详见 [ADR-0007](./docs/decisions/0007-mvp-slice.md) 与 [`docs/design/mvp-slice.md`](./docs/design/mvp-slice.md)。
+
+## 快速上手
+
+```bash
+# 一次性安装(需要 Python 3.11+;可选 [embed] 拉本地 embedding 模型)
+git clone https://github.com/FreeJolan/knowlet.git && cd knowlet
+uv venv --python 3.12
+uv pip install -e '.[embed]'
+
+# 准备一个 vault(任意目录,推荐放进 iCloud / Syncthing 同步管道)
+mkdir ~/my-vault && cd ~/my-vault
+knowlet vault init .
+knowlet config init       # 引导配置 OpenAI 兼容服务的 base_url / api_key / model
+knowlet doctor            # 自检后端 + LLM 工具调用兼容性
+knowlet user edit         # (可选)写一份你自己的 profile
+
+# 开始用
+knowlet                   # 不带子命令直接进 chat REPL
+# 或者浏览器界面
+knowlet web               # 默认 http://127.0.0.1:8765
+```
+
+LLM 服务可以是任何兼容 OpenAI Chat Completions 协议的端点 —— 官方 OpenAI、OpenRouter、Ollama,或用社区开源 wrapper 把 Claude Code / Codex / Cursor 等工具暴露成 OpenAI 协议。详见 [ADR-0005](./docs/decisions/0005-llm-integration-strategy.md)。
 
 ## 核心理念
 

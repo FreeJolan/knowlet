@@ -4,6 +4,19 @@
 
 > 活文档。本文是 [ADR-0007](../decisions/0007-mvp-slice.md) 在工程层面的展开,会随 MVP 实现进度持续更新。
 
+## 实现进度(2026-05-01)
+
+- ✅ **M0** — 端到端 CLI:`vault init` / `config init|set|show` / `doctor` / `chat`(含嵌入式 chat REPL + LLM-driven retrieval + AI 草稿 + 用户审查 + Note 入库) / `ls` / `reindex`。原子工具:`search_notes` / `get_note` / `list_recent_notes`。
+- ✅ **M0+ refactor** — `bootstrap_chat()` 抽出为单一会话入口;CLI 主入口默认进 chat REPL,辅以 slash 命令(`:save :ls :reindex :doctor :config show :user :tools :clear :help :quit`)。
+- ✅ **M1** — 用户上下文层:`<vault>/users/me.md`(0600 权限)+ system prompt 注入 + `get_user_profile` 原子工具(给忽略 system 的 backend 兜底)+ `knowlet user show/edit` + `:user` slash。
+- ✅ **M2** — 极简 web UI:FastAPI + 静态单页(暗色主题、Markdown 渲染、最近 Note 侧栏、草稿审查模态、profile 编辑模态)。`knowlet web` 启动。所有 endpoint 是 backend 函数的薄壳(见 [ADR-0008](../decisions/0008-cli-parity-discipline.md))。
+- ⏳ M2 phase 2 — SSE 流式响应。
+- ⏳ M3 — Card 实体 + FSRS SRS 子模块(进入场景 C)。
+- ⏳ M4 — 知识挖掘任务(进入场景 B)。
+- ⏳ M5 — Tauri 桌面壳 + 移动 PWA。
+
+测试规模:57 个,主要打 backend 模块 + HTTP API,CLI/slash/web 三层共享同一组业务逻辑。
+
 ## 范围速览
 
 只做**场景 A(研究 / 论文阅读)**的端到端最小可用版。详见 [ADR-0007 — MVP 范围](../decisions/0007-mvp-slice.md#mvp-范围)。

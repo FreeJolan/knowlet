@@ -1,0 +1,921 @@
+"""knowlet CLI — typer entrypoint."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import Annotated, Optional
+
+import typer
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.table import Table
+
+from knowlet import __version__
+from knowlet.config import (
+    KnowletConfig,
+    VaultNotFoundError,
+    config_path,
+    find_vault,
+    load_config,
+    save_config,
+)
+from knowlet.core.embedding import make_backend
+from knowlet.core.index import Index, reindex_vault
+from knowlet.core.llm import LLMClient
+from knowlet.core.tools._registry import ToolContext, default_registry
+from knowlet.core.vault import Vault
+
+app = typer.Typer(
+    name="knowlet",
+    help="A personal knowledge base that organizes itself.",
+    no_args_is_help=False,
+    add_completion=False,
+)
+vault_app = typer.Typer(help="Vault layout and lifecycle.", no_args_is_help=True)
+config_app = typer.Typer(help="Configuration.", no_args_is_help=True)
+user_app = typer.Typer(
+    help="User profile (`<vault>/users/me.md`).",
+    no_args_is_help=True,
+)
+app.add_typer(vault_app, name="vault")
+app.add_typer(config_app, name="config")
+app.add_typer(user_app, name="user")
+
+console = Console()
+err_console = Console(stderr=True)
+
+
+# ------------------------------------------------------------------ utilities
+
+
+def _resolve_vault_or_die() -> Vault:
+    try:
+        root = find_vault()
+    except VaultNotFoundError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+    return Vault(root)
+
+
+def _load_config_or_default(vault: Vault) -> KnowletConfig:
+    return load_config(vault.root)
+
+
+def _make_index(vault: Vault, cfg: KnowletConfig) -> Index:
+    backend = make_backend(
+        cfg.embedding.backend, cfg.embedding.model, cfg.embedding.dim
+    )
+    idx = Index(vault.db_path, backend)
+    idx.connect()
+    # Sync dim into config if backend reports something different.
+    real_dim = backend.dim
+    if real_dim != cfg.embedding.dim:
+        cfg.embedding.dim = real_dim
+        save_config(vault.root, cfg)
+    return idx
+
+
+def _mask(value: str, keep: int = 4) -> str:
+    if not value:
+        return ""
+    if len(value) <= keep:
+        return "*" * len(value)
+    return value[:keep] + "*" * (len(value) - keep)
+
+
+# ------------------------------------------------------------------ root
+
+
+@app.callback(invoke_without_command=True)
+def _root(
+    ctx: typer.Context,
+    version: Annotated[
+        bool, typer.Option("--version", help="Show version and exit.", is_eager=True)
+    ] = False,
+) -> None:
+    if version:
+        console.print(f"knowlet {__version__}")
+        raise typer.Exit()
+    if ctx.invoked_subcommand is None:
+        # Bare `knowlet` → drop into chat. Subcommands stay available via
+        # `knowlet --help` / `knowlet <name>` for scripting and one-off ops.
+        _run_chat(save_after=False)
+        raise typer.Exit()
+
+
+# ------------------------------------------------------------------ vault
+
+
+@vault_app.command("init")
+def vault_init(
+    path: Annotated[
+        Optional[Path],
+        typer.Argument(help="Vault directory. Defaults to current directory."),
+    ] = None,
+) -> None:
+    """Create the on-disk layout for a knowlet vault."""
+    target = (path or Path.cwd()).resolve()
+    target.mkdir(parents=True, exist_ok=True)
+    vault = Vault(target)
+    vault.init_layout()
+    cfg_path = config_path(vault.root)
+    if not cfg_path.exists():
+        save_config(vault.root, KnowletConfig())
+    console.print(
+        Panel.fit(
+            f"vault initialized at [bold]{vault.root}[/bold]\n"
+            f"  notes/                ← put or sediment Notes here\n"
+            f"  .knowlet/index.sqlite ← FTS5 + sqlite-vec index\n"
+            f"  .knowlet/config.toml  ← run `knowlet config init` to set the LLM",
+            title="vault init",
+        )
+    )
+
+
+# ------------------------------------------------------------------ config
+
+
+@config_app.command("init")
+def config_init() -> None:
+    """Interactive wizard: configure the LLM endpoint and embedding model."""
+    vault = _resolve_vault_or_die()
+    cfg = _load_config_or_default(vault)
+
+    console.print(
+        Panel.fit(
+            "Point knowlet at any OpenAI-compatible HTTP service.\n"
+            "Examples: OpenAI, Anthropic-via-OpenAI shim, OpenRouter, Ollama, "
+            "or a local wrapper that fronts your AI tool of choice.\n"
+            "knowlet does not proxy or store credentials beyond this file.",
+            title="LLM backend",
+        )
+    )
+    cfg.llm.base_url = Prompt.ask("base URL", default=cfg.llm.base_url)
+    cfg.llm.model = Prompt.ask("model name", default=cfg.llm.model)
+    api_key = Prompt.ask(
+        "API key",
+        default=(_mask(cfg.llm.api_key) if cfg.llm.api_key else ""),
+        password=True,
+    )
+    if api_key and not api_key.startswith("****"):
+        cfg.llm.api_key = api_key
+
+    console.print()
+    console.print("[bold]Embedding[/bold] (local)")
+    cfg.embedding.backend = Prompt.ask(
+        "backend (sentence_transformers/dummy)",
+        default=cfg.embedding.backend,
+        choices=["sentence_transformers", "dummy"],
+    )
+    cfg.embedding.model = Prompt.ask("model", default=cfg.embedding.model)
+
+    save_config(vault.root, cfg)
+    console.print(
+        Panel.fit(
+            f"config saved → {config_path(vault.root)}\n\n"
+            "Next: run [bold]knowlet doctor[/bold] to verify the backend is reachable\n"
+            "and tool-calling works, then [bold]knowlet chat[/bold] to start a session.",
+            title="config init",
+        )
+    )
+
+
+@config_app.command("set")
+def config_set(
+    key: Annotated[
+        str,
+        typer.Argument(
+            help="Dotted path: llm.base_url, llm.api_key, llm.model, llm.temperature, "
+            "embedding.backend, embedding.model, retrieval.chunk_size, etc.",
+        ),
+    ],
+    value: Annotated[str, typer.Argument(help="Value to set (string; coerced by type).")],
+) -> None:
+    """Non-interactive single-field update of the config.
+
+    Designed for scripts/agents and for users who don't want the wizard:
+        knowlet config set llm.base_url http://127.0.0.1:8317/v1
+        knowlet config set llm.model claude-opus-4-7
+        knowlet config set llm.api_key sk-...
+    """
+    vault = _resolve_vault_or_die()
+    cfg = _load_config_or_default(vault)
+    parts = key.split(".")
+    if len(parts) != 2 or parts[0] not in {"llm", "embedding", "retrieval"}:
+        err_console.print(
+            f"[red]invalid key {key!r}; expected <section>.<field> "
+            f"where section is llm | embedding | retrieval[/red]"
+        )
+        raise typer.Exit(code=2)
+    section_name, field = parts
+    section = getattr(cfg, section_name)
+    if not hasattr(section, field):
+        err_console.print(f"[red]unknown field: {section_name}.{field}[/red]")
+        raise typer.Exit(code=2)
+
+    # Coerce value to the field's declared type.
+    field_type = type(getattr(section, field))
+    try:
+        coerced: object
+        if field_type is bool:
+            coerced = value.lower() in {"1", "true", "yes", "y", "on"}
+        elif field_type is int:
+            coerced = int(value)
+        elif field_type is float:
+            coerced = float(value)
+        else:
+            coerced = value
+    except ValueError as exc:
+        err_console.print(f"[red]value {value!r} not convertible to {field_type.__name__}: {exc}[/red]")
+        raise typer.Exit(code=2) from exc
+
+    setattr(section, field, coerced)
+    save_config(vault.root, cfg)
+    shown = _mask(str(coerced)) if field == "api_key" else coerced
+    console.print(f"[green]✓[/green] {key} = {shown}")
+
+
+@config_app.command("show")
+def config_show() -> None:
+    """Print the current config (with API key masked)."""
+    vault = _resolve_vault_or_die()
+    cfg = _load_config_or_default(vault)
+    safe = cfg.model_dump()
+    safe["llm"]["api_key"] = _mask(cfg.llm.api_key)
+    console.print(json.dumps(safe, indent=2, ensure_ascii=False))
+    console.print(f"[dim]{config_path(vault.root)}[/dim]")
+
+
+# ------------------------------------------------------------------ web
+
+
+@app.command("web")
+def web(
+    host: Annotated[
+        str,
+        typer.Option("--host", help="Bind address. Default 127.0.0.1 (localhost only)."),
+    ] = "127.0.0.1",
+    port: Annotated[
+        int,
+        typer.Option("--port", help="Port. Default 8765."),
+    ] = 8765,
+) -> None:
+    """Start the local web UI (http://127.0.0.1:8765 by default).
+
+    Single-user, localhost-only. No auth. Reuses the same backend modules as
+    the CLI — every UI action has a CLI mirror by design (see ADR-0008).
+    """
+    from knowlet.web.server import create_app
+
+    vault = _resolve_vault_or_die()
+    cfg = _load_config_or_default(vault)
+    if not cfg.llm.api_key:
+        err_console.print(
+            "[red]LLM api_key is empty. Run `knowlet config init` first.[/red]"
+        )
+        raise typer.Exit(code=2)
+
+    try:
+        import uvicorn
+    except ImportError as exc:  # noqa: F841
+        err_console.print(
+            "[red]uvicorn is not installed. Reinstall knowlet to pull web deps.[/red]"
+        )
+        raise typer.Exit(code=2)
+
+    fastapi_app = create_app(vault, cfg)
+    console.print(
+        Panel.fit(
+            f"knowlet web · http://{host}:{port}\n"
+            f"vault={vault.root.name}  model={cfg.llm.model}\n"
+            "Ctrl-C to stop.",
+            title=f"knowlet {__version__}",
+        )
+    )
+    uvicorn.run(fastapi_app, host=host, port=port, log_level="warning")
+
+
+# ------------------------------------------------------------------ user profile
+
+
+@user_app.command("show")
+def user_show() -> None:
+    """Print the user profile (or note that none exists yet)."""
+    from knowlet.core.user_profile import read_profile
+
+    vault = _resolve_vault_or_die()
+    profile = read_profile(vault.profile_path)
+    if profile is None:
+        console.print(
+            "[dim]no profile yet — `knowlet user edit` to create one.[/dim]"
+        )
+        return
+    console.print(Panel(Markdown(profile.body), title=str(vault.profile_path)))
+    console.print(f"[dim]updated_at: {profile.updated_at}[/dim]")
+
+
+@user_app.command("edit")
+def user_edit() -> None:
+    """Open the user profile in $EDITOR (creates a default template if missing)."""
+    from knowlet.core.user_profile import edit_profile_in_editor
+
+    vault = _resolve_vault_or_die()
+    try:
+        profile = edit_profile_in_editor(vault.profile_path)
+    except FileNotFoundError as exc:
+        err_console.print(
+            f"[red]editor not found:[/red] {exc} — set $EDITOR to a working editor."
+        )
+        raise typer.Exit(code=2) from exc
+    except Exception as exc:  # noqa: BLE001
+        err_console.print(f"[red]editor failed:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+    console.print(f"[green]profile saved[/green] → {profile.path}")
+
+
+# ------------------------------------------------------------------ ls / reindex
+
+
+@app.command("ls")
+def ls(
+    recent: Annotated[
+        bool,
+        typer.Option("--recent", help="Sort by updated_at (default is created_at)."),
+    ] = False,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Max rows.")] = 20,
+) -> None:
+    """List Notes in the current vault."""
+    vault = _resolve_vault_or_die()
+    cfg = _load_config_or_default(vault)
+    idx = _make_index(vault, cfg)
+    try:
+        rows = idx.list_notes(limit=limit, order="updated_at" if recent else "created_at")
+    finally:
+        idx.close()
+    if not rows:
+        console.print("[dim]no notes yet — start a chat and use :save[/dim]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("id", style="dim", no_wrap=True)
+    table.add_column("title")
+    table.add_column("tags", style="cyan")
+    table.add_column("updated_at" if recent else "created_at", style="dim")
+    for r in rows:
+        table.add_row(
+            r["id"][:8] + "…",
+            r["title"],
+            ", ".join(r["tags"]),
+            r["updated_at"] if recent else r["created_at"],
+        )
+    console.print(table)
+
+
+@app.command("reindex")
+def reindex(
+    rebuild: Annotated[
+        bool,
+        typer.Option(
+            "--rebuild",
+            help="Drop the index DB and rebuild from disk. Use after switching embedding models.",
+        ),
+    ] = False,
+) -> None:
+    """Rebuild the index from on-disk Notes."""
+    vault = _resolve_vault_or_die()
+    cfg = _load_config_or_default(vault)
+    if rebuild and vault.db_path.exists():
+        vault.db_path.unlink()
+        console.print(f"[dim]dropped {vault.db_path}[/dim]")
+    backend = make_backend(cfg.embedding.backend, cfg.embedding.model, cfg.embedding.dim)
+    if backend.dim != cfg.embedding.dim:
+        cfg.embedding.dim = backend.dim
+        save_config(vault.root, cfg)
+    changed, deleted, unchanged = reindex_vault(
+        vault.root,
+        vault.db_path,
+        backend,
+        chunk_size=cfg.retrieval.chunk_size,
+        chunk_overlap=cfg.retrieval.chunk_overlap,
+        note_paths=list(vault.iter_note_paths()),
+    )
+    console.print(
+        f"reindex done: {changed} updated, {deleted} removed, {unchanged} unchanged"
+    )
+
+
+# ------------------------------------------------------------------ doctor
+
+
+@app.command("doctor")
+def doctor(
+    skip_llm: Annotated[
+        bool,
+        typer.Option("--skip-llm", help="Don't call the LLM endpoint."),
+    ] = False,
+    skip_embedding: Annotated[
+        bool,
+        typer.Option("--skip-embedding", help="Don't load the embedding backend."),
+    ] = False,
+) -> None:
+    """Smoke-test the configured vault + LLM endpoint + embedding stack.
+
+    Useful when wiring up an OpenAI-compatible wrapper around Claude Code /
+    Codex / Ollama / etc. — confirms that knowlet can speak to the proxy and
+    that tool-calling works.
+    """
+    try:
+        vault_root = find_vault()
+    except VaultNotFoundError as exc:
+        _print_doctor([("fail", "vault", str(exc))])
+        raise typer.Exit(code=1) from exc
+    vault = Vault(vault_root)
+    cfg = _load_config_or_default(vault)
+    results = _run_doctor_checks(vault, cfg, skip_llm=skip_llm, skip_embedding=skip_embedding)
+    _print_doctor(results)
+    if any(r[0] == "fail" for r in results):
+        raise typer.Exit(code=1)
+
+
+def _run_doctor_checks(
+    vault: Vault,
+    cfg: KnowletConfig,
+    *,
+    skip_llm: bool = False,
+    skip_embedding: bool = False,
+) -> list[tuple[str, str, str]]:
+    """Pure check logic — produces a list of (status, name, detail) tuples.
+
+    Reusable from both the `doctor` CLI command and the `:doctor` REPL slash.
+    """
+    from knowlet.core.index import IndexDimensionMismatchError
+
+    results: list[tuple[str, str, str]] = []
+
+    def ok(name: str, detail: str = "") -> None:
+        results.append(("ok", name, detail))
+
+    def fail(name: str, detail: str) -> None:
+        results.append(("fail", name, detail))
+
+    def warn(name: str, detail: str) -> None:
+        results.append(("warn", name, detail))
+
+    ok("vault", str(vault.root))
+    ok("config file", str(config_path(vault.root)))
+    if cfg.llm.api_key:
+        ok("llm.api_key", "set")
+    else:
+        warn("llm.api_key", "empty — `knowlet config init` to set")
+    ok("llm.base_url", cfg.llm.base_url)
+    ok("llm.model", cfg.llm.model)
+    ok("embedding.backend", f"{cfg.embedding.backend} ({cfg.embedding.model})")
+
+    backend = None
+    if skip_embedding:
+        warn("embedding load", "skipped")
+    else:
+        try:
+            backend = make_backend(cfg.embedding.backend, cfg.embedding.model, cfg.embedding.dim)
+            v = backend.embed_query("test")
+            ok("embedding load", f"dim={backend.dim}, sample shape={v.shape}")
+            if backend.dim != cfg.embedding.dim:
+                cfg.embedding.dim = backend.dim
+                save_config(vault.root, cfg)
+                warn("embedding dim", f"updated cfg.embedding.dim → {backend.dim}")
+        except Exception as exc:  # noqa: BLE001
+            fail("embedding load", f"{type(exc).__name__}: {exc}")
+
+    if backend is not None:
+        try:
+            idx = Index(vault.db_path, backend)
+            idx.connect()
+            n = len(idx.list_notes(limit=10000))
+            idx.close()
+            ok("index", f"{n} note(s) indexed")
+        except IndexDimensionMismatchError as exc:
+            fail("index dim", str(exc))
+        except Exception as exc:  # noqa: BLE001
+            fail("index", f"{type(exc).__name__}: {exc}")
+    else:
+        warn("index", "skipped (no embedding backend)")
+
+    if skip_llm:
+        warn("llm ping", "skipped")
+    elif not cfg.llm.api_key:
+        warn("llm ping", "skipped (no api_key)")
+    else:
+        llm = LLMClient(cfg.llm)
+        try:
+            resp = llm.chat(
+                [{"role": "user", "content": "Reply with exactly: pong"}],
+                max_tokens=8,
+                temperature=0,
+            )
+            content = (resp.content or "").strip()
+            if "pong" in content.lower():
+                ok("llm ping", f"got {content!r}")
+            else:
+                warn("llm ping", f"unexpected reply {content!r}")
+        except Exception as exc:  # noqa: BLE001
+            fail("llm ping", f"{type(exc).__name__}: {exc} — check base_url / api_key / network")
+
+        try:
+            registry = default_registry()
+            resp = llm.chat(
+                [
+                    {
+                        "role": "user",
+                        "content": (
+                            "Call the search_notes tool with query='ping' and limit=1. "
+                            "Do not answer in prose."
+                        ),
+                    }
+                ],
+                tools=registry.openai_schema(),
+                max_tokens=128,
+                temperature=0,
+            )
+            if resp.tool_calls:
+                names = ", ".join(tc.name for tc in resp.tool_calls)
+                ok("llm tool-calling", f"{len(resp.tool_calls)} call(s): {names}")
+            else:
+                fail(
+                    "llm tool-calling",
+                    "no tool_calls in response — backend may not support OpenAI tool-calling",
+                )
+        except Exception as exc:  # noqa: BLE001
+            fail("llm tool-calling", f"{type(exc).__name__}: {exc}")
+
+    return results
+
+
+def _print_doctor(results: list[tuple[str, str, str]]) -> None:
+    icons = {"ok": "[green]✓[/green]", "fail": "[red]✗[/red]", "warn": "[yellow]⚠[/yellow]"}
+    table = Table(show_header=True, header_style="bold", box=None)
+    table.add_column("", width=2)
+    table.add_column("check", style="bold")
+    table.add_column("detail", overflow="fold")
+    for status, name, detail in results:
+        table.add_row(icons[status], name, detail)
+    console.print(table)
+    failures = sum(1 for r in results if r[0] == "fail")
+    warnings = sum(1 for r in results if r[0] == "warn")
+    if failures:
+        console.print(f"\n[red]doctor: {failures} failure(s), {warnings} warning(s)[/red]")
+    elif warnings:
+        console.print(f"\n[yellow]doctor: {warnings} warning(s)[/yellow]")
+    else:
+        console.print("\n[green]doctor: all checks passed[/green]")
+
+
+# ------------------------------------------------------------------ chat
+
+
+@app.command("chat")
+def chat(
+    save_after: Annotated[
+        bool,
+        typer.Option(
+            "--save-after",
+            help="After exit, prompt to sediment the conversation into a Note.",
+        ),
+    ] = False,
+) -> None:
+    """Start an interactive chat REPL backed by the vault."""
+    _run_chat(save_after=save_after)
+
+
+def _run_chat(*, save_after: bool) -> None:
+    """Inner chat entry — also called by the bare-`knowlet` root callback."""
+    from knowlet.chat.bootstrap import ChatNotReadyError, bootstrap_chat
+    from knowlet.core.index import IndexDimensionMismatchError
+
+    vault, cfg = _ensure_ready_or_wizard()
+
+    try:
+        runtime, report = bootstrap_chat(vault, cfg)
+    except ChatNotReadyError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+    except IndexDimensionMismatchError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+
+    if report.pruned_conversations:
+        console.print(
+            f"[dim]pruned {report.pruned_conversations} old conversation log(s)[/dim]"
+        )
+
+    console.print(
+        Panel.fit(
+            f"[bold]knowlet[/bold]  vault={runtime.vault.root.name}  "
+            f"model={runtime.config.llm.model}\n"
+            ":save :ls :reindex :doctor :config :clear :help :quit",
+            title=f"knowlet {__version__}",
+        )
+    )
+
+    def on_tool_call(tc, payload) -> None:
+        args_preview = json.dumps(tc.arguments, ensure_ascii=False)[:120]
+        if "error" in payload:
+            console.print(
+                f"[dim]· {tc.name}({args_preview}) → error: {payload['error']}[/dim]"
+            )
+        else:
+            count = payload.get("count")
+            tail = f" ({count} hits)" if count is not None else ""
+            console.print(f"[dim]· {tc.name}({args_preview}){tail}[/dim]")
+
+    try:
+        while True:
+            try:
+                user_text = Prompt.ask("[bold cyan]you[/bold cyan]").strip()
+            except (EOFError, KeyboardInterrupt):
+                console.print()
+                break
+
+            if not user_text:
+                continue
+
+            if user_text.startswith(":") or user_text == "?":
+                handled, should_quit = _handle_slash(user_text, runtime)
+                if should_quit:
+                    break
+                if handled:
+                    continue
+
+            try:
+                reply, _trace = runtime.session.user_turn(
+                    user_text, on_tool_call=on_tool_call
+                )
+            except Exception as exc:  # noqa: BLE001
+                err_console.print(f"[red]LLM error:[/red] {exc}")
+                continue
+
+            console.print(Panel(Markdown(reply or "_(empty reply)_"), title="knowlet"))
+    finally:
+        if save_after:
+            _do_sediment(runtime, quiet_skip=True)
+        try:
+            convo_path = runtime.convo.write(runtime.session.history)
+            if convo_path is not None:
+                console.print(f"[dim]conversation saved → {convo_path}[/dim]")
+        except Exception as exc:  # noqa: BLE001
+            err_console.print(f"[yellow]could not save conversation log: {exc}[/yellow]")
+        runtime.close()
+
+
+# ------------------------------------------------------------------ slash commands
+
+
+def _handle_slash(text: str, runtime) -> tuple[bool, bool]:
+    """Dispatch a slash command. Returns (handled, should_quit)."""
+    parts = text[1:].split() if text.startswith(":") else [text.lstrip("?")]
+    if not parts or not parts[0]:
+        _print_help()
+        return True, False
+    name = parts[0].lower()
+    args = parts[1:]
+
+    if name in ("quit", "exit", "q"):
+        return True, True
+    if name in ("help", "h", ""):
+        _print_help()
+        return True, False
+    if name == "clear":
+        runtime.session.history = runtime.session.history[:1]
+        console.print("[dim]history cleared[/dim]")
+        return True, False
+    if name == "save":
+        _do_sediment(runtime)
+        return True, False
+    if name == "ls":
+        recent = "--recent" in args or "-r" in args
+        rows = runtime.index.list_notes(
+            limit=20, order="updated_at" if recent else "created_at"
+        )
+        _render_notes_table(rows, recent=recent)
+        return True, False
+    if name == "reindex":
+        from knowlet.core.index import reindex_vault as _reindex
+
+        changed, deleted, unchanged = _reindex(
+            runtime.vault.root,
+            runtime.vault.db_path,
+            runtime.backend,
+            chunk_size=runtime.config.retrieval.chunk_size,
+            chunk_overlap=runtime.config.retrieval.chunk_overlap,
+            note_paths=list(runtime.vault.iter_note_paths()),
+        )
+        # The reindex closes the connection; reopen for the live session.
+        runtime.index = Index(runtime.vault.db_path, runtime.backend)
+        runtime.index.connect()
+        runtime.ctx.index = runtime.index
+        console.print(
+            f"[dim]reindex: {changed} updated, {deleted} removed, {unchanged} unchanged[/dim]"
+        )
+        return True, False
+    if name == "doctor":
+        results = _run_doctor_checks(
+            runtime.vault, runtime.config, skip_llm=False, skip_embedding=False
+        )
+        _print_doctor(results)
+        return True, False
+    if name == "config":
+        sub = args[0] if args else "show"
+        if sub == "show":
+            safe = runtime.config.model_dump()
+            safe["llm"]["api_key"] = _mask(runtime.config.llm.api_key)
+            console.print(json.dumps(safe, indent=2, ensure_ascii=False))
+        else:
+            console.print(
+                "[yellow]inside the chat REPL, only `:config show` is supported.\n"
+                "for edits, exit and run `knowlet config set <key> <value>`.[/yellow]"
+            )
+        return True, False
+    if name == "tools":
+        names = sorted(runtime.registry.tools)
+        console.print(f"[dim]available tools: {', '.join(names)}[/dim]")
+        return True, False
+    if name == "user":
+        from knowlet.core.user_profile import edit_profile_in_editor, read_profile
+
+        sub = args[0] if args else "show"
+        if sub == "show":
+            profile = read_profile(runtime.vault.profile_path)
+            if profile is None:
+                console.print(
+                    "[dim]no profile yet — `:user edit` to create one.[/dim]"
+                )
+            else:
+                console.print(
+                    Panel(Markdown(profile.body), title=str(runtime.vault.profile_path))
+                )
+                console.print(f"[dim]updated_at: {profile.updated_at}[/dim]")
+        elif sub == "edit":
+            try:
+                profile = edit_profile_in_editor(runtime.vault.profile_path)
+            except Exception as exc:  # noqa: BLE001
+                err_console.print(f"[red]editor failed:[/red] {exc}")
+                return True, False
+            # Reload into the runtime so subsequent turns see the new profile.
+            runtime.user_profile = profile
+            from knowlet.chat.prompts import build_chat_system_prompt
+
+            new_system = build_chat_system_prompt(profile.truncated_for_prompt())
+            if runtime.session.history and runtime.session.history[0]["role"] == "system":
+                runtime.session.history[0]["content"] = new_system
+            console.print(f"[green]profile saved[/green] → {profile.path}")
+        else:
+            console.print(
+                f"[yellow]unknown :user subcommand: {sub}  (use show | edit)[/yellow]"
+            )
+        return True, False
+
+    console.print(f"[yellow]unknown slash command: :{name}  (try :help)[/yellow]")
+    return True, False
+
+
+def _print_help() -> None:
+    console.print(
+        Panel.fit(
+            ":save         draft a Note from this chat and review it\n"
+            ":ls [-r]      list Notes (created_at; -r for updated_at)\n"
+            ":reindex      re-scan vault notes from disk\n"
+            ":doctor       run diagnostics on backend + embedding\n"
+            ":config show  print the current config (key masked)\n"
+            ":user [edit]  show or edit your profile (users/me.md)\n"
+            ":tools        list LLM-callable tools\n"
+            ":clear        reset chat history (keeps system prompt)\n"
+            ":help         this help (also  ?)\n"
+            ":quit         exit  (also  :q  :exit  Ctrl-D)\n",
+            title="slash commands",
+        )
+    )
+
+
+def _render_notes_table(rows: list[dict], recent: bool) -> None:
+    if not rows:
+        console.print("[dim]no notes yet[/dim]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("id", style="dim", no_wrap=True)
+    table.add_column("title")
+    table.add_column("tags", style="cyan")
+    table.add_column("updated_at" if recent else "created_at", style="dim")
+    for r in rows:
+        table.add_row(
+            r["id"][:8] + "…",
+            r["title"],
+            ", ".join(r["tags"]),
+            r["updated_at"] if recent else r["created_at"],
+        )
+    console.print(table)
+
+
+def _do_sediment(runtime, quiet_skip: bool = False) -> None:
+    from knowlet.chat.sediment import (
+        commit_draft,
+        draft_from_conversation,
+        open_in_editor,
+    )
+
+    if len(runtime.session.history) <= 1:
+        if not quiet_skip:
+            console.print("[dim]nothing to sediment yet[/dim]")
+        return
+    console.print("[dim]drafting Note from conversation…[/dim]")
+    try:
+        draft = draft_from_conversation(runtime.llm, runtime.session.history)
+    except Exception as exc:  # noqa: BLE001
+        err_console.print(f"[red]draft failed:[/red] {exc}")
+        return
+
+    while True:
+        preview = (
+            f"# {draft.title}\n\n"
+            f"_tags: {', '.join(draft.tags) or '—'}_\n\n"
+            f"{draft.body}"
+        )
+        console.print(Panel(Markdown(preview), title="draft"))
+        choice = Prompt.ask(
+            "save? [y]es / [n]o / [e]dit",
+            choices=["y", "n", "e"],
+            default="y",
+        )
+        if choice == "n":
+            console.print("[dim]discarded[/dim]")
+            return
+        if choice == "e":
+            try:
+                draft = open_in_editor(draft)
+            except Exception as exc:  # noqa: BLE001
+                err_console.print(f"[red]editor failed:[/red] {exc}")
+                return
+            continue
+        note = commit_draft(draft, runtime.vault, runtime.index, runtime.config)
+        console.print(f"[green]saved[/green] → {note.path}")
+        return
+
+
+# ------------------------------------------------------------------ setup wizard
+
+
+def _ensure_ready_or_wizard() -> tuple[Vault, KnowletConfig]:
+    """Find the vault and verify config; if anything is missing, walk through
+    setup interactively. Returns (vault, cfg) ready for `bootstrap_chat`."""
+    import os
+
+    try:
+        vault_root = find_vault()
+    except VaultNotFoundError:
+        cwd = Path.cwd().resolve()
+        console.print(
+            Panel.fit(
+                f"No vault found in {cwd} or any parent.\n"
+                "Initialize one here so you can start chatting?",
+                title="welcome",
+            )
+        )
+        proceed = Prompt.ask(
+            "initialize vault here?", choices=["y", "n"], default="y"
+        )
+        if proceed != "y":
+            raise typer.Exit(code=0)
+        target = Path(
+            Prompt.ask("vault directory", default=str(cwd))
+        ).expanduser().resolve()
+        target.mkdir(parents=True, exist_ok=True)
+        vault = Vault(target)
+        vault.init_layout()
+        save_config(vault.root, KnowletConfig())
+        os.environ["KNOWLET_VAULT"] = str(vault.root)
+        vault_root = vault.root
+        console.print(f"[green]vault initialized at {vault.root}[/green]\n")
+
+    vault = Vault(vault_root)
+    cfg = _load_config_or_default(vault)
+    if not cfg.llm.api_key:
+        console.print(
+            Panel.fit(
+                "LLM is not configured yet — let's do that now.\n"
+                "knowlet talks to any OpenAI-compatible HTTP service.",
+                title="LLM setup",
+            )
+        )
+        cfg.llm.base_url = Prompt.ask("base URL", default=cfg.llm.base_url)
+        cfg.llm.model = Prompt.ask("model", default=cfg.llm.model)
+        api_key = Prompt.ask("API key", password=True)
+        if api_key:
+            cfg.llm.api_key = api_key
+        save_config(vault.root, cfg)
+        console.print(f"[green]config saved → {config_path(vault.root)}[/green]\n")
+    return vault, cfg
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(app())

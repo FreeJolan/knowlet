@@ -7,7 +7,30 @@
 
 Knowlet is an AI long-term memory layer + lower-burden PKM, built first for personal use and gradually opened to the public. AI takes over the low-ROI organization work — summarizing, classifying, sedimenting, retrieving — while you keep intent, thinking, and judgment. At the same time, any AI tool (Claude / Cursor / others) can actively retrieve from this knowledge base during a conversation — so the memory is visible not just inside knowlet, but across all your AI workflows.
 
-> Knowlet is currently in design. No code yet — this repository only maintains design documents and the roadmap.
+> Knowlet's MVP is implemented (M0 end-to-end CLI / M1 user-context layer / M2 minimal web UI). It is in the "self-use first" phase; real-use feedback drives the roadmap. See [ADR-0007](./docs/decisions/0007-mvp-slice.en.md) and [`docs/design/mvp-slice.en.md`](./docs/design/mvp-slice.en.md).
+
+## Quick start
+
+```bash
+# One-time install (requires Python 3.11+; optional [embed] extra pulls the local embedding model)
+git clone https://github.com/FreeJolan/knowlet.git && cd knowlet
+uv venv --python 3.12
+uv pip install -e '.[embed]'
+
+# Prepare a vault (any directory; iCloud / Syncthing / Dropbox work fine)
+mkdir ~/my-vault && cd ~/my-vault
+knowlet vault init .
+knowlet config init       # wizard: OpenAI-compatible base_url / api_key / model
+knowlet doctor            # smoke-test backend + LLM tool-call support
+knowlet user edit         # (optional) write your own profile
+
+# Use it
+knowlet                   # no subcommand → drops into the chat REPL
+# or, browser-based UI
+knowlet web               # default http://127.0.0.1:8765
+```
+
+The LLM endpoint can be any OpenAI-Chat-Completions-compatible service — OpenAI, OpenRouter, Ollama, or an open-source community wrapper that exposes Claude Code / Codex / Cursor as an OpenAI endpoint. See [ADR-0005](./docs/decisions/0005-llm-integration-strategy.en.md).
 
 ## Core Principles
 
