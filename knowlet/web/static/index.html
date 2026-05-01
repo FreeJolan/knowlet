@@ -30,7 +30,14 @@
     </section>
 
     <aside id="side-pane">
-      <div id="cards-section">
+      <div id="drafts-section">
+        <h2>drafts inbox</h2>
+        <p id="drafts-status" class="hint">loading…</p>
+        <button id="drafts-btn" class="primary" hidden>review drafts</button>
+        <button id="run-mining-btn" hidden>run mining now</button>
+      </div>
+
+      <div id="cards-section" style="margin-top: 18px">
         <h2>cards due</h2>
         <p id="cards-status" class="hint">loading…</p>
         <button id="review-btn" class="primary" hidden>start review</button>
@@ -82,6 +89,22 @@
       <div id="note-body" class="rendered"></div>
       <div class="modal-actions">
         <button id="note-close" class="primary">close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: drafts review -->
+  <div id="drafts-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h3 id="drafts-progress">drafts review</h3>
+      <p class="hint" id="drafts-source"></p>
+      <h4 id="drafts-title" style="margin: 6px 0"></h4>
+      <div id="drafts-body" class="rendered"></div>
+      <div class="modal-actions">
+        <button id="drafts-reject">reject</button>
+        <button id="drafts-skip">skip</button>
+        <button id="drafts-approve" class="primary">approve</button>
+        <button id="drafts-quit">quit</button>
       </div>
     </div>
   </div>

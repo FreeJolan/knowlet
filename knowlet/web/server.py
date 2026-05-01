@@ -39,6 +39,10 @@ from knowlet.core.card import Card, parse_due
 from knowlet.core.events import ErrorEvent, event_to_dict
 from knowlet.core.fsrs_wrap import initial_state, schedule_next
 from knowlet.core.index import IndexDimensionMismatchError
+from knowlet.core.llm import LLMClient
+from knowlet.core.mining.runner import run_task
+from knowlet.core.mining.scheduler import MiningScheduler
+from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
 from knowlet.core.user_profile import (
     UserProfile,
     read_profile,
@@ -129,6 +133,44 @@ class CardFull(CardSummary):
     fsrs_state: dict[str, Any]
 
 
+class TaskCreate(BaseModel):
+    name: str
+    sources: list[dict[str, str]] = Field(default_factory=list)
+    schedule: dict[str, str] = Field(default_factory=dict)
+    prompt: str = ""
+    enabled: bool = True
+    body: str = ""
+
+
+class TaskSummary(BaseModel):
+    id: str
+    name: str
+    enabled: bool
+    schedule: dict[str, str]
+    sources: list[dict[str, str]]
+    updated_at: str
+
+
+class TaskFull(TaskSummary):
+    prompt: str
+    body: str
+    created_at: str
+
+
+class DraftSummary(BaseModel):
+    id: str
+    title: str
+    tags: list[str]
+    source: str | None = None
+    task_id: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class DraftFull(DraftSummary):
+    body: str
+
+
 # ----------------------------------------------------------------- runtime singleton
 
 
@@ -143,6 +185,7 @@ class WebState:
         self.vault = vault
         self.config = config
         self.runtime: ChatRuntime | None = None
+        self.scheduler: MiningScheduler | None = None
 
     def runtime_or_init(self) -> ChatRuntime:
         if self.runtime is None:
@@ -162,6 +205,9 @@ class WebState:
         return self.runtime
 
     def close(self) -> None:
+        if self.scheduler is not None:
+            self.scheduler.shutdown()
+            self.scheduler = None
         if self.runtime is not None:
             self.runtime.close()
             self.runtime = None
@@ -190,7 +236,17 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # state is set on the app below; nothing to do at startup.
+        # Eager-initialize the runtime so the scheduler can share its LLMClient.
+        # If api_key is empty (test fixtures, fresh installs), skip — endpoints
+        # will surface ChatNotReadyError on first call.
+        if config.llm.api_key:
+            try:
+                runtime = state.runtime_or_init()
+                state.scheduler = MiningScheduler(vault, runtime.llm)
+                state.scheduler.start()
+            except HTTPException:
+                # bootstrap failed (e.g., dim mismatch) — endpoints will surface it
+                pass
         yield
         state.close()
 
@@ -431,6 +487,210 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         schedule_next(card, payload.rating)
         runtime.ctx.cards.save(card)
         return _summary(card)
+
+    # ---------------- mining tasks ----------------
+
+    def _task_summary(t: MiningTask) -> TaskSummary:
+        return TaskSummary(
+            id=t.id,
+            name=t.name,
+            enabled=t.enabled,
+            schedule=t.schedule.to_payload(),
+            sources=[s.to_payload() for s in t.sources],
+            updated_at=t.updated_at,
+        )
+
+    def _reload_scheduler() -> None:
+        if state.scheduler is not None:
+            state.scheduler.reload()
+
+    @app.get("/api/mining/tasks", response_model=list[TaskSummary])
+    def list_mining(runtime: ChatRuntime = Depends(runtime_dep)) -> list[TaskSummary]:
+        return [_task_summary(t) for t in runtime.ctx.tasks.list()]
+
+    @app.post("/api/mining/tasks", response_model=TaskFull)
+    def create_mining(
+        payload: TaskCreate,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> TaskFull:
+        task = MiningTask(
+            name=payload.name,
+            enabled=payload.enabled,
+            schedule=Schedule(**{k: v for k, v in payload.schedule.items() if v}),
+            sources=[SourceSpec.parse(s) for s in payload.sources],
+            prompt=payload.prompt,
+            body=payload.body,
+        )
+        problems = task.validate()
+        if problems:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="; ".join(problems),
+            )
+        runtime.ctx.tasks.save(task)
+        _reload_scheduler()
+        return TaskFull(
+            **_task_summary(task).model_dump(),
+            prompt=task.prompt,
+            body=task.body,
+            created_at=task.created_at,
+        )
+
+    @app.get("/api/mining/tasks/{task_id}", response_model=TaskFull)
+    def get_mining(
+        task_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> TaskFull:
+        t = runtime.ctx.tasks.get(task_id)
+        if t is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"task not found: {task_id}",
+            )
+        return TaskFull(
+            **_task_summary(t).model_dump(),
+            prompt=t.prompt,
+            body=t.body,
+            created_at=t.created_at,
+        )
+
+    @app.put("/api/mining/tasks/{task_id}", response_model=TaskFull)
+    def update_mining(
+        task_id: str,
+        payload: TaskCreate,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> TaskFull:
+        existing = runtime.ctx.tasks.get(task_id)
+        if existing is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"task not found: {task_id}",
+            )
+        existing.name = payload.name
+        existing.enabled = payload.enabled
+        existing.schedule = Schedule(**{k: v for k, v in payload.schedule.items() if v})
+        existing.sources = [SourceSpec.parse(s) for s in payload.sources]
+        existing.prompt = payload.prompt
+        existing.body = payload.body
+        problems = existing.validate()
+        if problems:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="; ".join(problems),
+            )
+        runtime.ctx.tasks.save(existing)
+        _reload_scheduler()
+        return TaskFull(
+            **_task_summary(existing).model_dump(),
+            prompt=existing.prompt,
+            body=existing.body,
+            created_at=existing.created_at,
+        )
+
+    @app.delete("/api/mining/tasks/{task_id}")
+    def delete_mining(
+        task_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        if not runtime.ctx.tasks.delete(task_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"task not found: {task_id}",
+            )
+        _reload_scheduler()
+        return {"ok": True}
+
+    @app.post("/api/mining/tasks/{task_id}/run")
+    def run_mining_now(
+        task_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        t = runtime.ctx.tasks.get(task_id)
+        if t is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"task not found: {task_id}",
+            )
+        report = run_task(t, runtime.vault, runtime.llm, drafts=runtime.ctx.drafts)
+        return report.to_dict()
+
+    @app.post("/api/mining/run-all")
+    def run_all_mining(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for t in runtime.ctx.tasks.list():
+            if not t.enabled:
+                continue
+            report = run_task(t, runtime.vault, runtime.llm, drafts=runtime.ctx.drafts)
+            out.append(report.to_dict())
+        return out
+
+    # ---------------- drafts ----------------
+
+    def _draft_summary(d) -> DraftSummary:
+        return DraftSummary(
+            id=d.id,
+            title=d.title,
+            tags=d.tags,
+            source=d.source,
+            task_id=d.task_id,
+            created_at=d.created_at,
+            updated_at=d.updated_at,
+        )
+
+    @app.get("/api/drafts", response_model=list[DraftSummary])
+    def list_drafts_endpoint(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[DraftSummary]:
+        return [_draft_summary(d) for d in runtime.ctx.drafts.list()]
+
+    @app.get("/api/drafts/{draft_id}", response_model=DraftFull)
+    def get_draft_endpoint(
+        draft_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> DraftFull:
+        d = runtime.ctx.drafts.get(draft_id)
+        if d is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"draft not found: {draft_id}",
+            )
+        return DraftFull(**_draft_summary(d).model_dump(), body=d.body)
+
+    @app.post("/api/drafts/{draft_id}/approve")
+    def approve_draft_endpoint(
+        draft_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        d = runtime.ctx.drafts.get(draft_id)
+        if d is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"draft not found: {draft_id}",
+            )
+        note = d.to_note()
+        path = runtime.vault.write_note(note)
+        note.path = path
+        runtime.index.upsert_note(
+            note,
+            chunk_size=runtime.config.retrieval.chunk_size,
+            chunk_overlap=runtime.config.retrieval.chunk_overlap,
+        )
+        runtime.ctx.drafts.delete(d.id)
+        return {"note_id": note.id, "path": str(path)}
+
+    @app.post("/api/drafts/{draft_id}/reject")
+    def reject_draft_endpoint(
+        draft_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        if not runtime.ctx.drafts.delete(draft_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"draft not found: {draft_id}",
+            )
+        return {"ok": True}
 
     # ---------------- profile ----------------
 

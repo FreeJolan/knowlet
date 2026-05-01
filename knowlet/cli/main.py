@@ -45,10 +45,20 @@ cards_app = typer.Typer(
     help="Spaced-repetition Cards (scenario C).",
     no_args_is_help=True,
 )
+mining_app = typer.Typer(
+    help="Knowledge-mining tasks (scenario B).",
+    no_args_is_help=True,
+)
+drafts_app = typer.Typer(
+    help="AI-extracted drafts pending review.",
+    no_args_is_help=True,
+)
 app.add_typer(vault_app, name="vault")
 app.add_typer(config_app, name="config")
 app.add_typer(user_app, name="user")
 app.add_typer(cards_app, name="cards")
+app.add_typer(mining_app, name="mining")
+app.add_typer(drafts_app, name="drafts")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -405,6 +415,295 @@ def cards_show(
         f"[dim]tags: {', '.join(card.tags) or '—'}  ·  "
         f"due: {card.fsrs_state.get('due') or '—'}[/dim]"
     )
+
+
+# ------------------------------------------------------------------ mining
+
+
+@mining_app.command("list")
+def mining_list() -> None:
+    """List configured mining tasks."""
+    from knowlet.core.mining.tasks import TaskStore
+
+    vault = _resolve_vault_or_die()
+    store = TaskStore(vault.tasks_dir)
+    tasks = store.list()
+    if not tasks:
+        console.print("[dim]no mining tasks yet — `knowlet mining add` to create one[/dim]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("id", style="dim", no_wrap=True)
+    table.add_column("name")
+    table.add_column("schedule")
+    table.add_column("sources")
+    table.add_column("on?", style="dim")
+    for t in tasks:
+        sched = (
+            t.schedule.every and f"every {t.schedule.every}"
+        ) or (t.schedule.cron and f"cron {t.schedule.cron}") or "—"
+        srcs = ", ".join(s.url[:40] + ("…" if len(s.url) > 40 else "") for s in t.sources)
+        table.add_row(t.id[:8] + "…", t.name, sched, srcs, "yes" if t.enabled else "no")
+    console.print(table)
+
+
+@mining_app.command("add")
+def mining_add(
+    name: Annotated[str, typer.Option("--name", help="Human-readable task name.")],
+    rss: Annotated[
+        Optional[str],
+        typer.Option("--rss", help="RSS / Atom feed URL (repeatable via comma)."),
+    ] = None,
+    url: Annotated[
+        Optional[str],
+        typer.Option("--url", help="Plain URL fetch (repeatable via comma)."),
+    ] = None,
+    every: Annotated[
+        Optional[str],
+        typer.Option(
+            "--every",
+            help="Interval: '30m' / '1h' / '6h' / '1d'. Use --cron for cron expressions.",
+        ),
+    ] = None,
+    cron: Annotated[
+        Optional[str],
+        typer.Option("--cron", help="5-field cron expression (e.g. '0 9 * * *')."),
+    ] = None,
+    prompt: Annotated[
+        Optional[str],
+        typer.Option(
+            "--prompt", help="Extraction guidance for the LLM."
+        ),
+    ] = None,
+) -> None:
+    """Create a new mining task."""
+    from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
+    from knowlet.core.mining.tasks import TaskStore
+
+    if not (rss or url):
+        err_console.print("[red]at least one --rss or --url is required[/red]")
+        raise typer.Exit(code=2)
+    if every and cron:
+        err_console.print("[red]use --every OR --cron, not both[/red]")
+        raise typer.Exit(code=2)
+
+    vault = _resolve_vault_or_die()
+    store = TaskStore(vault.tasks_dir)
+
+    sources: list[SourceSpec] = []
+    if rss:
+        sources.extend(SourceSpec(type="rss", url=u.strip()) for u in rss.split(",") if u.strip())
+    if url:
+        sources.extend(SourceSpec(type="url", url=u.strip()) for u in url.split(",") if u.strip())
+
+    task = MiningTask(
+        name=name,
+        sources=sources,
+        schedule=Schedule(every=every, cron=cron),
+        prompt=prompt or "Summarize each item; surface anything new or surprising.",
+    )
+    problems = task.validate()
+    if problems:
+        err_console.print(f"[red]invalid task:[/red] {'; '.join(problems)}")
+        raise typer.Exit(code=2)
+    path = store.save(task)
+    console.print(f"[green]created[/green] → {path}")
+
+
+@mining_app.command("edit")
+def mining_edit(
+    task_id: Annotated[str, typer.Argument(help="Task id (or 8-char prefix).")],
+) -> None:
+    """Open the task's Markdown file in $EDITOR for direct editing."""
+    import os
+    import subprocess
+
+    from knowlet.core.mining.tasks import TaskStore
+
+    vault = _resolve_vault_or_die()
+    store = TaskStore(vault.tasks_dir)
+    task = store.get(task_id)
+    if task is None or task.path is None:
+        err_console.print(f"[red]task not found:[/red] {task_id}")
+        raise typer.Exit(code=1)
+    editor = os.environ.get("EDITOR") or "vi"
+    subprocess.run([editor, str(task.path)], check=True)
+    console.print(f"[green]edited[/green] → {task.path}")
+
+
+@mining_app.command("remove")
+def mining_remove(
+    task_id: Annotated[str, typer.Argument(help="Task id (or 8-char prefix).")],
+) -> None:
+    """Remove a mining task. The drafts it produced stay in <vault>/drafts/."""
+    from knowlet.core.mining.tasks import TaskStore
+
+    vault = _resolve_vault_or_die()
+    store = TaskStore(vault.tasks_dir)
+    if not store.delete(task_id):
+        err_console.print(f"[red]task not found:[/red] {task_id}")
+        raise typer.Exit(code=1)
+    console.print(f"[green]removed[/green] {task_id}")
+
+
+@mining_app.command("run")
+def mining_run(
+    task_id: Annotated[str, typer.Argument(help="Task id (or 8-char prefix).")],
+) -> None:
+    """Run a single mining task now."""
+    _run_one_task(task_id)
+
+
+@mining_app.command("run-all")
+def mining_run_all() -> None:
+    """Run every enabled mining task now."""
+    from knowlet.core.llm import LLMClient
+    from knowlet.core.mining.runner import run_task
+    from knowlet.core.mining.tasks import TaskStore
+
+    vault = _resolve_vault_or_die()
+    cfg = _load_config_or_default(vault)
+    if not cfg.llm.api_key:
+        err_console.print("[red]LLM api_key is empty. Run `knowlet config init` first.[/red]")
+        raise typer.Exit(code=2)
+    store = TaskStore(vault.tasks_dir)
+    tasks = [t for t in store.list() if t.enabled]
+    if not tasks:
+        console.print("[dim]no enabled tasks[/dim]")
+        return
+    llm = LLMClient(cfg.llm)
+    for t in tasks:
+        console.print(f"[bold]running[/bold] {t.name} ({t.id[:8]}…)")
+        report = run_task(t, vault, llm)
+        _render_run_report(report)
+
+
+def _run_one_task(task_id: str) -> None:
+    from knowlet.core.llm import LLMClient
+    from knowlet.core.mining.runner import run_task
+    from knowlet.core.mining.tasks import TaskStore
+
+    vault = _resolve_vault_or_die()
+    cfg = _load_config_or_default(vault)
+    if not cfg.llm.api_key:
+        err_console.print("[red]LLM api_key is empty. Run `knowlet config init` first.[/red]")
+        raise typer.Exit(code=2)
+    store = TaskStore(vault.tasks_dir)
+    task = store.get(task_id)
+    if task is None:
+        err_console.print(f"[red]task not found:[/red] {task_id}")
+        raise typer.Exit(code=1)
+    llm = LLMClient(cfg.llm)
+    console.print(f"[bold]running[/bold] {task.name} ({task.id[:8]}…)")
+    report = run_task(task, vault, llm)
+    _render_run_report(report)
+
+
+def _render_run_report(report) -> None:
+    line = (
+        f"  fetched={report.fetched}  new={report.new_items}  "
+        f"drafts={report.drafts_created}  skipped_empty={report.skipped_empty}"
+    )
+    if report.errors:
+        line += f"  errors={len(report.errors)}"
+    console.print(line)
+    for err in report.errors[:5]:
+        console.print(f"  [red]· {err}[/red]")
+    if len(report.errors) > 5:
+        console.print(f"  [dim]…{len(report.errors) - 5} more errors[/dim]")
+
+
+# ------------------------------------------------------------------ drafts
+
+
+@drafts_app.command("list")
+def drafts_list() -> None:
+    """List drafts pending review."""
+    from knowlet.core.drafts import DraftStore
+
+    vault = _resolve_vault_or_die()
+    store = DraftStore(vault.drafts_dir)
+    drafts = store.list()
+    if not drafts:
+        console.print("[dim]no drafts pending — your inbox is empty[/dim]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("id", style="dim", no_wrap=True)
+    table.add_column("title")
+    table.add_column("source", style="cyan", overflow="fold")
+    table.add_column("when", style="dim")
+    for d in drafts:
+        table.add_row(d.id[:8] + "…", d.title, (d.source or "")[:60], d.created_at)
+    console.print(table)
+
+
+@drafts_app.command("show")
+def drafts_show(
+    draft_id: Annotated[str, typer.Argument(help="Draft id (or 8-char prefix).")],
+) -> None:
+    """Print a draft's full body."""
+    from knowlet.core.drafts import DraftStore
+
+    vault = _resolve_vault_or_die()
+    store = DraftStore(vault.drafts_dir)
+    d = store.get(draft_id)
+    if d is None:
+        err_console.print(f"[red]draft not found:[/red] {draft_id}")
+        raise typer.Exit(code=1)
+    console.print(Panel(Markdown(d.body), title=d.title))
+    console.print(
+        f"[dim]source: {d.source or '—'}  ·  task: {d.task_id or '—'}  ·  "
+        f"tags: {', '.join(d.tags) or '—'}[/dim]"
+    )
+
+
+@drafts_app.command("approve")
+def drafts_approve(
+    draft_id: Annotated[str, typer.Argument(help="Draft id (or 8-char prefix).")],
+) -> None:
+    """Promote a draft to a Note and remove it from drafts/."""
+    _draft_approve_or_reject(draft_id, approve=True)
+
+
+@drafts_app.command("reject")
+def drafts_reject(
+    draft_id: Annotated[str, typer.Argument(help="Draft id (or 8-char prefix).")],
+) -> None:
+    """Delete a draft."""
+    _draft_approve_or_reject(draft_id, approve=False)
+
+
+def _draft_approve_or_reject(draft_id: str, *, approve: bool) -> None:
+    from knowlet.core.drafts import DraftStore
+    from knowlet.core.embedding import make_backend
+    from knowlet.core.index import Index
+
+    vault = _resolve_vault_or_die()
+    cfg = _load_config_or_default(vault)
+    store = DraftStore(vault.drafts_dir)
+    draft = store.get(draft_id)
+    if draft is None:
+        err_console.print(f"[red]draft not found:[/red] {draft_id}")
+        raise typer.Exit(code=1)
+    if not approve:
+        store.delete(draft.id)
+        console.print(f"[green]rejected[/green] {draft.id[:8]}…")
+        return
+    backend = make_backend(cfg.embedding.backend, cfg.embedding.model, cfg.embedding.dim)
+    idx = Index(vault.db_path, backend)
+    idx.connect()
+    try:
+        note = draft.to_note()
+        path = vault.write_note(note)
+        note.path = path
+        idx.upsert_note(
+            note,
+            chunk_size=cfg.retrieval.chunk_size,
+            chunk_overlap=cfg.retrieval.chunk_overlap,
+        )
+    finally:
+        idx.close()
+    store.delete(draft.id)
+    console.print(f"[green]approved[/green] → {path}")
 
 
 # ------------------------------------------------------------------ web
@@ -883,6 +1182,99 @@ def _handle_slash(text: str, runtime) -> tuple[bool, bool]:
         names = sorted(runtime.registry.tools)
         console.print(f"[dim]available tools: {', '.join(names)}[/dim]")
         return True, False
+    if name == "mining":
+        sub = args[0] if args else "list"
+        if sub == "list":
+            tasks = runtime.ctx.tasks.list()
+            if not tasks:
+                console.print("[dim]no mining tasks; `knowlet mining add` to create one[/dim]")
+            else:
+                table = Table(show_header=True, header_style="bold")
+                table.add_column("id", style="dim", no_wrap=True)
+                table.add_column("name")
+                table.add_column("schedule")
+                table.add_column("on?")
+                for t in tasks:
+                    sched = (
+                        (t.schedule.every and f"every {t.schedule.every}")
+                        or (t.schedule.cron and f"cron {t.schedule.cron}")
+                        or "—"
+                    )
+                    table.add_row(t.id[:8] + "…", t.name, sched, "yes" if t.enabled else "no")
+                console.print(table)
+        elif sub == "run":
+            if len(args) < 2:
+                console.print("[yellow]usage: :mining run <task_id>[/yellow]")
+            else:
+                from knowlet.core.mining.runner import run_task as _run
+
+                task = runtime.ctx.tasks.get(args[1])
+                if task is None:
+                    console.print(f"[red]task not found:[/red] {args[1]}")
+                else:
+                    report = _run(task, runtime.vault, runtime.llm, drafts=runtime.ctx.drafts)
+                    _render_run_report(report)
+        elif sub == "run-all":
+            from knowlet.core.mining.runner import run_task as _run
+
+            tasks = [t for t in runtime.ctx.tasks.list() if t.enabled]
+            if not tasks:
+                console.print("[dim]no enabled tasks[/dim]")
+            for t in tasks:
+                console.print(f"[bold]{t.name}[/bold] ({t.id[:8]}…)")
+                report = _run(t, runtime.vault, runtime.llm, drafts=runtime.ctx.drafts)
+                _render_run_report(report)
+        else:
+            console.print(
+                f"[yellow]unknown :mining subcommand: {sub}  "
+                f"(use list | run <id> | run-all)[/yellow]"
+            )
+        return True, False
+    if name == "drafts":
+        sub = args[0] if args else "list"
+        if sub == "list":
+            drafts = runtime.ctx.drafts.list()
+            if not drafts:
+                console.print("[dim]inbox empty[/dim]")
+            else:
+                table = Table(show_header=True, header_style="bold")
+                table.add_column("id", style="dim", no_wrap=True)
+                table.add_column("title")
+                table.add_column("source", style="cyan", overflow="fold")
+                table.add_column("when", style="dim")
+                for d in drafts:
+                    table.add_row(d.id[:8] + "…", d.title, (d.source or "")[:60], d.created_at)
+                console.print(table)
+        elif sub in ("show", "approve", "reject"):
+            if len(args) < 2:
+                console.print(f"[yellow]usage: :drafts {sub} <draft_id>[/yellow]")
+                return True, False
+            d = runtime.ctx.drafts.get(args[1])
+            if d is None:
+                console.print(f"[red]draft not found:[/red] {args[1]}")
+                return True, False
+            if sub == "show":
+                console.print(Panel(Markdown(d.body), title=d.title))
+            elif sub == "reject":
+                runtime.ctx.drafts.delete(d.id)
+                console.print(f"[green]rejected[/green] {d.id[:8]}…")
+            elif sub == "approve":
+                note = d.to_note()
+                path = runtime.vault.write_note(note)
+                note.path = path
+                runtime.index.upsert_note(
+                    note,
+                    chunk_size=runtime.config.retrieval.chunk_size,
+                    chunk_overlap=runtime.config.retrieval.chunk_overlap,
+                )
+                runtime.ctx.drafts.delete(d.id)
+                console.print(f"[green]approved[/green] → {path}")
+        else:
+            console.print(
+                f"[yellow]unknown :drafts subcommand: {sub}  "
+                f"(use list | show <id> | approve <id> | reject <id>)[/yellow]"
+            )
+        return True, False
     if name == "cards":
         sub = args[0] if args else "due"
         if sub == "due":
@@ -1026,6 +1418,10 @@ def _print_help() -> None:
             ":user [edit]       show or edit your profile (users/me.md)\n"
             ":cards due         list cards due now\n"
             ":cards review      run an interactive review session\n"
+            ":mining list       show configured mining tasks\n"
+            ":mining run-all    run every enabled mining task now\n"
+            ":drafts list       drafts pending review\n"
+            ":drafts approve <id> / reject <id>   review a draft\n"
             ":tools             list LLM-callable tools\n"
             ":clear             reset chat history (keeps system prompt)\n"
             ":help              this help (also  ?)\n"

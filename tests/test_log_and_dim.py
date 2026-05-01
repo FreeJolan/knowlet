@@ -83,7 +83,14 @@ def test_list_recent_notes_tool(tmp_path: Path):
 
     cfg = KnowletConfig()
     from knowlet.core.cards import CardStore
-    ctx = ToolContext(vault=vault, index=idx, config=cfg, cards=CardStore(vault.cards_dir))
+    from knowlet.core.drafts import DraftStore
+    from knowlet.core.mining.tasks import TaskStore
+    ctx = ToolContext(
+        vault=vault, index=idx, config=cfg,
+        cards=CardStore(vault.cards_dir),
+        tasks=TaskStore(vault.tasks_dir),
+        drafts=DraftStore(vault.drafts_dir),
+    )
     reg = default_registry()
     res = reg.dispatch("list_recent_notes", {"limit": 5}, ctx)
     assert res["count"] == 2

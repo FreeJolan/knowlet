@@ -16,9 +16,11 @@ from knowlet.chat.prompts import build_chat_system_prompt
 from knowlet.chat.session import ChatSession
 from knowlet.config import KnowletConfig, save_config
 from knowlet.core.cards import CardStore
+from knowlet.core.drafts import DraftStore
 from knowlet.core.embedding import EmbeddingBackend, make_backend
 from knowlet.core.index import Index, reindex_vault
 from knowlet.core.llm import LLMClient
+from knowlet.core.mining.tasks import TaskStore
 from knowlet.core.tools._registry import Registry, ToolContext, default_registry
 from knowlet.core.user_profile import UserProfile, read_profile
 from knowlet.core.vault import Vault
@@ -109,7 +111,12 @@ def bootstrap_chat(
     llm = LLMClient(cfg.llm)
     registry = default_registry()
     cards = CardStore(vault.cards_dir)
-    ctx = ToolContext(vault=vault, index=idx, config=cfg, cards=cards)
+    tasks = TaskStore(vault.tasks_dir)
+    drafts = DraftStore(vault.drafts_dir)
+    ctx = ToolContext(
+        vault=vault, index=idx, config=cfg,
+        cards=cards, tasks=tasks, drafts=drafts,
+    )
     session = ChatSession(
         llm=llm, registry=registry, ctx=ctx, system_prompt=system_prompt
     )

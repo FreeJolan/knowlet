@@ -13,6 +13,8 @@ NOTES_DIR = "notes"
 USERS_DIR = "users"
 PROFILE_FILENAME = "me.md"
 CARDS_DIR = "cards"
+TASKS_DIR = "tasks"
+DRAFTS_DIR = "drafts"
 INDEX_DB = "index.sqlite"
 CONVERSATIONS_DIR = "conversations"
 BACKUPS_DIR = "backups"
@@ -41,6 +43,14 @@ class Vault:
         return self.root / CARDS_DIR
 
     @property
+    def tasks_dir(self) -> Path:
+        return self.root / TASKS_DIR
+
+    @property
+    def drafts_dir(self) -> Path:
+        return self.root / DRAFTS_DIR
+
+    @property
     def state_dir(self) -> Path:
         return self.root / VAULT_MARKER_DIR
 
@@ -61,6 +71,8 @@ class Vault:
         self.notes_dir.mkdir(parents=True, exist_ok=True)
         self.users_dir.mkdir(parents=True, exist_ok=True)
         self.cards_dir.mkdir(parents=True, exist_ok=True)
+        self.tasks_dir.mkdir(parents=True, exist_ok=True)
+        self.drafts_dir.mkdir(parents=True, exist_ok=True)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.conversations_dir.mkdir(parents=True, exist_ok=True)
         self.backups_dir.mkdir(parents=True, exist_ok=True)

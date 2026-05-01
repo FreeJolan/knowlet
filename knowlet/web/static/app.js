@@ -215,8 +215,10 @@ async function sendMessage(text) {
   } finally {
     inputEl.disabled = false;
     inputEl.focus();
-    // The LLM may have created a card via tools; reflect that in the sidebar.
+    // The LLM may have created a card or processed drafts; reflect that.
     refreshCards();
+    refreshDrafts();
+    refreshNotes();
   }
 }
 
@@ -430,6 +432,119 @@ for (const btn of $$('#review-rate-row button[data-rating]')) {
   });
 }
 
+// --------------------------------------------------------- drafts review
+
+const draftsModal = $("#drafts-modal");
+const draftsState = { queue: [], current: 0 };
+
+async function refreshDrafts() {
+  try {
+    const drafts = await api("GET", "/api/drafts");
+    const status = $("#drafts-status");
+    const btn = $("#drafts-btn");
+    if (!drafts.length) {
+      status.textContent = "inbox empty — run mining or wait for the schedule";
+      btn.hidden = true;
+    } else {
+      status.textContent = `${drafts.length} draft${drafts.length === 1 ? "" : "s"} pending`;
+      btn.hidden = false;
+    }
+  } catch (exc) {
+    $("#drafts-status").textContent = `(error: ${exc.message})`;
+  }
+}
+
+async function showDraftAt(index) {
+  const drafts = draftsState.queue;
+  if (index >= drafts.length) {
+    draftsModal.hidden = true;
+    refreshDrafts();
+    refreshNotes();
+    toast("done", "ok");
+    return;
+  }
+  draftsState.current = index;
+  try {
+    const full = await api(
+      "GET",
+      `/api/drafts/${encodeURIComponent(drafts[index].id)}`
+    );
+    $("#drafts-progress").textContent = `draft ${index + 1} / ${drafts.length}`;
+    $("#drafts-title").textContent = full.title;
+    $("#drafts-source").textContent =
+      `source: ${full.source || "—"}  ·  task: ${full.task_id || "—"}` +
+      (full.tags.length ? `  ·  tags: ${full.tags.join(", ")}` : "");
+    $("#drafts-body").innerHTML = renderMarkdown(full.body);
+  } catch (exc) {
+    toast(exc.message, "error");
+  }
+}
+
+async function openDraftsReview() {
+  try {
+    const drafts = await api("GET", "/api/drafts");
+    if (!drafts.length) {
+      toast("inbox empty", "ok");
+      return;
+    }
+    draftsState.queue = drafts;
+    draftsState.current = 0;
+    draftsModal.hidden = false;
+    showDraftAt(0);
+  } catch (exc) {
+    toast(exc.message, "error");
+  }
+}
+
+$("#drafts-btn").addEventListener("click", openDraftsReview);
+$("#drafts-quit").addEventListener("click", () => (draftsModal.hidden = true));
+$("#drafts-skip").addEventListener("click", () =>
+  showDraftAt(draftsState.current + 1)
+);
+$("#drafts-reject").addEventListener("click", async () => {
+  const card = draftsState.queue[draftsState.current];
+  try {
+    await api("POST", `/api/drafts/${encodeURIComponent(card.id)}/reject`);
+    showDraftAt(draftsState.current + 1);
+  } catch (exc) {
+    toast(exc.message, "error");
+  }
+});
+$("#drafts-approve").addEventListener("click", async () => {
+  const card = draftsState.queue[draftsState.current];
+  try {
+    await api("POST", `/api/drafts/${encodeURIComponent(card.id)}/approve`);
+    showDraftAt(draftsState.current + 1);
+  } catch (exc) {
+    toast(exc.message, "error");
+  }
+});
+
+$("#run-mining-btn").addEventListener("click", async () => {
+  $("#run-mining-btn").disabled = true;
+  $("#drafts-status").textContent = "running mining tasks…";
+  try {
+    const reports = await api("POST", "/api/mining/run-all");
+    const totals = reports.reduce(
+      (acc, r) => {
+        acc.fetched += r.fetched;
+        acc.drafts += r.drafts_created;
+        return acc;
+      },
+      { fetched: 0, drafts: 0 }
+    );
+    toast(
+      `mining: ${totals.fetched} fetched, ${totals.drafts} drafts`,
+      "ok"
+    );
+  } catch (exc) {
+    toast(exc.message, "error");
+  } finally {
+    $("#run-mining-btn").disabled = false;
+    refreshDrafts();
+  }
+});
+
 // --------------------------------------------------------- bootstrap
 
 async function bootstrap() {
@@ -441,6 +556,12 @@ async function bootstrap() {
   }
   await refreshNotes();
   await refreshCards();
+  await refreshDrafts();
+  // Show the "run mining now" button only if at least one task exists.
+  try {
+    const tasks = await api("GET", "/api/mining/tasks");
+    if (tasks.length) $("#run-mining-btn").hidden = false;
+  } catch (_) {}
   // Restore any prior conversation in the running session.
   try {
     const data = await api("GET", "/api/chat/history");
