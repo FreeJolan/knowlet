@@ -30,14 +30,14 @@ def test_default_is_english():
     set_language("en")
     assert current_language() == "en"
     assert t("vault.init.title") == "vault init"
-    assert t("web.send") == "send"
+    assert t("inbox.action.keep") == "Keep as note"
 
 
 def test_zh_translation_works():
     set_language("zh")
     try:
         assert t("vault.init.title") == "vault 初始化"
-        assert t("web.send") == "发送"
+        assert t("inbox.action.keep") == "收入笔记"
     finally:
         set_language("en")
 
@@ -84,7 +84,7 @@ def test_init_from_env_reads_knowlet_lang(monkeypatch):
     out = init_from_env()
     try:
         assert out == "zh"
-        assert t("web.send") == "发送"
+        assert t("inbox.action.keep") == "收入笔记"
     finally:
         set_language("en")
 

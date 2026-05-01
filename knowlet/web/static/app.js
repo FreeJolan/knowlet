@@ -87,6 +87,33 @@ async function loadI18n(lang) {
 function tt(key) {
   return I18N[key] || key;
 }
+function ttf(key, vars) {
+  let s = tt(key);
+  if (vars) {
+    for (const [k, v] of Object.entries(vars)) {
+      s = s.split(`{${k}}`).join(v == null ? "" : String(v));
+    }
+  }
+  return s;
+}
+function applyI18n(root) {
+  const scope = root || document;
+  scope.querySelectorAll("[data-i18n]").forEach((el) => {
+    const key = el.dataset.i18n;
+    const v = I18N[key];
+    if (v) el.textContent = v;
+  });
+  scope.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+    const key = el.dataset.i18nPlaceholder;
+    const v = I18N[key];
+    if (v) el.placeholder = v;
+  });
+  scope.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    const key = el.dataset.i18nTitle;
+    const v = I18N[key];
+    if (v) el.title = v;
+  });
+}
 
 // ---------- markdown render with link-target=_blank ----------
 
@@ -164,6 +191,7 @@ function ui() {
         };
         document.documentElement.lang = h.language || "en";
         await loadI18n(h.language || "en");
+        applyI18n();
       } catch (exc) {
         toast(`health: ${exc.message}`, "error");
       }
@@ -323,7 +351,7 @@ function ui() {
     },
 
     async newNote() {
-      const title = prompt("新笔记标题") || "";
+      const title = prompt(tt("prompt.new.title")) || "";
       if (!title.trim()) return;
       try {
         const r = await api("POST", "/api/notes", {
@@ -448,7 +476,7 @@ function ui() {
       try {
         await api("POST", "/api/chat/clear");
         this.chatHistory = [];
-        toast("已清空对话", "ok");
+        toast(tt("chat.web.cleared"), "ok");
       } catch (exc) {
         toast(exc.message, "error");
       }
@@ -484,7 +512,7 @@ function ui() {
       const title = this.sediment.title.trim();
       const body = this.sediment.body.trim();
       if (!title || !body) {
-        toast("标题和正文都得填一下", "error");
+        toast(tt("sediment.web.required"), "error");
         return;
       }
       const tags = this.sediment.tagsStr
@@ -494,7 +522,7 @@ function ui() {
       try {
         await api("POST", "/api/notes", { title, tags, body });
         this.modal = null;
-        toast("已存为笔记", "ok");
+        toast(tt("sediment.web.saved"), "ok");
         await this.refreshNotes();
       } catch (exc) {
         toast(exc.message, "error");
@@ -523,7 +551,7 @@ function ui() {
           body: this.profile.body,
         });
         this.modal = null;
-        toast("个人资料已保存", "ok");
+        toast(tt("profile.web.saved"), "ok");
       } catch (exc) {
         toast(exc.message, "error");
       }
@@ -555,7 +583,7 @@ function ui() {
       try {
         const drafts = await api("GET", "/api/drafts");
         if (!drafts.length) {
-          toast("收件箱为空。", "ok");
+          toast(tt("inbox.empty"), "ok");
           return;
         }
         this.draftsState = { queue: drafts, current: 0, full: null };
@@ -572,7 +600,7 @@ function ui() {
         this.modal = null;
         await this.refreshDraftsCount();
         await this.refreshNotes();
-        toast("收件箱审完了", "ok");
+        toast(tt("inbox.done"), "ok");
         return;
       }
       try {
@@ -617,7 +645,7 @@ function ui() {
       try {
         const due = await api("GET", "/api/cards/due?limit=50");
         if (!due.length) {
-          toast("没有到期的卡片", "ok");
+          toast(tt("review.empty"), "ok");
           return;
         }
         this.cardsState = { queue: due, current: 0, revealed: false };
@@ -637,7 +665,7 @@ function ui() {
         if (this.cardsState.current >= this.cardsState.queue.length) {
           this.modal = null;
           await this.refreshCardsCount();
-          toast("今天复习完了", "ok");
+          toast(tt("review.done"), "ok");
         }
       } catch (exc) {
         toast(exc.message, "error");
@@ -668,13 +696,19 @@ function ui() {
           { fetched: 0, new_items: 0, drafts: 0 }
         );
         if (totals.drafts === 0) {
-          const reason =
-            totals.new_items === 0
-              ? "没有新内容"
-              : `${totals.new_items} 条新内容但 AI 没整理出有效条目`;
-          toast(`抓了 ${totals.fetched} 条 · ${reason}`, "ok");
+          if (totals.new_items === 0) {
+            toast(ttf("mining.toast.empty", { n: totals.fetched }), "ok");
+          } else {
+            toast(
+              ttf("mining.toast.no_drafts", { n: totals.fetched, m: totals.new_items }),
+              "ok"
+            );
+          }
         } else {
-          toast(`抓了 ${totals.fetched} 条 · 整理出 ${totals.drafts} 条新内容`, "ok");
+          toast(
+            ttf("mining.toast.success", { n: totals.fetched, m: totals.drafts }),
+            "ok"
+          );
         }
         await this.refreshDraftsCount();
       } catch (exc) {
@@ -698,6 +732,10 @@ function ui() {
 
     tt(key) {
       return tt(key);
+    },
+
+    ttf(key, vars) {
+      return ttf(key, vars);
     },
   };
 }
