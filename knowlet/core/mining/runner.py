@@ -82,11 +82,18 @@ def run_task(
     vault: Vault,
     llm: LLMClient,
     drafts: DraftStore | None = None,
+    default_output_language: str | None = None,
 ) -> RunReport:
     """Execute one mining task. Pure-function-ish — all side effects go
-    through `vault` (drafts dir + .knowlet/mining/seen state)."""
+    through `vault` (drafts dir + .knowlet/mining/seen state).
+
+    `default_output_language` is the fallback when the task itself does not
+    set `output_language` — typically the caller passes
+    `cfg.general.language` so existing tasks auto-pick up the user's UI
+    language without editing each task file."""
     if drafts is None:
         drafts = DraftStore(vault.root / "drafts")
+    effective_lang = task.output_language or default_output_language
 
     started = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     report = RunReport(task_id=task.id, started_at=started, finished_at=started)
@@ -112,7 +119,7 @@ def run_task(
 
     new_seen_ids: list[str] = []
     for item in new_items:
-        result = extract_one(task, item, llm)
+        result = extract_one(task, item, llm, output_language=effective_lang)
         if result.error:
             if result.error == "empty source content" or "LLM declined" in result.error:
                 report.skipped_empty += 1

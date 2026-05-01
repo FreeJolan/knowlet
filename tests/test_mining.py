@@ -67,6 +67,7 @@ def test_mining_task_round_trip(tmp_path: Path):
         schedule=Schedule(every="1h"),
         prompt="summarize each item",
         body="some explanation",
+        output_language="zh",
     )
     p = tmp_path / t.filename
     p.write_text(t.to_markdown(), encoding="utf-8")
@@ -76,6 +77,15 @@ def test_mining_task_round_trip(tmp_path: Path):
     assert len(loaded.sources) == 2
     assert loaded.schedule.every == "1h"
     assert loaded.prompt == "summarize each item"
+    assert loaded.output_language == "zh"
+
+
+def test_mining_task_default_output_language_is_none(tmp_path: Path):
+    t = MiningTask(name="x", sources=[SourceSpec(type="rss", url="https://x")], prompt="p")
+    p = tmp_path / t.filename
+    p.write_text(t.to_markdown(), encoding="utf-8")
+    loaded = MiningTask.from_file(p)
+    assert loaded.output_language is None
 
 
 def test_mining_task_validate():
@@ -287,6 +297,134 @@ def test_extract_one_handles_empty_llm_reply(tmp_path: Path):
     res = extract_one(task, item, StubLLM([AssistantMessage(content="", tool_calls=[])]))  # type: ignore[arg-type]
     assert res.draft is None
     assert "empty" in (res.error or "").lower()
+
+
+def test_extract_one_with_output_language_injects_translation_directive(tmp_path: Path):
+    """Verify the LLM message embeds a 'translate to Chinese' instruction."""
+    item = SourceItem(
+        source_url="https://x",
+        item_id="i",
+        title="t",
+        url="https://x",
+        published=None,
+        content="some english content",
+    )
+    task = MiningTask(name="t", prompt="p")
+    captured: list[list[dict]] = []
+
+    class CapturingLLM:
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            captured.append(messages)
+            return AssistantMessage(
+                content='{"title": "标题", "tags": [], "body": "主体"}',
+                tool_calls=[],
+            )
+
+    res = extract_one(task, item, CapturingLLM(), output_language="zh")  # type: ignore[arg-type]
+    assert res.draft is not None
+    user_msg = captured[0][0]["content"]
+    assert "Chinese" in user_msg or "中文" in user_msg
+    assert "Translate" in user_msg
+
+
+def test_extract_one_without_output_language_keeps_source_language(tmp_path: Path):
+    item = SourceItem(
+        source_url="https://x",
+        item_id="i",
+        title="t",
+        url="https://x",
+        published=None,
+        content="some content",
+    )
+    task = MiningTask(name="t", prompt="p")  # no output_language set
+    captured: list[str] = []
+
+    class CapturingLLM:
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            captured.append(messages[0]["content"])
+            return AssistantMessage(
+                content='{"title": "X", "tags": [], "body": "y"}', tool_calls=[]
+            )
+
+    extract_one(task, item, CapturingLLM())  # type: ignore[arg-type]
+    assert "Translate" not in captured[0]
+    assert "in the source's main language" in captured[0]
+
+
+def test_runner_passes_default_output_language(tmp_path: Path, monkeypatch):
+    v, _ = _ready_vault(tmp_path)
+    items = [
+        SourceItem(
+            source_url="https://feed",
+            item_id="x1",
+            title="english title",
+            url="https://x",
+            published=None,
+            content="hello world " * 30,
+        )
+    ]
+    monkeypatch.setattr(
+        "knowlet.core.mining.runner.fetch_source",
+        _stub_fetch({"https://feed": items}),
+    )
+
+    captured: list[str] = []
+
+    class CapturingLLM:
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            captured.append(messages[0]["content"])
+            return AssistantMessage(
+                content='{"title": "标题", "tags": [], "body": "主体"}',
+                tool_calls=[],
+            )
+
+    task = MiningTask(
+        name="t",
+        sources=[SourceSpec(type="rss", url="https://feed")],
+        prompt="summarize",
+    )
+    run_task(task, v, CapturingLLM(), default_output_language="zh")  # type: ignore[arg-type]
+    assert captured  # at least one extraction call
+    assert "Chinese" in captured[0] or "中文" in captured[0]
+
+
+def test_runner_task_lang_overrides_default(tmp_path: Path, monkeypatch):
+    """Task-level output_language wins over the run-time default."""
+    v, _ = _ready_vault(tmp_path)
+    items = [
+        SourceItem(
+            source_url="https://feed",
+            item_id="x1",
+            title="title",
+            url="https://x",
+            published=None,
+            content="content " * 30,
+        )
+    ]
+    monkeypatch.setattr(
+        "knowlet.core.mining.runner.fetch_source",
+        _stub_fetch({"https://feed": items}),
+    )
+
+    captured: list[str] = []
+
+    class CapturingLLM:
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            captured.append(messages[0]["content"])
+            return AssistantMessage(
+                content='{"title": "X", "tags": [], "body": "Y"}', tool_calls=[]
+            )
+
+    task = MiningTask(
+        name="t",
+        sources=[SourceSpec(type="rss", url="https://feed")],
+        prompt="p",
+        output_language="en",  # explicit on task
+    )
+    # default says zh, but task says en — task wins
+    run_task(task, v, CapturingLLM(), default_output_language="zh")  # type: ignore[arg-type]
+    assert "English" in captured[0]
+    assert "Chinese" not in captured[0]
 
 
 # ------------------------------------------------------- scheduler

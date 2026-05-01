@@ -50,7 +50,12 @@ const noteModal = $("#note-modal");
 function renderMarkdown(text) {
   // marked is loaded from CDN. If it failed to load, fall back to <pre>.
   if (typeof marked !== "undefined") {
-    return marked.parse(text || "");
+    const html = marked.parse(text || "");
+    // Make every link open in a new tab so the user keeps their place in knowlet.
+    return html.replace(
+      /<a (?![^>]*\btarget=)/gi,
+      '<a target="_blank" rel="noopener noreferrer" '
+    );
   }
   const pre = document.createElement("pre");
   pre.textContent = text || "";
@@ -496,9 +501,14 @@ async function showDraftAt(index) {
     );
     $("#drafts-progress").textContent = `draft ${index + 1} / ${drafts.length}`;
     $("#drafts-title").textContent = full.title;
-    $("#drafts-source").textContent =
-      `source: ${full.source || "—"}  ·  task: ${full.task_id || "—"}` +
-      (full.tags.length ? `  ·  tags: ${full.tags.join(", ")}` : "");
+    const sourceLink = full.source
+      ? `<a href="${full.source}" target="_blank" rel="noopener noreferrer">${full.source}</a>`
+      : "—";
+    const tagBlurb = full.tags.length
+      ? `  ·  tags: ${full.tags.join(", ")}`
+      : "";
+    $("#drafts-source").innerHTML =
+      `source: ${sourceLink}  ·  task: ${full.task_id || "—"}${tagBlurb}`;
     $("#drafts-body").innerHTML = renderMarkdown(full.body);
   } catch (exc) {
     toast(exc.message, "error");
@@ -522,7 +532,12 @@ async function openDraftsReview() {
 }
 
 $("#drafts-btn").addEventListener("click", openDraftsReview);
-$("#drafts-quit").addEventListener("click", () => (draftsModal.hidden = true));
+$("#drafts-quit").addEventListener("click", async () => {
+  draftsModal.hidden = true;
+  // Reflect any approve/reject from this session in the sidebar.
+  await refreshDrafts();
+  await refreshNotes();
+});
 $("#drafts-skip").addEventListener("click", () =>
   showDraftAt(draftsState.current + 1)
 );
@@ -530,6 +545,7 @@ $("#drafts-reject").addEventListener("click", async () => {
   const card = draftsState.queue[draftsState.current];
   try {
     await api("POST", `/api/drafts/${encodeURIComponent(card.id)}/reject`);
+    refreshDrafts(); // update sidebar count immediately, no await needed
     showDraftAt(draftsState.current + 1);
   } catch (exc) {
     toast(exc.message, "error");
@@ -539,6 +555,8 @@ $("#drafts-approve").addEventListener("click", async () => {
   const card = draftsState.queue[draftsState.current];
   try {
     await api("POST", `/api/drafts/${encodeURIComponent(card.id)}/approve`);
+    refreshDrafts();
+    refreshNotes();
     showDraftAt(draftsState.current + 1);
   } catch (exc) {
     toast(exc.message, "error");

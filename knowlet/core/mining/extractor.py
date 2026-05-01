@@ -25,11 +25,11 @@ class ExtractionResult:
     error: str | None = None
 
 
-_EXTRACT_INSTRUCTIONS = """\
+_EXTRACT_INSTRUCTIONS_TPL = """\
 You are extracting one Note draft from a single source item for the user's knowledge vault.
 
 Output **strict JSON** with these fields:
-- title: short and descriptive, in the source's main language
+- title: short and descriptive, {language_hint}
 - tags: 1-5 lowercase, hyphen-separated tags
 - body: Markdown body. Structure:
     - one-paragraph plain-language summary at the top
@@ -37,12 +37,35 @@ Output **strict JSON** with these fields:
     - "## Why it matters" — one or two sentences, only if a clear answer
     - "## Source" — exactly one bullet: `[<title>](<url>)`
 
-Be honest: if the source content is too thin to extract, output:
-{"title": "", "tags": [], "body": ""}
+{output_language_directive}Be honest: if the source content is too thin to extract, output:
+{{"title": "", "tags": [], "body": ""}}
 and we will skip it.
 
 Do not include any text outside the JSON object.
 """
+
+
+_LANG_NAMES = {
+    "en": "English",
+    "zh": "Chinese (中文)",
+}
+
+
+def _instructions_for(output_language: str | None) -> str:
+    if not output_language:
+        return _EXTRACT_INSTRUCTIONS_TPL.format(
+            language_hint="in the source's main language",
+            output_language_directive="",
+        )
+    name = _LANG_NAMES.get(output_language, output_language)
+    return _EXTRACT_INSTRUCTIONS_TPL.format(
+        language_hint=f"in {name}",
+        output_language_directive=(
+            f"**Translate the entire output (title, tags, body) into {name}**, "
+            f"regardless of the source's language. Keep proper nouns, code, "
+            f"and inline URLs in their original form.\n\n"
+        ),
+    )
 
 
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
@@ -67,14 +90,21 @@ def extract_one(
     item: SourceItem,
     llm: LLMClient,
     max_input_chars: int = 8000,
+    output_language: str | None = None,
 ) -> ExtractionResult:
-    """Run the LLM on a single item; return a Draft (or an error)."""
+    """Run the LLM on a single item; return a Draft (or an error).
+
+    `output_language` (when provided) instructs the LLM to translate the
+    output into that language regardless of source language. Caller usually
+    passes `task.output_language or cfg.general.language`.
+    """
     if not item.content.strip() and not item.title.strip():
         return ExtractionResult(item=item, draft=None, error="empty source content")
 
     body_excerpt = item.content[:max_input_chars]
+    instructions = _instructions_for(output_language or task.output_language)
     user_msg = (
-        f"{_EXTRACT_INSTRUCTIONS}\n\n"
+        f"{instructions}\n\n"
         f"Task-specific guidance:\n{task.prompt.strip()}\n\n"
         f"---\n"
         f"Source title: {item.title}\n"

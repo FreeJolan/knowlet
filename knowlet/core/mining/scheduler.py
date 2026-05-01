@@ -41,10 +41,12 @@ class MiningScheduler:
         vault: Vault,
         llm: LLMClient,
         on_run: Callable[[MiningTask, RunReport], None] | None = None,
+        default_output_language: str | None = None,
     ):
         self.vault = vault
         self.llm = llm
         self.on_run = on_run
+        self.default_output_language = default_output_language
         self._sched: BackgroundScheduler | None = None
         self._task_store = TaskStore(vault.root / "tasks")
 
@@ -134,7 +136,12 @@ class MiningScheduler:
         if not task.enabled:
             return
         try:
-            report = run_task(task, self.vault, self.llm)
+            report = run_task(
+                task,
+                self.vault,
+                self.llm,
+                default_output_language=self.default_output_language,
+            )
         except Exception:  # noqa: BLE001
             log.exception("task %s crashed", task_id)
             return

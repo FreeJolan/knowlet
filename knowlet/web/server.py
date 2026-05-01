@@ -141,6 +141,7 @@ class TaskCreate(BaseModel):
     prompt: str = ""
     enabled: bool = True
     body: str = ""
+    output_language: str | None = None
 
 
 class TaskSummary(BaseModel):
@@ -156,6 +157,7 @@ class TaskFull(TaskSummary):
     prompt: str
     body: str
     created_at: str
+    output_language: str | None = None
 
 
 class DraftSummary(BaseModel):
@@ -245,7 +247,11 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         if config.llm.api_key:
             try:
                 runtime = state.runtime_or_init()
-                state.scheduler = MiningScheduler(vault, runtime.llm)
+                state.scheduler = MiningScheduler(
+                    vault,
+                    runtime.llm,
+                    default_output_language=config.general.language,
+                )
                 state.scheduler.start()
             except HTTPException:
                 # bootstrap failed (e.g., dim mismatch) — endpoints will surface it
@@ -528,6 +534,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             schedule=Schedule(**{k: v for k, v in payload.schedule.items() if v}),
             sources=[SourceSpec.parse(s) for s in payload.sources],
             prompt=payload.prompt,
+            output_language=payload.output_language,
             body=payload.body,
         )
         problems = task.validate()
@@ -543,6 +550,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             prompt=task.prompt,
             body=task.body,
             created_at=task.created_at,
+            output_language=task.output_language,
         )
 
     @app.get("/api/mining/tasks/{task_id}", response_model=TaskFull)
@@ -561,6 +569,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             prompt=t.prompt,
             body=t.body,
             created_at=t.created_at,
+            output_language=t.output_language,
         )
 
     @app.put("/api/mining/tasks/{task_id}", response_model=TaskFull)
@@ -580,6 +589,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         existing.schedule = Schedule(**{k: v for k, v in payload.schedule.items() if v})
         existing.sources = [SourceSpec.parse(s) for s in payload.sources]
         existing.prompt = payload.prompt
+        existing.output_language = payload.output_language
         existing.body = payload.body
         problems = existing.validate()
         if problems:
@@ -594,6 +604,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             prompt=existing.prompt,
             body=existing.body,
             created_at=existing.created_at,
+            output_language=existing.output_language,
         )
 
     @app.delete("/api/mining/tasks/{task_id}")
@@ -620,7 +631,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"task not found: {task_id}",
             )
-        report = run_task(t, runtime.vault, runtime.llm, drafts=runtime.ctx.drafts)
+        report = run_task(
+            t,
+            runtime.vault,
+            runtime.llm,
+            drafts=runtime.ctx.drafts,
+            default_output_language=runtime.config.general.language,
+        )
         return report.to_dict()
 
     @app.post("/api/mining/run-all")
@@ -631,7 +648,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         for t in runtime.ctx.tasks.list():
             if not t.enabled:
                 continue
-            report = run_task(t, runtime.vault, runtime.llm, drafts=runtime.ctx.drafts)
+            report = run_task(
+                t,
+                runtime.vault,
+                runtime.llm,
+                drafts=runtime.ctx.drafts,
+                default_output_language=runtime.config.general.language,
+            )
             out.append(report.to_dict())
         return out
 
