@@ -10,9 +10,9 @@
   <header>
     <span class="logo">knowlet</span>
     <span id="meta" class="meta"></span>
-    <button id="profile-btn" title="Edit profile">profile</button>
-    <button id="clear-btn" title="Reset chat history">clear</button>
-    <button id="save-btn" title="Sediment chat into a Note">save</button>
+    <button id="profile-btn" data-i18n="web.profile">profile</button>
+    <button id="clear-btn" data-i18n="web.clear">clear</button>
+    <button id="save-btn" data-i18n="web.save">save</button>
   </header>
 
   <main>
@@ -22,30 +22,31 @@
         <textarea
           id="input"
           rows="3"
+          data-i18n-placeholder="web.composer.placeholder"
           placeholder="Ask, discuss, or paste — Cmd+Enter to send."
           autofocus
         ></textarea>
-        <button type="submit" id="send-btn">send</button>
+        <button type="submit" id="send-btn" data-i18n="web.send">send</button>
       </form>
     </section>
 
     <aside id="side-pane">
       <div id="drafts-section">
-        <h2>drafts inbox</h2>
+        <h2 data-i18n="web.drafts.inbox">drafts inbox</h2>
         <p id="drafts-status" class="hint">loading…</p>
-        <button id="drafts-btn" class="primary" hidden>review drafts</button>
-        <button id="run-mining-btn" hidden>run mining now</button>
+        <button id="drafts-btn" class="primary" data-i18n="web.drafts.review" hidden>review drafts</button>
+        <button id="run-mining-btn" data-i18n="web.drafts.run_mining" hidden>run mining now</button>
       </div>
 
       <div id="cards-section" style="margin-top: 18px">
-        <h2>cards due</h2>
+        <h2 data-i18n="web.cards.due">cards due</h2>
         <p id="cards-status" class="hint">loading…</p>
-        <button id="review-btn" class="primary" hidden>start review</button>
+        <button id="review-btn" class="primary" data-i18n="web.cards.start_review" hidden>start review</button>
       </div>
 
-      <h2 style="margin-top: 18px">recent notes</h2>
+      <h2 style="margin-top: 18px" data-i18n="web.recent_notes">recent notes</h2>
       <ul id="notes-list"></ul>
-      <p id="notes-empty" class="hint" hidden>
+      <p id="notes-empty" class="hint" data-i18n="web.notes.empty" hidden>
         no notes yet — save a chat to create the first one.
       </p>
     </aside>
@@ -54,13 +55,13 @@
   <!-- Modal: sediment draft preview -->
   <div id="draft-modal" class="modal" hidden>
     <div class="modal-card">
-      <h3>save this chat as a Note</h3>
-      <label>title<input type="text" id="draft-title" /></label>
-      <label>tags (comma-separated)<input type="text" id="draft-tags" /></label>
-      <label>body<textarea id="draft-body" rows="14"></textarea></label>
+      <h3 data-i18n="web.draft.modal.title">save this chat as a Note</h3>
+      <label><span data-i18n="web.draft.field.title">title</span><input type="text" id="draft-title" /></label>
+      <label><span data-i18n="web.draft.field.tags">tags (comma-separated)</span><input type="text" id="draft-tags" /></label>
+      <label><span data-i18n="web.draft.field.body">body</span><textarea id="draft-body" rows="14"></textarea></label>
       <div class="modal-actions">
-        <button id="draft-cancel">cancel</button>
-        <button id="draft-commit" class="primary">save</button>
+        <button id="draft-cancel" data-i18n="web.cancel">cancel</button>
+        <button id="draft-commit" class="primary" data-i18n="web.save">save</button>
       </div>
     </div>
   </div>
@@ -68,15 +69,15 @@
   <!-- Modal: profile editor -->
   <div id="profile-modal" class="modal" hidden>
     <div class="modal-card">
-      <h3>your profile</h3>
-      <p class="hint">
+      <h3 data-i18n="web.profile.modal.title">your profile</h3>
+      <p class="hint" data-i18n="web.profile.intro">
         knowlet reads this on every chat session. edit freely.
       </p>
-      <label>name (optional)<input type="text" id="profile-name" /></label>
-      <label>body (Markdown)<textarea id="profile-body" rows="20"></textarea></label>
+      <label><span data-i18n="web.profile.field.name">name (optional)</span><input type="text" id="profile-name" /></label>
+      <label><span data-i18n="web.profile.field.body">body (Markdown)</span><textarea id="profile-body" rows="20"></textarea></label>
       <div class="modal-actions">
-        <button id="profile-cancel">cancel</button>
-        <button id="profile-save" class="primary">save</button>
+        <button id="profile-cancel" data-i18n="web.cancel">cancel</button>
+        <button id="profile-save" class="primary" data-i18n="web.save">save</button>
       </div>
     </div>
   </div>
@@ -88,7 +89,7 @@
       <p class="hint" id="note-meta"></p>
       <div id="note-body" class="rendered"></div>
       <div class="modal-actions">
-        <button id="note-close" class="primary">close</button>
+        <button id="note-close" class="primary" data-i18n="web.note.close">close</button>
       </div>
     </div>
   </div>
@@ -96,15 +97,15 @@
   <!-- Modal: drafts review -->
   <div id="drafts-modal" class="modal" hidden>
     <div class="modal-card">
-      <h3 id="drafts-progress">drafts review</h3>
+      <h3 id="drafts-progress" data-i18n="web.drafts.title">drafts review</h3>
       <p class="hint" id="drafts-source"></p>
       <h4 id="drafts-title" style="margin: 6px 0"></h4>
       <div id="drafts-body" class="rendered"></div>
       <div class="modal-actions">
-        <button id="drafts-reject">reject</button>
-        <button id="drafts-skip">skip</button>
-        <button id="drafts-approve" class="primary">approve</button>
-        <button id="drafts-quit">quit</button>
+        <button id="drafts-reject" data-i18n="web.drafts.reject">reject</button>
+        <button id="drafts-skip" data-i18n="web.drafts.skip">skip</button>
+        <button id="drafts-approve" class="primary" data-i18n="web.drafts.approve">approve</button>
+        <button id="drafts-quit" data-i18n="web.drafts.quit">quit</button>
       </div>
     </div>
   </div>
@@ -112,19 +113,19 @@
   <!-- Modal: card review -->
   <div id="review-modal" class="modal" hidden>
     <div class="modal-card">
-      <h3 id="review-progress">review</h3>
+      <h3 id="review-progress" data-i18n="web.review.modal.title">review</h3>
       <div id="review-front" class="rendered"></div>
       <div id="review-back" class="rendered" hidden></div>
       <p class="hint" id="review-tags"></p>
       <div class="modal-actions" id="review-actions">
-        <button id="review-reveal" class="primary">reveal</button>
-        <button id="review-quit">quit</button>
+        <button id="review-reveal" class="primary" data-i18n="web.review.reveal">reveal</button>
+        <button id="review-quit" data-i18n="web.drafts.quit">quit</button>
       </div>
       <div class="modal-actions" id="review-rate-row" hidden>
-        <button data-rating="1">again</button>
-        <button data-rating="2">hard</button>
-        <button data-rating="3" class="primary">good</button>
-        <button data-rating="4">easy</button>
+        <button data-rating="1" data-i18n="web.review.again">again</button>
+        <button data-rating="2" data-i18n="web.review.hard">hard</button>
+        <button data-rating="3" class="primary" data-i18n="web.review.good">good</button>
+        <button data-rating="4" data-i18n="web.review.easy">easy</button>
       </div>
     </div>
   </div>

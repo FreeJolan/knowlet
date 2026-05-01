@@ -26,7 +26,30 @@ from knowlet.core.note import now_iso
 PROFILE_FILENAME = "me.md"
 PROFILE_BODY_CHAR_LIMIT = 8000  # ~2000 tokens; truncate beyond this for safety
 
-DEFAULT_PROFILE_TEMPLATE = """\
+DEFAULT_PROFILE_TEMPLATE_EN = """\
+# About me
+
+A short self-description so knowlet knows who you are in every chat.
+Suggested sections:
+
+## Current focus
+- What I'm researching / learning / thinking about right now
+
+## Preferences and style
+- What kind of replies I like (concise vs thorough / English vs Chinese /
+  formulas vs analogies)
+- What I dislike (no small talk, no over-politeness, no fabricated citations)
+
+## Background
+- Domains I'm already comfortable with — feel free to skip basics
+
+## About this file
+Edit freely; knowlet re-reads it on every chat session. It lives inside the
+vault, so syncing the vault (iCloud / Syncthing) shares it across devices.
+"""
+
+
+DEFAULT_PROFILE_TEMPLATE_ZH = """\
 # About me
 
 写一段关于你自己的短描述,让 knowlet 在每次对话中知道你是谁。
@@ -45,6 +68,14 @@ DEFAULT_PROFILE_TEMPLATE = """\
 ## 这份文档
 随手编辑就好,knowlet 每次启动会重新读取。可以放进 vault 的同步管道(iCloud / Syncthing)跨设备共用。
 """
+
+
+def default_profile_template(lang: str = "en") -> str:
+    return DEFAULT_PROFILE_TEMPLATE_ZH if lang == "zh" else DEFAULT_PROFILE_TEMPLATE_EN
+
+
+# Back-compat alias (some callers still import the old constant).
+DEFAULT_PROFILE_TEMPLATE = DEFAULT_PROFILE_TEMPLATE_EN
 
 
 @dataclass
@@ -113,22 +144,23 @@ def write_profile(profile_path: Path, profile: UserProfile) -> Path:
     return profile_path
 
 
-def ensure_profile(profile_path: Path) -> UserProfile:
+def ensure_profile(profile_path: Path, lang: str = "en") -> UserProfile:
     """Return existing profile, or create a default one if missing."""
     existing = read_profile(profile_path)
     if existing is not None:
         return existing
-    profile = UserProfile(body=DEFAULT_PROFILE_TEMPLATE.strip())
+    profile = UserProfile(body=default_profile_template(lang).strip())
     write_profile(profile_path, profile)
     return profile
 
 
-def edit_profile_in_editor(profile_path: Path) -> UserProfile:
+def edit_profile_in_editor(profile_path: Path, lang: str = "en") -> UserProfile:
     """Open `<vault>/users/me.md` in $EDITOR for direct editing.
 
-    Creates the file with the default template if missing. Returns the
-    profile after the editor exits. Raises subprocess.CalledProcessError on
-    editor failure; FileNotFoundError if $EDITOR is not on PATH.
+    Creates the file with the default template (in `lang`) if missing.
+    Returns the profile after the editor exits. Raises
+    subprocess.CalledProcessError on editor failure; FileNotFoundError if
+    $EDITOR is not on PATH.
 
     The CLI subcommand `knowlet user edit` and the slash `:user edit` share
     this single backend function — see ADR-0008 (CLI parity discipline).
@@ -136,7 +168,7 @@ def edit_profile_in_editor(profile_path: Path) -> UserProfile:
     import os
     import subprocess
 
-    ensure_profile(profile_path)
+    ensure_profile(profile_path, lang=lang)
     editor = os.environ.get("EDITOR") or "vi"
     subprocess.run([editor, str(profile_path)], check=True)
     profile = read_profile(profile_path)
