@@ -10,12 +10,12 @@
 - ✅ **M0+ refactor** — `bootstrap_chat()` 抽出为单一会话入口;CLI 主入口默认进 chat REPL,辅以 slash 命令(`:save :ls :reindex :doctor :config show :user :tools :clear :help :quit`)。
 - ✅ **M1** — 用户上下文层:`<vault>/users/me.md`(0600 权限)+ system prompt 注入 + `get_user_profile` 原子工具(给忽略 system 的 backend 兜底)+ `knowlet user show/edit` + `:user` slash。
 - ✅ **M2** — 极简 web UI:FastAPI + 静态单页(暗色主题、Markdown 渲染、最近 Note 侧栏、草稿审查模态、profile 编辑模态)。`knowlet web` 启动。所有 endpoint 是 backend 函数的薄壳(见 [ADR-0008](../decisions/0008-cli-parity-discipline.md))。
-- ⏳ M2 phase 2 — SSE 流式响应。
-- ⏳ M3 — Card 实体 + FSRS SRS 子模块(进入场景 C)。
+- ✅ **M2 phase 2** — SSE 流式响应:`/api/chat/stream` 推送 `tool_call / tool_result / reply_chunk / turn_done / error` 事件流;CLI REPL 与 web UI 共享同一个 `ChatSession.user_turn_stream` generator。
+- ✅ **M3** — Card 实体(JSON,`<vault>/cards/<id>.json`)+ FSRS 调度(`fsrs` 库 6.x)+ 4 个原子工具(`create_card / list_due_cards / get_card / review_card`)+ CLI `knowlet cards new|due|review|show` + Slash `:cards [due|review|new]` + web 侧栏 due 计数 + 复习模态。
 - ⏳ M4 — 知识挖掘任务(进入场景 B)。
 - ⏳ M5 — Tauri 桌面壳 + 移动 PWA。
 
-测试规模:57 个,主要打 backend 模块 + HTTP API,CLI/slash/web 三层共享同一组业务逻辑。
+测试规模:86 个,主要打 backend 模块 + HTTP API,CLI/slash/web 三层共享同一组业务逻辑。
 
 ## 范围速览
 

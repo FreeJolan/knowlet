@@ -215,6 +215,8 @@ async function sendMessage(text) {
   } finally {
     inputEl.disabled = false;
     inputEl.focus();
+    // The LLM may have created a card via tools; reflect that in the sidebar.
+    refreshCards();
   }
 }
 
@@ -344,6 +346,90 @@ async function openNote(noteId) {
 
 $("#note-close").addEventListener("click", () => (noteModal.hidden = true));
 
+// --------------------------------------------------------- cards review
+
+const reviewModal = $("#review-modal");
+const reviewState = {
+  queue: [],
+  current: 0,
+};
+
+async function refreshCards() {
+  try {
+    const due = await api("GET", "/api/cards/due?limit=50");
+    const status = $("#cards-status");
+    const btn = $("#review-btn");
+    if (!due.length) {
+      status.textContent = "nothing due — make some cards in chat";
+      btn.hidden = true;
+    } else {
+      status.textContent = `${due.length} card${due.length === 1 ? "" : "s"} due`;
+      btn.hidden = false;
+    }
+  } catch (exc) {
+    $("#cards-status").textContent = `(error: ${exc.message})`;
+  }
+}
+
+async function openReview() {
+  try {
+    const due = await api("GET", "/api/cards/due?limit=50");
+    if (!due.length) {
+      toast("nothing due", "ok");
+      return;
+    }
+    reviewState.queue = due;
+    reviewState.current = 0;
+    reviewModal.hidden = false;
+    showCurrentCard();
+  } catch (exc) {
+    toast(exc.message, "error");
+  }
+}
+
+function showCurrentCard() {
+  const card = reviewState.queue[reviewState.current];
+  if (!card) return finishReview();
+  $("#review-progress").textContent = `card ${reviewState.current + 1} / ${reviewState.queue.length}`;
+  $("#review-front").innerHTML = renderMarkdown(card.front);
+  $("#review-back").innerHTML = renderMarkdown(card.back);
+  $("#review-back").hidden = true;
+  $("#review-tags").textContent = card.tags.length ? `tags: ${card.tags.join(", ")}` : "";
+  $("#review-actions").hidden = false;
+  $("#review-rate-row").hidden = true;
+}
+
+function finishReview() {
+  reviewModal.hidden = true;
+  reviewState.queue = [];
+  reviewState.current = 0;
+  refreshCards();
+  toast("review done", "ok");
+}
+
+$("#review-btn").addEventListener("click", openReview);
+$("#review-reveal").addEventListener("click", () => {
+  $("#review-back").hidden = false;
+  $("#review-actions").hidden = true;
+  $("#review-rate-row").hidden = false;
+});
+$("#review-quit").addEventListener("click", () => (reviewModal.hidden = true));
+for (const btn of $$('#review-rate-row button[data-rating]')) {
+  btn.addEventListener("click", async () => {
+    const card = reviewState.queue[reviewState.current];
+    if (!card) return;
+    try {
+      await api("POST", `/api/cards/${encodeURIComponent(card.id)}/review`, {
+        rating: parseInt(btn.dataset.rating, 10),
+      });
+      reviewState.current += 1;
+      showCurrentCard();
+    } catch (exc) {
+      toast(exc.message, "error");
+    }
+  });
+}
+
 // --------------------------------------------------------- bootstrap
 
 async function bootstrap() {
@@ -354,6 +440,7 @@ async function bootstrap() {
     metaEl.textContent = `(health check failed: ${exc.message})`;
   }
   await refreshNotes();
+  await refreshCards();
   // Restore any prior conversation in the running session.
   try {
     const data = await api("GET", "/api/chat/history");

@@ -22,6 +22,7 @@ dependencies = [
     "numpy>=1.26",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    "fsrs>=6.0",
 ]
 
 [project.optional-dependencies]

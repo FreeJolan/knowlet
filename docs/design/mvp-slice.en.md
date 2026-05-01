@@ -10,12 +10,12 @@
 - ✅ **M0+ refactor** — `bootstrap_chat()` extracted as the single session entry; bare `knowlet` drops into the chat REPL with slash commands (`:save :ls :reindex :doctor :config show :user :tools :clear :help :quit`).
 - ✅ **M1** — User-context layer: `<vault>/users/me.md` (0600 perms) + system-prompt injection + `get_user_profile` atomic tool (fallback for backends that ignore role:'system') + `knowlet user show/edit` + `:user` slash.
 - ✅ **M2** — Minimal web UI: FastAPI + static single page (dark theme, Markdown rendering, recent-notes sidebar, draft-review modal, profile editor modal). `knowlet web` starts the server. Every endpoint is a thin shell over backend functions (see [ADR-0008](../decisions/0008-cli-parity-discipline.en.md)).
-- ⏳ M2 phase 2 — SSE streaming responses.
-- ⏳ M3 — Card entity + FSRS SRS submodule (enters scenario C).
+- ✅ **M2 phase 2** — SSE streaming: `/api/chat/stream` pushes a structured event stream (`tool_call / tool_result / reply_chunk / turn_done / error`); the CLI REPL and the web UI both consume the same `ChatSession.user_turn_stream` generator.
+- ✅ **M3** — Card entity (JSON at `<vault>/cards/<id>.json`) + FSRS scheduling (the `fsrs` library 6.x) + 4 atomic tools (`create_card / list_due_cards / get_card / review_card`) + CLI `knowlet cards new|due|review|show` + slash `:cards [due|review|new]` + web sidebar due count + review modal.
 - ⏳ M4 — Knowledge mining tasks (enters scenario B).
 - ⏳ M5 — Tauri desktop shell + mobile PWA.
 
-Test footprint: 57 tests, primarily targeting backend modules + the HTTP API. CLI / slash / web all share the same business logic.
+Test footprint: 86 tests, primarily targeting backend modules + the HTTP API. CLI / slash / web all share the same business logic.
 
 ## Scope at a Glance
 

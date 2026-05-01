@@ -30,7 +30,13 @@
     </section>
 
     <aside id="side-pane">
-      <h2>recent notes</h2>
+      <div id="cards-section">
+        <h2>cards due</h2>
+        <p id="cards-status" class="hint">loading…</p>
+        <button id="review-btn" class="primary" hidden>start review</button>
+      </div>
+
+      <h2 style="margin-top: 18px">recent notes</h2>
       <ul id="notes-list"></ul>
       <p id="notes-empty" class="hint" hidden>
         no notes yet — save a chat to create the first one.
@@ -76,6 +82,26 @@
       <div id="note-body" class="rendered"></div>
       <div class="modal-actions">
         <button id="note-close" class="primary">close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: card review -->
+  <div id="review-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h3 id="review-progress">review</h3>
+      <div id="review-front" class="rendered"></div>
+      <div id="review-back" class="rendered" hidden></div>
+      <p class="hint" id="review-tags"></p>
+      <div class="modal-actions" id="review-actions">
+        <button id="review-reveal" class="primary">reveal</button>
+        <button id="review-quit">quit</button>
+      </div>
+      <div class="modal-actions" id="review-rate-row" hidden>
+        <button data-rating="1">again</button>
+        <button data-rating="2">hard</button>
+        <button data-rating="3" class="primary">good</button>
+        <button data-rating="4">easy</button>
       </div>
     </div>
   </div>

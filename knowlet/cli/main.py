@@ -41,9 +41,14 @@ user_app = typer.Typer(
     help="User profile (`<vault>/users/me.md`).",
     no_args_is_help=True,
 )
+cards_app = typer.Typer(
+    help="Spaced-repetition Cards (scenario C).",
+    no_args_is_help=True,
+)
 app.add_typer(vault_app, name="vault")
 app.add_typer(config_app, name="config")
 app.add_typer(user_app, name="user")
+app.add_typer(cards_app, name="cards")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -248,6 +253,158 @@ def config_show() -> None:
     safe["llm"]["api_key"] = _mask(cfg.llm.api_key)
     console.print(json.dumps(safe, indent=2, ensure_ascii=False))
     console.print(f"[dim]{config_path(vault.root)}[/dim]")
+
+
+# ------------------------------------------------------------------ cards
+
+
+@cards_app.command("new")
+def cards_new(
+    front: Annotated[str, typer.Option("--front", "-f", help="Card front (cue).")],
+    back: Annotated[str, typer.Option("--back", "-b", help="Card back (answer).")],
+    tags: Annotated[
+        Optional[str],
+        typer.Option("--tags", "-t", help="Comma-separated tags."),
+    ] = None,
+    card_type: Annotated[
+        str,
+        typer.Option("--type", help="basic | cloze (default basic)."),
+    ] = "basic",
+) -> None:
+    """Create a new spaced-repetition Card. The new card is due immediately."""
+    from knowlet.core.card import Card
+    from knowlet.core.cards import CardStore
+    from knowlet.core.fsrs_wrap import initial_state
+
+    vault = _resolve_vault_or_die()
+    store = CardStore(vault.cards_dir)
+    parsed_tags = (
+        [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+    )
+    card = Card(
+        type=card_type,
+        front=front,
+        back=back,
+        tags=parsed_tags,
+        fsrs_state=initial_state(),
+    )
+    path = store.save(card)
+    console.print(f"[green]created[/green] → {path}")
+
+
+@cards_app.command("due")
+def cards_due(
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Max rows.")] = 20,
+) -> None:
+    """List Cards that are due now."""
+    from knowlet.core.card import parse_due
+    from knowlet.core.cards import CardStore
+
+    vault = _resolve_vault_or_die()
+    store = CardStore(vault.cards_dir)
+    due = store.list_due(limit=limit)
+    if not due:
+        console.print("[dim]nothing due — create cards or come back later[/dim]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("id", style="dim", no_wrap=True)
+    table.add_column("front")
+    table.add_column("tags", style="cyan")
+    table.add_column("due", style="dim")
+    for c in due:
+        table.add_row(
+            c.id[:8] + "…",
+            c.front[:60] + ("…" if len(c.front) > 60 else ""),
+            ", ".join(c.tags),
+            parse_due(c).strftime("%Y-%m-%d %H:%M"),
+        )
+    console.print(table)
+
+
+@cards_app.command("review")
+def cards_review(
+    limit: Annotated[
+        int,
+        typer.Option("--limit", "-n", help="Max cards in this session."),
+    ] = 20,
+) -> None:
+    """Walk through due Cards interactively, recording ratings."""
+    _run_cards_review(limit=limit)
+
+
+def _run_cards_review(limit: int = 20) -> None:
+    from knowlet.core.card import parse_due
+    from knowlet.core.cards import CardStore
+    from knowlet.core.fsrs_wrap import schedule_next
+
+    vault = _resolve_vault_or_die()
+    store = CardStore(vault.cards_dir)
+    due = store.list_due(limit=limit)
+    if not due:
+        console.print("[dim]nothing due — create cards or come back later[/dim]")
+        return
+
+    console.print(
+        Panel.fit(
+            f"reviewing {len(due)} card(s)\n"
+            "rate yourself: 1=again  2=hard  3=good  4=easy   q=quit",
+            title="cards review",
+        )
+    )
+    for i, card in enumerate(due, 1):
+        console.print(f"\n[bold cyan]{i}/{len(due)}[/bold cyan]")
+        console.print(Panel(Markdown(card.front), title="front"))
+        try:
+            Prompt.ask("press [enter] to reveal", default="", show_default=False)
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]exiting review[/dim]")
+            return
+        console.print(Panel(Markdown(card.back), title="back"))
+        try:
+            rating = Prompt.ask(
+                "your recall",
+                choices=["1", "2", "3", "4", "q"],
+                default="3",
+            )
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]exiting review[/dim]")
+            return
+        if rating == "q":
+            console.print("[dim]exiting review[/dim]")
+            return
+        schedule_next(card, int(rating))
+        store.save(card)
+        console.print(
+            f"[dim]next due: {parse_due(card).strftime('%Y-%m-%d %H:%M')}[/dim]"
+        )
+    console.print("\n[green]done[/green]")
+
+
+@cards_app.command("show")
+def cards_show(
+    card_id: Annotated[str, typer.Argument(help="Card ULID (full or 8-char prefix).")],
+) -> None:
+    """Print a single Card's content."""
+    from knowlet.core.cards import CardStore
+
+    vault = _resolve_vault_or_die()
+    store = CardStore(vault.cards_dir)
+    card = store.get(card_id)
+    if card is None:
+        # try prefix match for convenience
+        for c in store.list_cards():
+            if c.id.startswith(card_id):
+                card = c
+                break
+    if card is None:
+        err_console.print(f"[red]card not found:[/red] {card_id}")
+        raise typer.Exit(code=1)
+    console.print(Panel(Markdown(card.front), title="front"))
+    console.print(Panel(Markdown(card.back), title="back"))
+    console.print(
+        f"[dim]tags: {', '.join(card.tags) or '—'}  ·  "
+        f"due: {card.fsrs_state.get('due') or '—'}[/dim]"
+    )
 
 
 # ------------------------------------------------------------------ web
@@ -726,6 +883,41 @@ def _handle_slash(text: str, runtime) -> tuple[bool, bool]:
         names = sorted(runtime.registry.tools)
         console.print(f"[dim]available tools: {', '.join(names)}[/dim]")
         return True, False
+    if name == "cards":
+        sub = args[0] if args else "due"
+        if sub == "due":
+            from knowlet.core.card import parse_due
+
+            due = runtime.ctx.cards.list_due(limit=20)
+            if not due:
+                console.print("[dim]nothing due — `:cards new` to create[/dim]")
+            else:
+                table = Table(show_header=True, header_style="bold")
+                table.add_column("id", style="dim", no_wrap=True)
+                table.add_column("front")
+                table.add_column("tags", style="cyan")
+                table.add_column("due", style="dim")
+                for c in due:
+                    table.add_row(
+                        c.id[:8] + "…",
+                        c.front[:60] + ("…" if len(c.front) > 60 else ""),
+                        ", ".join(c.tags),
+                        parse_due(c).strftime("%Y-%m-%d %H:%M"),
+                    )
+                console.print(table)
+        elif sub == "review":
+            _run_cards_review(limit=20)
+        elif sub == "new":
+            console.print(
+                "[yellow]inside chat, ask me to create the card "
+                "(e.g. \"add a card: front=… back=…\") or run "
+                "`knowlet cards new` from a separate shell.[/yellow]"
+            )
+        else:
+            console.print(
+                f"[yellow]unknown :cards subcommand: {sub}  (use due | review | new)[/yellow]"
+            )
+        return True, False
     if name == "user":
         from knowlet.core.user_profile import edit_profile_in_editor, read_profile
 
@@ -826,16 +1018,18 @@ def _stream_turn_to_console(runtime, user_text: str) -> None:
 def _print_help() -> None:
     console.print(
         Panel.fit(
-            ":save         draft a Note from this chat and review it\n"
-            ":ls [-r]      list Notes (created_at; -r for updated_at)\n"
-            ":reindex      re-scan vault notes from disk\n"
-            ":doctor       run diagnostics on backend + embedding\n"
-            ":config show  print the current config (key masked)\n"
-            ":user [edit]  show or edit your profile (users/me.md)\n"
-            ":tools        list LLM-callable tools\n"
-            ":clear        reset chat history (keeps system prompt)\n"
-            ":help         this help (also  ?)\n"
-            ":quit         exit  (also  :q  :exit  Ctrl-D)\n",
+            ":save              draft a Note from this chat and review it\n"
+            ":ls [-r]           list Notes (created_at; -r for updated_at)\n"
+            ":reindex           re-scan vault notes from disk\n"
+            ":doctor            run diagnostics on backend + embedding\n"
+            ":config show       print the current config (key masked)\n"
+            ":user [edit]       show or edit your profile (users/me.md)\n"
+            ":cards due         list cards due now\n"
+            ":cards review      run an interactive review session\n"
+            ":tools             list LLM-callable tools\n"
+            ":clear             reset chat history (keeps system prompt)\n"
+            ":help              this help (also  ?)\n"
+            ":quit              exit  (also  :q  :exit  Ctrl-D)\n",
             title="slash commands",
         )
     )
