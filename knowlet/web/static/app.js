@@ -274,6 +274,96 @@ inputEl.addEventListener("keydown", (ev) => {
   sendMessage(inputEl.value);
 });
 
+// --------------------------------------------------------- fullscreen editor
+
+const editorModal = $("#editor-modal");
+const editorTextarea = $("#editor-textarea");
+const editorPreview = $("#editor-preview");
+const editorBody = $("#editor-body");
+const editorToggleBtn = $("#editor-toggle-split");
+let editorSplit = false;
+
+function openEditor() {
+  // Sync from small input → modal textarea so the user can keep typing.
+  editorTextarea.value = inputEl.value;
+  editorModal.hidden = false;
+  setEditorSplit(editorSplit); // re-apply current mode
+  editorTextarea.focus();
+  // Move caret to the end (continuation feel).
+  const len = editorTextarea.value.length;
+  editorTextarea.setSelectionRange(len, len);
+  renderEditorPreview();
+}
+
+function closeEditor(syncBack) {
+  if (syncBack) inputEl.value = editorTextarea.value;
+  editorModal.hidden = true;
+}
+
+function setEditorSplit(on) {
+  editorSplit = !!on;
+  editorBody.classList.toggle("split", editorSplit);
+  editorBody.classList.toggle("single", !editorSplit);
+  editorPreview.hidden = !editorSplit;
+  editorToggleBtn.textContent = editorSplit
+    ? tt("web.editor.split_off")
+    : tt("web.editor.split_on");
+  if (editorSplit) renderEditorPreview();
+}
+
+function renderEditorPreview() {
+  if (!editorSplit) return;
+  editorPreview.innerHTML = renderMarkdown(editorTextarea.value);
+}
+
+editorTextarea.addEventListener("input", renderEditorPreview);
+editorToggleBtn.addEventListener("click", () => setEditorSplit(!editorSplit));
+$("#editor-cancel").addEventListener("click", () => closeEditor(true));
+$("#editor-send").addEventListener("click", () => {
+  const text = editorTextarea.value;
+  closeEditor(false); // don't sync back; we're sending and emptying
+  inputEl.value = "";
+  sendMessage(text);
+});
+
+// IME-aware Cmd/Ctrl+Enter from inside the editor sends; Esc closes.
+let editorImeComposing = false;
+editorTextarea.addEventListener(
+  "compositionstart",
+  () => (editorImeComposing = true)
+);
+editorTextarea.addEventListener(
+  "compositionend",
+  () => (editorImeComposing = false)
+);
+editorTextarea.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") {
+    ev.preventDefault();
+    closeEditor(true);
+    return;
+  }
+  if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
+    if (editorImeComposing || ev.isComposing || ev.keyCode === 229) return;
+    ev.preventDefault();
+    $("#editor-send").click();
+  }
+});
+
+$("#expand-btn").addEventListener("click", openEditor);
+
+// Cmd/Ctrl+Shift+E from anywhere opens the editor.
+document.addEventListener("keydown", (ev) => {
+  if (
+    (ev.metaKey || ev.ctrlKey) &&
+    ev.shiftKey &&
+    (ev.key === "E" || ev.key === "e")
+  ) {
+    ev.preventDefault();
+    if (editorModal.hidden) openEditor();
+    else closeEditor(true);
+  }
+});
+
 // --------------------------------------------------------- header buttons
 
 $("#clear-btn").addEventListener("click", async () => {
