@@ -36,6 +36,23 @@ class AssistantMessage:
     raw: Any = None
 
 
+# Anthropic Claude 4.x (Opus 4.7 / 4.6, Sonnet 4.6, Haiku 4.5, …) deprecated
+# the `temperature` request param; sending it makes the API return a 400. We
+# strip it client-side for known-affected model ids. Match by substring so
+# variants like `claude-opus-4-7@some-proxy` still work.
+_NO_TEMPERATURE_MODELS: tuple[str, ...] = (
+    "opus-4-7",
+    "opus-4-6",
+    "sonnet-4-6",
+    "haiku-4-5",
+)
+
+
+def model_disallows_temperature(model: str) -> bool:
+    m = (model or "").lower()
+    return any(token in m for token in _NO_TEMPERATURE_MODELS)
+
+
 class LLMClient:
     def __init__(self, cfg: LLMConfig):
         self.cfg = cfg
@@ -62,8 +79,10 @@ class LLMClient:
             "model": self.cfg.model,
             "messages": messages,
             "max_tokens": max_tokens or self.cfg.max_tokens,
-            "temperature": self.cfg.temperature if temperature is None else temperature,
         }
+        temp = self.cfg.temperature if temperature is None else temperature
+        if temp is not None and not model_disallows_temperature(self.cfg.model):
+            kwargs["temperature"] = temp
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
@@ -108,9 +127,11 @@ class LLMClient:
             "model": self.cfg.model,
             "messages": messages,
             "max_tokens": max_tokens or self.cfg.max_tokens,
-            "temperature": self.cfg.temperature if temperature is None else temperature,
             "stream": True,
         }
+        temp = self.cfg.temperature if temperature is None else temperature
+        if temp is not None and not model_disallows_temperature(self.cfg.model):
+            kwargs["temperature"] = temp
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
