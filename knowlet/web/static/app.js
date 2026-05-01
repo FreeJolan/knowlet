@@ -257,12 +257,21 @@ composerEl.addEventListener("submit", (ev) => {
   sendMessage(inputEl.value);
 });
 
+// IME (Chinese / Japanese pinyin etc.) composition state. While composing,
+// Enter belongs to the IME (selecting a candidate) — never to "send".
+let imeComposing = false;
+inputEl.addEventListener("compositionstart", () => (imeComposing = true));
+inputEl.addEventListener("compositionend", () => (imeComposing = false));
+
 inputEl.addEventListener("keydown", (ev) => {
-  // Cmd/Ctrl+Enter sends.
-  if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {
-    ev.preventDefault();
-    sendMessage(inputEl.value);
-  }
+  // Industry convention (Slack / ChatGPT / Claude): Enter sends,
+  // Shift+Enter inserts a newline. Cmd/Ctrl+Enter also sends as a power-user
+  // alternative. Never act while the IME is composing.
+  if (ev.key !== "Enter") return;
+  if (imeComposing || ev.isComposing || ev.keyCode === 229) return;
+  if (ev.shiftKey) return; // explicit newline
+  ev.preventDefault();
+  sendMessage(inputEl.value);
 });
 
 // --------------------------------------------------------- header buttons
@@ -278,6 +287,12 @@ $("#clear-btn").addEventListener("click", async () => {
 });
 
 $("#save-btn").addEventListener("click", async () => {
+  // Sediment can take 20-30s on Opus. Without visible feedback the user
+  // assumes the click did nothing.
+  const btn = $("#save-btn");
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = tt("web.save.drafting");
   try {
     const draft = await api("POST", "/api/chat/draft");
     $("#draft-title").value = draft.title;
@@ -286,6 +301,9 @@ $("#save-btn").addEventListener("click", async () => {
     draftModal.hidden = false;
   } catch (exc) {
     toast(exc.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
   }
 });
 

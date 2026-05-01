@@ -111,10 +111,16 @@ main {
 .bubble .content { line-height: 1.6; }
 .bubble .content :first-child { margin-top: 0; }
 .bubble .content :last-child { margin-bottom: 0; }
+.bubble .content p { margin: 0.4em 0; }
+.bubble .content ul, .bubble .content ol { margin: 0.4em 0; padding-left: 1.4em; }
+.bubble .content li { margin: 0.15em 0; }
+.bubble .content li > p { margin: 0; }
+.bubble .content h1, .bubble .content h2, .bubble .content h3,
+.bubble .content h4, .bubble .content h5 { margin: 0.7em 0 0.3em; line-height: 1.3; }
 .bubble .content code { background: var(--surface-soft); padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: var(--font-mono); }
-.bubble .content pre { background: var(--surface-soft); padding: 10px 14px; border-radius: var(--radius); overflow-x: auto; font-family: var(--font-mono); font-size: 12px; }
+.bubble .content pre { background: var(--surface-soft); padding: 10px 14px; border-radius: var(--radius); overflow-x: auto; font-family: var(--font-mono); font-size: 12px; margin: 0.5em 0; }
 .bubble .content pre code { background: none; padding: 0; }
-.bubble .content blockquote { border-left: 3px solid var(--border); margin: 6px 0; padding-left: 10px; color: var(--text-soft); }
+.bubble .content blockquote { border-left: 3px solid var(--border); margin: 0.4em 0; padding-left: 10px; color: var(--text-soft); }
 
 .tool-trace {
   font-family: var(--font-mono);
