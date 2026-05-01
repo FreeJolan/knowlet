@@ -323,7 +323,7 @@ function ui() {
     },
 
     async newNote() {
-      const title = prompt("新 Note 标题") || "";
+      const title = prompt("新笔记标题") || "";
       if (!title.trim()) return;
       try {
         const r = await api("POST", "/api/notes", {
@@ -448,7 +448,7 @@ function ui() {
       try {
         await api("POST", "/api/chat/clear");
         this.chatHistory = [];
-        toast(tt("web.toast.cleared") || "history cleared", "ok");
+        toast("已清空对话", "ok");
       } catch (exc) {
         toast(exc.message, "error");
       }
@@ -484,7 +484,7 @@ function ui() {
       const title = this.sediment.title.trim();
       const body = this.sediment.body.trim();
       if (!title || !body) {
-        toast("title 和 body 都需要填", "error");
+        toast("标题和正文都得填一下", "error");
         return;
       }
       const tags = this.sediment.tagsStr
@@ -494,7 +494,7 @@ function ui() {
       try {
         await api("POST", "/api/notes", { title, tags, body });
         this.modal = null;
-        toast("已保存", "ok");
+        toast("已存为笔记", "ok");
         await this.refreshNotes();
       } catch (exc) {
         toast(exc.message, "error");
@@ -523,7 +523,7 @@ function ui() {
           body: this.profile.body,
         });
         this.modal = null;
-        toast("档案已保存", "ok");
+        toast("个人资料已保存", "ok");
       } catch (exc) {
         toast(exc.message, "error");
       }
@@ -555,7 +555,7 @@ function ui() {
       try {
         const drafts = await api("GET", "/api/drafts");
         if (!drafts.length) {
-          toast("收件箱为空", "ok");
+          toast("收件箱为空。", "ok");
           return;
         }
         this.draftsState = { queue: drafts, current: 0, full: null };
@@ -572,7 +572,7 @@ function ui() {
         this.modal = null;
         await this.refreshDraftsCount();
         await this.refreshNotes();
-        toast("done", "ok");
+        toast("收件箱审完了", "ok");
         return;
       }
       try {
@@ -637,7 +637,7 @@ function ui() {
         if (this.cardsState.current >= this.cardsState.queue.length) {
           this.modal = null;
           await this.refreshCardsCount();
-          toast("复习完成", "ok");
+          toast("今天复习完了", "ok");
         }
       } catch (exc) {
         toast(exc.message, "error");
@@ -670,11 +670,11 @@ function ui() {
         if (totals.drafts === 0) {
           const reason =
             totals.new_items === 0
-              ? "无新内容(seen-set 已覆盖全部)"
-              : `${totals.new_items} 条新内容但抽取产出 0 条草稿`;
-          toast(`${totals.fetched} 拉取 · ${reason}`, "ok");
+              ? "没有新内容"
+              : `${totals.new_items} 条新内容但 AI 没整理出有效条目`;
+          toast(`抓了 ${totals.fetched} 条 · ${reason}`, "ok");
         } else {
-          toast(`${totals.fetched} 拉取 · ${totals.drafts} 条新草稿`, "ok");
+          toast(`抓了 ${totals.fetched} 条 · 整理出 ${totals.drafts} 条新内容`, "ok");
         }
         await this.refreshDraftsCount();
       } catch (exc) {

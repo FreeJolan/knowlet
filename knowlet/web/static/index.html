@@ -92,40 +92,38 @@
 <header class="h-10 px-4 flex items-center gap-3 bg-surface border-b border-border">
   <span class="text-accent font-semibold tracking-tight text-base">knowlet</span>
   <span class="text-textsoft text-xs hidden sm:block">
-    <span class="mono" x-text="meta.vault || '—'"></span>
-    <span> · </span>
+    <span x-text="meta.vault || '—'"></span>
+    <span class="mx-1">·</span>
     <span class="mono" x-text="meta.model || '—'"></span>
-    <span> · </span>
-    <span x-text="meta.language || '—'"></span>
   </span>
   <div class="flex-1"></div>
 
   <!-- placeholder Cmd+K palette button (M6.2 will wire it) -->
   <button
-    @click="toast(tt('palette.coming'), 'ok')"
+    @click="toast('命令面板下个版本(M6.2)实装,稍等', 'ok')"
     class="flex items-center gap-2 px-2.5 py-1 text-xs text-textsoft border border-border rounded hover:border-accent hover:text-text"
     title="Cmd+K (M6.2)"
   >
     <svg class="icon icon-sm"><use href="#i-search"/></svg>
-    <span data-i18n="header.palette">跳转 / 命令 / ask AI</span>
+    <span data-i18n="header.palette">搜索 / 命令 / 问 AI</span>
     <span class="mono text-textsoft border border-border rounded px-1 py-0.5 text-[10px]">⌘K</span>
   </button>
 
-  <!-- save current note as Note (sediment from chat = M6.3 brings this into chat focus mode) -->
+  <!-- save chat → note -->
   <button
     @click="openSediment()"
     :disabled="!chatHistory.length"
     class="text-textsoft hover:text-text p-1.5 rounded hover:bg-surface2 disabled:opacity-30 disabled:hover:bg-transparent"
-    title="把当前 chat 沉淀成 Note"
+    title="把这段对话存成笔记"
   >
     <svg class="icon"><use href="#i-save"/></svg>
   </button>
 
-  <!-- profile / settings -->
+  <!-- settings -->
   <button
     @click="openProfile()"
     class="text-textsoft hover:text-text p-1.5 rounded hover:bg-surface2"
-    title="设置 / 档案"
+    title="个人资料 · 设置"
   >
     <svg class="icon"><use href="#i-cog"/></svg>
   </button>
@@ -142,13 +140,13 @@
         <input
           type="text"
           x-model="treeFilter"
-          placeholder="搜索 Note 名…"
+          placeholder="搜索笔记…"
           class="w-full bg-bg border border-border rounded pl-7 pr-2 py-1 text-xs focus:outline-none focus:border-accent"
         />
       </div>
       <button
         @click="newNote()"
-        title="新建 Note"
+        title="新建笔记"
         class="p-1.5 text-textsoft hover:text-accent border border-border hover:border-accent rounded"
       >
         <svg class="icon icon-sm"><use href="#i-plus"/></svg>
@@ -172,7 +170,7 @@
         x-show="!notes.length && !notesLoading"
         class="px-3 py-4 text-textsoft text-xs"
       >
-        还没有 Note。点 <span class="mono">+</span> 新建第一条。
+        还没有笔记。点 <span class="mono">+</span> 新建第一条。
       </li>
       <li x-show="notesLoading" class="px-3 py-4 text-textsoft text-xs">
         加载中…
@@ -236,7 +234,7 @@
         x-show="!currentTab()"
         class="flex items-center justify-center text-textsoft text-sm col-span-2"
       >
-        左栏选一条 Note,或点 <svg class="icon icon-sm inline-block mx-1 align-middle"><use href="#i-plus"/></svg> 新建
+        左栏选一条笔记,或点 <svg class="icon icon-sm inline-block mx-1 align-middle"><use href="#i-plus"/></svg> 新建
       </div>
     </div>
 
@@ -307,7 +305,7 @@
 
       <!-- Outline (parsed from current note's headings) -->
       <div x-show="rightTab === 'outline'" class="flex-1 overflow-y-auto p-4 text-sm">
-        <p x-show="!outline().length" class="text-textsoft text-xs">这条 Note 没有标题(`#` / `##` / `###`)</p>
+        <p x-show="!outline().length" class="text-textsoft text-xs">这条笔记还没有章节标题(<span class="mono">#</span> / <span class="mono">##</span> / <span class="mono">###</span>)</p>
         <ul x-show="outline().length" class="space-y-1.5">
           <template x-for="(h, i) in outline()" :key="i">
             <li
@@ -322,27 +320,27 @@
       <!-- Backlinks (M6.2 will compute real ones) -->
       <div x-show="rightTab === 'backlinks'" class="flex-1 overflow-y-auto p-4 text-sm">
         <p class="text-textsoft text-xs leading-relaxed">
-          M6.2 会实装句子级反链预览(找出所有引用了当前 Note 的其它 Note,显示包含 <code class="mono">[[link]]</code> 的那段话)。
+          这一栏会显示「引用了当前笔记的其它笔记」,带句子级预览。
           <br><br>
-          当前 phase 1 仅占位。
+          下一阶段(M6.2)实装,目前是占位。
         </p>
       </div>
 
       <!-- AI dock — chat scoped to current note -->
       <div x-show="rightTab === 'ai'" class="flex-1 flex flex-col">
         <div class="px-3 py-2 text-xs text-textsoft border-b border-border flex items-center gap-2">
-          <span>scope:</span>
+          <span>参考范围</span>
           <select x-model="chatScope" class="bg-bg border border-border rounded px-1.5 py-1 text-xs">
-            <option value="note">这条 Note</option>
-            <option value="vault">整个 vault</option>
-            <option value="none">无 context</option>
+            <option value="note">当前笔记</option>
+            <option value="vault">所有笔记</option>
+            <option value="none">不参考</option>
           </select>
           <span class="flex-1"></span>
           <button
             @click="clearChat()"
             class="text-textsoft hover:text-text px-1.5 py-0.5 rounded hover:bg-surface2 text-[11px]"
             title="清空对话"
-          >clear</button>
+          >清空</button>
         </div>
 
         <div class="flex-1 overflow-y-auto p-4 text-sm space-y-4" x-ref="chatScroll">
@@ -360,7 +358,7 @@
             </div>
           </template>
           <div x-show="!chatHistory.length" class="text-textsoft text-xs">
-            <p>提问关于 <span class="text-text" x-text="currentTab()?.title || '(选一条 Note 先)'"></span> 的内容。</p>
+            <p>问点关于「<span class="text-text" x-text="currentTab()?.title || '(先选一条笔记)'"></span>」的内容。</p>
           </div>
         </div>
 
@@ -385,52 +383,52 @@
   <button
     @click="openDraftsReview()"
     class="flex items-center gap-1.5 px-2.5 py-1 rounded hover:bg-surface2 text-text"
-    title="审查 AI 草稿"
+    title="审查 AI 整理来的新内容"
   >
     <svg class="icon icon-sm text-textsoft"><use href="#i-inbox"/></svg>
-    <span class="text-textsoft">草稿</span>
+    <span class="text-textsoft">收件箱</span>
     <span :class="draftsCountClass()" class="px-1.5 rounded mono text-[11px]" x-text="draftsLabel()"></span>
   </button>
   <button
     @click="openCardsReview()"
     class="flex items-center gap-1.5 px-2.5 py-1 rounded hover:bg-surface2 text-text"
-    title="复习到期卡片"
+    title="复习到期的记忆卡片"
   >
     <svg class="icon icon-sm text-textsoft"><use href="#i-cards"/></svg>
-    <span class="text-textsoft">卡片</span>
+    <span class="text-textsoft">复习</span>
     <span class="text-ok mono px-1.5 text-[11px]" x-text="cardsCount"></span>
   </button>
   <div class="flex items-center gap-1.5 px-2.5 py-1 text-textsoft">
     <svg class="icon icon-sm"><use href="#i-mining"/></svg>
-    <span>挖掘</span>
+    <span>订阅源</span>
     <button
       @click="runMiningNow()"
       :disabled="miningRunning"
       class="text-accent hover:text-text disabled:opacity-50"
       x-text="miningTaskName || '(无)'"
-      title="点击立刻跑"
+      title="点击立刻抓取最新内容"
     ></button>
-    <span x-show="miningRunning">运行中…</span>
+    <span x-show="miningRunning">抓取中…</span>
   </div>
   <div class="flex-1"></div>
-  <span class="text-textsoft mono">v0.0.1 · <span x-text="meta.language || ''"></span></span>
+  <span class="text-textsoft mono">v0.0.1</span>
 </footer>
 
 <!-- ═══════════════ MODALS (existing flows preserved) ═══════════════ -->
 
-<!-- Sediment draft preview -->
+<!-- Save chat as a Note -->
 <div x-show="modal === 'sediment'" @click.self="modal = null" class="modal" x-cloak>
   <div class="modal-card">
-    <h3 data-i18n="web.draft.modal.title">把当前 chat 保存为 Note</h3>
-    <div x-show="sedimentDrafting" class="text-textsoft text-sm py-8 text-center">起草中…(Opus 大约要 25 秒)</div>
+    <h3>把这段对话存成笔记</h3>
+    <div x-show="sedimentDrafting" class="text-textsoft text-sm py-8 text-center">AI 整理中…(Opus 大约 25 秒)</div>
     <template x-if="!sedimentDrafting">
       <div class="space-y-2">
         <label class="block">
-          <span class="text-xs text-textsoft" data-i18n="web.draft.field.title">标题</span>
+          <span class="text-xs text-textsoft">标题</span>
           <input type="text" x-model="sediment.title" class="w-full bg-bg border border-border rounded px-2.5 py-1.5 mt-1 text-sm focus:outline-none focus:border-accent"/>
         </label>
         <label class="block">
-          <span class="text-xs text-textsoft">tags(逗号分隔)</span>
+          <span class="text-xs text-textsoft">标签(逗号分隔)</span>
           <input type="text" x-model="sediment.tagsStr" class="w-full bg-bg border border-border rounded px-2.5 py-1.5 mt-1 text-sm focus:outline-none focus:border-accent"/>
         </label>
         <label class="block">
@@ -449,8 +447,8 @@
 <!-- Profile editor -->
 <div x-show="modal === 'profile'" @click.self="modal = null" class="modal" x-cloak>
   <div class="modal-card">
-    <h3>你的档案</h3>
-    <p class="text-xs text-textsoft">knowlet 在每次 chat 启动都会读取它。随时改。</p>
+    <h3>个人资料</h3>
+    <p class="text-xs text-textsoft">每次 AI 跟你对话时都会读这份资料,知道你是谁、偏好什么。随时改。</p>
     <label class="block">
       <span class="text-xs text-textsoft">姓名(可选)</span>
       <input type="text" x-model="profile.name" class="w-full bg-bg border border-border rounded px-2.5 py-1.5 mt-1 text-sm focus:outline-none focus:border-accent"/>
@@ -466,23 +464,23 @@
   </div>
 </div>
 
-<!-- Drafts review (M6.3 will move this to focus mode) -->
+<!-- Inbox review (M6.3 will move this to focus mode) -->
 <div x-show="modal === 'drafts'" @click.self="modal = null" class="modal" x-cloak>
   <div class="modal-card">
-    <h3 x-text="`草稿审查 ${draftsState.queue.length ? `${draftsState.current + 1} / ${draftsState.queue.length}` : ''}`"></h3>
+    <h3 x-text="`审收件箱 ${draftsState.queue.length ? `${draftsState.current + 1} / ${draftsState.queue.length}` : ''}`"></h3>
     <div x-show="!draftsState.queue.length" class="text-textsoft text-sm py-8 text-center">收件箱为空。</div>
     <template x-if="draftsState.queue.length && draftsState.full">
       <div>
         <p class="text-xs text-textsoft">
-          source: <a class="text-accent border-b border-transparent hover:border-accent" target="_blank" :href="draftsState.full.source" x-text="draftsState.full.source || '—'"></a>
-          <span x-show="draftsState.full.tags?.length"> · tags: <span x-text="draftsState.full.tags.join(', ')"></span></span>
+          来源: <a class="text-accent border-b border-transparent hover:border-accent" target="_blank" :href="draftsState.full.source" x-text="draftsState.full.source || '—'"></a>
+          <span x-show="draftsState.full.tags?.length"> · 标签: <span x-text="draftsState.full.tags.join(', ')"></span></span>
         </p>
         <h4 class="text-lg font-semibold mt-2 mb-3" x-text="draftsState.full.title"></h4>
         <div class="prose-note text-sm max-h-[50vh] overflow-y-auto" x-html="renderMarkdown(draftsState.full.body || '')"></div>
         <div class="flex items-center gap-2 pt-3 mt-3 border-t border-border">
-          <button @click="actDraft('reject')" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text">拒绝</button>
-          <button @click="actDraft('skip')" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text">跳过</button>
-          <button @click="actDraft('approve')" class="px-5 py-1.5 rounded bg-accent text-bg font-medium">通过 → notes/</button>
+          <button @click="actDraft('reject')" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text">不要</button>
+          <button @click="actDraft('skip')" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text">稍后再看</button>
+          <button @click="actDraft('approve')" class="px-5 py-1.5 rounded bg-accent text-bg font-medium">收入笔记</button>
           <span class="flex-1"></span>
           <button @click="modal = null" class="text-textsoft hover:text-text text-xs">关闭</button>
         </div>
@@ -494,26 +492,26 @@
 <!-- Cards review (M6.3 will move this to focus mode) -->
 <div x-show="modal === 'cards'" @click.self="modal = null" class="modal" x-cloak>
   <div class="modal-card">
-    <h3 x-text="`卡片复习 ${cardsState.queue.length ? `${cardsState.current + 1} / ${cardsState.queue.length}` : ''}`"></h3>
+    <h3 x-text="`复习 ${cardsState.queue.length ? `${cardsState.current + 1} / ${cardsState.queue.length}` : ''}`"></h3>
     <div x-show="!cardsState.queue.length" class="text-textsoft text-sm py-8 text-center">没有到期的卡片。</div>
     <template x-if="cardsState.queue.length">
       <div>
-        <div class="text-textsoft text-xs uppercase tracking-wide mb-2">front</div>
+        <div class="text-textsoft text-xs mb-2">题面</div>
         <div class="prose-note text-base mb-6" x-html="renderMarkdown(cardsState.queue[cardsState.current]?.front || '')"></div>
         <div x-show="cardsState.revealed">
-          <div class="text-textsoft text-xs uppercase tracking-wide mb-2">back</div>
+          <div class="text-textsoft text-xs mb-2">答案</div>
           <div class="prose-note text-base mb-6" x-html="renderMarkdown(cardsState.queue[cardsState.current]?.back || '')"></div>
         </div>
         <div class="flex items-center gap-2 pt-3 border-t border-border">
           <template x-if="!cardsState.revealed">
-            <button @click="cardsState.revealed = true" class="px-5 py-1.5 rounded bg-accent text-bg font-medium">⏎ 翻面</button>
+            <button @click="cardsState.revealed = true" class="px-5 py-1.5 rounded bg-accent text-bg font-medium">⏎ 看答案</button>
           </template>
           <template x-if="cardsState.revealed">
             <div class="flex gap-2">
-              <button @click="rateCard(1)" class="px-3 py-1.5 rounded border border-border text-text">1 重来</button>
-              <button @click="rateCard(2)" class="px-3 py-1.5 rounded border border-border text-text">2 困难</button>
-              <button @click="rateCard(3)" class="px-3 py-1.5 rounded border border-accent text-accent">3 良好</button>
-              <button @click="rateCard(4)" class="px-3 py-1.5 rounded border border-border text-text">4 简单</button>
+              <button @click="rateCard(1)" class="px-3 py-1.5 rounded border border-border text-text" title="完全没记住,重新开始">不记得</button>
+              <button @click="rateCard(2)" class="px-3 py-1.5 rounded border border-border text-text" title="想了挺久才记起">勉强想起</button>
+              <button @click="rateCard(3)" class="px-3 py-1.5 rounded border border-accent text-accent" title="顺利记起">记起来了</button>
+              <button @click="rateCard(4)" class="px-3 py-1.5 rounded border border-border text-text" title="下次都不必复习">太简单</button>
             </div>
           </template>
           <span class="flex-1"></span>
