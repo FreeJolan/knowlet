@@ -421,6 +421,51 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             body=note.body,
         )
 
+    @app.put("/api/notes/{note_id}", response_model=NoteFull)
+    def update_note(
+        note_id: str,
+        payload: DraftPayload,  # reuses {title, tags, body} shape
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> NoteFull:
+        meta = runtime.index.get_note_meta(note_id)
+        if meta is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note not found: {note_id}",
+            )
+        path = Path(meta["path"])
+        if not path.is_absolute():
+            path = runtime.vault.notes_dir / path.name
+        try:
+            note = runtime.vault.read_note(path)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail=f"note file missing on disk: {path}",
+            ) from exc
+        # Apply updates; rename file if title (slug) changed.
+        old_path = path
+        note.title = payload.title.strip() or note.title
+        note.body = payload.body
+        note.tags = list(payload.tags)
+        new_path = runtime.vault.write_note(note)
+        if new_path != old_path and old_path.exists():
+            old_path.unlink()
+        runtime.index.upsert_note(
+            note,
+            chunk_size=runtime.config.retrieval.chunk_size,
+            chunk_overlap=runtime.config.retrieval.chunk_overlap,
+        )
+        return NoteFull(
+            id=note.id,
+            title=note.title,
+            path=str(new_path),
+            tags=note.tags,
+            created_at=note.created_at,
+            updated_at=note.updated_at,
+            body=note.body,
+        )
+
     # ---------------- cards ----------------
 
     def _summary(card: Card) -> CardSummary:

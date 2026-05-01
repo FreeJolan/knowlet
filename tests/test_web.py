@@ -201,6 +201,37 @@ def test_get_missing_note_404(tmp_path: Path):
     assert r.status_code == 404
 
 
+def test_put_note_updates_body_and_indexes(tmp_path: Path):
+    v, cfg = _ready_vault(tmp_path)
+    n = Note(id=new_id(), title="Old title", body="old body", tags=["a"])
+    v.write_note(n)
+
+    client = TestClient(create_app(v, cfg))
+    # ensure indexed via initial GET (which triggers reindex via the runtime)
+    client.get("/api/notes")
+
+    r = client.put(
+        f"/api/notes/{n.id}",
+        json={"title": "New title", "tags": ["b"], "body": "new body content"},
+    )
+    assert r.status_code == 200
+    out = r.json()
+    assert out["id"] == n.id
+    assert out["title"] == "New title"
+    assert out["body"] == "new body content"
+    assert out["tags"] == ["b"]
+
+
+def test_put_note_404_for_missing(tmp_path: Path):
+    v, cfg = _ready_vault(tmp_path)
+    client = TestClient(create_app(v, cfg))
+    r = client.put(
+        "/api/notes/no-such-id",
+        json={"title": "x", "tags": [], "body": "y"},
+    )
+    assert r.status_code == 404
+
+
 # ------------------------------------------------------- profile
 
 
