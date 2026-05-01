@@ -74,6 +74,41 @@ def _save_seen(vault: Vault, task_id: str, seen: Iterable[str]) -> None:
     p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def reset_task_state(
+    vault: Vault,
+    task_id: str,
+    drafts: DraftStore | None = None,
+    delete_drafts: bool = False,
+) -> dict[str, int]:
+    """Clear the seen-set for `task_id`, so the next run treats every fetched
+    item as new again. If `delete_drafts` is True, also delete every draft
+    file produced by this task — useful when the user wants a clean inbox.
+
+    Returns counts of what changed."""
+    if drafts is None:
+        drafts = DraftStore(vault.root / "drafts")
+
+    seen_path = _seen_set_path(vault, task_id)
+    seen_cleared = 0
+    if seen_path.exists():
+        try:
+            seen_cleared = len(json.loads(seen_path.read_text("utf-8")).get("seen", []))
+        except (OSError, json.JSONDecodeError):
+            seen_cleared = 0
+        seen_path.unlink()
+
+    drafts_deleted = 0
+    if delete_drafts:
+        for d in drafts.list():
+            if d.task_id == task_id:
+                drafts.delete(d.id)
+                drafts_deleted += 1
+    return {
+        "seen_cleared": seen_cleared,
+        "drafts_deleted": drafts_deleted,
+    }
+
+
 # ----------------------------------------------------- runner
 
 
@@ -83,6 +118,7 @@ def run_task(
     llm: LLMClient,
     drafts: DraftStore | None = None,
     default_output_language: str | None = None,
+    max_items: int | None = None,
 ) -> RunReport:
     """Execute one mining task. Pure-function-ish — all side effects go
     through `vault` (drafts dir + .knowlet/mining/seen state).
@@ -90,7 +126,11 @@ def run_task(
     `default_output_language` is the fallback when the task itself does not
     set `output_language` — typically the caller passes
     `cfg.general.language` so existing tasks auto-pick up the user's UI
-    language without editing each task file."""
+    language without editing each task file.
+
+    `max_items` caps the number of *new* items processed in this run.
+    Useful for quick verification (translate a few items first) without
+    spending tokens on the full backlog."""
     if drafts is None:
         drafts = DraftStore(vault.root / "drafts")
     effective_lang = task.output_language or default_output_language
@@ -115,6 +155,8 @@ def run_task(
 
     seen = _load_seen(vault, task.id)
     new_items = [it for it in items if it.item_id not in seen]
+    if max_items is not None and len(new_items) > max_items:
+        new_items = new_items[: int(max_items)]
     report.new_items = len(new_items)
 
     new_seen_ids: list[str] = []

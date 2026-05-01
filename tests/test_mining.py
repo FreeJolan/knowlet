@@ -388,6 +388,80 @@ def test_runner_passes_default_output_language(tmp_path: Path, monkeypatch):
     assert "Chinese" in captured[0] or "中文" in captured[0]
 
 
+def test_runner_max_items_caps_extractions(tmp_path: Path, monkeypatch):
+    v, _ = _ready_vault(tmp_path)
+    items = [
+        SourceItem(
+            source_url="https://feed",
+            item_id=f"x{i}",
+            title=f"t{i}",
+            url=f"https://x/{i}",
+            published=None,
+            content=f"content {i} " * 30,
+        )
+        for i in range(10)
+    ]
+    monkeypatch.setattr(
+        "knowlet.core.mining.runner.fetch_source",
+        _stub_fetch({"https://feed": items}),
+    )
+
+    calls: list[str] = []
+
+    class CountingLLM:
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            calls.append("once")
+            return AssistantMessage(
+                content='{"title": "T", "tags": [], "body": "b"}', tool_calls=[]
+            )
+
+    task = MiningTask(
+        name="t",
+        sources=[SourceSpec(type="rss", url="https://feed")],
+        prompt="p",
+    )
+    report = run_task(task, v, CountingLLM(), max_items=3)  # type: ignore[arg-type]
+    assert report.fetched == 10
+    assert report.new_items == 3
+    assert report.drafts_created == 3
+    assert len(calls) == 3
+
+
+def test_reset_task_state_clears_seen_only_by_default(tmp_path: Path):
+    from knowlet.core.mining.runner import _save_seen, reset_task_state
+
+    v, _ = _ready_vault(tmp_path)
+    DraftStore(v.drafts_dir).save(
+        Draft(title="A", body="x", task_id="task-1")
+    )
+    DraftStore(v.drafts_dir).save(
+        Draft(title="B", body="y", task_id="task-2")
+    )
+    _save_seen(v, "task-1", ["a", "b", "c"])
+
+    out = reset_task_state(v, "task-1")
+    assert out["seen_cleared"] == 3
+    assert out["drafts_deleted"] == 0
+    # task-1 drafts still on disk
+    assert any(d.task_id == "task-1" for d in DraftStore(v.drafts_dir).list())
+
+
+def test_reset_task_state_with_delete_drafts(tmp_path: Path):
+    from knowlet.core.mining.runner import _save_seen, reset_task_state
+
+    v, _ = _ready_vault(tmp_path)
+    DraftStore(v.drafts_dir).save(Draft(title="A", body="x", task_id="task-1"))
+    DraftStore(v.drafts_dir).save(Draft(title="B", body="y", task_id="task-2"))
+    _save_seen(v, "task-1", ["a"])
+
+    out = reset_task_state(v, "task-1", delete_drafts=True)
+    assert out["drafts_deleted"] == 1
+    remaining = DraftStore(v.drafts_dir).list()
+    assert all(d.task_id != "task-1" for d in remaining)
+    # task-2 drafts untouched
+    assert any(d.task_id == "task-2" for d in remaining)
+
+
 def test_runner_task_lang_overrides_default(tmp_path: Path, monkeypatch):
     """Task-level output_language wins over the run-time default."""
     v, _ = _ready_vault(tmp_path)

@@ -577,9 +577,48 @@ def mining_remove(
 @mining_app.command("run")
 def mining_run(
     task_id: Annotated[str, typer.Argument(help="Task id (or 8-char prefix).")],
+    limit: Annotated[
+        Optional[int],
+        typer.Option(
+            "--limit", "-n",
+            help="Cap the number of new items processed this run (useful for quick verification).",
+        ),
+    ] = None,
 ) -> None:
     """Run a single mining task now."""
-    _run_one_task(task_id)
+    _run_one_task(task_id, limit=limit)
+
+
+@mining_app.command("reset")
+def mining_reset(
+    task_id: Annotated[str, typer.Argument(help="Task id (or 8-char prefix).")],
+    delete_drafts: Annotated[
+        bool,
+        typer.Option(
+            "--delete-drafts",
+            help="Also delete every draft this task previously produced. Without this flag, "
+            "only the seen-set is cleared and existing drafts stay.",
+        ),
+    ] = False,
+) -> None:
+    """Clear the seen-set so the next run re-extracts everything. Useful when
+    you've changed `output_language` / `prompt` and want fresh drafts."""
+    from knowlet.core.drafts import DraftStore
+    from knowlet.core.mining.runner import reset_task_state
+    from knowlet.core.mining.tasks import TaskStore
+
+    vault = _resolve_vault_or_die()
+    store = TaskStore(vault.tasks_dir)
+    task = store.get(task_id)
+    if task is None:
+        err_console.print(f"[red]task not found:[/red] {task_id}")
+        raise typer.Exit(code=1)
+    drafts = DraftStore(vault.drafts_dir)
+    out = reset_task_state(vault, task.id, drafts=drafts, delete_drafts=delete_drafts)
+    console.print(
+        f"[green]reset[/green] {task.name} ({task.id[:8]}…)  "
+        f"seen_cleared={out['seen_cleared']}  drafts_deleted={out['drafts_deleted']}"
+    )
 
 
 @mining_app.command("run-all")
@@ -608,7 +647,7 @@ def mining_run_all() -> None:
         _render_run_report(report)
 
 
-def _run_one_task(task_id: str) -> None:
+def _run_one_task(task_id: str, limit: int | None = None) -> None:
     from knowlet.core.llm import LLMClient
     from knowlet.core.mining.runner import run_task
     from knowlet.core.mining.tasks import TaskStore
@@ -626,7 +665,9 @@ def _run_one_task(task_id: str) -> None:
     llm = LLMClient(cfg.llm)
     console.print(f"[bold]running[/bold] {task.name} ({task.id[:8]}…)")
     report = run_task(
-        task, vault, llm, default_output_language=cfg.general.language
+        task, vault, llm,
+        default_output_language=cfg.general.language,
+        max_items=limit,
     )
     _render_run_report(report)
 
