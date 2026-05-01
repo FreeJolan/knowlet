@@ -145,16 +145,22 @@ def test_schedule_next_invalid_rating_raises():
 
 def _ctx(tmp_path: Path):
     """Build a minimal ToolContext for tool dispatch tests."""
+    from knowlet.core.drafts import DraftStore
     from knowlet.core.embedding import DummyBackend
     from knowlet.core.index import Index
+    from knowlet.core.mining.tasks import TaskStore
     from knowlet.core.tools._registry import ToolContext
 
     v, cfg = _ready_vault(tmp_path)
     backend = DummyBackend(dim=32)
     idx = Index(v.db_path, backend)
     idx.connect()
-    store = CardStore(v.cards_dir)
-    return ToolContext(vault=v, index=idx, config=cfg, cards=store), idx
+    return ToolContext(
+        vault=v, index=idx, config=cfg,
+        cards=CardStore(v.cards_dir),
+        tasks=TaskStore(v.tasks_dir),
+        drafts=DraftStore(v.drafts_dir),
+    ), idx
 
 
 def test_tool_create_card_round_trip(tmp_path: Path):

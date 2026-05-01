@@ -12,10 +12,10 @@
 - ✅ **M2** — 极简 web UI:FastAPI + 静态单页(暗色主题、Markdown 渲染、最近 Note 侧栏、草稿审查模态、profile 编辑模态)。`knowlet web` 启动。所有 endpoint 是 backend 函数的薄壳(见 [ADR-0008](../decisions/0008-cli-parity-discipline.md))。
 - ✅ **M2 phase 2** — SSE 流式响应:`/api/chat/stream` 推送 `tool_call / tool_result / reply_chunk / turn_done / error` 事件流;CLI REPL 与 web UI 共享同一个 `ChatSession.user_turn_stream` generator。
 - ✅ **M3** — Card 实体(JSON,`<vault>/cards/<id>.json`)+ FSRS 调度(`fsrs` 库 6.x)+ 4 个原子工具(`create_card / list_due_cards / get_card / review_card`)+ CLI `knowlet cards new|due|review|show` + Slash `:cards [due|review|new]` + web 侧栏 due 计数 + 复习模态。
-- ⏳ M4 — 知识挖掘任务(进入场景 B)。
+- ✅ **M4** — 知识挖掘任务(进入场景 B):RSS / Atom + URL fetch 两类来源、APScheduler in-daemon 调度(`misfire_grace_time=300`)、`<vault>/tasks/*.md` 任务定义、`<vault>/drafts/*.md` 审查队列(approve → 移到 `notes/` 并入索引;reject → 删文件,seen-set 保留)、6 个原子工具(`list_mining_tasks / run_mining_task / list_drafts / get_draft / approve_draft / reject_draft`)+ CLI `knowlet mining add|list|edit|run|run-all|remove` + `knowlet drafts list|show|approve|reject` + Slash `:mining` `:drafts` + web drafts 审查模态 + ADR-0009。
 - ⏳ M5 — Tauri 桌面壳 + 移动 PWA。
 
-测试规模:86 个,主要打 backend 模块 + HTTP API,CLI/slash/web 三层共享同一组业务逻辑。
+测试规模:106 个,主要打 backend 模块 + HTTP API,CLI/slash/web 三层共享同一组业务逻辑。
 
 ## 范围速览
 

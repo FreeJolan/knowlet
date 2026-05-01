@@ -17,7 +17,9 @@ from typing import Any, Callable
 
 from knowlet.config import KnowletConfig
 from knowlet.core.cards import CardStore
+from knowlet.core.drafts import DraftStore
 from knowlet.core.index import Index
+from knowlet.core.mining.tasks import TaskStore
 from knowlet.core.vault import Vault
 
 
@@ -27,6 +29,8 @@ class ToolContext:
     index: Index
     config: KnowletConfig
     cards: CardStore
+    tasks: TaskStore
+    drafts: DraftStore
 
 
 @dataclass
@@ -80,13 +84,19 @@ class Registry:
 
 def _build_default_registry() -> Registry:
     from knowlet.core.tools import (
+        approve_draft,
         create_card,
         get_card,
+        get_draft,
         get_note,
         get_user_profile,
+        list_drafts,
         list_due_cards,
+        list_mining_tasks,
         list_recent_notes,
+        reject_draft,
         review_card,
+        run_mining_task,
         search_notes,
     )
 
@@ -99,6 +109,12 @@ def _build_default_registry() -> Registry:
     reg.register(get_card.TOOL)
     reg.register(list_due_cards.TOOL)
     reg.register(review_card.TOOL)
+    reg.register(list_mining_tasks.TOOL)
+    reg.register(run_mining_task.TOOL)
+    reg.register(list_drafts.TOOL)
+    reg.register(get_draft.TOOL)
+    reg.register(approve_draft.TOOL)
+    reg.register(reject_draft.TOOL)
     return reg
 
 

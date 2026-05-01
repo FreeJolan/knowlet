@@ -23,6 +23,9 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "fsrs>=6.0",
+    "feedparser>=6.0",
+    "trafilatura>=1.12",
+    "apscheduler>=3.10,<4",
 ]
 
 [project.optional-dependencies]

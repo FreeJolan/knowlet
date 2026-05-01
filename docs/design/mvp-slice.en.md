@@ -12,10 +12,10 @@
 - ✅ **M2** — Minimal web UI: FastAPI + static single page (dark theme, Markdown rendering, recent-notes sidebar, draft-review modal, profile editor modal). `knowlet web` starts the server. Every endpoint is a thin shell over backend functions (see [ADR-0008](../decisions/0008-cli-parity-discipline.en.md)).
 - ✅ **M2 phase 2** — SSE streaming: `/api/chat/stream` pushes a structured event stream (`tool_call / tool_result / reply_chunk / turn_done / error`); the CLI REPL and the web UI both consume the same `ChatSession.user_turn_stream` generator.
 - ✅ **M3** — Card entity (JSON at `<vault>/cards/<id>.json`) + FSRS scheduling (the `fsrs` library 6.x) + 4 atomic tools (`create_card / list_due_cards / get_card / review_card`) + CLI `knowlet cards new|due|review|show` + slash `:cards [due|review|new]` + web sidebar due count + review modal.
-- ⏳ M4 — Knowledge mining tasks (enters scenario B).
+- ✅ **M4** — Knowledge-mining tasks (Scenario B): RSS / Atom + URL fetch sources, APScheduler in-daemon (`misfire_grace_time=300`), `<vault>/tasks/*.md` task definitions, `<vault>/drafts/*.md` review queue (approve → moves to `notes/` and indexes; reject → deletes file, keeps seen-set), 6 atomic tools (`list_mining_tasks / run_mining_task / list_drafts / get_draft / approve_draft / reject_draft`) + CLI `knowlet mining add|list|edit|run|run-all|remove` + `knowlet drafts list|show|approve|reject` + slash `:mining` `:drafts` + web drafts review modal + ADR-0009.
 - ⏳ M5 — Tauri desktop shell + mobile PWA.
 
-Test footprint: 86 tests, primarily targeting backend modules + the HTTP API. CLI / slash / web all share the same business logic.
+Test footprint: 106 tests, primarily targeting backend modules + the HTTP API. CLI / slash / web all share the same business logic.
 
 ## Scope at a Glance
 
