@@ -10,11 +10,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 from openai import OpenAI
 
 from knowlet.config import LLMConfig
+from knowlet.core.events import (
+    ReplyChunkEvent,
+    ReplyDoneEvent,
+    ToolCallEvent,
+)
 
 
 @dataclass
@@ -77,6 +82,73 @@ class LLMClient:
             tool_calls=tool_calls,
             raw=resp,
         )
+
+    def chat_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> Iterator[ReplyChunkEvent | ToolCallEvent | ReplyDoneEvent]:
+        """Streaming variant of `chat`.
+
+        Yields events in this order:
+
+        1. Zero or more `ReplyChunkEvent` as content tokens arrive.
+        2. After the stream is exhausted, zero or more `ToolCallEvent` —
+           emitted only when the tool calls are fully assembled (we do not
+           expose partial / mid-assembly tool calls).
+        3. Exactly one `ReplyDoneEvent` with the final accumulated text.
+
+        The caller (typically `ChatSession.user_turn_stream`) drives the
+        tool-loop on top of this primitive.
+        """
+        client = self._ensure()
+        kwargs: dict[str, Any] = {
+            "model": self.cfg.model,
+            "messages": messages,
+            "max_tokens": max_tokens or self.cfg.max_tokens,
+            "temperature": self.cfg.temperature if temperature is None else temperature,
+            "stream": True,
+        }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+
+        content_buf: list[str] = []
+        tc_buf: dict[int, dict[str, Any]] = {}
+
+        for chunk in client.chat.completions.create(**kwargs):
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta is None:
+                continue
+            if getattr(delta, "content", None):
+                text = delta.content
+                content_buf.append(text)
+                yield ReplyChunkEvent(text=text)
+            for tc_delta in getattr(delta, "tool_calls", None) or []:
+                idx = tc_delta.index
+                slot = tc_buf.setdefault(idx, {"id": "", "name": "", "args": ""})
+                if tc_delta.id:
+                    slot["id"] = tc_delta.id
+                fn = getattr(tc_delta, "function", None)
+                if fn is not None:
+                    if fn.name:
+                        slot["name"] = fn.name
+                    if fn.arguments:
+                        slot["args"] += fn.arguments
+
+        for idx in sorted(tc_buf):
+            slot = tc_buf[idx]
+            try:
+                args = json.loads(slot["args"]) if slot["args"] else {}
+            except json.JSONDecodeError:
+                args = {"_raw": slot["args"]}
+            yield ToolCallEvent(id=slot["id"], name=slot["name"], arguments=args)
+
+        yield ReplyDoneEvent(final_text="".join(content_buf))
 
 
 def messages_with_assistant(

@@ -619,17 +619,6 @@ def _run_chat(*, save_after: bool) -> None:
         )
     )
 
-    def on_tool_call(tc, payload) -> None:
-        args_preview = json.dumps(tc.arguments, ensure_ascii=False)[:120]
-        if "error" in payload:
-            console.print(
-                f"[dim]· {tc.name}({args_preview}) → error: {payload['error']}[/dim]"
-            )
-        else:
-            count = payload.get("count")
-            tail = f" ({count} hits)" if count is not None else ""
-            console.print(f"[dim]· {tc.name}({args_preview}){tail}[/dim]")
-
     try:
         while True:
             try:
@@ -649,14 +638,10 @@ def _run_chat(*, save_after: bool) -> None:
                     continue
 
             try:
-                reply, _trace = runtime.session.user_turn(
-                    user_text, on_tool_call=on_tool_call
-                )
+                _stream_turn_to_console(runtime, user_text)
             except Exception as exc:  # noqa: BLE001
                 err_console.print(f"[red]LLM error:[/red] {exc}")
                 continue
-
-            console.print(Panel(Markdown(reply or "_(empty reply)_"), title="knowlet"))
     finally:
         if save_after:
             _do_sediment(runtime, quiet_skip=True)
@@ -778,6 +763,64 @@ def _handle_slash(text: str, runtime) -> tuple[bool, bool]:
 
     console.print(f"[yellow]unknown slash command: :{name}  (try :help)[/yellow]")
     return True, False
+
+
+def _stream_turn_to_console(runtime, user_text: str) -> None:
+    """Run a streaming user turn, rendering chunks + tool traces incrementally.
+
+    Per ADR-0008, this consumes `runtime.session.user_turn_stream` — the same
+    event generator the web SSE endpoint reads. No business logic here, only
+    rendering.
+    """
+    from knowlet.core.events import (
+        ErrorEvent,
+        ReplyChunkEvent,
+        ToolCallEvent,
+        ToolResultEvent,
+        TurnDoneEvent,
+    )
+
+    started_assistant = False
+    final_text = ""
+
+    def maybe_open_assistant() -> None:
+        nonlocal started_assistant
+        if not started_assistant:
+            console.print("[bold]knowlet:[/bold] ", end="")
+            started_assistant = True
+
+    for ev in runtime.session.user_turn_stream(user_text):
+        if isinstance(ev, ReplyChunkEvent):
+            maybe_open_assistant()
+            console.print(ev.text, end="", soft_wrap=True, markup=False)
+            final_text += ev.text
+        elif isinstance(ev, ToolCallEvent):
+            if started_assistant:
+                console.print()
+                started_assistant = False
+            args_preview = json.dumps(ev.arguments, ensure_ascii=False)[:120]
+            console.print(f"[dim]· {ev.name}({args_preview})[/dim]")
+        elif isinstance(ev, ToolResultEvent):
+            if isinstance(ev.payload, dict) and "error" in ev.payload:
+                console.print(
+                    f"[dim]  → {ev.name} error: {ev.payload['error']}[/dim]"
+                )
+            else:
+                count = (
+                    ev.payload.get("count") if isinstance(ev.payload, dict) else None
+                )
+                tail = f" ({count} hits)" if count is not None else ""
+                console.print(f"[dim]  → {ev.name}{tail}[/dim]")
+        elif isinstance(ev, TurnDoneEvent):
+            if started_assistant:
+                console.print()
+                started_assistant = False
+            final_text = ev.final_text or final_text
+        elif isinstance(ev, ErrorEvent):
+            if started_assistant:
+                console.print()
+                started_assistant = False
+            err_console.print(f"[red]error: {ev.message}[/red]")
 
 
 def _print_help() -> None:

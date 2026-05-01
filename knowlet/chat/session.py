@@ -7,9 +7,18 @@ in cli/main.py is a thin wrapper)."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from knowlet.chat.prompts import CHAT_SYSTEM_PROMPT
+from knowlet.core.events import (
+    ChatEvent,
+    ErrorEvent,
+    ReplyChunkEvent,
+    ReplyDoneEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+    TurnDoneEvent,
+)
 from knowlet.core.llm import (
     AssistantMessage,
     LLMClient,
@@ -71,3 +80,52 @@ class ChatSession:
 
         trace.final = AssistantMessage(content="(tool loop iteration limit reached)")
         return trace.final.content, trace
+
+    def user_turn_stream(self, user_text: str) -> Iterator[ChatEvent]:
+        """Streaming variant of `user_turn`. Yields structured events that
+        any UI (CLI REPL, web SSE, future desktop shell) can consume.
+
+        Per ADR-0008, this generator is the **single** source of streaming
+        chat behavior. Tests assert event sequences directly; UIs only render
+        events, never reimplement the tool loop.
+        """
+        self.history.append({"role": "user", "content": user_text})
+        tools = self.registry.openai_schema()
+
+        for _ in range(self.max_tool_iters):
+            content_buf: list[str] = []
+            tool_calls: list[ToolCall] = []
+            try:
+                stream = self.llm.chat_stream(self.history, tools=tools)
+            except Exception as exc:  # noqa: BLE001
+                yield ErrorEvent(message=f"LLM stream error: {exc}")
+                return
+
+            for ev in stream:
+                if isinstance(ev, ReplyChunkEvent):
+                    content_buf.append(ev.text)
+                    yield ev
+                elif isinstance(ev, ToolCallEvent):
+                    tool_calls.append(
+                        ToolCall(id=ev.id, name=ev.name, arguments=ev.arguments)
+                    )
+                    yield ev
+                elif isinstance(ev, ReplyDoneEvent):
+                    final_text = "".join(content_buf)
+                    assistant_msg = AssistantMessage(
+                        content=final_text, tool_calls=tool_calls
+                    )
+                    self.history = messages_with_assistant(self.history, assistant_msg)
+
+                    if not tool_calls:
+                        yield TurnDoneEvent(final_text=final_text)
+                        return
+
+                    results: list[tuple[str, dict[str, Any]]] = []
+                    for tc in tool_calls:
+                        payload = self.registry.dispatch(tc.name, tc.arguments, self.ctx)
+                        yield ToolResultEvent(id=tc.id, name=tc.name, payload=payload)
+                        results.append((tc.id, payload))
+                    self.history = messages_with_tool_results(self.history, results)
+
+        yield ErrorEvent(message="tool loop iteration limit reached")
