@@ -100,12 +100,12 @@
 
   <!-- placeholder Cmd+K palette button (M6.2 will wire it) -->
   <button
-    @click="toast('命令面板下个版本(M6.2)实装,稍等', 'ok')"
+    @click="toast(tt('header.palette.toast'), 'ok')"
     class="flex items-center gap-2 px-2.5 py-1 text-xs text-textsoft border border-border rounded hover:border-accent hover:text-text"
-    title="Cmd+K (M6.2)"
+    data-i18n-title="header.palette.title"
   >
     <svg class="icon icon-sm"><use href="#i-search"/></svg>
-    <span data-i18n="header.palette">搜索 / 命令 / 问 AI</span>
+    <span data-i18n="header.palette.label">搜索 / 命令 / 问 AI</span>
     <span class="mono text-textsoft border border-border rounded px-1 py-0.5 text-[10px]">⌘K</span>
   </button>
 
@@ -114,7 +114,7 @@
     @click="openSediment()"
     :disabled="!chatHistory.length"
     class="text-textsoft hover:text-text p-1.5 rounded hover:bg-surface2 disabled:opacity-30 disabled:hover:bg-transparent"
-    title="把这段对话存成笔记"
+    data-i18n-title="header.save.title"
   >
     <svg class="icon"><use href="#i-save"/></svg>
   </button>
@@ -123,7 +123,7 @@
   <button
     @click="openProfile()"
     class="text-textsoft hover:text-text p-1.5 rounded hover:bg-surface2"
-    title="个人资料 · 设置"
+    data-i18n-title="header.settings.title"
   >
     <svg class="icon"><use href="#i-cog"/></svg>
   </button>
@@ -140,13 +140,14 @@
         <input
           type="text"
           x-model="treeFilter"
+          data-i18n-placeholder="sidebar.search.placeholder"
           placeholder="搜索笔记…"
           class="w-full bg-bg border border-border rounded pl-7 pr-2 py-1 text-xs focus:outline-none focus:border-accent"
         />
       </div>
       <button
         @click="newNote()"
-        title="新建笔记"
+        data-i18n-title="sidebar.new.title"
         class="p-1.5 text-textsoft hover:text-accent border border-border hover:border-accent rounded"
       >
         <svg class="icon icon-sm"><use href="#i-plus"/></svg>
@@ -169,10 +170,15 @@
       <li
         x-show="!notes.length && !notesLoading"
         class="px-3 py-4 text-textsoft text-xs"
+        data-i18n="sidebar.empty"
       >
-        还没有笔记。点 <span class="mono">+</span> 新建第一条。
+        还没有笔记。点 + 新建第一条。
       </li>
-      <li x-show="notesLoading" class="px-3 py-4 text-textsoft text-xs">
+      <li
+        x-show="notesLoading"
+        class="px-3 py-4 text-textsoft text-xs"
+        data-i18n="sidebar.loading"
+      >
         加载中…
       </li>
     </ul>
@@ -189,10 +195,11 @@
           class="px-3 py-1.5 text-xs cursor-pointer flex items-center gap-2 -mb-px rounded-t flex-shrink-0"
         >
           <span x-text="tab.title"></span>
-          <span x-show="tab.dirty" class="w-1.5 h-1.5 rounded-full bg-warn" title="未保存"></span>
+          <span x-show="tab.dirty" class="w-1.5 h-1.5 rounded-full bg-warn" data-i18n-title="tab.dirty"></span>
           <button
             @click.stop="closeTab(tab.id)"
             class="text-textsoft hover:text-danger p-0.5 rounded"
+            data-i18n-title="tab.close"
           >
             <svg class="icon icon-sm"><use href="#i-x"/></svg>
           </button>
@@ -207,9 +214,9 @@
     >
       <span class="mono truncate" x-text="currentTab()?.path?.split('/')?.pop() || ''"></span>
       <span class="flex-1"></span>
-      <span x-text="currentTab() ? `${(currentTab().body || '').length} 字` : ''"></span>
+      <span x-text="currentTab() ? ttf('editor.chars', { n: (currentTab().body || '').length }) : ''"></span>
       <span class="mono" x-text="currentTab() ? `· ${currentTab().updated_at || ''}` : ''"></span>
-      <span x-show="currentTab()?.saving" class="text-textsoft">保存中…</span>
+      <span x-show="currentTab()?.saving" class="text-textsoft" data-i18n="editor.saving">保存中…</span>
     </div>
 
     <!-- editor body -->
@@ -223,6 +230,7 @@
         @input="markDirty()"
         @blur="saveCurrent()"
         class="bg-bg text-text px-6 py-5 font-mono text-sm leading-relaxed border-r border-border focus:outline-none resize-none"
+        data-i18n-placeholder="editor.placeholder"
         placeholder="开始写… 支持 Markdown。"
       ></textarea>
       <div
@@ -234,7 +242,9 @@
         x-show="!currentTab()"
         class="flex items-center justify-center text-textsoft text-sm col-span-2"
       >
-        左栏选一条笔记,或点 <svg class="icon icon-sm inline-block mx-1 align-middle"><use href="#i-plus"/></svg> 新建
+        <span data-i18n="editor.empty.before">左栏选一条笔记,或点</span>
+        <svg class="icon icon-sm inline-block mx-1 align-middle"><use href="#i-plus"/></svg>
+        <span data-i18n="editor.empty.after">新建</span>
       </div>
     </div>
 
@@ -244,9 +254,9 @@
       class="border-t border-border bg-surface px-3 py-1 flex items-center gap-1 text-xs"
     >
       <template x-for="m in [
-        { id: 'edit', label: '编辑', icon: 'i-edit' },
-        { id: 'split', label: '双栏', icon: 'i-columns' },
-        { id: 'preview', label: '预览', icon: 'i-eye' },
+        { id: 'edit', i18n: 'editor.mode.edit', icon: 'i-edit' },
+        { id: 'split', i18n: 'editor.mode.split', icon: 'i-columns' },
+        { id: 'preview', i18n: 'editor.mode.preview', icon: 'i-eye' },
       ]" :key="m.id">
         <button
           @click="editorMode = m.id"
@@ -254,7 +264,7 @@
           class="flex items-center gap-1.5 px-2 py-1 rounded"
         >
           <svg class="icon icon-sm"><use :href="`#${m.icon}`"/></svg>
-          <span x-text="m.label"></span>
+          <span x-text="tt(m.i18n)"></span>
         </button>
       </template>
     </div>
@@ -268,13 +278,13 @@
   >
     <!-- collapsed -->
     <div x-show="!rightOpen" class="flex-1 flex flex-col items-center py-3 gap-1">
-      <button @click="rightOpen = true; rightTab = 'outline'" class="text-textsoft hover:text-accent p-2 rounded hover:bg-surface2" title="大纲">
+      <button @click="rightOpen = true; rightTab = 'outline'" class="text-textsoft hover:text-accent p-2 rounded hover:bg-surface2" data-i18n-title="rail.tab.outline">
         <svg class="icon"><use href="#i-list"/></svg>
       </button>
-      <button @click="rightOpen = true; rightTab = 'backlinks'" class="text-textsoft hover:text-accent p-2 rounded hover:bg-surface2" title="反链">
+      <button @click="rightOpen = true; rightTab = 'backlinks'" class="text-textsoft hover:text-accent p-2 rounded hover:bg-surface2" data-i18n-title="rail.tab.backlinks">
         <svg class="icon"><use href="#i-link"/></svg>
       </button>
-      <button @click="rightOpen = true; rightTab = 'ai'" class="text-textsoft hover:text-accent p-2 rounded hover:bg-surface2" title="AI">
+      <button @click="rightOpen = true; rightTab = 'ai'" class="text-textsoft hover:text-accent p-2 rounded hover:bg-surface2" data-i18n-title="rail.tab.ai">
         <svg class="icon"><use href="#i-sparkles"/></svg>
       </button>
     </div>
@@ -284,9 +294,9 @@
       <div class="flex items-center justify-between px-2 py-1.5 border-b border-border">
         <div class="flex items-center gap-0.5 text-xs">
           <template x-for="tab in [
-            { id: 'outline', label: '大纲', icon: 'i-list' },
-            { id: 'backlinks', label: '反链', icon: 'i-link' },
-            { id: 'ai', label: 'AI', icon: 'i-sparkles' },
+            { id: 'outline', i18n: 'rail.tab.outline', icon: 'i-list' },
+            { id: 'backlinks', i18n: 'rail.tab.backlinks', icon: 'i-link' },
+            { id: 'ai', i18n: 'rail.tab.ai', icon: 'i-sparkles' },
           ]" :key="tab.id">
             <button
               @click="rightTab = tab.id"
@@ -294,18 +304,18 @@
               class="flex items-center gap-1 px-2 py-1 rounded"
             >
               <svg class="icon icon-sm"><use :href="`#${tab.icon}`"/></svg>
-              <span x-text="tab.label"></span>
+              <span x-text="tt(tab.i18n)"></span>
             </button>
           </template>
         </div>
-        <button @click="rightOpen = false" class="text-textsoft hover:text-text p-1 rounded hover:bg-surface2" title="折叠">
+        <button @click="rightOpen = false" class="text-textsoft hover:text-text p-1 rounded hover:bg-surface2" data-i18n-title="rail.collapse.title">
           <svg class="icon icon-sm"><use href="#i-chevron-r"/></svg>
         </button>
       </div>
 
       <!-- Outline (parsed from current note's headings) -->
       <div x-show="rightTab === 'outline'" class="flex-1 overflow-y-auto p-4 text-sm">
-        <p x-show="!outline().length" class="text-textsoft text-xs">这条笔记还没有章节标题(<span class="mono">#</span> / <span class="mono">##</span> / <span class="mono">###</span>)</p>
+        <p x-show="!outline().length" class="text-textsoft text-xs" data-i18n="rail.outline.empty">这条笔记还没有章节标题。</p>
         <ul x-show="outline().length" class="space-y-1.5">
           <template x-for="(h, i) in outline()" :key="i">
             <li
@@ -319,27 +329,26 @@
 
       <!-- Backlinks (M6.2 will compute real ones) -->
       <div x-show="rightTab === 'backlinks'" class="flex-1 overflow-y-auto p-4 text-sm">
-        <p class="text-textsoft text-xs leading-relaxed">
-          这一栏会显示「引用了当前笔记的其它笔记」,带句子级预览。
-          <br><br>
-          下一阶段(M6.2)实装,目前是占位。
+        <p class="text-textsoft text-xs leading-relaxed" data-i18n="rail.backlinks.placeholder">
+          这一栏会显示「引用了当前笔记的其它笔记」,带句子级预览。下一阶段(M6.2)实装。
         </p>
       </div>
 
       <!-- AI dock — chat scoped to current note -->
       <div x-show="rightTab === 'ai'" class="flex-1 flex flex-col">
         <div class="px-3 py-2 text-xs text-textsoft border-b border-border flex items-center gap-2">
-          <span>参考范围</span>
+          <span data-i18n="rail.ai.scope.label">参考范围</span>
           <select x-model="chatScope" class="bg-bg border border-border rounded px-1.5 py-1 text-xs">
-            <option value="note">当前笔记</option>
-            <option value="vault">所有笔记</option>
-            <option value="none">不参考</option>
+            <option value="note" data-i18n="rail.ai.scope.note">当前笔记</option>
+            <option value="vault" data-i18n="rail.ai.scope.vault">所有笔记</option>
+            <option value="none" data-i18n="rail.ai.scope.none">不参考</option>
           </select>
           <span class="flex-1"></span>
           <button
             @click="clearChat()"
             class="text-textsoft hover:text-text px-1.5 py-0.5 rounded hover:bg-surface2 text-[11px]"
-            title="清空对话"
+            data-i18n-title="rail.ai.clear.title"
+            data-i18n="rail.ai.clear.label"
           >清空</button>
         </div>
 
@@ -358,7 +367,7 @@
             </div>
           </template>
           <div x-show="!chatHistory.length" class="text-textsoft text-xs">
-            <p>问点关于「<span class="text-text" x-text="currentTab()?.title || '(先选一条笔记)'"></span>」的内容。</p>
+            <p x-html="ttf('rail.ai.empty', { title: currentTab()?.title || tt('rail.ai.empty.notitle') })"></p>
           </div>
         </div>
 
@@ -369,6 +378,7 @@
             @keydown="handleChatKey($event)"
             class="w-full bg-bg border border-border rounded p-2 text-sm resize-none focus:outline-none focus:border-accent"
             rows="2"
+            data-i18n-placeholder="rail.ai.placeholder"
             placeholder="问点什么 — Enter 发送, Shift+Enter 换行"
             :disabled="chatStreaming"
           ></textarea>
@@ -383,32 +393,32 @@
   <button
     @click="openDraftsReview()"
     class="flex items-center gap-1.5 px-2.5 py-1 rounded hover:bg-surface2 text-text"
-    title="审查 AI 整理来的新内容"
+    data-i18n-title="footer.inbox.title"
   >
     <svg class="icon icon-sm text-textsoft"><use href="#i-inbox"/></svg>
-    <span class="text-textsoft">收件箱</span>
+    <span class="text-textsoft" data-i18n="footer.inbox.label">收件箱</span>
     <span :class="draftsCountClass()" class="px-1.5 rounded mono text-[11px]" x-text="draftsLabel()"></span>
   </button>
   <button
     @click="openCardsReview()"
     class="flex items-center gap-1.5 px-2.5 py-1 rounded hover:bg-surface2 text-text"
-    title="复习到期的记忆卡片"
+    data-i18n-title="footer.review.title"
   >
     <svg class="icon icon-sm text-textsoft"><use href="#i-cards"/></svg>
-    <span class="text-textsoft">复习</span>
+    <span class="text-textsoft" data-i18n="footer.review.label">复习</span>
     <span class="text-ok mono px-1.5 text-[11px]" x-text="cardsCount"></span>
   </button>
   <div class="flex items-center gap-1.5 px-2.5 py-1 text-textsoft">
     <svg class="icon icon-sm"><use href="#i-mining"/></svg>
-    <span>订阅源</span>
+    <span data-i18n="footer.feed.label">订阅</span>
     <button
       @click="runMiningNow()"
       :disabled="miningRunning"
       class="text-accent hover:text-text disabled:opacity-50"
-      x-text="miningTaskName || '(无)'"
-      title="点击立刻抓取最新内容"
+      x-text="miningTaskName || tt('footer.feed.empty')"
+      data-i18n-title="footer.feed.title"
     ></button>
-    <span x-show="miningRunning">抓取中…</span>
+    <span x-show="miningRunning" data-i18n="footer.feed.running">抓取中…</span>
   </div>
   <div class="flex-1"></div>
   <span class="text-textsoft mono">v0.0.1</span>
@@ -419,25 +429,25 @@
 <!-- Save chat as a Note -->
 <div x-show="modal === 'sediment'" @click.self="modal = null" class="modal" x-cloak>
   <div class="modal-card">
-    <h3>把这段对话存成笔记</h3>
-    <div x-show="sedimentDrafting" class="text-textsoft text-sm py-8 text-center">AI 整理中…(Opus 大约 25 秒)</div>
+    <h3 data-i18n="sediment.web.title">把这段对话存成笔记</h3>
+    <div x-show="sedimentDrafting" class="text-textsoft text-sm py-8 text-center" data-i18n="sediment.web.drafting">AI 整理中…(Opus 大约 25 秒)</div>
     <template x-if="!sedimentDrafting">
       <div class="space-y-2">
         <label class="block">
-          <span class="text-xs text-textsoft">标题</span>
+          <span class="text-xs text-textsoft" data-i18n="sediment.web.field.title">标题</span>
           <input type="text" x-model="sediment.title" class="w-full bg-bg border border-border rounded px-2.5 py-1.5 mt-1 text-sm focus:outline-none focus:border-accent"/>
         </label>
         <label class="block">
-          <span class="text-xs text-textsoft">标签(逗号分隔)</span>
+          <span class="text-xs text-textsoft" data-i18n="sediment.web.field.tags">标签(逗号分隔)</span>
           <input type="text" x-model="sediment.tagsStr" class="w-full bg-bg border border-border rounded px-2.5 py-1.5 mt-1 text-sm focus:outline-none focus:border-accent"/>
         </label>
         <label class="block">
-          <span class="text-xs text-textsoft">正文</span>
+          <span class="text-xs text-textsoft" data-i18n="sediment.web.field.body">正文</span>
           <textarea x-model="sediment.body" rows="14" class="w-full bg-bg border border-border rounded px-2.5 py-2 mt-1 text-sm font-mono focus:outline-none focus:border-accent"></textarea>
         </label>
         <div class="flex justify-end gap-2 pt-2">
-          <button @click="modal = null" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text">取消</button>
-          <button @click="commitSediment()" class="px-4 py-1.5 rounded bg-accent text-bg font-medium">保存</button>
+          <button @click="modal = null" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text" data-i18n="sediment.web.cancel">取消</button>
+          <button @click="commitSediment()" class="px-4 py-1.5 rounded bg-accent text-bg font-medium" data-i18n="sediment.web.commit">保存</button>
         </div>
       </div>
     </template>
@@ -447,19 +457,19 @@
 <!-- Profile editor -->
 <div x-show="modal === 'profile'" @click.self="modal = null" class="modal" x-cloak>
   <div class="modal-card">
-    <h3>个人资料</h3>
-    <p class="text-xs text-textsoft">每次 AI 跟你对话时都会读这份资料,知道你是谁、偏好什么。随时改。</p>
+    <h3 data-i18n="profile.web.title">个人资料</h3>
+    <p class="text-xs text-textsoft" data-i18n="profile.web.intro">每次跟 AI 对话时,AI 会先读这份资料,知道你是谁。</p>
     <label class="block">
-      <span class="text-xs text-textsoft">姓名(可选)</span>
+      <span class="text-xs text-textsoft" data-i18n="profile.web.field.name">姓名(可选)</span>
       <input type="text" x-model="profile.name" class="w-full bg-bg border border-border rounded px-2.5 py-1.5 mt-1 text-sm focus:outline-none focus:border-accent"/>
     </label>
     <label class="block">
-      <span class="text-xs text-textsoft">正文(Markdown)</span>
+      <span class="text-xs text-textsoft" data-i18n="profile.web.field.body">正文(Markdown)</span>
       <textarea x-model="profile.body" rows="20" class="w-full bg-bg border border-border rounded px-2.5 py-2 mt-1 text-sm font-mono focus:outline-none focus:border-accent"></textarea>
     </label>
     <div class="flex justify-end gap-2 pt-2">
-      <button @click="modal = null" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text">取消</button>
-      <button @click="saveProfile()" class="px-4 py-1.5 rounded bg-accent text-bg font-medium">保存</button>
+      <button @click="modal = null" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text" data-i18n="profile.web.cancel">取消</button>
+      <button @click="saveProfile()" class="px-4 py-1.5 rounded bg-accent text-bg font-medium" data-i18n="profile.web.save">保存</button>
     </div>
   </div>
 </div>
@@ -467,22 +477,26 @@
 <!-- Inbox review (M6.3 will move this to focus mode) -->
 <div x-show="modal === 'drafts'" @click.self="modal = null" class="modal" x-cloak>
   <div class="modal-card">
-    <h3 x-text="`审收件箱 ${draftsState.queue.length ? `${draftsState.current + 1} / ${draftsState.queue.length}` : ''}`"></h3>
-    <div x-show="!draftsState.queue.length" class="text-textsoft text-sm py-8 text-center">收件箱为空。</div>
+    <h3>
+      <span data-i18n="inbox.title">收件箱</span>
+      <span class="text-textsoft text-xs ml-2 mono" x-text="draftsState.queue.length ? `${draftsState.current + 1} / ${draftsState.queue.length}` : ''"></span>
+    </h3>
+    <div x-show="!draftsState.queue.length" class="text-textsoft text-sm py-8 text-center" data-i18n="inbox.empty">收件箱是空的。</div>
     <template x-if="draftsState.queue.length && draftsState.full">
       <div>
         <p class="text-xs text-textsoft">
-          来源: <a class="text-accent border-b border-transparent hover:border-accent" target="_blank" :href="draftsState.full.source" x-text="draftsState.full.source || '—'"></a>
-          <span x-show="draftsState.full.tags?.length"> · 标签: <span x-text="draftsState.full.tags.join(', ')"></span></span>
+          <span data-i18n="inbox.source">来源</span>:
+          <a class="text-accent border-b border-transparent hover:border-accent" target="_blank" :href="draftsState.full.source" x-text="draftsState.full.source || '—'"></a>
+          <span x-show="draftsState.full.tags?.length"> · <span data-i18n="inbox.tags">标签</span>: <span x-text="draftsState.full.tags.join(', ')"></span></span>
         </p>
         <h4 class="text-lg font-semibold mt-2 mb-3" x-text="draftsState.full.title"></h4>
         <div class="prose-note text-sm max-h-[50vh] overflow-y-auto" x-html="renderMarkdown(draftsState.full.body || '')"></div>
         <div class="flex items-center gap-2 pt-3 mt-3 border-t border-border">
-          <button @click="actDraft('reject')" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text">不要</button>
-          <button @click="actDraft('skip')" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text">稍后再看</button>
-          <button @click="actDraft('approve')" class="px-5 py-1.5 rounded bg-accent text-bg font-medium">收入笔记</button>
+          <button @click="actDraft('reject')" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text" data-i18n="inbox.action.discard">不要</button>
+          <button @click="actDraft('skip')" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text" data-i18n="inbox.action.later">稍后再看</button>
+          <button @click="actDraft('approve')" class="px-5 py-1.5 rounded bg-accent text-bg font-medium" data-i18n="inbox.action.keep">收入笔记</button>
           <span class="flex-1"></span>
-          <button @click="modal = null" class="text-textsoft hover:text-text text-xs">关闭</button>
+          <button @click="modal = null" class="text-textsoft hover:text-text text-xs" data-i18n="modal.close">关闭</button>
         </div>
       </div>
     </template>
@@ -492,30 +506,33 @@
 <!-- Cards review (M6.3 will move this to focus mode) -->
 <div x-show="modal === 'cards'" @click.self="modal = null" class="modal" x-cloak>
   <div class="modal-card">
-    <h3 x-text="`复习 ${cardsState.queue.length ? `${cardsState.current + 1} / ${cardsState.queue.length}` : ''}`"></h3>
-    <div x-show="!cardsState.queue.length" class="text-textsoft text-sm py-8 text-center">没有到期的卡片。</div>
+    <h3>
+      <span data-i18n="review.title">复习</span>
+      <span class="text-textsoft text-xs ml-2 mono" x-text="cardsState.queue.length ? `${cardsState.current + 1} / ${cardsState.queue.length}` : ''"></span>
+    </h3>
+    <div x-show="!cardsState.queue.length" class="text-textsoft text-sm py-8 text-center" data-i18n="review.empty">没有到期的卡片。</div>
     <template x-if="cardsState.queue.length">
       <div>
-        <div class="text-textsoft text-xs mb-2">题面</div>
+        <div class="text-textsoft text-xs mb-2" data-i18n="review.front">题面</div>
         <div class="prose-note text-base mb-6" x-html="renderMarkdown(cardsState.queue[cardsState.current]?.front || '')"></div>
         <div x-show="cardsState.revealed">
-          <div class="text-textsoft text-xs mb-2">答案</div>
+          <div class="text-textsoft text-xs mb-2" data-i18n="review.back">答案</div>
           <div class="prose-note text-base mb-6" x-html="renderMarkdown(cardsState.queue[cardsState.current]?.back || '')"></div>
         </div>
         <div class="flex items-center gap-2 pt-3 border-t border-border">
           <template x-if="!cardsState.revealed">
-            <button @click="cardsState.revealed = true" class="px-5 py-1.5 rounded bg-accent text-bg font-medium">⏎ 看答案</button>
+            <button @click="cardsState.revealed = true" class="px-5 py-1.5 rounded bg-accent text-bg font-medium" data-i18n="review.reveal">⏎ 看答案</button>
           </template>
           <template x-if="cardsState.revealed">
             <div class="flex gap-2">
-              <button @click="rateCard(1)" class="px-3 py-1.5 rounded border border-border text-text" title="完全没记住,重新开始">不记得</button>
-              <button @click="rateCard(2)" class="px-3 py-1.5 rounded border border-border text-text" title="想了挺久才记起">勉强想起</button>
-              <button @click="rateCard(3)" class="px-3 py-1.5 rounded border border-accent text-accent" title="顺利记起">记起来了</button>
-              <button @click="rateCard(4)" class="px-3 py-1.5 rounded border border-border text-text" title="下次都不必复习">太简单</button>
+              <button @click="rateCard(1)" class="px-3 py-1.5 rounded border border-border text-text" data-i18n-title="review.rate.again.title" data-i18n="review.rate.again">不记得</button>
+              <button @click="rateCard(2)" class="px-3 py-1.5 rounded border border-border text-text" data-i18n-title="review.rate.hard.title" data-i18n="review.rate.hard">勉强想起</button>
+              <button @click="rateCard(3)" class="px-3 py-1.5 rounded border border-accent text-accent" data-i18n-title="review.rate.good.title" data-i18n="review.rate.good">记起来了</button>
+              <button @click="rateCard(4)" class="px-3 py-1.5 rounded border border-border text-text" data-i18n-title="review.rate.easy.title" data-i18n="review.rate.easy">太简单</button>
             </div>
           </template>
           <span class="flex-1"></span>
-          <button @click="modal = null" class="text-textsoft hover:text-text text-xs">关闭</button>
+          <button @click="modal = null" class="text-textsoft hover:text-text text-xs" data-i18n="modal.close">关闭</button>
         </div>
       </div>
     </template>
