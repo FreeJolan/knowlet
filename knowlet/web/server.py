@@ -35,7 +35,9 @@ from knowlet.chat.sediment import (
     draft_from_conversation,
 )
 from knowlet.config import KnowletConfig, find_vault, load_config
+from knowlet.core.card import Card, parse_due
 from knowlet.core.events import ErrorEvent, event_to_dict
+from knowlet.core.fsrs_wrap import initial_state, schedule_next
 from knowlet.core.index import IndexDimensionMismatchError
 from knowlet.core.user_profile import (
     UserProfile,
@@ -96,6 +98,35 @@ class NoteFull(NoteSummary):
 class ProfilePayload(BaseModel):
     body: str
     name: str | None = None
+
+
+class CardCreate(BaseModel):
+    front: str
+    back: str
+    tags: list[str] = Field(default_factory=list)
+    type: str = "basic"
+    source_note_id: str | None = None
+
+
+class CardReview(BaseModel):
+    rating: int = Field(..., ge=1, le=4)
+
+
+class CardSummary(BaseModel):
+    id: str
+    type: str
+    front: str
+    back: str
+    tags: list[str]
+    due: str
+    state: int | None = None
+
+
+class CardFull(CardSummary):
+    source_note_id: str | None = None
+    created_at: str
+    updated_at: str
+    fsrs_state: dict[str, Any]
 
 
 # ----------------------------------------------------------------- runtime singleton
@@ -318,6 +349,88 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             updated_at=note.updated_at,
             body=note.body,
         )
+
+    # ---------------- cards ----------------
+
+    def _summary(card: Card) -> CardSummary:
+        return CardSummary(
+            id=card.id,
+            type=card.type,
+            front=card.front,
+            back=card.back,
+            tags=card.tags,
+            due=parse_due(card).isoformat(),
+            state=card.fsrs_state.get("state"),
+        )
+
+    @app.get("/api/cards/due", response_model=list[CardSummary])
+    def list_due(
+        limit: int = 20,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[CardSummary]:
+        return [_summary(c) for c in runtime.ctx.cards.list_due(limit=limit)]
+
+    @app.post("/api/cards", response_model=CardSummary)
+    def create_card(
+        payload: CardCreate,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> CardSummary:
+        if not payload.front.strip() or not payload.back.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="front and back are both required",
+            )
+        card = Card(
+            type=payload.type,
+            front=payload.front,
+            back=payload.back,
+            tags=payload.tags,
+            source_note_id=payload.source_note_id,
+            fsrs_state=initial_state(),
+        )
+        runtime.ctx.cards.save(card)
+        return _summary(card)
+
+    @app.get("/api/cards/{card_id}", response_model=CardFull)
+    def get_card(
+        card_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> CardFull:
+        card = runtime.ctx.cards.get(card_id)
+        if card is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"card not found: {card_id}",
+            )
+        return CardFull(
+            id=card.id,
+            type=card.type,
+            front=card.front,
+            back=card.back,
+            tags=card.tags,
+            source_note_id=card.source_note_id,
+            created_at=card.created_at,
+            updated_at=card.updated_at,
+            due=parse_due(card).isoformat(),
+            state=card.fsrs_state.get("state"),
+            fsrs_state=card.fsrs_state,
+        )
+
+    @app.post("/api/cards/{card_id}/review", response_model=CardSummary)
+    def review_card_endpoint(
+        card_id: str,
+        payload: CardReview,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> CardSummary:
+        card = runtime.ctx.cards.get(card_id)
+        if card is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"card not found: {card_id}",
+            )
+        schedule_next(card, payload.rating)
+        runtime.ctx.cards.save(card)
+        return _summary(card)
 
     # ---------------- profile ----------------
 

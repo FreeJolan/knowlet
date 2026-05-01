@@ -137,7 +137,7 @@ def test_get_user_profile_tool_when_missing(tmp_path: Path):
     v, cfg = _ready_vault(tmp_path)
     runtime, _ = bootstrap_chat(v, cfg)
     try:
-        ctx = ToolContext(vault=v, index=runtime.index, config=cfg)
+        ctx = ToolContext(vault=v, index=runtime.index, config=cfg, cards=runtime.ctx.cards)
         res = runtime.registry.dispatch("get_user_profile", {}, ctx)
         assert res["exists"] is False
         assert "suggestion" in res
@@ -150,7 +150,7 @@ def test_get_user_profile_tool_when_present(tmp_path: Path):
     write_profile(v.profile_path, UserProfile(body="I read AI papers.", name="Jolan"))
     runtime, _ = bootstrap_chat(v, cfg)
     try:
-        ctx = ToolContext(vault=v, index=runtime.index, config=cfg)
+        ctx = ToolContext(vault=v, index=runtime.index, config=cfg, cards=runtime.ctx.cards)
         res = runtime.registry.dispatch("get_user_profile", {}, ctx)
         assert res["exists"] is True
         assert res["name"] == "Jolan"

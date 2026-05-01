@@ -12,6 +12,7 @@ from knowlet.core.note import Note, now_iso
 NOTES_DIR = "notes"
 USERS_DIR = "users"
 PROFILE_FILENAME = "me.md"
+CARDS_DIR = "cards"
 INDEX_DB = "index.sqlite"
 CONVERSATIONS_DIR = "conversations"
 BACKUPS_DIR = "backups"
@@ -36,6 +37,10 @@ class Vault:
         return self.users_dir / PROFILE_FILENAME
 
     @property
+    def cards_dir(self) -> Path:
+        return self.root / CARDS_DIR
+
+    @property
     def state_dir(self) -> Path:
         return self.root / VAULT_MARKER_DIR
 
@@ -55,6 +60,7 @@ class Vault:
         """Create the directory structure. Idempotent."""
         self.notes_dir.mkdir(parents=True, exist_ok=True)
         self.users_dir.mkdir(parents=True, exist_ok=True)
+        self.cards_dir.mkdir(parents=True, exist_ok=True)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.conversations_dir.mkdir(parents=True, exist_ok=True)
         self.backups_dir.mkdir(parents=True, exist_ok=True)

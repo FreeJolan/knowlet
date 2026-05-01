@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from knowlet.config import KnowletConfig
+from knowlet.core.cards import CardStore
 from knowlet.core.index import Index
 from knowlet.core.vault import Vault
 
@@ -25,6 +26,7 @@ class ToolContext:
     vault: Vault
     index: Index
     config: KnowletConfig
+    cards: CardStore
 
 
 @dataclass
@@ -78,9 +80,13 @@ class Registry:
 
 def _build_default_registry() -> Registry:
     from knowlet.core.tools import (
+        create_card,
+        get_card,
         get_note,
         get_user_profile,
+        list_due_cards,
         list_recent_notes,
+        review_card,
         search_notes,
     )
 
@@ -89,6 +95,10 @@ def _build_default_registry() -> Registry:
     reg.register(get_note.TOOL)
     reg.register(list_recent_notes.TOOL)
     reg.register(get_user_profile.TOOL)
+    reg.register(create_card.TOOL)
+    reg.register(get_card.TOOL)
+    reg.register(list_due_cards.TOOL)
+    reg.register(review_card.TOOL)
     return reg
 
 

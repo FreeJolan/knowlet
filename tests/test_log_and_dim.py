@@ -82,7 +82,8 @@ def test_list_recent_notes_tool(tmp_path: Path):
     idx.upsert_note(n2, chunk_size=200, chunk_overlap=40)
 
     cfg = KnowletConfig()
-    ctx = ToolContext(vault=vault, index=idx, config=cfg)
+    from knowlet.core.cards import CardStore
+    ctx = ToolContext(vault=vault, index=idx, config=cfg, cards=CardStore(vault.cards_dir))
     reg = default_registry()
     res = reg.dispatch("list_recent_notes", {"limit": 5}, ctx)
     assert res["count"] == 2
