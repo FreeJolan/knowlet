@@ -485,6 +485,14 @@ def mining_add(
             "--prompt", help="Extraction guidance for the LLM."
         ),
     ] = None,
+    output_language: Annotated[
+        Optional[str],
+        typer.Option(
+            "--output-language",
+            help="'en' | 'zh' | 'none' (skip translation). "
+            "Default: inherit from cfg.general.language.",
+        ),
+    ] = None,
 ) -> None:
     """Create a new mining task."""
     from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
@@ -498,6 +506,7 @@ def mining_add(
         raise typer.Exit(code=2)
 
     vault = _resolve_vault_or_die()
+    cfg = _load_config_or_default(vault)
     store = TaskStore(vault.tasks_dir)
 
     sources: list[SourceSpec] = []
@@ -506,11 +515,20 @@ def mining_add(
     if url:
         sources.extend(SourceSpec(type="url", url=u.strip()) for u in url.split(",") if u.strip())
 
+    # output_language resolution: explicit > "none" sentinel disables > cfg.general.language
+    if output_language is None:
+        resolved_lang = cfg.general.language
+    elif output_language.lower() in ("none", "off", "source"):
+        resolved_lang = None
+    else:
+        resolved_lang = output_language
+
     task = MiningTask(
         name=name,
         sources=sources,
         schedule=Schedule(every=every, cron=cron),
         prompt=prompt or "Summarize each item; surface anything new or surprising.",
+        output_language=resolved_lang,
     )
     problems = task.validate()
     if problems:
@@ -584,7 +602,9 @@ def mining_run_all() -> None:
     llm = LLMClient(cfg.llm)
     for t in tasks:
         console.print(f"[bold]running[/bold] {t.name} ({t.id[:8]}…)")
-        report = run_task(t, vault, llm)
+        report = run_task(
+            t, vault, llm, default_output_language=cfg.general.language
+        )
         _render_run_report(report)
 
 
@@ -605,7 +625,9 @@ def _run_one_task(task_id: str) -> None:
         raise typer.Exit(code=1)
     llm = LLMClient(cfg.llm)
     console.print(f"[bold]running[/bold] {task.name} ({task.id[:8]}…)")
-    report = run_task(task, vault, llm)
+    report = run_task(
+        task, vault, llm, default_output_language=cfg.general.language
+    )
     _render_run_report(report)
 
 
@@ -1230,7 +1252,13 @@ def _handle_slash(text: str, runtime) -> tuple[bool, bool]:
                 if task is None:
                     console.print(f"[red]task not found:[/red] {args[1]}")
                 else:
-                    report = _run(task, runtime.vault, runtime.llm, drafts=runtime.ctx.drafts)
+                    report = _run(
+                        task,
+                        runtime.vault,
+                        runtime.llm,
+                        drafts=runtime.ctx.drafts,
+                        default_output_language=runtime.config.general.language,
+                    )
                     _render_run_report(report)
         elif sub == "run-all":
             from knowlet.core.mining.runner import run_task as _run
@@ -1240,7 +1268,13 @@ def _handle_slash(text: str, runtime) -> tuple[bool, bool]:
                 console.print("[dim]no enabled tasks[/dim]")
             for task in tasks:
                 console.print(f"[bold]{task.name}[/bold] ({task.id[:8]}…)")
-                report = _run(task, runtime.vault, runtime.llm, drafts=runtime.ctx.drafts)
+                report = _run(
+                    task,
+                    runtime.vault,
+                    runtime.llm,
+                    drafts=runtime.ctx.drafts,
+                    default_output_language=runtime.config.general.language,
+                )
                 _render_run_report(report)
         else:
             console.print(

@@ -107,6 +107,7 @@ class MiningTask:
     schedule: Schedule = field(default_factory=Schedule)
     sources: list[SourceSpec] = field(default_factory=list)
     prompt: str = ""
+    output_language: str | None = None  # "en" | "zh" | None → fall back to cfg.general.language
     body: str = ""  # free-form Markdown description
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
@@ -131,6 +132,8 @@ class MiningTask:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if self.output_language:
+            meta["output_language"] = self.output_language
         post = frontmatter.Post(self.body, **meta)
         return frontmatter.dumps(post)
 
@@ -141,6 +144,7 @@ class MiningTask:
         meta = post.metadata
         sources_raw = meta.get("sources") or []
         sources = [SourceSpec.parse(s) for s in sources_raw]
+        ol_raw = meta.get("output_language")
         return cls(
             id=str(meta.get("id") or new_id()),
             name=str(meta.get("name") or path.stem),
@@ -148,6 +152,7 @@ class MiningTask:
             schedule=Schedule.parse(meta.get("schedule")),
             sources=sources,
             prompt=str(meta.get("prompt") or ""),
+            output_language=str(ol_raw) if ol_raw else None,
             body=post.content,
             created_at=str(meta.get("created_at") or now_iso()),
             updated_at=str(meta.get("updated_at") or now_iso()),
