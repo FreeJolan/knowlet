@@ -26,7 +26,16 @@
           placeholder="Ask, discuss, or paste — Enter to send, Shift+Enter for newline."
           autofocus
         ></textarea>
-        <button type="submit" id="send-btn" data-i18n="web.send">send</button>
+        <div class="composer-actions">
+          <button
+            type="button"
+            id="expand-btn"
+            class="ghost"
+            title="Open fullscreen editor (⌘⇧E)"
+            data-i18n="web.composer.expand"
+          >全屏</button>
+          <button type="submit" id="send-btn" data-i18n="web.send">send</button>
+        </div>
       </form>
     </section>
 
@@ -106,6 +115,31 @@
         <button id="drafts-skip" data-i18n="web.drafts.skip">skip</button>
         <button id="drafts-approve" class="primary" data-i18n="web.drafts.approve">approve</button>
         <button id="drafts-quit" data-i18n="web.drafts.quit">quit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: fullscreen Markdown editor -->
+  <div id="editor-modal" class="modal" hidden>
+    <div class="modal-card editor-card">
+      <header class="editor-header">
+        <h3 data-i18n="web.editor.title">编辑器</h3>
+        <div class="editor-toolbar">
+          <button id="editor-toggle-split" type="button" data-i18n="web.editor.split_on">双栏预览</button>
+          <span class="editor-hint" data-i18n="web.editor.hint">⌘⏎ 发送 · Esc 关闭</span>
+        </div>
+      </header>
+      <div id="editor-body" class="editor-body single">
+        <textarea
+          id="editor-textarea"
+          data-i18n-placeholder="web.composer.placeholder"
+          placeholder="..."
+        ></textarea>
+        <div id="editor-preview" class="rendered editor-preview" hidden></div>
+      </div>
+      <div class="modal-actions">
+        <button id="editor-cancel" type="button" data-i18n="web.cancel">cancel</button>
+        <button id="editor-send" type="button" class="primary" data-i18n="web.send">send</button>
       </div>
     </div>
   </div>

@@ -122,6 +122,83 @@ main {
 .bubble .content pre code { background: none; padding: 0; }
 .bubble .content blockquote { border-left: 3px solid var(--border); margin: 0.4em 0; padding-left: 10px; color: var(--text-soft); }
 
+#composer { align-items: stretch; }
+.composer-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: flex-end;
+}
+button.ghost {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-soft);
+}
+button.ghost:hover { background: var(--surface-soft); border-color: var(--accent); color: var(--text); }
+
+/* fullscreen Markdown editor modal */
+.editor-card {
+  width: min(1200px, 95vw);
+  height: min(85vh, 800px);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 18px 16px;
+  gap: 10px;
+}
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.editor-header h3 { margin: 0; font-size: 13px; }
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.editor-hint {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-soft);
+}
+.editor-body {
+  flex: 1;
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+.editor-body.single { grid-template-columns: 1fr; }
+.editor-body.split { grid-template-columns: 1fr 1fr; }
+#editor-textarea {
+  width: 100%;
+  height: 100%;
+  resize: none;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+}
+#editor-textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+.editor-preview {
+  margin: 0;
+  height: 100%;
+  max-height: none;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+}
+.editor-preview p { margin: 0.4em 0; }
+.editor-preview ul, .editor-preview ol { margin: 0.4em 0; padding-left: 1.4em; }
+.editor-preview li { margin: 0.15em 0; }
+.editor-preview h1, .editor-preview h2, .editor-preview h3 { margin: 0.7em 0 0.3em; line-height: 1.3; }
+.editor-preview code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: var(--font-mono); }
+.editor-preview pre { background: var(--bg); padding: 10px 14px; border-radius: var(--radius); overflow-x: auto; }
+.editor-preview pre code { background: none; padding: 0; }
+
 .tool-trace {
   font-family: var(--font-mono);
   font-size: 11px;
