@@ -70,6 +70,8 @@
     <symbol id="i-columns" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></symbol>
     <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
     <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
     <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></symbol>
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
     <symbol id="i-chevron-r" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
@@ -460,10 +462,13 @@
                 @click="removeChatRef(i)"
                 :title="r.quote_text"
                 class="capsule capsule-active"
+                :class="r.source === 'url' ? 'capsule-url' : ''"
               >
-                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-link"/></svg>
-                <span x-text="`《${r.note_title}》`"></span>
-                <span class="capsule-quote" x-text="r.quote_text.slice(0, 28) + (r.quote_text.length > 28 ? '…' : '')"></span>
+                <svg class="icon icon-sm" aria-hidden="true">
+                  <use :href="r.source === 'url' ? '#i-globe' : '#i-link'"/>
+                </svg>
+                <span x-text="r.source === 'url' ? `[网页] ${r.note_title}` : `《${r.note_title}》`"></span>
+                <span class="capsule-quote" x-text="r.source === 'url' ? r.source_url.replace(/^https?:\/\//, '').slice(0, 28) : (r.quote_text.slice(0, 28) + (r.quote_text.length > 28 ? '…' : ''))"></span>
                 <span class="capsule-x">×</span>
               </span>
             </template>
@@ -473,17 +478,48 @@
                 :title="r.quote_text + ' · 再用一次'"
                 class="capsule capsule-sent"
               >
-                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-link"/></svg>
-                <span x-text="`《${r.note_title}》`"></span>
-                <span class="capsule-quote" x-text="r.quote_text.slice(0, 28) + (r.quote_text.length > 28 ? '…' : '')"></span>
+                <svg class="icon icon-sm" aria-hidden="true">
+                  <use :href="r.source === 'url' ? '#i-globe' : '#i-link'"/>
+                </svg>
+                <span x-text="r.source === 'url' ? `[网页] ${r.note_title}` : `《${r.note_title}》`"></span>
+                <span class="capsule-quote" x-text="r.source === 'url' ? r.source_url.replace(/^https?:\/\//, '').slice(0, 28) : (r.quote_text.slice(0, 28) + (r.quote_text.length > 28 ? '…' : ''))"></span>
                 <span class="capsule-reuse" data-i18n="chat.reference.reuse">再用</span>
               </span>
+            </template>
+          </div>
+          <!-- M7.2 paste-detected URL hint -->
+          <div
+            x-show="urlCapturePending"
+            x-cloak
+            class="url-capture-banner"
+          >
+            <template x-if="urlCapturePending && urlCapturePending.status === 'ready'">
+              <div class="flex items-center gap-2">
+                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-link"/></svg>
+                <span class="text-textsoft text-[12px] truncate flex-1" x-text="urlCapturePending.url"></span>
+                <button @click="runUrlCapture()" class="text-accent text-[11.5px] hover:underline" data-i18n="chat.url.fetch">抓取并讨论</button>
+                <button @click="cancelUrlCapture()" class="text-textmute hover:text-text" title="取消">×</button>
+              </div>
+            </template>
+            <template x-if="urlCapturePending && urlCapturePending.status === 'fetching'">
+              <div class="flex items-center gap-2 text-textsoft text-[12px]">
+                <svg class="icon icon-sm animate-spin" aria-hidden="true"><use href="#i-refresh"/></svg>
+                <span data-i18n="chat.url.fetching">抓取中…摘要中…</span>
+              </div>
+            </template>
+            <template x-if="urlCapturePending && urlCapturePending.status === 'error'">
+              <div class="flex items-center gap-2 text-danger text-[12px]">
+                <span data-i18n="chat.url.error">抓取失败</span>
+                <span x-text="urlCapturePending.error" class="text-textmute"></span>
+                <button @click="cancelUrlCapture()" class="ml-auto text-textmute hover:text-text">×</button>
+              </div>
             </template>
           </div>
           <textarea
             x-ref="chatInput"
             x-model="chatDraft"
             @keydown="handleChatKey($event)"
+            @paste="onChatInputPaste($event)"
             class="w-full bg-bg border border-border rounded-lg p-2.5 text-sm resize-none focus:outline-none focus:border-accent"
             rows="2"
             data-i18n-placeholder="rail.ai.placeholder"
@@ -674,12 +710,46 @@
 <!-- ═══════════════ MODALS (existing flows preserved) ═══════════════ -->
 
 <!-- Save chat as a Note -->
-<div x-show="modal === 'sediment'" @click.self="modal = null" class="modal" x-cloak>
+<div
+  x-show="modal === 'sediment'"
+  @click.self="modal = null"
+  x-effect="modal === 'sediment' && !sedimentDrafting && loadSimilarForSediment()"
+  class="modal"
+  x-cloak
+>
   <div class="modal-card">
     <h3 data-i18n="sediment.web.title">把这段对话存成笔记</h3>
     <div x-show="sedimentDrafting" class="text-textsoft text-sm py-8 text-center" data-i18n="sediment.web.drafting">AI 整理中…(Opus 大约 25 秒)</div>
     <template x-if="!sedimentDrafting">
       <div class="space-y-2">
+        <!-- M7.2 Layer A ambient — top-3 similar Notes (ADR-0013 §3) -->
+        <div
+          x-show="similarNotes.rows.length > 0 || similarNotes.loading"
+          class="border border-bordersoft rounded bg-panel/60 p-2.5 text-[12px]"
+        >
+          <details>
+            <summary class="cursor-pointer text-textsoft hover:text-text flex items-center gap-1.5">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-search"/></svg>
+              <span data-i18n="sediment.similar.heading">可能相关的笔记</span>
+              <span x-show="!similarNotes.loading" class="text-textmute" x-text="`(${similarNotes.rows.length})`"></span>
+              <span x-show="similarNotes.loading" class="text-textmute" data-i18n="sediment.similar.loading">载入中…</span>
+            </summary>
+            <div class="mt-2 space-y-1.5">
+              <template x-for="row in similarNotes.rows" :key="row.id">
+                <button
+                  @click="openSimilarNote(row.id)"
+                  class="block w-full text-left px-2 py-1.5 rounded hover:bg-surface2"
+                >
+                  <div class="text-text font-medium text-[12.5px] truncate" x-text="row.title"></div>
+                  <div class="text-textsoft text-[11.5px] truncate" x-text="row.preview"></div>
+                </button>
+              </template>
+            </div>
+            <p class="text-textmute text-[10.5px] mt-1.5" data-i18n="sediment.similar.disclaimer">
+              纯供参考。默认动作仍然是「保存为新笔记」。
+            </p>
+          </details>
+        </div>
         <label class="block">
           <span class="text-xs text-textsoft" data-i18n="sediment.web.field.title">标题</span>
           <input type="text" x-model="sediment.title" class="w-full bg-bg border border-border rounded px-2.5 py-1.5 mt-1 text-sm focus:outline-none focus:border-accent"/>
@@ -965,26 +1035,64 @@
             class="flex flex-wrap gap-1.5 mb-2"
           >
             <template x-for="(r, i) in chatRefs" :key="'fa' + i">
-              <span @click="removeChatRef(i)" :title="r.quote_text" class="capsule capsule-active">
-                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-link"/></svg>
-                <span x-text="`《${r.note_title}》`"></span>
-                <span class="capsule-quote" x-text="r.quote_text.slice(0, 36) + (r.quote_text.length > 36 ? '…' : '')"></span>
+              <span
+                @click="removeChatRef(i)"
+                :title="r.quote_text"
+                class="capsule capsule-active"
+                :class="r.source === 'url' ? 'capsule-url' : ''"
+              >
+                <svg class="icon icon-sm" aria-hidden="true">
+                  <use :href="r.source === 'url' ? '#i-globe' : '#i-link'"/>
+                </svg>
+                <span x-text="r.source === 'url' ? `[网页] ${r.note_title}` : `《${r.note_title}》`"></span>
+                <span class="capsule-quote" x-text="r.source === 'url' ? r.source_url.replace(/^https?:\/\//, '').slice(0, 36) : (r.quote_text.slice(0, 36) + (r.quote_text.length > 36 ? '…' : ''))"></span>
                 <span class="capsule-x">×</span>
               </span>
             </template>
             <template x-for="(r, i) in chatRefsSent" :key="'fs' + i">
               <span @click="reuseChatRef(i)" :title="r.quote_text + ' · 再用一次'" class="capsule capsule-sent">
-                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-link"/></svg>
-                <span x-text="`《${r.note_title}》`"></span>
-                <span class="capsule-quote" x-text="r.quote_text.slice(0, 36) + (r.quote_text.length > 36 ? '…' : '')"></span>
+                <svg class="icon icon-sm" aria-hidden="true">
+                  <use :href="r.source === 'url' ? '#i-globe' : '#i-link'"/>
+                </svg>
+                <span x-text="r.source === 'url' ? `[网页] ${r.note_title}` : `《${r.note_title}》`"></span>
+                <span class="capsule-quote" x-text="r.source === 'url' ? r.source_url.replace(/^https?:\/\//, '').slice(0, 36) : (r.quote_text.slice(0, 36) + (r.quote_text.length > 36 ? '…' : ''))"></span>
                 <span class="capsule-reuse" data-i18n="chat.reference.reuse">再用</span>
               </span>
+            </template>
+          </div>
+          <!-- M7.2 paste-detected URL hint (chat focus mode) -->
+          <div
+            x-show="urlCapturePending"
+            x-cloak
+            class="url-capture-banner"
+          >
+            <template x-if="urlCapturePending && urlCapturePending.status === 'ready'">
+              <div class="flex items-center gap-2">
+                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-link"/></svg>
+                <span class="text-textsoft text-[12.5px] truncate flex-1" x-text="urlCapturePending.url"></span>
+                <button @click="runUrlCapture()" class="text-accent text-[12px] hover:underline" data-i18n="chat.url.fetch">抓取并讨论</button>
+                <button @click="cancelUrlCapture()" class="text-textmute hover:text-text" title="取消">×</button>
+              </div>
+            </template>
+            <template x-if="urlCapturePending && urlCapturePending.status === 'fetching'">
+              <div class="flex items-center gap-2 text-textsoft text-[12.5px]">
+                <svg class="icon icon-sm animate-spin" aria-hidden="true"><use href="#i-refresh"/></svg>
+                <span data-i18n="chat.url.fetching">抓取中…摘要中…</span>
+              </div>
+            </template>
+            <template x-if="urlCapturePending && urlCapturePending.status === 'error'">
+              <div class="flex items-center gap-2 text-danger text-[12.5px]">
+                <span data-i18n="chat.url.error">抓取失败</span>
+                <span x-text="urlCapturePending.error" class="text-textmute"></span>
+                <button @click="cancelUrlCapture()" class="ml-auto text-textmute hover:text-text">×</button>
+              </div>
             </template>
           </div>
           <textarea
             x-ref="chatFocusInput"
             x-model="chatDraft"
             @keydown="handleChatFocusKey($event)"
+            @paste="onChatInputPaste($event)"
             class="w-full bg-bg border border-border rounded-lg p-3 text-[14px] resize-none focus:outline-none focus:border-accent"
             rows="3"
             data-i18n-placeholder="rail.ai.placeholder"
