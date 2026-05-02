@@ -162,8 +162,13 @@ function ui() {
     miningTaskName: "",
     miningRunning: false,
 
-    // ---- modals ----
-    modal: null,          // null | 'sediment' | 'profile' | 'drafts' | 'cards'
+    // ---- modals (small dialogs) ----
+    modal: null,          // null | 'sediment' | 'profile'
+
+    // ---- focus modes (fullscreen overlays per ADR-0011 §5) ----
+    // The three focus modes preserve outer layout / open notes / scroll
+    // position on Esc — they're overlays, not navigation.
+    focus: null,          // null | 'chat' | 'drafts' | 'cards'
 
     // ---- Cmd+K command palette ----
     palette: {
@@ -598,7 +603,7 @@ function ui() {
           return;
         }
         this.draftsState = { queue: drafts, current: 0, full: null };
-        this.modal = "drafts";
+        this.focus = "drafts";
         await this.loadCurrentDraft();
       } catch (exc) {
         toast(exc.message, "error");
@@ -608,7 +613,7 @@ function ui() {
     async loadCurrentDraft() {
       const d = this.draftsState.queue[this.draftsState.current];
       if (!d) {
-        this.modal = null;
+        this.focus = null;
         await this.refreshDraftsCount();
         await this.refreshNotes();
         toast(tt("inbox.done"), "ok");
@@ -643,6 +648,18 @@ function ui() {
       }
     },
 
+    /** J / K navigation within drafts focus. K = next (forward in queue),
+     * J = prev. Treats prev as a no-op past index 0 (no rewind into
+     * already-decided drafts; ADR-0011 §6 says drafts are a forward-only
+     * stream). */
+    async draftsNav(delta) {
+      if (this.focus !== "drafts") return;
+      const next = this.draftsState.current + delta;
+      if (next < 0 || next >= this.draftsState.queue.length) return;
+      this.draftsState.current = next;
+      await this.loadCurrentDraft();
+    },
+
     // ============================================================ cards review
 
     async refreshCardsCount() {
@@ -660,7 +677,7 @@ function ui() {
           return;
         }
         this.cardsState = { queue: due, current: 0, revealed: false };
-        this.modal = "cards";
+        this.focus = "cards";
       } catch (exc) {
         toast(exc.message, "error");
       }
@@ -674,7 +691,7 @@ function ui() {
         this.cardsState.current += 1;
         this.cardsState.revealed = false;
         if (this.cardsState.current >= this.cardsState.queue.length) {
-          this.modal = null;
+          this.focus = null;
           await this.refreshCardsCount();
           toast(tt("review.done"), "ok");
         }
@@ -992,11 +1009,105 @@ function ui() {
       }
     },
 
+    // ============================================================ chat focus
+
+    openChatFocus() {
+      this.focus = "chat";
+      this.$nextTick(() => {
+        const el = this.$refs.chatFocusInput;
+        if (el) el.focus();
+        this.scrollChatFocusToBottom();
+      });
+    },
+
+    scrollChatFocusToBottom() {
+      this.$nextTick(() => {
+        const el = this.$refs.chatFocusScroll;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    },
+
+    handleChatFocusKey(ev) {
+      if (ev.key !== "Enter") return;
+      if (this.imeComposing || ev.isComposing || ev.keyCode === 229) return;
+      if (ev.shiftKey) return;
+      ev.preventDefault();
+      this.sendChat();
+      this.scrollChatFocusToBottom();
+    },
+
+    // ============================================================ focus mode keyboard
+
+    /** Global hotkeys for entering focus modes. Bound on body via Alpine.
+     * Cmd+Shift+{C,D,R} match the ADR-0011 §5 spec. */
+    handleFocusHotkey(ev, mode) {
+      if (this.modal) return;       // modal takes precedence
+      if (this.palette.open) return;
+      if (this.focus === mode) return;
+      if (mode === "chat") {
+        this.openChatFocus();
+      } else if (mode === "drafts") {
+        this.openDraftsReview();
+      } else if (mode === "cards") {
+        this.openCardsReview();
+      }
+    },
+
+    /** Within drafts focus: X reject, S skip, A approve, J prev, K next. */
+    handleDraftsFocusKey(ev) {
+      if (this.focus !== "drafts") return;
+      // Ignore when typing in any input/textarea (none expected here, but
+      // safe to guard).
+      const tag = (ev.target.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea") return;
+      const k = ev.key.toLowerCase();
+      if (k === "x") { ev.preventDefault(); this.actDraft("reject"); }
+      else if (k === "s") { ev.preventDefault(); this.actDraft("skip"); }
+      else if (k === "a" || ev.key === "Enter") { ev.preventDefault(); this.actDraft("approve"); }
+      else if (k === "j") { ev.preventDefault(); this.draftsNav(-1); }
+      else if (k === "k") { ev.preventDefault(); this.draftsNav(1); }
+    },
+
+    /** Within cards focus: ⏎ reveal, then 1/2/3/4 rate. */
+    handleCardsFocusKey(ev) {
+      if (this.focus !== "cards") return;
+      const tag = (ev.target.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea") return;
+      if (!this.cardsState.revealed) {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          this.cardsState.revealed = true;
+        }
+        return;
+      }
+      const n = parseInt(ev.key, 10);
+      if (n >= 1 && n <= 4) {
+        ev.preventDefault();
+        this.rateCard(n);
+      }
+    },
+
+    /** Progress hairline width for focus headers. 0 → 1 over the queue. */
+    draftsProgress() {
+      const total = this.draftsState.queue.length || 1;
+      const done = Math.min(this.draftsState.current, total);
+      return Math.round((done / total) * 100);
+    },
+    cardsProgress() {
+      const total = this.cardsState.queue.length || 1;
+      const done = Math.min(this.cardsState.current, total);
+      return Math.round((done / total) * 100);
+    },
+
     // ============================================================ overlays
 
     closeAllOverlays() {
       if (this.palette.open) {
         this.closePalette();
+        return;
+      }
+      if (this.focus) {
+        this.focus = null;
         return;
       }
       if (this.modal) this.modal = null;
