@@ -927,3 +927,153 @@ def test_chat_turn_drops_capsule_for_deleted_note(tmp_path: Path):
     # No prefix — capsule dropped, only the bare user text reached the LLM.
     last = captured[-1]
     assert last == "still asking"
+
+
+# ------------------------------------------------------------- M7.2 url capture
+
+
+def test_url_capture_endpoint_happy_path(tmp_path: Path, monkeypatch):
+    """M7.2: POST /api/url/capture fetches via httpx (mocked) + summarizes
+    via the runtime LLM stub, returns {url, title, hostname, summary}."""
+    import httpx
+    from knowlet.core.llm import AssistantMessage
+
+    html = (
+        "<html><head><title>Article Title</title></head><body><article><p>"
+        + "Main body content here. " * 50
+        + "</p></article></body></html>"
+    )
+
+    def fake_get(self, url, **kwargs):
+        return httpx.Response(200, text=html, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+
+    class FixedLLM:
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            return AssistantMessage(content="一段中性摘要", tool_calls=[])
+
+    client, _, _ = _client_with_stub(tmp_path, FixedLLM())
+    r = client.post(
+        "/api/url/capture",
+        json={"url": "https://www.example.com/article"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["url"] == "https://www.example.com/article"
+    assert body["title"] == "Article Title"
+    assert body["hostname"] == "example.com"
+    assert body["summary"] == "一段中性摘要"
+    assert body["summary_failed"] is False
+
+
+def test_url_capture_rejects_non_http(tmp_path: Path):
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.post("/api/url/capture", json={"url": "ftp://example.com/file"})
+    assert r.status_code == 400
+    r2 = client.post("/api/url/capture", json={"url": ""})
+    assert r2.status_code == 400
+
+
+def test_url_capture_502_when_fetch_fails(tmp_path: Path, monkeypatch):
+    import httpx
+
+    def fake_get(self, url, **kwargs):
+        return httpx.Response(404, text="not found", request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.post("/api/url/capture", json={"url": "https://example.com/missing"})
+    assert r.status_code == 502
+
+
+def test_url_capture_422_when_extraction_empty(tmp_path: Path, monkeypatch):
+    """Page returns 200 but trafilatura can't pull readable content."""
+    import httpx
+
+    empty = "<html><head><title>x</title></head><body></body></html>"
+
+    def fake_get(self, url, **kwargs):
+        return httpx.Response(200, text=empty, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.post("/api/url/capture", json={"url": "https://example.com/empty"})
+    assert r.status_code == 422
+
+
+# ------------------------------------------------------------- M7.2 similar notes
+
+
+def test_similar_notes_returns_top_k(tmp_path: Path):
+    """ADR-0013 §3 Layer A: /api/notes/similar returns top-K hits, no scores."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+
+    n1 = Note(id=new_id(), title="RAG retrieval", body="hybrid retrieval combines FTS and vector search")
+    n2 = Note(id=new_id(), title="Embeddings", body="embeddings power semantic search")
+    n3 = Note(id=new_id(), title="Cards", body="spaced repetition with FSRS")
+    for n in (n1, n2, n3):
+        v.write_note(n)
+        runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    rows = client.get("/api/notes/similar?q=hybrid retrieval search&top_k=2").json()
+    assert isinstance(rows, list)
+    assert len(rows) <= 2
+    if rows:
+        # Each row has the M7.2 payload shape.
+        r0 = rows[0]
+        assert set(r0.keys()) == {"id", "title", "path", "preview"}
+
+
+def test_similar_notes_empty_query_returns_empty(tmp_path: Path):
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    rows = client.get("/api/notes/similar?q=").json()
+    assert rows == []
+
+
+# ------------------------------------------------------------- M7.2 url capsule chat
+
+
+def test_chat_turn_with_url_capsule_uses_summary_directly(tmp_path: Path):
+    """source='url' capsules go through `format_references_block` without
+    a vault lookup — the summary IS the context, so no enclosing-section
+    machinery runs."""
+    from knowlet.core.llm import AssistantMessage
+
+    captured: list[str] = []
+
+    class CapturingLLM:
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            for m in messages:
+                if m.get("role") == "user":
+                    captured.append(m["content"])
+            return AssistantMessage(content="ok", tool_calls=[])
+
+    client, _, _ = _client_with_stub(tmp_path, CapturingLLM())
+
+    payload = {
+        "text": "what's the takeaway?",
+        "references": [
+            {
+                "note_id": "url://https://example.com/x",
+                "note_title": "An Article About RAG",
+                "quote_text": "RAG fuses retrieval + generation; key tradeoff is latency.",
+                "paragraph_anchor": "",
+                "source": "url",
+                "source_url": "https://example.com/x",
+            }
+        ],
+    }
+    r = client.post("/api/chat/turn", json=payload)
+    assert r.status_code == 200
+    last = captured[-1]
+    assert "我想就这篇文章问你" in last
+    assert "《An Article About RAG》" in last
+    assert "https://example.com/x" in last
+    assert "RAG fuses retrieval + generation" in last
+    assert "what's the takeaway?" in last
+    # url-source capsules don't carry the enclosing-section hint.
+    assert "标题节是" not in last

@@ -43,6 +43,11 @@ from knowlet.core.quote_refs import (
     QuoteRef,
     format_references_block,
 )
+from knowlet.core.url_capture import (
+    ExtractionError,
+    FetchError,
+    capture_url,
+)
 from knowlet.core.events import ErrorEvent, event_to_dict
 from knowlet.core.fsrs_wrap import initial_state, schedule_next
 from knowlet.core.i18n import SUPPORTED_LANGUAGES, all_keys, set_language
@@ -69,13 +74,16 @@ class RenameSessionRequest(BaseModel):
 
 
 class QuoteRefPayload(BaseModel):
-    """M7.1: one capsule from the editor selection. note_title is sent so
-    the prompt block can quote the source by name without an extra
-    server-side lookup; backend still fetches the body via note_id."""
+    """M7.1 / M7.2: one capsule. `source = "note"` (M7.1 default) →
+    the backend fetches the Note body via note_id and runs the enclosing-
+    section algorithm. `source = "url"` (M7.2) → quote_text is already
+    the LLM-produced summary; source_url surfaces the page reference."""
     note_id: str
     note_title: str
     quote_text: str
     paragraph_anchor: str = ""
+    source: str = "note"  # "note" | "url"
+    source_url: str = ""
 
 
 class ChatTurnRequest(BaseModel):
@@ -133,6 +141,32 @@ class BacklinkRow(BaseModel):
     target: str  # the wikilink target as written
     line: int
     sentence: str
+
+
+class UrlCaptureRequest(BaseModel):
+    url: str
+
+
+class UrlCaptureResponse(BaseModel):
+    """M7.2: result of fetching + summarizing a URL. summary may be empty
+    if the LLM call failed but the page extracted — frontend surfaces a
+    "(摘要失败)" capsule in that case so the user can still attach + ask."""
+    url: str
+    title: str
+    hostname: str
+    summary: str
+    summary_failed: bool = False  # True iff fetch ok but summarize raised
+
+
+class SimilarNoteRow(BaseModel):
+    """M7.2: ADR-0013 §3 Layer A — top-K similar Notes for the sediment
+    modal. No `score` field on the wire to discourage UIs from showing
+    confidence numbers (the contract says no auto-actions, no implied
+    judgment). Just title + path + a short preview."""
+    id: str
+    title: str
+    path: str
+    preview: str
 
 
 class ProfilePayload(BaseModel):
@@ -472,12 +506,34 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         runtime: ChatRuntime,
         refs: list[QuoteRefPayload],
     ) -> list[tuple[QuoteRef, str]]:
-        """Resolve each capsule's note_id to the latest on-disk Note body
-        and return (capsule, body) pairs for the prompt formatter. Notes
-        the user has since deleted are dropped silently (the rest of the
-        capsules still go through). Hard-truncates at MAX_REFERENCES."""
+        """Resolve each capsule into (QuoteRef, body) pairs for the prompt
+        formatter. Two branches per ADR-0016 §2:
+
+        - source="note" (M7.1): vault lookup of note_id → fresh body. Notes
+          the user has since deleted are dropped silently.
+        - source="url" (M7.2): no vault lookup; quote_text already holds
+          the LLM-produced summary. body passes as "" (formatter ignores
+          it for url source).
+
+        Hard-truncates at MAX_REFERENCES per ADR-0015 §2."""
         out: list[tuple[QuoteRef, str]] = []
         for r in refs[:MAX_REFERENCES]:
+            if r.source == "url":
+                out.append(
+                    (
+                        QuoteRef(
+                            note_id=r.note_id,
+                            note_title=r.note_title,
+                            quote_text=r.quote_text,
+                            paragraph_anchor="",
+                            source="url",
+                            source_url=r.source_url,
+                        ),
+                        "",  # body unused for url source
+                    )
+                )
+                continue
+            # source="note" path
             meta = runtime.index.get_note_meta(r.note_id)
             if meta is None:
                 continue
@@ -495,6 +551,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                         note_title=r.note_title or note.title,
                         quote_text=r.quote_text,
                         paragraph_anchor=r.paragraph_anchor,
+                        source="note",
                     ),
                     note.body,
                 )
@@ -859,6 +916,36 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             out.append(NoteSummary(**r, folder=folder))
         return out
 
+    @app.get("/api/notes/similar", response_model=list[SimilarNoteRow])
+    def list_similar_notes(
+        q: str = "",
+        top_k: int = 3,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[SimilarNoteRow]:
+        """M7.2 / ADR-0013 §3 Layer A — top-K Notes whose content overlaps
+        the query string (typically the user's draft body in the sediment
+        modal). Pure information; the contract is "AI gives info, human
+        decides" — no merge buttons, no scores, no auto-actions.
+
+        Reuses `index.search()` (RRF hybrid: FTS + vec). top_k clamped
+        to [1, 10] so a careless caller can't exhaust the index. Route
+        deliberately registered *before* `/api/notes/{note_id}` so the
+        literal path doesn't get captured as a note id."""
+        q = (q or "").strip()
+        if not q:
+            return []
+        k = max(1, min(10, int(top_k)))
+        hits = runtime.index.search(query=q[:4000], top_k=k)
+        return [
+            SimilarNoteRow(
+                id=h.note_id,
+                title=h.title or "(无标题)",
+                path=h.path or "",
+                preview=(h.snippet or "").strip()[:160],
+            )
+            for h in hits
+        ]
+
     @app.get("/api/notes/{note_id}", response_model=NoteFull)
     def get_note(
         note_id: str, runtime: ChatRuntime = Depends(runtime_dep)
@@ -1075,6 +1162,67 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail=f"attachment not found: {name}",
             )
         return FileResponse(target)
+
+    # ---------------- url capture (M7.2 / ADR-0016) ----------------
+
+    @app.post("/api/url/capture", response_model=UrlCaptureResponse)
+    def capture_url_endpoint(
+        req: UrlCaptureRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> UrlCaptureResponse:
+        """Fetch a URL via trafilatura, summarize via the configured LLM,
+        return a payload the frontend wraps in a `source="url"` capsule.
+
+        Failure modes:
+        - 400: empty / non-http URL
+        - 502: page fetch failed (DNS / 4xx / 5xx / timeout)
+        - 422: page fetched but no readable content (JS-heavy / paywall)
+        - 200 + summary_failed=true: page extracted, but the summarize
+          LLM call raised. Frontend surfaces a "(摘要失败)" capsule so
+          the user can still attach the URL and ask manually.
+        """
+        url = (req.url or "").strip()
+        if not url or not (url.startswith("http://") or url.startswith("https://")):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="invalid url (must start with http:// or https://)",
+            )
+        try:
+            cap = capture_url(url, runtime.llm)
+            return UrlCaptureResponse(
+                url=cap.url,
+                title=cap.title,
+                hostname=cap.hostname,
+                summary=cap.summary,
+                summary_failed=False,
+            )
+        except FetchError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=str(exc),
+            ) from exc
+        except ExtractionError as exc:
+            # 422 by literal — starlette renamed the constant to
+            # _CONTENT and deprecated _ENTITY; either name is a
+            # version-coupling hazard, the integer isn't.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            # Page fetched + extracted, but the LLM step blew up. Per
+            # ADR-0016 §3 we still return a capsule so the user can
+            # attach the URL and ask manually.
+            from knowlet.core.url_capture import fetch_and_extract, _hostname
+
+            try:
+                title, _ = fetch_and_extract(url)
+            except Exception:
+                title = url
+            return UrlCaptureResponse(
+                url=url,
+                title=title,
+                hostname=_hostname(url),
+                summary=f"(摘要失败:{exc})",
+                summary_failed=True,
+            )
 
     # ---------------- cards ----------------
 
