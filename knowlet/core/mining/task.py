@@ -122,6 +122,12 @@ class MiningTask:
     # piling up untouched drafts becomes Roam-style backlog anxiety.
     # 30 mirrors what ADR-0011 specced as the default. None = unlimited.
     max_keep: int | None = 30
+    # M7.3.1: ask the extractor to add a "## Critical take" section with a
+    # content-grounded model evaluation (vs the existing neutral
+    # summary/key-points/why-it-matters trio). Default OFF — adds tokens,
+    # adds opinion, and not every feed warrants it (product release notes
+    # in particular tend to produce throwaway praise). User opts in per task.
+    include_critical_take: bool = False
     body: str = ""  # free-form Markdown description
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
@@ -152,6 +158,8 @@ class MiningTask:
             meta["max_items_per_run"] = self.max_items_per_run
         if self.max_keep is not None:
             meta["max_keep"] = self.max_keep
+        if self.include_critical_take:
+            meta["include_critical_take"] = True
         post = frontmatter.Post(self.body, **meta)
         return frontmatter.dumps(post)
 
@@ -183,6 +191,7 @@ class MiningTask:
             output_language=str(ol_raw) if ol_raw else None,
             max_items_per_run=cap,
             max_keep=keep,
+            include_critical_take=bool(meta.get("include_critical_take", False)),
             body=post.content,
             created_at=str(meta.get("created_at") or now_iso()),
             updated_at=str(meta.get("updated_at") or now_iso()),

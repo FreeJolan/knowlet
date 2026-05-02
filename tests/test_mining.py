@@ -798,3 +798,69 @@ def test_web_task_validation(tmp_path: Path):
         json={"name": "", "sources": [], "schedule": {}, "prompt": "", "enabled": True, "body": ""},
     )
     assert r.status_code == 400
+
+
+# ------------------------------------------------------------- M7.3 extractor
+
+
+def test_mining_task_round_trip_critical_take(tmp_path: Path):
+    """M7.3.1: include_critical_take persists through frontmatter."""
+    t = MiningTask(
+        name="hot takes",
+        sources=[SourceSpec(type="rss", url="https://x")],
+        schedule=Schedule(every="1h"),
+        prompt="summarize",
+        include_critical_take=True,
+    )
+    p = tmp_path / t.filename
+    p.write_text(t.to_markdown(), encoding="utf-8")
+    loaded = MiningTask.from_file(p)
+    assert loaded.include_critical_take is True
+
+
+def test_mining_task_default_critical_take_off(tmp_path: Path):
+    """Tasks created before M7.3 stay byte-identical: no opt-in, no
+    `include_critical_take` key in frontmatter, and reload defaults False."""
+    t = MiningTask(name="plain", sources=[SourceSpec(type="rss", url="https://x")], prompt="p")
+    p = tmp_path / t.filename
+    md = t.to_markdown()
+    assert "include_critical_take" not in md
+    p.write_text(md, encoding="utf-8")
+    loaded = MiningTask.from_file(p)
+    assert loaded.include_critical_take is False
+
+
+def test_extractor_prompt_omits_critical_take_by_default():
+    """M7.3.1: default prompt rendering does NOT include the critical take
+    section. Pre-M7.3 task files keep producing the same drafts."""
+    from knowlet.core.mining.extractor import _instructions_for
+
+    out = _instructions_for(None, include_critical_take=False)
+    assert "Critical take" not in out
+    # but the standard sections are intact
+    assert "## Key points" in out
+    assert "## Why it matters" in out
+    assert "## Source" in out
+
+
+def test_extractor_prompt_includes_critical_take_when_opted_in():
+    from knowlet.core.mining.extractor import _instructions_for
+
+    out = _instructions_for("zh", include_critical_take=True)
+    assert "## Critical take" in out
+    # Anti-platitude guard rails are part of the prompt.
+    assert "represents an important step" in out  # negative example listed
+    assert "groundbreaking" in out
+
+
+def test_extractor_prompt_always_includes_hover_quote_directive():
+    """M7.3.2: hover-quote directive is unconditional. It tells the LLM to
+    wrap 1-3 important sentences with `<q data-original="...">`. Same-
+    language drafts get fewer / no wraps and that's fine."""
+    from knowlet.core.mining.extractor import _instructions_for
+
+    out_default = _instructions_for(None)
+    out_zh = _instructions_for("zh", include_critical_take=True)
+    for s in (out_default, out_zh):
+        assert "<q data-original=" in s
+        assert "1-3" in s  # explicit count guidance

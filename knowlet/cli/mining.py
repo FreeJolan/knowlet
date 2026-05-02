@@ -97,6 +97,16 @@ def mining_add(
             "drafts/.archive/ (recoverable). Default 30; pass 0 to disable.",
         ),
     ] = 30,
+    critical_take: Annotated[
+        bool,
+        typer.Option(
+            "--critical-take/--no-critical-take",
+            help="M7.3.1: ask the LLM to add a `## Critical take` section with a "
+            "content-grounded opinion on each draft (vs the default neutral "
+            "summary). Off by default — adds tokens and not every feed warrants "
+            "an opinion.",
+        ),
+    ] = False,
 ) -> None:
     """Create a new mining task."""
     from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
@@ -134,6 +144,7 @@ def mining_add(
         output_language=resolved_lang,
         max_items_per_run=None if max_items_per_run <= 0 else max_items_per_run,
         max_keep=None if max_keep <= 0 else max_keep,
+        include_critical_take=critical_take,
     )
     problems = task.validate()
     if problems:
