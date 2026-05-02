@@ -151,12 +151,22 @@
       <template x-for="n in filteredNotes()" :key="n.id">
         <li>
           <div
-            @click="openNote(n.id)"
-            :class="currentNoteId === n.id ? 'bg-accentsoft text-accent2' : 'hover:bg-surface2 text-text'"
-            class="px-2.5 py-1 cursor-pointer flex items-center gap-2"
+            :class="currentNoteId === n.id ? 'tree-item active' : 'tree-item'"
           >
-            <svg class="icon icon-sm flex-shrink-0" :class="currentNoteId === n.id ? 'text-accent2' : 'text-textmute'"><use href="#i-doc"/></svg>
-            <span x-text="n.title" class="truncate"></span>
+            <div class="tree-row" @click="openNote(n.id)">
+              <svg class="icon icon-sm flex-shrink-0"
+                   :class="currentNoteId === n.id ? 'text-accent2' : 'text-textmute'">
+                <use href="#i-doc"/>
+              </svg>
+              <span x-text="n.title" class="truncate flex-1"></span>
+            </div>
+            <button
+              @click.stop="deleteNote(n.id, n.title)"
+              class="tree-action text-textmute hover:text-danger"
+              data-i18n-title="sidebar.note.delete.title"
+            >
+              <svg class="icon icon-sm"><use href="#i-x"/></svg>
+            </button>
           </div>
         </li>
       </template>

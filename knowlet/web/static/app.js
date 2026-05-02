@@ -413,6 +413,36 @@ function ui() {
       }
     },
 
+    /** Soft-delete a Note (M7.0.1). Confirmation prompt + DELETE
+     * /api/notes/{id}, which moves the file to notes/.trash/. The Note
+     * gets removed from openTabs (if present) and the sidebar refreshes.
+     * Per ADR-0013 §1, deletion is a structural change: only triggered
+     * by an explicit user click, never by AI. */
+    async deleteNote(id, title) {
+      if (!id) return;
+      const msg = ttf("sidebar.note.delete.confirm", {
+        title: title || tt("rail.ai.empty.notitle"),
+      });
+      if (!window.confirm(msg)) return;
+      try {
+        await api("DELETE", `/api/notes/${encodeURIComponent(id)}`);
+        // Close any tab pointing at the deleted note.
+        const i = this.openTabs.findIndex((t) => t.id === id);
+        if (i >= 0) {
+          this.openTabs.splice(i, 1);
+          if (this.currentNoteId === id) {
+            this.currentNoteId =
+              this.openTabs[i]?.id || this.openTabs[i - 1]?.id || null;
+          }
+          this.persistTabs();
+        }
+        await this.refreshNotes();
+        toast(ttf("sidebar.note.delete.toast", { title: title || "" }), "ok");
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
     /** Sidebar "+" / palette `New note` command both land here. We open
      * the Cmd+K palette pre-filled with `+ ` so the user types the title
      * inline — no browser-native `prompt()` (raw, unstyled, races with

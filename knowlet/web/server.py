@@ -801,6 +801,42 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             body=note.body,
         )
 
+    @app.delete("/api/notes/{note_id}")
+    def delete_note(
+        note_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """Soft-delete a Note (M7.0.1).
+
+        Moves the file to `<vault>/notes/.trash/` (recoverable via the
+        `knowlet notes restore` CLI or by hand in Finder) and removes the
+        index entry so search / chat tools stop surfacing it. Per ADR-0013
+        §1, this counts as a structural change — only triggered by an
+        explicit user click, never by AI.
+        """
+        meta = runtime.index.get_note_meta(note_id)
+        if meta is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note not found: {note_id}",
+            )
+        path = Path(meta["path"])
+        if not path.is_absolute():
+            path = runtime.vault.notes_dir / path.name
+        try:
+            trashed = runtime.vault.trash_note(path)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail=f"note file missing on disk: {path}",
+            ) from exc
+        runtime.index.delete_note(note_id)
+        return {
+            "ok": True,
+            "id": note_id,
+            "trashed_to": str(trashed),
+        }
+
     @app.put("/api/notes/{note_id}", response_model=NoteFull)
     def update_note(
         note_id: str,

@@ -104,3 +104,45 @@ class Vault:
         target = self.backups_dir / f"{now_iso().replace(':', '-')}-{path.name}"
         shutil.copy2(path, target)
         return target
+
+    # ----------------------------------------------------- soft-delete (M7.0.1)
+
+    @property
+    def trash_dir(self) -> Path:
+        """Recoverable Note bin. `notes/.trash/` keeps deleted Notes intact
+        (frontmatter + body) so the user can restore by hand or via the
+        `knowlet notes restore` CLI. Hidden from `iter_note_paths` because
+        it's a dotfolder."""
+        return self.notes_dir / ".trash"
+
+    def trash_note(self, path: Path) -> Path:
+        """Move a Note's on-disk file into `notes/.trash/`. Returns the
+        new path. Idempotent on the file location (a same-name collision
+        gets a timestamp suffix). Caller is responsible for removing the
+        Note from the index."""
+        if not path.exists():
+            raise FileNotFoundError(str(path))
+        self.trash_dir.mkdir(parents=True, exist_ok=True)
+        target = self.trash_dir / path.name
+        if target.exists():
+            target = self.trash_dir / f"{path.stem}-{now_iso().replace(':', '-')}.md"
+        path.rename(target)
+        return target
+
+    def restore_note(self, trashed_path: Path) -> Path:
+        """Move a trashed Note back to `notes/`. Returns the final path."""
+        if not trashed_path.exists():
+            raise FileNotFoundError(str(trashed_path))
+        self.notes_dir.mkdir(parents=True, exist_ok=True)
+        target = self.notes_dir / trashed_path.name
+        if target.exists():
+            raise FileExistsError(
+                f"cannot restore: {target} already exists in notes/"
+            )
+        trashed_path.rename(target)
+        return target
+
+    def iter_trashed_paths(self) -> Iterator[Path]:
+        if not self.trash_dir.exists():
+            return iter(())
+        return (p for p in self.trash_dir.glob("*.md") if p.is_file())

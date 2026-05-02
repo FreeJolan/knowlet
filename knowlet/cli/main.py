@@ -22,6 +22,7 @@ from knowlet.cli import cards as cards_cli
 from knowlet.cli import config as config_cli
 from knowlet.cli import drafts as drafts_cli
 from knowlet.cli import mining as mining_cli
+from knowlet.cli import notes as notes_cli
 from knowlet.cli import user as user_cli
 from knowlet.cli import vault as vault_cli
 from knowlet.cli._common import (
@@ -58,6 +59,7 @@ app.add_typer(user_cli.app, name="user")
 app.add_typer(cards_cli.app, name="cards")
 app.add_typer(mining_cli.app, name="mining")
 app.add_typer(drafts_cli.app, name="drafts")
+app.add_typer(notes_cli.app, name="notes")
 
 
 # ------------------------------------------------------------------ root

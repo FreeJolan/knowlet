@@ -616,6 +616,40 @@ def test_auto_title_idempotent_when_already_titled(tmp_path: Path):
     assert body["title"] == "manual"
 
 
+def test_delete_note_endpoint_soft_deletes_to_trash(tmp_path: Path):
+    """M7.0.1: DELETE /api/notes/{id} moves to notes/.trash/, removes
+    the index entry, returns 200 with the trashed path."""
+    from knowlet.core.note import Note, new_id
+
+    v, cfg = _ready_vault(tmp_path)
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+
+    # Seed a note via the runtime so it lands in the index too.
+    state = client.app.state.web_state
+    runtime = state.runtime_or_init()
+    n = Note(id=new_id(), title="to be trashed", body="...")
+    path = v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    r = client.delete(f"/api/notes/{n.id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["id"] == n.id
+    assert ".trash" in body["trashed_to"]
+    # File moved off notes/ root
+    assert not path.exists()
+    assert (v.notes_dir / ".trash" / path.name).exists()
+    # Index forgot it
+    assert runtime.index.get_note_meta(n.id) is None
+
+
+def test_delete_note_endpoint_404_for_unknown_id(tmp_path: Path):
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.delete("/api/notes/does-not-exist")
+    assert r.status_code == 404
+
+
 def test_system_reindex_endpoint(tmp_path: Path):
     """M6.5: /api/system/reindex hits reindex_vault and returns counts."""
     # Pre-create a Note on disk so reindex sees something.
