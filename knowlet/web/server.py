@@ -19,7 +19,7 @@ from typing import Any
 
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -893,6 +893,76 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             updated_at=note.updated_at,
             body=note.body,
         )
+
+    # ---------------- attachments (M7.0.3) ----------------
+
+    @app.post("/api/attachments")
+    async def upload_attachment(
+        file: UploadFile = File(...),  # noqa: B008
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """Save a pasted image into `notes/_attachments/<ULID>.<ext>` and
+        return the markdown-relative path. Frontend pastes that path into
+        the editor as `![](_attachments/...)` so the note stays portable
+        across Obsidian / iCloud / plain Finder.
+
+        Hard-coded to bitmap images for now — no PDFs, no SVG (XSS risk in
+        the preview pane), no random binaries. The web UI is the only
+        caller; CLI users embed images by hand in markdown."""
+        ext_map = {
+            "image/png": "png",
+            "image/jpeg": "jpg",
+            "image/jpg": "jpg",
+            "image/gif": "gif",
+            "image/webp": "webp",
+        }
+        ext = ext_map.get((file.content_type or "").lower())
+        if ext is None:
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=f"unsupported image type: {file.content_type!r}",
+            )
+        # 20 MB ceiling — bigger pastes are usually accidents (scanned PDFs
+        # rasterized into the clipboard). Streaming would be nicer but the
+        # body is already in memory by the time we reach here.
+        data = await file.read()
+        if len(data) > 20 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="attachment exceeds 20 MB limit",
+            )
+        path = runtime.vault.write_attachment(data, ext)
+        return {
+            "path": runtime.vault.attachment_relpath(path),
+            "bytes": len(data),
+        }
+
+    @app.get("/files/_attachments/{name}")
+    def get_attachment(
+        name: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> FileResponse:
+        """Serve an attachment by basename. Path-traversal hardened: no
+        slashes / backslashes / leading dots / non-allowlisted extensions.
+        Single segment only."""
+        if "/" in name or "\\" in name or name.startswith("."):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="invalid attachment name",
+            )
+        suffix = Path(name).suffix.lower().lstrip(".")
+        if suffix not in {"png", "jpg", "jpeg", "gif", "webp"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"disallowed extension: {suffix!r}",
+            )
+        target = runtime.vault.attachments_dir / name
+        if not target.exists() or not target.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"attachment not found: {name}",
+            )
+        return FileResponse(target)
 
     # ---------------- cards ----------------
 

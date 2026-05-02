@@ -251,6 +251,7 @@
         x-show="editorMode !== 'preview' && currentTab()"
         x-model="editorBody"
         @blur="saveCurrent()"
+        @paste="onEditorPaste($event)"
         class="bg-bg text-text px-8 py-6 font-sans text-[15px] leading-[1.75] border-r border-bordersoft focus:outline-none resize-none"
         data-i18n-placeholder="editor.placeholder"
         placeholder="开始写… 支持 Markdown。"

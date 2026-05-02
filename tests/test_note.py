@@ -171,6 +171,53 @@ def test_folder_of_returns_relative_dir(tmp_path):
     assert v.folder_of(deep) == "AI papers/transformer"
 
 
+def test_write_attachment_creates_dir_and_returns_path(tmp_path):
+    """M7.0.3: write_attachment lazy-creates _attachments/ and saves bytes
+    under a ULID name with the given ext."""
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+
+    p = v.write_attachment(b"\x89PNG\r\n\x1a\n...", "png")
+    assert p.exists()
+    assert p.parent == v.attachments_dir
+    assert p.suffix == ".png"
+    assert p.read_bytes().startswith(b"\x89PNG")
+    rel = v.attachment_relpath(p)
+    assert rel.startswith("_attachments/")
+    assert rel.endswith(".png")
+
+
+def test_write_attachment_normalizes_ext(tmp_path):
+    """`.png` and `PNG` should both end up as `.png`."""
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+    p = v.write_attachment(b"x", ".PNG")
+    assert p.suffix == ".png"
+
+
+def test_iter_note_paths_skips_attachments_dir(tmp_path):
+    """M7.0.3: even if a stray .md ended up in `_attachments/`, the notes
+    listing must not pick it up. The dir holds binaries, not Notes."""
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+    n = Note(id=new_id(), title="real", body="x")
+    p = v.write_note(n)
+
+    v.attachments_dir.mkdir(parents=True, exist_ok=True)
+    stray = v.attachments_dir / "01HX0000000000000000000099.md"
+    stray.write_text("body", encoding="utf-8")
+
+    found = list(v.iter_note_paths())
+    assert p in found
+    assert stray not in found
+
+
 def test_restore_note_collision_raises(tmp_path):
     """If a Note with the same filename already exists in notes/, restore
     must refuse rather than silently overwrite."""

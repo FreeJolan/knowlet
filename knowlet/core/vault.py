@@ -97,7 +97,10 @@ class Vault:
                 rel = p.relative_to(self.notes_dir)
             except ValueError:
                 return False
-            return not any(part.startswith(".") for part in rel.parts)
+            if any(part.startswith(".") for part in rel.parts):
+                return False
+            # `_attachments/` holds binaries pasted via M7.0.3 — never a Note.
+            return rel.parts[0] != "_attachments"
 
         return (p for p in self.notes_dir.rglob("*.md") if _ok(p))
 
@@ -177,3 +180,30 @@ class Vault:
         if not self.trash_dir.exists():
             return iter(())
         return (p for p in self.trash_dir.glob("*.md") if p.is_file())
+
+    # ----------------------------------------------------- attachments (M7.0.3)
+
+    @property
+    def attachments_dir(self) -> Path:
+        """`notes/_attachments/`. Image-paste lands here; markdown links use
+        a relative path (`_attachments/<id>.png`) so notes stay portable
+        across Obsidian / iCloud / plain Finder."""
+        return self.notes_dir / "_attachments"
+
+    def write_attachment(self, data: bytes, ext: str) -> Path:
+        """Save raw bytes as `_attachments/<ULID>.<ext>` and return the full
+        path. Caller decides the ext (we validate the allowlist at the
+        HTTP layer, not here, so unit tests don't need a fake mimetype)."""
+        from knowlet.core.note import new_id
+
+        self.attachments_dir.mkdir(parents=True, exist_ok=True)
+        clean_ext = ext.lstrip(".").lower()
+        target = self.attachments_dir / f"{new_id()}.{clean_ext}"
+        target.write_bytes(data)
+        return target
+
+    def attachment_relpath(self, attachment_path: Path) -> str:
+        """Return the path relative to `notes/`, slash-joined. Used to
+        compose the markdown link the editor inserts."""
+        rel = attachment_path.relative_to(self.notes_dir)
+        return "/".join(rel.parts)

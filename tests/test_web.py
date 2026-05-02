@@ -719,3 +719,76 @@ def test_auto_title_unsaved_session_404(tmp_path: Path):
     sid = client.get("/api/chat/history").json()["active_id"]
     r = client.post(f"/api/chat/sessions/{sid}/auto-title")
     assert r.status_code == 404
+
+
+# ------------------------------------------------------------- M7.0.3 attachments
+
+
+def _png_bytes() -> bytes:
+    """Smallest possible valid PNG — 1x1 transparent pixel. Saves us from
+    needing Pillow as a test dep."""
+    import base64
+    return base64.b64decode(
+        b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+
+
+def test_upload_attachment_returns_relative_path(tmp_path: Path):
+    """M7.0.3: image POST → saved to notes/_attachments/<ulid>.png and the
+    response carries a portable `_attachments/<id>.png` path (no absolute
+    paths, no `/files/` prefix — the markdown link should round-trip across
+    Obsidian / Finder)."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.post(
+        "/api/attachments",
+        files={"file": ("pasted.png", _png_bytes(), "image/png")},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["path"].startswith("_attachments/")
+    assert body["path"].endswith(".png")
+    assert body["bytes"] == len(_png_bytes())
+    saved = v.notes_dir / body["path"]
+    assert saved.exists()
+    assert saved.read_bytes() == _png_bytes()
+
+
+def test_upload_attachment_rejects_unsupported_type(tmp_path: Path):
+    """SVG is intentionally blocked — it's a script-execution vector in any
+    pane that renders it via <img> or <object>. PDFs / .docx are also out
+    of scope for the paste flow."""
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.post(
+        "/api/attachments",
+        files={"file": ("evil.svg", b"<svg/>", "image/svg+xml")},
+    )
+    assert r.status_code == 415
+
+
+def test_get_attachment_serves_bytes(tmp_path: Path):
+    """Round-trip: upload, then GET back the bytes via /files/."""
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    up = client.post(
+        "/api/attachments",
+        files={"file": ("p.png", _png_bytes(), "image/png")},
+    ).json()
+    name = up["path"].split("/")[-1]
+    got = client.get(f"/files/_attachments/{name}")
+    assert got.status_code == 200
+    assert got.content == _png_bytes()
+
+
+def test_get_attachment_rejects_traversal(tmp_path: Path):
+    """`..` in the basename must 400 — defense in depth on top of the
+    single-segment route shape."""
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.get("/files/_attachments/.hidden.png")
+    assert r.status_code == 400
+    r = client.get("/files/_attachments/x.svg")
+    assert r.status_code == 400
+
+
+def test_get_attachment_404_for_missing(tmp_path: Path):
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.get("/files/_attachments/01HX0000000000000000000099.png")
+    assert r.status_code == 404
