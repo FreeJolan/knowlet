@@ -18,6 +18,7 @@
 - [0010 — i18n 策略](./0010-i18n.md)
 - [0011 — Web UI 重设计:笔记软件本位 + Focus Modes](./0011-web-ui-redesign.md)
 - [0012 — 笔记本位 / AI 是可选增强](./0012-notes-first-ai-optional.md)
+- [0013 — 知识管理契约 / 碎片化治理三层框架](./0013-knowledge-management-contract.md)
 
 历史 / 已不代表当前方向的 ADR 见 [`archive/`](./archive/)。
 
