@@ -49,14 +49,8 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["knowlet"]
 
-# Frontend lives at <repo>/frontend/ (peer to knowlet/) for clean architectural
-# separation. At wheel build time, copy it inside the package so installed
-# users get the SPA assets next to knowlet/web/server.py — no extra steps.
-[tool.hatch.build.targets.wheel.force-include]
-"frontend" = "knowlet/web/static"
-
 [tool.hatch.build.targets.sdist]
-include = ["knowlet", "frontend", "README.md", "README.en.md", "LICENSE", "docs"]
+include = ["knowlet", "README.md", "README.en.md", "LICENSE", "docs"]
 
 [tool.ruff]
 line-length = 100

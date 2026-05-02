@@ -16,10 +16,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from knowlet.config import KnowletConfig
-from knowlet.core.cards import CardStore
+from knowlet.core.card_store import CardStore
 from knowlet.core.drafts import DraftStore
 from knowlet.core.index import Index
-from knowlet.core.mining.tasks import TaskStore
+from knowlet.core.mining.task_store import TaskStore
 from knowlet.core.vault import Vault
 
 

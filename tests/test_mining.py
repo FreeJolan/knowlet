@@ -23,7 +23,7 @@ from knowlet.core.mining.task import (
     SourceSpec,
     parse_interval_seconds,
 )
-from knowlet.core.mining.tasks import TaskStore
+from knowlet.core.mining.task_store import TaskStore
 from knowlet.core.note import Note
 from knowlet.core.vault import Vault
 from knowlet.web.server import create_app

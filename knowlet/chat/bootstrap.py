@@ -15,12 +15,12 @@ from knowlet.chat.log import ConversationLog, prune_old
 from knowlet.chat.prompts import build_chat_system_prompt
 from knowlet.chat.session import ChatSession
 from knowlet.config import KnowletConfig, save_config
-from knowlet.core.cards import CardStore
+from knowlet.core.card_store import CardStore
 from knowlet.core.drafts import DraftStore
 from knowlet.core.embedding import EmbeddingBackend, make_backend
 from knowlet.core.index import Index, reindex_vault
 from knowlet.core.llm import LLMClient
-from knowlet.core.mining.tasks import TaskStore
+from knowlet.core.mining.task_store import TaskStore
 from knowlet.core.tools._registry import Registry, ToolContext, default_registry
 from knowlet.core.user_profile import UserProfile, read_profile
 from knowlet.core.vault import Vault
