@@ -572,3 +572,55 @@ def test_sessions_404_for_unknown_id(tmp_path: Path):
     r = client.delete("/api/chat/sessions/does-not-exist")
     # Still 404 because we never become "active" with this id.
     assert r.status_code == 404
+
+
+def test_auto_title_summarizes_first_exchange(tmp_path: Path):
+    """First-exchange auto-title (M6.4 Phase 2). The summary call uses
+    the runtime's regular `LLMClient.chat` — same path the test stub
+    intercepts."""
+    stub = StubLLM(
+        [
+            AssistantMessage(content="hybrid retrieval is BM25+vector via RRF.", tool_calls=[]),
+            # Second call = the auto-title summary itself.
+            AssistantMessage(content="RAG hybrid retrieval primer", tool_calls=[]),
+        ]
+    )
+    client, _, _ = _client_with_stub(tmp_path, stub)
+    client.post("/api/chat/turn", json={"text": "what is RAG?"})
+    sid = client.get("/api/chat/history").json()["active_id"]
+
+    r = client.post(f"/api/chat/sessions/{sid}/auto-title")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["generated"] is True
+    assert body["title"] == "RAG hybrid retrieval primer"
+
+    # Listing reflects the new title.
+    sessions = client.get("/api/chat/sessions").json()["sessions"]
+    assert next(s for s in sessions if s["id"] == sid)["title"] == "RAG hybrid retrieval primer"
+
+
+def test_auto_title_idempotent_when_already_titled(tmp_path: Path):
+    """If a title already exists, the endpoint returns it without
+    burning another LLM call."""
+    stub = StubLLM([AssistantMessage(content="hi", tool_calls=[])])
+    client, _, _ = _client_with_stub(tmp_path, stub)
+    client.post("/api/chat/turn", json={"text": "hi"})
+    sid = client.get("/api/chat/history").json()["active_id"]
+    client.put(f"/api/chat/sessions/{sid}", json={"title": "manual"})
+
+    r = client.post(f"/api/chat/sessions/{sid}/auto-title")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["generated"] is False
+    assert body["title"] == "manual"
+
+
+def test_auto_title_unsaved_session_404(tmp_path: Path):
+    """A brand-new session without any turn yet hasn't been persisted to
+    disk (we only save after a real exchange — see persist_active()), so
+    the store-keyed lookup correctly 404s."""
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    sid = client.get("/api/chat/history").json()["active_id"]
+    r = client.post(f"/api/chat/sessions/{sid}/auto-title")
+    assert r.status_code == 404

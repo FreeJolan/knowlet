@@ -745,7 +745,9 @@
   <header class="focus-header">
     <svg class="icon icon-sm" style="color: var(--accent-2);"><use href="#i-sparkles"/></svg>
     <span class="focus-header-title" data-i18n="chat.focus.title">对话</span>
-    <span class="mono text-textmute text-[11.5px]" data-i18n="chat.focus.singlesession">单会话 · 多会话归档下一阶段</span>
+    <span class="mono text-textmute text-[11.5px] truncate"
+          x-text="activeSessionTitle || tt('chat.session.untitled')"
+          style="max-width: 320px;"></span>
     <span class="flex-1"></span>
     <span class="text-textmute text-xs" data-i18n="rail.ai.scope.label">参考范围</span>
     <select x-model="chatScope" class="bg-bg border border-border rounded px-1.5 py-1 text-xs text-text">
@@ -758,53 +760,105 @@
             data-i18n-title="header.save.title">
       <svg class="icon icon-sm"><use href="#i-save"/></svg>
     </button>
-    <button @click="clearChat()" :disabled="!chatHistory.length"
-            class="text-textsoft hover:text-text px-2 py-1 rounded hover:bg-surface2 text-[11.5px] disabled:opacity-30"
-            data-i18n="rail.ai.clear.label" data-i18n-title="rail.ai.clear.title">清空</button>
     <button @click="focus = null" class="focus-esc">
       <span class="kbd">esc</span>
       <span data-i18n="focus.exit">退出</span>
     </button>
   </header>
 
-  <div class="flex-1 overflow-y-auto px-6 py-8" x-ref="chatFocusScroll">
-    <div class="mx-auto flex flex-col gap-4" style="max-width: 880px;">
-      <template x-for="(msg, i) in chatHistory" :key="i">
-        <div :class="msg.role === 'user' ? 'flex flex-col items-end gap-1' : 'flex flex-col items-start gap-1'">
-          <span class="mono text-[10px] text-textfaint" x-text="msg.role === 'user' ? tt('rail.ai.label.you') : tt('rail.ai.label.ai')"></span>
-          <div
-            :class="msg.role === 'user'
-              ? 'bg-accentsoft border border-[rgba(91,122,156,0.22)] text-text rounded-[12px_12px_3px_12px] px-4 py-3 max-w-[80%]'
-              : 'bg-card border border-bordersoft text-text rounded-[12px_12px_12px_3px] px-4 py-3 max-w-[88%]'"
-            class="leading-relaxed prose-note"
-            style="font-size: 14px;"
-            x-html="renderMarkdown(msg.content || '')"
-          ></div>
-          <template x-for="tc in (msg.tool_calls || [])" :key="tc.id">
-            <div class="text-textmute text-[11px] mono mt-1 pl-2 border-l border-bordersoft" x-text="`· ${tc.name}(${JSON.stringify(tc.args).slice(0, 120)})`"></div>
-          </template>
-        </div>
-      </template>
-      <div x-show="!chatHistory.length" class="text-textmute text-sm leading-relaxed text-center py-12">
-        <p x-html="ttf('rail.ai.empty', { title: currentTab()?.title || tt('rail.ai.empty.notitle') })"></p>
-      </div>
-    </div>
-  </div>
+  <!-- Two-column body: sessions sidebar + conversation -->
+  <div class="flex-1 flex min-h-0">
 
-  <div class="border-t border-border px-6 py-4" style="background: var(--panel);">
-    <div class="mx-auto" style="max-width: 880px;">
-      <textarea
-        x-ref="chatFocusInput"
-        x-model="chatDraft"
-        @keydown="handleChatFocusKey($event)"
-        class="w-full bg-bg border border-border rounded-lg p-3 text-[14px] resize-none focus:outline-none focus:border-accent"
-        rows="3"
-        data-i18n-placeholder="rail.ai.placeholder"
-        :disabled="chatStreaming"
-      ></textarea>
-      <div class="flex items-center mt-1.5 text-textfaint">
+    <!-- Sessions sidebar (M6.4) -->
+    <aside class="w-[260px] border-r border-border flex flex-col min-h-0" style="background: var(--panel);">
+      <div class="px-3 py-2 border-b border-bordersoft flex items-center gap-2">
+        <span class="text-[11px] uppercase tracking-[0.08em] text-textmute font-medium"
+              data-i18n="chat.session.sidebar.title">会话</span>
         <span class="flex-1"></span>
-        <span class="kbd" data-i18n="rail.ai.composer.hint">⏎ 发送 · ⇧⏎ 换行</span>
+        <button @click="createSession()"
+                class="flex items-center gap-1 text-[11.5px] px-2 py-1 rounded text-textsoft hover:text-accent2 hover:bg-surface2"
+                data-i18n-title="chat.session.new.title">
+          <svg class="icon icon-sm"><use href="#i-plus"/></svg>
+          <span data-i18n="chat.session.new.label">新会话</span>
+        </button>
+      </div>
+      <div class="flex-1 overflow-y-auto py-1">
+        <template x-for="s in sessions" :key="s.id">
+          <div :class="s.id === activeSessionId
+                       ? 'session-item active'
+                       : 'session-item'">
+            <div class="session-row" @click="activateSession(s.id)">
+              <div class="session-title"
+                   x-text="s.title || tt('chat.session.untitled')"></div>
+              <div class="session-meta mono"
+                   x-text="(s.updated_at || '').slice(0, 16).replace('T', ' ')"></div>
+            </div>
+            <div class="session-actions">
+              <button @click.stop="promptRenameSession(s.id)"
+                      class="text-textmute hover:text-text p-1 rounded hover:bg-surface2"
+                      data-i18n-title="chat.session.rename.title">
+                <svg class="icon icon-sm"><use href="#i-edit"/></svg>
+              </button>
+              <button @click.stop="deleteSession(s.id)"
+                      :disabled="s.id === activeSessionId"
+                      class="text-textmute hover:text-danger p-1 rounded hover:bg-surface2 disabled:opacity-30 disabled:hover:bg-transparent"
+                      data-i18n-title="chat.session.delete.title">
+                <svg class="icon icon-sm"><use href="#i-x"/></svg>
+              </button>
+            </div>
+          </div>
+        </template>
+        <div x-show="!sessions.length" class="text-textmute text-xs px-3 py-6 text-center"
+             data-i18n="chat.session.empty">没有历史会话。开始对话后会出现在这里。</div>
+      </div>
+    </aside>
+
+    <!-- Conversation pane -->
+    <div class="flex-1 flex flex-col min-h-0">
+      <div class="flex-1 overflow-y-auto px-6 py-8" x-ref="chatFocusScroll">
+        <div class="mx-auto flex flex-col gap-4" style="max-width: 880px;">
+          <template x-for="(msg, i) in chatHistory" :key="i">
+            <div :class="msg.role === 'user' ? 'flex flex-col items-end gap-1' : 'flex flex-col items-start gap-1'">
+              <span class="mono text-[10px] text-textfaint" x-text="msg.role === 'user' ? tt('rail.ai.label.you') : tt('rail.ai.label.ai')"></span>
+              <div
+                :class="msg.role === 'user'
+                  ? 'bg-accentsoft border border-[rgba(91,122,156,0.22)] text-text rounded-[12px_12px_3px_12px] px-4 py-3 max-w-[80%]'
+                  : 'bg-card border border-bordersoft text-text rounded-[12px_12px_12px_3px] px-4 py-3 max-w-[88%]'"
+                class="leading-relaxed prose-note"
+                style="font-size: 14px;"
+                x-html="renderMarkdown(msg.content || '')"
+              ></div>
+              <template x-for="tc in (msg.tool_calls || [])" :key="tc.id">
+                <div class="text-textmute text-[11px] mono mt-1 pl-2 border-l border-bordersoft" x-text="`· ${tc.name}(${JSON.stringify(tc.args).slice(0, 120)})`"></div>
+              </template>
+            </div>
+          </template>
+          <div x-show="!chatHistory.length" class="text-textmute text-sm leading-relaxed text-center py-12">
+            <p x-html="ttf('rail.ai.empty', { title: currentTab()?.title || tt('rail.ai.empty.notitle') })"></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="border-t border-border px-6 py-4" style="background: var(--panel);">
+        <div class="mx-auto" style="max-width: 880px;">
+          <textarea
+            x-ref="chatFocusInput"
+            x-model="chatDraft"
+            @keydown="handleChatFocusKey($event)"
+            class="w-full bg-bg border border-border rounded-lg p-3 text-[14px] resize-none focus:outline-none focus:border-accent"
+            rows="3"
+            data-i18n-placeholder="rail.ai.placeholder"
+            :disabled="chatStreaming"
+          ></textarea>
+          <div class="flex items-center mt-1.5 text-textfaint">
+            <span class="flex-1"></span>
+            <button @click="clearChat()"
+                    class="text-textsoft hover:text-text px-2 py-0.5 rounded hover:bg-surface2 text-[11px] mr-2"
+                    data-i18n-title="chat.session.new.title"
+                    data-i18n="chat.session.new.label">新会话</button>
+            <span class="kbd" data-i18n="rail.ai.composer.hint">⏎ 发送 · ⇧⏎ 换行</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>

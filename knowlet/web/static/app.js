@@ -135,6 +135,10 @@ function ui() {
     chatStreaming: false,
     chatDraft: "",
     imeComposing: false,
+    // M6.4 multi-session
+    sessions: [],         // ConversationSummary[] from /api/chat/sessions
+    activeSessionId: "",
+    activeSessionTitle: "",
 
     // ---- footer counters ----
     draftsCount: 0,
@@ -235,6 +239,7 @@ function ui() {
         this.refreshCardsCount(),
         this.refreshMining(),
         this.fetchChatHistory(),
+        this.refreshSessions(),
       ]);
 
       // bind debounced save
@@ -451,8 +456,112 @@ function ui() {
             args: tc.function?.arguments,
           })),
         }));
+        this.activeSessionId = data.active_id || "";
+        this.activeSessionTitle = data.active_title || "";
         this.scrollChatToBottom();
       } catch (_) {}
+    },
+
+    // ============================================================ multi-session (M6.4)
+
+    async refreshSessions() {
+      try {
+        const data = await api("GET", "/api/chat/sessions?limit=50");
+        this.sessions = data.sessions || [];
+        this.activeSessionId = data.active_id || this.activeSessionId;
+      } catch (_) {}
+    },
+
+    /** Switch to an existing session: persist outgoing on the server,
+     * load the new history, scroll the chat focus pane to bottom. */
+    async activateSession(id) {
+      if (!id || id === this.activeSessionId) return;
+      try {
+        await api("POST", `/api/chat/sessions/${encodeURIComponent(id)}/activate`);
+        await this.fetchChatHistory();
+        await this.refreshSessions();
+        this.scrollChatFocusToBottom();
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    /** Start a fresh session and switch to it. */
+    async createSession() {
+      try {
+        const r = await api("POST", "/api/chat/sessions");
+        this.activeSessionId = r.id;
+        this.activeSessionTitle = r.title || "";
+        this.chatHistory = [];
+        await this.refreshSessions();
+        this.$nextTick(() => {
+          const el = this.$refs.chatFocusInput;
+          if (el) el.focus();
+        });
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    async renameSession(id, title) {
+      const trimmed = (title || "").trim();
+      if (!trimmed) return;
+      try {
+        await api("PUT", `/api/chat/sessions/${encodeURIComponent(id)}`, {
+          title: trimmed,
+        });
+        if (id === this.activeSessionId) this.activeSessionTitle = trimmed;
+        await this.refreshSessions();
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    async promptRenameSession(id) {
+      const current = this.sessions.find((s) => s.id === id)?.title || "";
+      const next = window.prompt(tt("chat.session.rename.prompt"), current);
+      if (next === null) return;
+      await this.renameSession(id, next);
+    },
+
+    async deleteSession(id) {
+      if (id === this.activeSessionId) {
+        // Backend would 409; UX is "switch first, then delete".
+        toast(tt("chat.session.delete.refuse_active"), "error");
+        return;
+      }
+      if (!window.confirm(tt("chat.session.delete.confirm"))) return;
+      try {
+        await api("DELETE", `/api/chat/sessions/${encodeURIComponent(id)}`);
+        await this.refreshSessions();
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    /** Fire-and-forget auto-title after the first turn of an untitled
+     * session. Doesn't block the UI; refreshes the sidebar when done. */
+    _maybeAutoTitle() {
+      if (!this.activeSessionId) return;
+      if (this.activeSessionTitle) return;
+      // Need at least one full exchange (user + assistant).
+      if (this.chatHistory.length < 2) return;
+      const sid = this.activeSessionId;
+      // Don't await — runs in the background. Errors are silent (best-effort).
+      (async () => {
+        try {
+          const r = await api(
+            "POST",
+            `/api/chat/sessions/${encodeURIComponent(sid)}/auto-title`,
+          );
+          if (r && r.title && sid === this.activeSessionId) {
+            this.activeSessionTitle = r.title;
+          }
+          await this.refreshSessions();
+        } catch (_) {
+          // best-effort: a flaky LLM call shouldn't bubble up to the user
+        }
+      })();
     },
 
     handleChatKey(ev) {
@@ -523,6 +632,11 @@ function ui() {
         this.refreshDraftsCount();
         this.refreshCardsCount();
         this.refreshNotes();
+        // M6.4: refresh sidebar (this exchange may have just made an
+        // empty session "meaningful" + bumped its updated_at) and kick
+        // off auto-titling if needed.
+        this.refreshSessions();
+        this._maybeAutoTitle();
       } catch (exc) {
         asst.content += `\n\n**Error:** ${exc.message}`;
         toast(exc.message, "error");
@@ -533,8 +647,14 @@ function ui() {
 
     async clearChat() {
       try {
-        await api("POST", "/api/chat/clear");
+        const r = await api("POST", "/api/chat/clear");
         this.chatHistory = [];
+        // Backend returns the new active session id (M6.4).
+        if (r && r.active_id) {
+          this.activeSessionId = r.active_id;
+          this.activeSessionTitle = "";
+        }
+        await this.refreshSessions();
         toast(tt("chat.web.cleared"), "ok");
       } catch (exc) {
         toast(exc.message, "error");
