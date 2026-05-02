@@ -58,6 +58,10 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 # ----------------------------------------------------------------- request/response models
 
 
+class RenameSessionRequest(BaseModel):
+    title: str
+
+
 class ChatTurnRequest(BaseModel):
     text: str = Field(..., description="user message")
 
@@ -396,6 +400,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"LLM error: {exc}",
             ) from exc
+        # M6.4: persist the active conversation after every turn so a
+        # browser refresh / server restart doesn't lose the exchange.
+        runtime.persist_active()
         return ChatTurnResponse(reply=reply, tool_calls=traces)
 
     @app.post("/api/chat/stream")
@@ -418,6 +425,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             except Exception as exc:  # noqa: BLE001
                 err = ErrorEvent(message=f"server error: {exc}")
                 yield f"data: {json.dumps(event_to_dict(err))}\n\n"
+            finally:
+                # Persist the (possibly partial) turn so a refresh mid-stream
+                # doesn't drop the exchange.
+                try:
+                    runtime.persist_active()
+                except Exception:  # noqa: BLE001
+                    pass
 
         return StreamingResponse(
             event_source(),
@@ -430,9 +444,14 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     @app.post("/api/chat/clear")
     def chat_clear(runtime: ChatRuntime = Depends(runtime_dep)) -> dict[str, Any]:
-        # Keep system prompt; drop the rest.
-        runtime.session.history = runtime.session.history[:1]
-        return {"ok": True}
+        """`Clear chat` from the UI now means *start a new session* (M6.4).
+
+        The previous session stays on disk and is reachable from the
+        sidebar. This is more honest semantics than truncating history in
+        place: nothing is destroyed, and the user gets a fresh slate.
+        """
+        new_conv = runtime.new_session()
+        return {"ok": True, "active_id": new_conv.id}
 
     @app.post("/api/chat/ask-once")
     def chat_ask_once(
@@ -483,7 +502,94 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         public = [
             m for m in runtime.session.history if m.get("role") in ("user", "assistant")
         ]
-        return {"history": public}
+        return {
+            "history": public,
+            "active_id": runtime.active_conversation.id,
+            "active_title": runtime.active_conversation.title,
+        }
+
+    # ---------------- multi-session (M6.4) ----------------
+
+    @app.get("/api/chat/sessions")
+    def chat_sessions_list(
+        limit: int = 50,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """List persisted conversations, most recent first."""
+        rows = runtime.conversations.list(limit=limit, only_meaningful=True)
+        return {
+            "active_id": runtime.active_conversation.id,
+            "sessions": [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "model": r.model,
+                    "started_at": r.started_at,
+                    "updated_at": r.updated_at,
+                    "message_count": r.message_count,
+                }
+                for r in rows
+            ],
+        }
+
+    @app.post("/api/chat/sessions")
+    def chat_sessions_new(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """Start a fresh session and switch the runtime to it."""
+        new_conv = runtime.new_session()
+        return {"id": new_conv.id, "title": new_conv.title}
+
+    @app.post("/api/chat/sessions/{conv_id}/activate")
+    def chat_sessions_activate(
+        conv_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """Switch the runtime's active session. Persists the outgoing one."""
+        target = runtime.conversations.get(conv_id)
+        if target is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"conversation not found: {conv_id}",
+            )
+        runtime.switch_to(target)
+        return {"id": target.id, "title": target.title}
+
+    @app.put("/api/chat/sessions/{conv_id}")
+    def chat_sessions_rename(
+        conv_id: str,
+        req: RenameSessionRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        conv = runtime.conversations.rename(conv_id, req.title)
+        if conv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"conversation not found: {conv_id}",
+            )
+        # If we just renamed the active session, refresh the in-memory copy.
+        if runtime.active_conversation.id == conv_id:
+            runtime.active_conversation = conv
+        return {"id": conv.id, "title": conv.title}
+
+    @app.delete("/api/chat/sessions/{conv_id}")
+    def chat_sessions_delete(
+        conv_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        # Refuse to delete the active session — the UI should switch first.
+        if runtime.active_conversation.id == conv_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="cannot delete the active session — switch first",
+            )
+        ok = runtime.conversations.delete(conv_id)
+        if not ok:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"conversation not found: {conv_id}",
+            )
+        return {"ok": True}
 
     # ---------------- sediment / save ----------------
 

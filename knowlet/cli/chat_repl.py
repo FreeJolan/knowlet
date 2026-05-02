@@ -85,12 +85,8 @@ def run_chat(*, save_after: bool, ensure_ready) -> None:
     finally:
         if save_after:
             _do_sediment(runtime, quiet_skip=True)
-        try:
-            convo_path = runtime.convo.write(runtime.session.history)
-            if convo_path is not None:
-                console.print(f"[dim]conversation saved → {convo_path}[/dim]")
-        except Exception as exc:  # noqa: BLE001
-            err_console.print(f"[yellow]could not save conversation log: {exc}[/yellow]")
+        # `runtime.close()` calls `persist_active()` which saves through the
+        # ConversationStore, so the CLI no longer needs a manual write here.
         runtime.close()
 
 

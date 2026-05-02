@@ -11,7 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from knowlet.chat.log import ConversationLog, prune_old
+from knowlet.chat.conversation_store import Conversation, ConversationStore
+from knowlet.chat.log import prune_old
 from knowlet.chat.prompts import build_chat_system_prompt
 from knowlet.chat.session import ChatSession
 from knowlet.config import KnowletConfig, save_config
@@ -39,12 +40,51 @@ class ChatRuntime:
     llm: LLMClient
     registry: Registry
     ctx: ToolContext
-    convo: ConversationLog
-    session: ChatSession
+    conversations: ConversationStore  # the multi-session repo (M6.4)
+    session: ChatSession              # active in-memory session
+    active_conversation: Conversation # currently-loaded persisted record
     user_profile: UserProfile | None = None
 
     def close(self) -> None:
+        # Persist whatever's in flight before tearing down the index. The
+        # /api/chat/turn endpoint already saves after every turn, but the
+        # CLI REPL may exit mid-stream, so this catches that path.
+        self.persist_active()
         self.index.close()
+
+    def persist_active(self) -> None:
+        """Sync the in-memory `ChatSession.history` back to the persisted
+        `active_conversation` record. Only writes when there's content past
+        the system prompt — empty sessions don't pollute the listing."""
+        if not self.session.history or len(self.session.history) <= 1:
+            return
+        self.active_conversation.messages = list(self.session.history)
+        self.conversations.save(self.active_conversation)
+
+    def switch_to(self, conv: Conversation) -> None:
+        """Make `conv` the active session: load its messages into ChatSession
+        and remember it as the persistence target. The system prompt at index
+        0 stays whatever was last saved (per-session), so a profile change
+        only takes effect for *new* sessions."""
+        # Persist the outgoing session before discarding it.
+        self.persist_active()
+        if not conv.messages:
+            # Defensive: a brand-new conversation should at least carry the
+            # current build of the system prompt.
+            conv.messages = [self.session.history[0]] if self.session.history else []
+        self.active_conversation = conv
+        self.session.history = list(conv.messages)
+
+    def new_session(self, system_prompt: str | None = None) -> Conversation:
+        """Start a fresh persisted conversation and switch to it."""
+        prompt = (
+            system_prompt
+            if system_prompt is not None
+            else (self.session.history[0]["content"] if self.session.history else "")
+        )
+        conv = self.conversations.new(model=self.config.llm.model, system_prompt=prompt)
+        self.switch_to(conv)
+        return conv
 
 
 @dataclass
@@ -120,7 +160,20 @@ def bootstrap_chat(
     session = ChatSession(
         llm=llm, registry=registry, ctx=ctx, system_prompt=system_prompt
     )
-    convo = ConversationLog(dir=vault.conversations_dir, model=cfg.llm.model)
+    conversations = ConversationStore(vault.conversations_dir)
+
+    # Resume the most recent meaningful conversation (M6.4): a user closing
+    # the browser and coming back tomorrow doesn't lose context. Falls back
+    # to a fresh session if there's nothing on disk yet.
+    resumed = conversations.most_recent()
+    if resumed is not None:
+        # Replay the persisted messages into the session. The first message
+        # in the persisted log is the system prompt at the time of that
+        # conversation's start; we trust it (per-session prompt history).
+        session.history = list(resumed.messages)
+        active = resumed
+    else:
+        active = conversations.new(model=cfg.llm.model, system_prompt=system_prompt)
 
     runtime = ChatRuntime(
         vault=vault,
@@ -130,8 +183,9 @@ def bootstrap_chat(
         llm=llm,
         registry=registry,
         ctx=ctx,
-        convo=convo,
+        conversations=conversations,
         session=session,
+        active_conversation=active,
         user_profile=profile,
     )
     return runtime, report
