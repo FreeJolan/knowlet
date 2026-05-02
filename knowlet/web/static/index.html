@@ -50,6 +50,8 @@
   @keydown.window.ctrl.shift.d.prevent="handleFocusHotkey($event, 'drafts')"
   @keydown.window.meta.shift.r.prevent="handleFocusHotkey($event, 'cards')"
   @keydown.window.ctrl.shift.r.prevent="handleFocusHotkey($event, 'cards')"
+  @keydown.window.meta.shift.q.prevent="handleFocusHotkey($event, 'quiz')"
+  @keydown.window.ctrl.shift.q.prevent="handleFocusHotkey($event, 'quiz')"
   @keydown.window.meta.shift.a.prevent="captureSelectionAsCapsule()"
   @keydown.window.ctrl.shift.a.prevent="captureSelectionAsCapsule()"
   @selectionchange.document.debounce.150ms="onEditorSelectionChange()"
@@ -1108,6 +1110,233 @@
           </div>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ QUIZ FOCUS MODE (Cmd+Shift+Q · ADR-0014) ═══════════════ -->
+<div x-show="focus === 'quiz'" x-cloak class="focus-overlay">
+  <header class="focus-header">
+    <svg class="icon icon-sm" style="color: var(--accent-2);"><use href="#i-search"/></svg>
+    <span class="focus-header-title" data-i18n="quiz.title">考我</span>
+    <span class="mono text-textmute text-[11.5px]"
+          x-text="quiz.session && quiz.stage === 'loop' ? `${quiz.currentIndex + 1} / ${quiz.session.questions.length}` : ''"></span>
+    <span class="flex-1"></span>
+    <button @click="exitQuizFocus()" class="focus-esc">
+      <span data-i18n="focus.esc">Esc 退出</span>
+    </button>
+  </header>
+
+  <div class="focus-body" style="overflow-y: auto;">
+    <div class="mx-auto" style="max-width: 720px; padding: 32px 24px;">
+
+      <!-- Stage: scope picker -->
+      <template x-if="quiz.stage === 'scope'">
+        <div class="space-y-4">
+          <h2 class="font-serif text-[24px] font-semibold text-text" data-i18n="quiz.scope.heading">挑选 scope</h2>
+          <p class="text-textsoft text-[13px] leading-relaxed" data-i18n="quiz.scope.intro">
+            选 1-N 条笔记作为考题来源。AI 会出 N 道主动召回题(不是"找答案"题),并给参考答案 + advisory 评分。评分仅供参考,你可以不同意。
+          </p>
+          <div class="border border-border rounded p-3 bg-card">
+            <div class="text-xs text-textsoft mb-2" data-i18n="quiz.scope.notes">范围 · 笔记</div>
+            <div class="max-h-[280px] overflow-y-auto space-y-1">
+              <template x-for="n in notes.slice(0, 200)" :key="n.id">
+                <label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-surface2 cursor-pointer">
+                  <input type="checkbox"
+                         :checked="quiz.scopeNoteIds.includes(n.id)"
+                         @change="toggleQuizScopeNote(n.id)"
+                         class="accent-accent">
+                  <span class="text-[13px] text-text truncate flex-1" x-text="n.title"></span>
+                </label>
+              </template>
+            </div>
+          </div>
+          <details class="text-xs text-textsoft">
+            <summary class="cursor-pointer hover:text-text" data-i18n="quiz.scope.advanced">高级设置</summary>
+            <div class="pl-3 pt-2 space-y-2">
+              <label class="flex items-center gap-2">
+                <span data-i18n="quiz.scope.n_questions">出题数</span>
+                <input type="number" x-model.number="quiz.n" min="1" max="20"
+                       class="w-16 bg-bg border border-border rounded px-2 py-1 text-text text-sm">
+                <span class="text-textmute" data-i18n="quiz.scope.n_default">默认 5,1-20 之间</span>
+              </label>
+            </div>
+          </details>
+          <div class="flex gap-2">
+            <button @click="startQuiz()"
+                    :disabled="quiz.scopeNoteIds.length === 0"
+                    class="px-4 py-2 rounded bg-accent text-onaccent font-medium hover:bg-accent2 disabled:opacity-50"
+                    data-i18n="quiz.scope.start">开始</button>
+            <button @click="exitQuizFocus()"
+                    class="px-4 py-2 rounded border border-border text-textsoft hover:text-text"
+                    data-i18n="quiz.scope.cancel">取消</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- Stage: loading -->
+      <template x-if="quiz.stage === 'loading'">
+        <div class="text-center py-16 text-textsoft">
+          <svg class="icon icon-sm animate-spin inline-block" aria-hidden="true"><use href="#i-refresh"/></svg>
+          <span class="ml-2" data-i18n="quiz.generating">出题中…</span>
+        </div>
+      </template>
+
+      <!-- Stage: error -->
+      <template x-if="quiz.stage === 'error'">
+        <div class="space-y-3">
+          <h2 class="font-serif text-[20px] font-semibold text-danger" data-i18n="quiz.error.heading">出题失败</h2>
+          <p class="text-textsoft text-[13px]" x-text="quiz.error"></p>
+          <div class="flex gap-2">
+            <button @click="startQuiz()" class="px-4 py-2 rounded bg-accent text-onaccent font-medium hover:bg-accent2" data-i18n="quiz.error.retry">重试</button>
+            <button @click="quiz.stage = 'scope'" class="px-4 py-2 rounded border border-border text-textsoft hover:text-text" data-i18n="quiz.error.back">返回</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- Stage: question loop -->
+      <template x-if="quiz.stage === 'loop' && quizCurrentQuestion()">
+        <div class="space-y-5">
+          <div class="text-textmute mono text-[10.5px] uppercase tracking-wider" x-text="quizCurrentQuestion().type"></div>
+          <h2 class="font-serif text-[22px] font-semibold leading-snug text-text" x-text="quizCurrentQuestion().question"></h2>
+
+          <!-- Pre-answer state -->
+          <template x-if="quizCurrentQuestion().ai_score === null || quizCurrentQuestion().ai_score === undefined">
+            <div class="space-y-3">
+              <textarea
+                x-model="quiz.answerDraft"
+                @keydown.meta.enter.prevent="submitQuizAnswer()"
+                @keydown.ctrl.enter.prevent="submitQuizAnswer()"
+                rows="6"
+                class="w-full bg-bg border border-border rounded p-3 text-[14px] text-text leading-relaxed focus:outline-none focus:border-accent"
+                data-i18n-placeholder="quiz.answer.placeholder"
+                placeholder="用你自己的话回答…(留空 = 跳过)"
+                :disabled="quiz.submitting"></textarea>
+              <div class="flex items-center gap-2">
+                <button @click="submitQuizAnswer()"
+                        :disabled="quiz.submitting"
+                        class="px-4 py-2 rounded bg-accent text-onaccent font-medium hover:bg-accent2 disabled:opacity-60"
+                        data-i18n="quiz.answer.submit">提交</button>
+                <span class="kbd text-textmute" data-i18n="quiz.answer.kbd">⌘⏎ 提交</span>
+              </div>
+            </div>
+          </template>
+
+          <!-- Post-grade state -->
+          <template x-if="quizCurrentQuestion().ai_score !== null && quizCurrentQuestion().ai_score !== undefined">
+            <div class="space-y-3">
+              <div class="border border-bordersoft rounded p-3 bg-card">
+                <div class="text-xs text-textsoft mb-1" data-i18n="quiz.your_answer">你的回答</div>
+                <div class="text-[14px] text-text whitespace-pre-wrap" x-text="quizCurrentQuestion().user_answer || '(skipped)'"></div>
+              </div>
+              <div class="border border-bordersoft rounded p-3 bg-panel/40">
+                <div class="text-xs text-textsoft mb-1" data-i18n="quiz.reference">参考答案</div>
+                <div class="text-[14px] text-text whitespace-pre-wrap" x-text="quizCurrentQuestion().reference_answer"></div>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="font-serif text-[20px] font-semibold"
+                      :class="quizCurrentQuestion().ai_score >= 4 ? 'text-ok' : (quizCurrentQuestion().ai_score >= 3 ? 'text-warn' : 'text-danger')"
+                      x-text="`${quizCurrentQuestion().ai_score}/5`"></span>
+                <span class="text-textsoft text-[13px]" x-text="quizCurrentQuestion().ai_reason"></span>
+              </div>
+              <template x-if="quizCurrentQuestion().ai_missing && quizCurrentQuestion().ai_missing.length">
+                <div class="text-textsoft text-xs">
+                  <span data-i18n="quiz.missing">缺漏:</span>
+                  <template x-for="m in quizCurrentQuestion().ai_missing" :key="m">
+                    <span class="kbd" x-text="m"></span>
+                  </template>
+                </div>
+              </template>
+              <button @click="advanceQuiz()"
+                      class="px-4 py-2 rounded bg-accent text-onaccent font-medium hover:bg-accent2"
+                      x-text="(quiz.currentIndex >= quiz.session.questions.length - 1) ? (tt('quiz.finish') || '完成') : (tt('quiz.next') || '下一题')"></button>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- Stage: summary -->
+      <template x-if="quiz.stage === 'summary' && quiz.session">
+        <div class="space-y-5">
+          <div class="border border-border rounded-lg p-5 bg-card text-center">
+            <div class="text-textmute text-xs uppercase tracking-wider" data-i18n="quiz.summary.session_score">本次成绩</div>
+            <div class="font-serif text-[44px] font-semibold mt-1"
+                 :class="quiz.session.session_score >= 80 ? 'text-ok' : (quiz.session.session_score >= 60 ? 'text-warn' : 'text-danger')"
+                 x-text="`${quiz.session.session_score} / 100`"></div>
+            <div class="text-textsoft text-[13px] mt-1"
+                 x-text="`${quiz.session.n_correct} / ${quiz.session.n_questions} 答对` + (quiz.session.n_disagreement ? ` · 你不同意 ${quiz.session.n_disagreement} 题` : '')"></div>
+          </div>
+
+          <h3 class="font-serif text-[18px] font-semibold text-text" data-i18n="quiz.summary.review">逐题回顾</h3>
+          <div class="space-y-3">
+            <template x-for="(q, i) in quiz.session.questions" :key="i">
+              <div class="border border-bordersoft rounded p-3 bg-card">
+                <div class="flex items-start gap-3">
+                  <span class="font-serif text-[16px] font-semibold flex-shrink-0"
+                        :class="q.ai_score >= 4 ? 'text-ok' : (q.ai_score >= 3 ? 'text-warn' : 'text-danger')"
+                        x-text="`${q.ai_score}/5`"></span>
+                  <div class="flex-1 space-y-1">
+                    <div class="text-text text-[14px] font-medium" x-text="q.question"></div>
+                    <div class="text-textsoft text-xs leading-relaxed">
+                      <span data-i18n="quiz.summary.your_answer">你答:</span>
+                      <span class="text-text" x-text="q.user_answer || '(skipped)'"></span>
+                    </div>
+                    <div class="text-textsoft text-xs leading-relaxed">
+                      <span data-i18n="quiz.summary.reference">参考:</span>
+                      <span x-text="q.reference_answer"></span>
+                    </div>
+                    <div class="text-textmute text-[11.5px] mt-1" x-text="q.ai_reason"></div>
+
+                    <!-- Disagreement loop (M7.4.2) -->
+                    <div class="flex items-center gap-2 mt-2 text-[12px]">
+                      <button x-show="!q.user_disagrees && quiz.disagreeOpen !== i"
+                              @click="openDisagree(i)"
+                              class="text-textsoft hover:text-text px-2 py-0.5 rounded hover:bg-surface2"
+                              data-i18n="quiz.summary.disagree">✗ 我不同意</button>
+                      <span x-show="q.user_disagrees" class="text-warn">
+                        <span data-i18n="quiz.summary.you_disagreed">你已标记不同意</span>
+                        <span x-show="q.user_disagree_reason" class="text-textsoft" x-text="`· ${q.user_disagree_reason}`"></span>
+                        <button @click="submitDisagree(i, false)" class="text-textmute hover:text-text ml-1">×</button>
+                      </span>
+                    </div>
+                    <div x-show="quiz.disagreeOpen === i" class="mt-2 space-y-1.5">
+                      <textarea x-model="quiz.disagreeDraft" rows="2"
+                                class="w-full bg-bg border border-border rounded px-2 py-1 text-[12px] focus:outline-none focus:border-accent"
+                                data-i18n-placeholder="quiz.summary.disagree_reason"
+                                placeholder="为什么不同意?(可空)"></textarea>
+                      <div class="flex gap-1">
+                        <button @click="submitDisagree(i, true)" class="px-2 py-0.5 text-[11.5px] rounded bg-warn text-onaccent" data-i18n="quiz.summary.disagree_confirm">确认</button>
+                        <button @click="closeDisagree()" class="px-2 py-0.5 text-[11.5px] rounded border border-border text-textsoft" data-i18n="quiz.summary.disagree_cancel">取消</button>
+                      </div>
+                    </div>
+
+                    <!-- Cards reflux (M7.4.2): selected by default for q.ai_score < 3 -->
+                    <div x-show="q.ai_score < 3" class="flex items-center gap-1.5 mt-2 text-[12px]">
+                      <input type="checkbox"
+                             :checked="!!quiz.refluxSelected[i]"
+                             @change="quiz.refluxSelected[i] = $event.target.checked"
+                             :disabled="!!q.card_id_after_reflux"
+                             class="accent-accent">
+                      <span x-show="!q.card_id_after_reflux" class="text-textsoft" data-i18n="quiz.summary.reflux_into_card">做成 Card</span>
+                      <span x-show="q.card_id_after_reflux" class="text-ok" data-i18n="quiz.summary.reflux_done">✓ 已做成 Card</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <div class="flex gap-2 pt-2">
+            <button @click="refluxSelectedCards()"
+                    class="px-4 py-2 rounded bg-accent text-onaccent font-medium hover:bg-accent2"
+                    data-i18n="quiz.summary.reflux_batch">批量做成 Card</button>
+            <button @click="exitQuizFocus()"
+                    class="px-4 py-2 rounded border border-border text-textsoft hover:text-text"
+                    data-i18n="quiz.summary.done">完成</button>
+          </div>
+        </div>
+      </template>
+
     </div>
   </div>
 </div>
