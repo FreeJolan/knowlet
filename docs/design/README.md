@@ -7,6 +7,7 @@
 ## 索引
 
 - [`architecture.md`](./architecture.md) — 四层结构、领域实体、生产-消费闭环、Path 0 主线
+- [`architecture-diagrams.md`](./architecture-diagrams.md) — **技术 + 产品 ASCII 架构图**(2026-05-02 当前形态:M6 + ADR-0013/14)
 - [`users.md`](./users.md) — 目标用户共性画像与"决策视角"用法
 - [`organization.md`](./organization.md) — 知识组织策略:AI 托底 + 人工点睛
 - [`tech-stack.md`](./tech-stack.md) — 技术选型当前倾向与竞品参考
