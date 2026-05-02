@@ -7,6 +7,7 @@ This directory holds Knowlet's living docs, evolving with implementation. They d
 ## Index
 
 - [`architecture.en.md`](./architecture.en.md) — Four-layer structure, domain entities, produce-consume loop, Path 0 main line
+- [`architecture-diagrams.en.md`](./architecture-diagrams.en.md) — **Technical + product ASCII architecture diagrams** (2026-05-02 current shape: M6 + ADR-0013/14)
 - [`users.en.md`](./users.en.md) — Target users common persona and "decision lens" usage
 - [`organization.en.md`](./organization.en.md) — Knowledge organization strategy: AI floor + human spotlight
 - [`tech-stack.en.md`](./tech-stack.en.md) — Current tech-stack leanings and competitor reference
