@@ -572,6 +572,87 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             runtime.active_conversation = conv
         return {"id": conv.id, "title": conv.title}
 
+    @app.post("/api/chat/sessions/{conv_id}/auto-title")
+    def chat_sessions_auto_title(
+        conv_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """Generate a short title for a conversation via LLM summary.
+
+        Per ADR-0011 §"Open questions" #2: titles are auto-summarized
+        after the first user message. The frontend fires this
+        fire-and-forget right after sendChat completes for an untitled
+        session — no UI blocking, just a refresh of the session list a
+        moment later picks up the new title.
+
+        Idempotent-ish: if the conversation already has a title, returns
+        the existing one without re-calling the LLM. Empty / new-session
+        edge case returns 400.
+        """
+        conv = runtime.conversations.get(conv_id)
+        if conv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"conversation not found: {conv_id}",
+            )
+        if conv.title:
+            return {"id": conv.id, "title": conv.title, "generated": False}
+
+        # Pull the first real user/assistant exchange. The system prompt
+        # at index 0 isn't useful for a title.
+        excerpt: list[str] = []
+        for m in conv.messages:
+            role = m.get("role")
+            content = (m.get("content") or "").strip()
+            if not content:
+                continue
+            if role == "user":
+                excerpt.append(f"USER: {content[:400]}")
+            elif role == "assistant":
+                excerpt.append(f"ASSISTANT: {content[:400]}")
+            if len(excerpt) >= 2:
+                break
+        if not excerpt:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="conversation has no exchanges to summarize",
+            )
+
+        prompt = (
+            "Give a 3-to-5-word title for this short conversation excerpt. "
+            "Output the title only — no quotes, no preamble, no period. "
+            "Use the same language the user wrote in.\n\n"
+            + "\n\n".join(excerpt)
+            + "\n\nTitle:"
+        )
+        try:
+            resp = runtime.llm.chat(
+                [{"role": "user", "content": prompt}],
+                max_tokens=32,
+                temperature=0,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"auto-title LLM error: {exc}",
+            ) from exc
+
+        title = (resp.content or "").strip().strip('"').strip("'").strip()
+        # Clip aggressively. LLMs sometimes ignore the word-cap; we don't
+        # want a paragraph-long title polluting the sidebar.
+        if len(title) > 60:
+            title = title[:57].rstrip() + "…"
+        if not title:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="auto-title returned empty content",
+            )
+
+        runtime.conversations.rename(conv.id, title)
+        if runtime.active_conversation.id == conv.id:
+            runtime.active_conversation.title = title
+        return {"id": conv.id, "title": title, "generated": True}
+
     @app.delete("/api/chat/sessions/{conv_id}")
     def chat_sessions_delete(
         conv_id: str,

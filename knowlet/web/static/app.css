@@ -249,6 +249,48 @@ body {
 }
 *::-webkit-scrollbar-thumb:hover { background: var(--ink-faint); }
 
+/* chat focus session sidebar (M6.4 Phase 2) */
+.session-item {
+  display: flex;
+  align-items: stretch;
+  border-radius: 4px;
+  margin: 1px 6px;
+}
+.session-item:hover { background: var(--panel-2); }
+.session-item.active {
+  background: var(--accent-soft);
+}
+.session-row {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+.session-title {
+  font-size: 12.5px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-item.active .session-title {
+  color: var(--accent-2);
+  font-weight: 500;
+}
+.session-meta {
+  font-size: 10.5px;
+  color: var(--ink-mute);
+  margin-top: 2px;
+}
+.session-actions {
+  display: none;
+  align-items: center;
+  gap: 1px;
+  padding-right: 4px;
+}
+.session-item:hover .session-actions { display: flex; }
+.session-item.active .session-actions { display: flex; }
+
 /* focus modes (Cmd+Shift+{C,D,R} · ADR-0011 §5) */
 .focus-overlay {
   position: fixed;
