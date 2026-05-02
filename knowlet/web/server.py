@@ -96,6 +96,7 @@ class NoteSummary(BaseModel):
     id: str
     title: str
     path: str
+    folder: str = ""  # M7.0.2: relative dir under notes/, empty = top-level
     tags: list[str]
     created_at: str
     updated_at: str
@@ -769,7 +770,19 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         rows = runtime.index.list_notes(
             limit=limit, order="updated_at" if recent else "created_at"
         )
-        return [NoteSummary(**r) for r in rows]
+        # M7.0.2: derive folder (relative to notes_dir) for each row so
+        # the sidebar can build a tree without extra round-trips.
+        out: list[NoteSummary] = []
+        for r in rows:
+            folder = ""
+            p = r.get("path")
+            if p:
+                try:
+                    folder = runtime.vault.folder_of(Path(p))
+                except (TypeError, ValueError):
+                    folder = ""
+            out.append(NoteSummary(**r, folder=folder))
+        return out
 
     @app.get("/api/notes/{note_id}", response_model=NoteFull)
     def get_note(

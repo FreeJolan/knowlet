@@ -104,6 +104,73 @@ def test_restore_note_returns_to_notes_dir(tmp_path):
     assert not trashed.exists()
 
 
+def test_iter_note_paths_is_recursive(tmp_path):
+    """M7.0.2: notes/ supports user-organized subdirectories."""
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+
+    # top-level
+    a = Note(id=new_id(), title="root note", body="r")
+    pa = v.write_note(a)
+
+    # Manually place files in subdirs (the user does this in Finder).
+    sub = v.notes_dir / "AI papers"
+    sub.mkdir(parents=True, exist_ok=True)
+    deep = sub / "transformer"
+    deep.mkdir(parents=True, exist_ok=True)
+    b = Note(id=new_id(), title="attention", body="b")
+    pb = sub / b.filename
+    pb.write_text(b.to_markdown(), encoding="utf-8")
+    c = Note(id=new_id(), title="positional", body="c")
+    pc = deep / c.filename
+    pc.write_text(c.to_markdown(), encoding="utf-8")
+
+    found = set(v.iter_note_paths())
+    assert found == {pa, pb, pc}
+
+
+def test_iter_note_paths_skips_dotdirs(tmp_path):
+    """`.trash/` and any other dot-prefixed dir are excluded."""
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+    n = Note(id=new_id(), title="kept", body="x")
+    p = v.write_note(n)
+
+    # .trash/ created via trash_note
+    trashed = Note(id=new_id(), title="gone", body="y")
+    pt = v.write_note(trashed)
+    v.trash_note(pt)
+
+    # An arbitrary user-created dotdir
+    hidden = v.notes_dir / ".scratch"
+    hidden.mkdir()
+    h = Note(id=new_id(), title="scratch", body="z")
+    (hidden / h.filename).write_text(h.to_markdown(), encoding="utf-8")
+
+    found = set(v.iter_note_paths())
+    assert p in found
+    assert all(".trash" not in part for fp in found for part in fp.parts)
+    assert all(".scratch" not in part for fp in found for part in fp.parts)
+
+
+def test_folder_of_returns_relative_dir(tmp_path):
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+    top = v.notes_dir / "01HX0000000000000000000001.md"
+    sub = v.notes_dir / "AI papers" / "01HX0000000000000000000002.md"
+    deep = v.notes_dir / "AI papers" / "transformer" / "01HX0000000000000000000003.md"
+
+    assert v.folder_of(top) == ""
+    assert v.folder_of(sub) == "AI papers"
+    assert v.folder_of(deep) == "AI papers/transformer"
+
+
 def test_restore_note_collision_raises(tmp_path):
     """If a Note with the same filename already exists in notes/, restore
     must refuse rather than silently overwrite."""
