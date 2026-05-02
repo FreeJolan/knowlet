@@ -7,7 +7,7 @@ from knowlet.chat.prompts import (
     CHAT_SYSTEM_PROMPT_BASE,
     build_chat_system_prompt,
 )
-from knowlet.cli.main import _handle_slash
+from knowlet.cli.chat_repl import _handle_slash
 from knowlet.config import KnowletConfig, save_config
 from knowlet.core.tools._registry import ToolContext, default_registry
 from knowlet.core.user_profile import (
