@@ -446,3 +446,129 @@ def test_chat_endpoint_500s_after_bootstrap_error(tmp_path: Path):
     r = client.post("/api/chat/turn", json={"text": "hi"})
     assert r.status_code == 500
     assert "simulated bootstrap failure" in r.json()["detail"]
+
+
+# ------------------------------------------------------- multi-session (M6.4)
+
+
+def test_sessions_list_starts_empty(tmp_path: Path):
+    """Fresh vault: no conversations yet, but the active session id (the
+    one bootstrap created) is reported."""
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    body = client.get("/api/chat/sessions").json()
+    assert body["active_id"]
+    assert body["sessions"] == []  # no meaningful conversations yet
+
+
+def test_chat_turn_persists_to_active_session(tmp_path: Path):
+    stub = StubLLM([AssistantMessage(content="hello", tool_calls=[])])
+    client, _, _ = _client_with_stub(tmp_path, stub)
+    r = client.post("/api/chat/turn", json={"text": "hi"})
+    assert r.status_code == 200
+
+    # After one turn, the active session shows up in the listing.
+    sessions = client.get("/api/chat/sessions").json()["sessions"]
+    assert len(sessions) == 1
+    assert sessions[0]["message_count"] >= 2  # at least system + user (+ assistant)
+
+
+def test_clear_starts_a_new_session(tmp_path: Path):
+    """`/api/chat/clear` is now `start a fresh session` — the previous
+    one stays on disk."""
+    stub = StubLLM([AssistantMessage(content="hello", tool_calls=[])])
+    client, _, _ = _client_with_stub(tmp_path, stub)
+    client.post("/api/chat/turn", json={"text": "hi"})
+    first_id = client.get("/api/chat/history").json()["active_id"]
+
+    r = client.post("/api/chat/clear")
+    assert r.status_code == 200
+    second_id = r.json()["active_id"]
+    assert second_id != first_id
+
+    # Old session still listed.
+    sessions = client.get("/api/chat/sessions").json()["sessions"]
+    assert any(s["id"] == first_id for s in sessions)
+
+
+def test_sessions_activate_switches_runtime(tmp_path: Path):
+    stub = StubLLM(
+        [
+            AssistantMessage(content="reply-1", tool_calls=[]),
+            AssistantMessage(content="reply-2", tool_calls=[]),
+        ]
+    )
+    client, _, _ = _client_with_stub(tmp_path, stub)
+
+    # First session
+    client.post("/api/chat/turn", json={"text": "in session A"})
+    a_id = client.get("/api/chat/history").json()["active_id"]
+
+    # Start a new one
+    new_resp = client.post("/api/chat/sessions").json()
+    b_id = new_resp["id"]
+    assert b_id != a_id
+
+    # Talk in session B
+    client.post("/api/chat/turn", json={"text": "in session B"})
+
+    # Switch back to A
+    r = client.post(f"/api/chat/sessions/{a_id}/activate")
+    assert r.status_code == 200
+    history = client.get("/api/chat/history").json()
+    assert history["active_id"] == a_id
+    assert any("in session A" in (m.get("content") or "") for m in history["history"])
+
+
+def test_sessions_rename(tmp_path: Path):
+    stub = StubLLM([AssistantMessage(content="reply", tool_calls=[])])
+    client, _, _ = _client_with_stub(tmp_path, stub)
+    client.post("/api/chat/turn", json={"text": "hi"})
+    sid = client.get("/api/chat/history").json()["active_id"]
+
+    r = client.put(f"/api/chat/sessions/{sid}", json={"title": "renamed!"})
+    assert r.status_code == 200
+    assert r.json()["title"] == "renamed!"
+    sessions = client.get("/api/chat/sessions").json()["sessions"]
+    assert next(s for s in sessions if s["id"] == sid)["title"] == "renamed!"
+
+
+def test_sessions_delete_refuses_active(tmp_path: Path):
+    stub = StubLLM([AssistantMessage(content="reply", tool_calls=[])])
+    client, _, _ = _client_with_stub(tmp_path, stub)
+    client.post("/api/chat/turn", json={"text": "hi"})
+    sid = client.get("/api/chat/history").json()["active_id"]
+
+    r = client.delete(f"/api/chat/sessions/{sid}")
+    assert r.status_code == 409
+    assert "active" in r.json()["detail"].lower()
+
+
+def test_sessions_delete_inactive_succeeds(tmp_path: Path):
+    stub = StubLLM(
+        [
+            AssistantMessage(content="reply-a", tool_calls=[]),
+            AssistantMessage(content="reply-b", tool_calls=[]),
+        ]
+    )
+    client, _, _ = _client_with_stub(tmp_path, stub)
+    client.post("/api/chat/turn", json={"text": "in session A"})
+    a_id = client.get("/api/chat/history").json()["active_id"]
+    client.post("/api/chat/sessions")
+    client.post("/api/chat/turn", json={"text": "in session B"})
+
+    # A is no longer active — delete it.
+    r = client.delete(f"/api/chat/sessions/{a_id}")
+    assert r.status_code == 200
+    sessions = client.get("/api/chat/sessions").json()["sessions"]
+    assert all(s["id"] != a_id for s in sessions)
+
+
+def test_sessions_404_for_unknown_id(tmp_path: Path):
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.post("/api/chat/sessions/does-not-exist/activate")
+    assert r.status_code == 404
+    r = client.put("/api/chat/sessions/does-not-exist", json={"title": "x"})
+    assert r.status_code == 404
+    r = client.delete("/api/chat/sessions/does-not-exist")
+    # Still 404 because we never become "active" with this id.
+    assert r.status_code == 404
