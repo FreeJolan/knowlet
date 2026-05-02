@@ -678,3 +678,29 @@ body {
   font-size: 10.5px;
   margin-left: 2px;
 }
+
+/* M7.2 URL capture banner — shows above chat textarea on paste detection */
+.url-capture-banner {
+  background: var(--accent-soft, var(--panel));
+  border: 1px solid var(--accent-soft, var(--line-soft));
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+/* M7.2 URL capsule variant — globe icon, slightly different tone */
+.capsule-url .capsule-quote {
+  font-style: normal;
+  color: var(--ink-mute);
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+}
+
+/* M7.2 spinner for the "fetching… summarizing…" hint */
+.animate-spin {
+  animation: knowlet-spin 0.9s linear infinite;
+}
+@keyframes knowlet-spin {
+  to { transform: rotate(360deg); }
+}

@@ -45,13 +45,19 @@ _HTTP_HEADERS = {
 # which is usually the thesis + lead. Token cost stays predictable.
 _MAX_INPUT_CHARS = 5000
 
-# The summary prompt is fixed and neutral per ADR-0016 §3 — we want extraction,
-# not voice. If the user wants opinionated takes that's a chat turn, not the
-# capture call.
+# The summary prompt is fixed and neutral per ADR-0016 §3 — extraction, not
+# voice. Bilingual instructions so the LLM matches the article's language
+# (and falls back gracefully when content is multilingual). Hardcoding either
+# language alone would produce English-summary-of-Chinese-article (or vice
+# versa) for users whose UI language doesn't match the page.
 SUMMARY_PROMPT = (
+    "Produce a ~300-character neutral summary of the webpage body below, "
+    "extracting the thesis, key arguments, and conclusion. Match the language "
+    "of the source article. No personal commentary; do not add facts beyond "
+    "what's in the source.\n"
     "对以下网页正文做 300 字左右的中立摘要,提取主旨 + 关键论点 + 结论。"
-    "不要带个人评论,不要扩展超出原文的信息。\n\n"
-    "—— 网页正文 ——\n{content}"
+    "用与原文相同的语言输出。不要带个人评论,不要扩展超出原文的信息。\n\n"
+    "—— Article body / 网页正文 ——\n{content}"
 )
 
 

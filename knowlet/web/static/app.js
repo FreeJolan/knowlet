@@ -202,9 +202,14 @@ function ui() {
     chatDraft: "",
     imeComposing: false,
     // M7.1: selection → chat capsule
-    chatRefs: [],         // [{note_id, note_title, quote_text, paragraph_anchor}]
+    chatRefs: [],         // [{note_id, note_title, quote_text, paragraph_anchor, source, source_url}]
     chatRefsSent: [],     // grayed; one click to "use again"
     selectionPopover: { visible: false, x: 0, y: 0 },
+
+    // M7.2: URL capture
+    urlCapturePending: null,  // null | {url, status: 'ready'|'fetching'|'error', error?}
+    // M7.2: Layer A ambient (sediment)
+    similarNotes: { loading: false, query: "", rows: [] },
     // M6.4 multi-session
     sessions: [],         // ConversationSummary[] from /api/chat/sessions
     activeSessionId: "",
@@ -788,6 +793,99 @@ function ui() {
 
     clearSentChatRefs() {
       this.chatRefsSent = [];
+    },
+
+    // ============================================================ M7.2 URL capture
+
+    /** Loose mirror of `is_likely_url` in core/url_capture.py — keeps the
+     * paste detector permissive enough for the common case (single URL on
+     * its own line) but strict enough to not eat regular text pastes. */
+    _isLikelyUrl(text) {
+      const s = (text || "").trim();
+      if (!s || /\s/.test(s)) return false;
+      return /^https?:\/\/\S+$/.test(s);
+    },
+
+    /** Paste handler bound to both chat textareas. If the clipboard text
+     * is a single URL, prevent default + show a small "fetch & discuss"
+     * hint. Anything else paths through normally. */
+    onChatInputPaste(event) {
+      const data = event.clipboardData?.getData?.("text") || "";
+      if (!this._isLikelyUrl(data)) return;
+      event.preventDefault();
+      this.urlCapturePending = { url: data.trim(), status: "ready" };
+    },
+
+    /** Run the capture: fetch + summarize on the backend, push a
+     * `source="url"` capsule. Status updates feed the toast/hint banner. */
+    async runUrlCapture() {
+      const ctx = this.urlCapturePending;
+      if (!ctx || !ctx.url) return;
+      if (this.chatRefs.length >= 5) {
+        toast("最多挂 5 颗引用,请先取掉一颗", "warn");
+        return;
+      }
+      this.urlCapturePending = { ...ctx, status: "fetching" };
+      try {
+        const r = await api("POST", "/api/url/capture", { url: ctx.url });
+        this.chatRefs.push({
+          note_id: `url://${r.url}`,
+          note_title: r.title || r.hostname || r.url,
+          quote_text: r.summary || "",
+          paragraph_anchor: "",
+          source: "url",
+          source_url: r.url,
+        });
+        if (r.summary_failed) {
+          toast(`摘要失败,胶囊已挂上,可手动追问`, "warn");
+        }
+        // Switch right rail to AI tab so user sees the capsule landing.
+        this.rightOpen = true;
+        this.rightTab = "ai";
+        this.urlCapturePending = null;
+      } catch (exc) {
+        const detail = exc.message || "抓取失败";
+        toast(`URL 抓取失败: ${detail}`, "error");
+        this.urlCapturePending = { ...ctx, status: "error", error: detail };
+      }
+    },
+
+    cancelUrlCapture() {
+      this.urlCapturePending = null;
+    },
+
+    // ============================================================ M7.2 Layer A ambient
+
+    /** Sediment modal opens → fetch top-3 similar Notes by the draft body.
+     * Called from the modal's open hook; idempotent for a given body. */
+    async loadSimilarForSediment() {
+      const body = (this.sediment?.body || "").trim();
+      if (!body) {
+        this.similarNotes = { loading: false, query: "", rows: [] };
+        return;
+      }
+      // Cache: same query → no refetch.
+      if (this.similarNotes.query === body && !this.similarNotes.loading) return;
+      this.similarNotes = { loading: true, query: body, rows: [] };
+      try {
+        const url =
+          "/api/notes/similar?top_k=3&q=" +
+          encodeURIComponent(body.slice(0, 4000));
+        const rows = await api("GET", url);
+        this.similarNotes = { loading: false, query: body, rows };
+      } catch (exc) {
+        // Layer A is purely informational — failure is a quiet no-op.
+        this.similarNotes = { loading: false, query: body, rows: [] };
+      }
+    },
+
+    /** Click a similar-Note row in the sediment ambient panel — opens it
+     * in a new editor tab + closes the modal so the user can read first
+     * before deciding whether to merge by hand. ADR-0013 §1 stays intact:
+     * we never auto-merge, only navigate. */
+    openSimilarNote(noteId) {
+      this.modal = null;
+      this.openNote(noteId);
     },
 
     persistTabs() {
@@ -1394,6 +1492,7 @@ function ui() {
         { id: "new-note",       label: tt("palette.cmd.newnote"),   sub: tt("palette.cmd.newnote.sub") },
         { id: "reindex",        label: tt("palette.cmd.reindex"),   sub: tt("palette.cmd.reindex.sub") },
         { id: "doctor",         label: tt("palette.cmd.doctor"),    sub: tt("palette.cmd.doctor.sub") },
+        { id: "url-capture",    label: tt("palette.cmd.urlcapture"), sub: tt("palette.cmd.urlcapture.sub") },
       ];
     },
 
@@ -1411,7 +1510,20 @@ function ui() {
         case "new-note":       this.newNote(); break;
         case "reindex":        this.runReindex(); break;
         case "doctor":         this.runDoctor(); break;
+        case "url-capture":    this.runPaletteUrlCapture(); break;
       }
+    },
+
+    /** M7.2: palette `抓取网页` — prompt for URL, then run the capture
+     * flow that powers paste detection. Browser prompt() is enough for a
+     * keyboard-fallback path; users who paste into chat get the better
+     * inline UX. */
+    async runPaletteUrlCapture() {
+      this.closePalette();
+      const url = window.prompt(tt("palette.cmd.urlcapture.prompt") || "请输入要抓取的 URL");
+      if (!url) return;
+      this.urlCapturePending = { url: url.trim(), status: "ready" };
+      await this.runUrlCapture();
     },
 
     /** M6.5: palette `重建索引` — fire the reindex on the server and toast
