@@ -792,3 +792,48 @@ def test_get_attachment_404_for_missing(tmp_path: Path):
     client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
     r = client.get("/files/_attachments/01HX0000000000000000000099.png")
     assert r.status_code == 404
+
+
+# ------------------------------------------------------------- M7.0.4 backlinks
+
+
+def test_backlinks_endpoint_returns_inbound_references(tmp_path: Path):
+    """M7.0.4: GET /api/notes/<id>/backlinks scans the vault for `[[Title]]`
+    references and returns source + sentence preview."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+
+    target = Note(id=new_id(), title="Attention", body="core idea")
+    v.write_note(target)
+    runtime.index.upsert_note(target, chunk_size=64, chunk_overlap=16)
+
+    src = Note(
+        id=new_id(),
+        title="Survey",
+        body="see [[Attention]] for the seminal paper",
+    )
+    v.write_note(src)
+    runtime.index.upsert_note(src, chunk_size=64, chunk_overlap=16)
+
+    rows = client.get(f"/api/notes/{target.id}/backlinks").json()
+    assert len(rows) == 1
+    assert rows[0]["source_id"] == src.id
+    assert rows[0]["source_title"] == "Survey"
+    assert "[[Attention]]" in rows[0]["sentence"]
+
+
+def test_backlinks_endpoint_404_for_unknown_note(tmp_path: Path):
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.get("/api/notes/01HXMISSING0000000000000/backlinks")
+    assert r.status_code == 404
+
+
+def test_backlinks_endpoint_empty_when_no_inbound(tmp_path: Path):
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n = Note(id=new_id(), title="Lonely", body="no inbound links")
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    rows = client.get(f"/api/notes/{n.id}/backlinks").json()
+    assert rows == []

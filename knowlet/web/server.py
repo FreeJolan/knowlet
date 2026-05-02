@@ -36,6 +36,7 @@ from knowlet.chat.sediment import (
     draft_from_conversation,
 )
 from knowlet.config import KnowletConfig, find_vault, load_config
+from knowlet.core.backlinks import find_backlinks
 from knowlet.core.card import Card, parse_due
 from knowlet.core.events import ErrorEvent, event_to_dict
 from knowlet.core.fsrs_wrap import initial_state, schedule_next
@@ -104,6 +105,15 @@ class NoteSummary(BaseModel):
 
 class NoteFull(NoteSummary):
     body: str
+
+
+class BacklinkRow(BaseModel):
+    """M7.0.4: one inbound `[[Title]]` reference for the right-rail panel."""
+    source_id: str
+    source_title: str
+    target: str  # the wikilink target as written
+    line: int
+    sentence: str
 
 
 class ProfilePayload(BaseModel):
@@ -893,6 +903,43 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             updated_at=note.updated_at,
             body=note.body,
         )
+
+    @app.get("/api/notes/{note_id}/backlinks", response_model=list[BacklinkRow])
+    def list_backlinks(
+        note_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[BacklinkRow]:
+        """M7.0.4: Notes that reference this one via `[[Title]]`.
+
+        On-demand scan over `iter_note_paths` — small vaults (<5k notes)
+        finish in well under 100ms; if that ever becomes a problem we'll
+        add a wikilink table to the index. For now, no precompute
+        means no stale-index bug, which is the right tradeoff.
+        """
+        meta = runtime.index.get_note_meta(note_id)
+        if meta is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note not found: {note_id}",
+            )
+        target_title = (meta.get("title") or "").strip()
+        if not target_title:
+            return []
+        results = find_backlinks(
+            target_title,
+            runtime.vault.iter_note_paths(),
+            exclude_id=note_id,
+        )
+        return [
+            BacklinkRow(
+                source_id=b.source_id,
+                source_title=b.source_title,
+                target=b.target,
+                line=b.line,
+                sentence=b.sentence,
+            )
+            for b in results
+        ]
 
     # ---------------- attachments (M7.0.3) ----------------
 

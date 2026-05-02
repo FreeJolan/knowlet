@@ -261,6 +261,7 @@
         class="prose-note overflow-y-auto px-12 py-8 mx-auto w-full"
         style="max-width: 720px;"
         x-html="renderMarkdown(currentTab()?.body || '')"
+        @click="handlePreviewClick($event)"
       ></div>
       <div
         x-show="!currentTab()"
@@ -353,11 +354,41 @@
         </ul>
       </div>
 
-      <!-- Backlinks (M6.2 will compute real ones) -->
-      <div x-show="rightTab === 'backlinks'" class="flex-1 overflow-y-auto p-4 text-sm">
-        <p class="text-textsoft text-xs leading-relaxed" data-i18n="rail.backlinks.placeholder">
-          这一栏会显示「引用了当前笔记的其它笔记」,带句子级预览。下一阶段(M6.2)实装。
-        </p>
+      <!-- Backlinks — Notes that reference the current one via [[Title]] (M7.0.4) -->
+      <div
+        x-show="rightTab === 'backlinks'"
+        x-init="$watch('currentNoteId', () => loadBacklinks())"
+        x-effect="rightTab === 'backlinks' && loadBacklinks()"
+        class="flex-1 overflow-y-auto text-sm"
+      >
+        <template x-if="!currentTab()">
+          <p class="text-textsoft text-xs leading-relaxed p-4" data-i18n="rail.backlinks.no_note">
+            选一条笔记后查看反链。
+          </p>
+        </template>
+        <template x-if="currentTab() && backlinks.loading">
+          <p class="text-textsoft text-xs p-4" data-i18n="rail.backlinks.loading">载入中…</p>
+        </template>
+        <template x-if="currentTab() && !backlinks.loading && backlinks.rows.length === 0">
+          <p class="text-textsoft text-xs leading-relaxed p-4" data-i18n="rail.backlinks.empty">
+            还没有其他笔记用 [[标题]] 引用这一条。
+          </p>
+        </template>
+        <div x-show="currentTab() && !backlinks.loading && backlinks.rows.length > 0" class="divide-y divide-bordersoft">
+          <template x-for="row in backlinks.rows" :key="row.source_id + ':' + row.line">
+            <button
+              @click="openNoteById(row.source_id)"
+              class="block w-full text-left px-4 py-3 hover:bg-surface2 focus:outline-none focus:bg-surface2"
+            >
+              <div class="text-text font-medium text-[13px] truncate" x-text="row.source_title"></div>
+              <div
+                class="text-textsoft text-xs leading-relaxed mt-1"
+                x-html="formatBacklinkSentence(row)"
+              ></div>
+              <div class="text-textmute text-[10.5px] mono mt-1" x-text="`L${row.line}`"></div>
+            </button>
+          </template>
+        </div>
       </div>
 
       <!-- AI dock — chat scoped to current note -->

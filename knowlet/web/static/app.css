@@ -575,3 +575,27 @@ body {
   color: var(--ink);
   background: var(--panel-2);
 }
+
+/* M7.0.4 wikilinks: clickable spans inside the preview pane */
+.wikilink {
+  color: var(--accent);
+  text-decoration: none;
+  background: var(--accent-soft, transparent);
+  border-bottom: 1px solid var(--accent-soft, var(--line));
+  padding: 0 2px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.wikilink:hover {
+  color: var(--accent-2, var(--accent));
+  background: var(--accent-soft);
+}
+
+/* M7.0.4 backlink panel: highlight the matched [[Title]] inside the sentence */
+.bl-mark {
+  background: var(--accent-soft);
+  color: var(--accent-2, var(--accent));
+  padding: 0 2px;
+  border-radius: 2px;
+  font-style: normal;
+}

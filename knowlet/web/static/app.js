@@ -97,7 +97,21 @@ function applyI18n(root) {
 
 function renderMarkdown(text) {
   if (typeof marked !== "undefined") {
-    let html = marked.parse(text || "");
+    // M7.0.4: pre-rewrite `[[Title]]` (or `[[Title|alias]]`) into a sentinel
+    // span so marked doesn't mangle the brackets, then upgrade to a clickable
+    // link in post. Doing it pre-marked guarantees the link survives any
+    // surrounding markdown (lists, blockquotes, etc).
+    const wikiSrc = (text || "").replace(
+      /\[\[([^\[\]\n|]+?)(?:\|([^\[\]\n]+?))?\]\]/g,
+      (_m, target, alias) => {
+        const t = target.trim();
+        const a = (alias || target).trim();
+        if (!t) return _m;
+        const safeT = t.replace(/"/g, "&quot;");
+        return `<span class="wikilink" data-wiki-target="${safeT}">${a}</span>`;
+      }
+    );
+    let html = marked.parse(wikiSrc);
     // External-by-default for real links (not in-app fragment links).
     html = html.replace(
       /<a (?![^>]*\btarget=)/gi,
@@ -153,6 +167,9 @@ function ui() {
     // ---- right rail ----
     rightOpen: true,
     rightTab: "outline",  // 'outline' | 'backlinks' | 'ai'
+
+    // ---- backlinks (M7.0.4) ----
+    backlinks: { loading: false, noteId: null, rows: [] },
 
     // ---- AI dock chat ----
     chatHistory: [],      // [{role: 'user'|'assistant', content, tool_calls?}]
@@ -440,6 +457,78 @@ function ui() {
           JSON.stringify(this.treeFolderState),
         );
       } catch (_) {}
+    },
+
+    /** Alias used by the backlinks panel — same as openNote, plus closes
+     * any modal/overlay layer that might be on top. */
+    async openNoteById(id) {
+      await this.openNote(id);
+    },
+
+    /** Click delegate for the preview pane. Wikilinks are rendered as
+     * <span class="wikilink" data-wiki-target="…">; on click we look up
+     * the matching note by title (case-insensitive, whitespace-collapsed)
+     * and open it. No match → toast so the user knows the link is broken. */
+    handlePreviewClick(event) {
+      const el = event.target.closest(".wikilink");
+      if (!el) return;
+      event.preventDefault();
+      const target = el.dataset.wikiTarget || "";
+      const norm = (s) => s.split(/\s+/).filter(Boolean).join(" ").toLowerCase();
+      const wanted = norm(target);
+      const hit = this.notes.find((n) => norm(n.title) === wanted);
+      if (hit) {
+        this.openNote(hit.id);
+      } else {
+        toast(`没有找到笔记: ${target}`, "warn");
+      }
+    },
+
+    /** M7.0.4: load inbound `[[Title]]` references for the current note.
+     * Caches per-noteId so flipping tabs doesn't refetch needlessly; the
+     * cache invalidates whenever currentNoteId changes (via $watch in HTML)
+     * — saving the current note triggers no refresh, which is fine since
+     * the user can manually click the Backlinks tab again to refresh, or
+     * we'll add a save-time refetch in M7.1 if dogfooding shows it bites. */
+    async loadBacklinks() {
+      const id = this.currentNoteId;
+      if (!id) {
+        this.backlinks = { loading: false, noteId: null, rows: [] };
+        return;
+      }
+      if (this.backlinks.noteId === id && !this.backlinks.loading) return;
+      this.backlinks = { loading: true, noteId: id, rows: [] };
+      try {
+        const rows = await api("GET", `/api/notes/${encodeURIComponent(id)}/backlinks`);
+        if (this.currentNoteId !== id) return; // user navigated away mid-flight
+        this.backlinks = { loading: false, noteId: id, rows };
+      } catch (exc) {
+        if (this.currentNoteId !== id) return;
+        this.backlinks = { loading: false, noteId: id, rows: [] };
+        toast(`backlinks: ${exc.message}`, "error");
+      }
+    },
+
+    /** Render the sentence preview with the matched `[[target]]` highlighted.
+     * We do the highlight in JS rather than backend HTML so the API stays
+     * neutral (no embedded markup) and the UI controls the visual treatment. */
+    formatBacklinkSentence(row) {
+      const text = row.sentence || "";
+      const target = row.target || "";
+      const escapeHTML = (s) =>
+        s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const escaped = escapeHTML(text);
+      // Match `[[target]]` or `[[ target ]]` or alias `[[target|alias]]`.
+      const re = new RegExp(
+        "\\[\\[\\s*" +
+          target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+          "(\\s*\\|[^\\]]+)?\\s*\\]\\]",
+        "i"
+      );
+      return escaped.replace(
+        re,
+        (m) => `<mark class="bl-mark">${escapeHTML(m)}</mark>`
+      );
     },
 
     async openNote(id, focus) {

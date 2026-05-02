@@ -258,6 +258,9 @@ _EN: dict[str, str] = {
         "This panel will surface notes that reference the current one, "
         "with sentence-level previews. Coming in M6.2."
     ),
+    "rail.backlinks.no_note": "Open a note to see backlinks.",
+    "rail.backlinks.loading": "Loading…",
+    "rail.backlinks.empty": "No other note links to this one yet via [[Title]].",
     "rail.ai.scope.label": "Context",
     "rail.ai.scope.note": "This note",
     "rail.ai.scope.vault": "All notes",
@@ -526,6 +529,9 @@ _ZH: dict[str, str] = {
         "这一栏会显示「引用了当前笔记的其它笔记」,带句子级预览。"
         "下一阶段(M6.2)实装。"
     ),
+    "rail.backlinks.no_note": "选一条笔记后查看反链。",
+    "rail.backlinks.loading": "载入中…",
+    "rail.backlinks.empty": "还没有其他笔记用 [[标题]] 引用这一条。",
     "rail.ai.scope.label": "参考范围",
     "rail.ai.scope.note": "当前笔记",
     "rail.ai.scope.vault": "所有笔记",
