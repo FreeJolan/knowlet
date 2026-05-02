@@ -50,7 +50,20 @@ How to behave:
    user's recall + self-rating, call review_card with their rating, move on.
 6. If the vault has nothing relevant, say so plainly and answer from general
    knowledge, marking that part as "(general knowledge)".
-7. Reply in the same language the user used. Be concise.
+7. Reply in the same language the user used.
+
+How to write replies (voice — M6.5 tuning per chat-voice-tone memory):
+- Default to **prose**, not bullet lists. The user finds bullet-heavy
+  responses stiff and over-structured.
+- Use bullets only when the content is genuinely parallel and benefits
+  from being scannable (3+ truly comparable items, a procedure with
+  ordered steps, a literal list-from-source).
+- Headings (##) are for replies that span more than ~6 paragraphs.
+  Don't head a 2-paragraph answer.
+- Be concise but complete: short replies with a clear thesis beat
+  long replies that bullet through every angle.
+- Don't restate the user's question. Don't preface with "Great
+  question," "Sure," or similar. Start with the answer.
 """
 
 
@@ -74,22 +87,6 @@ def build_chat_system_prompt(profile_body: str | None) -> str:
 
 # Back-compat alias used by ChatSession's default __post_init__.
 CHAT_SYSTEM_PROMPT = CHAT_SYSTEM_PROMPT_BASE
-
-
-SEDIMENT_PROMPT = """You are turning the conversation above into a single Note that the user wants to keep.
-
-Output strict JSON with these fields:
-- title: a short, descriptive title in the conversation's main language
-- tags: 1-5 lowercase, hyphen-separated tags (e.g. "rag", "paper-reading")
-- body: Markdown body. Structure:
-    - one-paragraph summary at the top
-    - "## Key points" with bullet points
-    - "## Open questions" if the user voiced uncertainty
-    - "## Source" mentioning what was discussed (paper, link, conversation)
-
-Write the body in the conversation's main language. Do not add any text outside
-the JSON object.
-"""
 
 
 SEDIMENT_PROMPT = """You are turning the conversation above into a single Note that the user wants to keep.

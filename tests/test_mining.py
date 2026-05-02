@@ -466,6 +466,58 @@ def test_per_task_max_items_per_run_applies_when_no_explicit_arg(tmp_path: Path,
     assert llm.calls == 4
 
 
+def test_max_keep_archives_oldest_drafts(tmp_path: Path, monkeypatch):
+    """After a run, if the live drafts queue for this task exceeds
+    `max_keep`, the oldest get moved to `.archive/` (M6.5 / ADR-0011 §6).
+    """
+    v, _ = _ready_vault(tmp_path)
+
+    # Pre-seed 5 drafts for our task — newest first ordering uses created_at.
+    from knowlet.core.drafts import Draft, DraftStore
+    from knowlet.core.note import new_id
+    drafts = DraftStore(v.drafts_dir)
+    seed_ids: list[str] = []
+    for i in range(5):
+        d = Draft(
+            id=new_id(),
+            title=f"old draft {i}",
+            body="b",
+            tags=[],
+            source=None,
+            task_id="my-task",
+            created_at=f"2026-04-{i+1:02d}T00:00:00Z",
+        )
+        drafts.save(d)
+        seed_ids.append(d.id)
+    assert len(drafts.list()) == 5
+
+    # No fetched items — we just want to verify max_keep enforcement after a
+    # no-op run.
+    monkeypatch.setattr(
+        "knowlet.core.mining.runner.fetch_source",
+        _stub_fetch({}),
+    )
+    task = MiningTask(
+        id="my-task",
+        name="t",
+        sources=[SourceSpec(type="rss", url="https://feed")],
+        prompt="p",
+        max_keep=2,
+    )
+
+    class StubLLM:
+        def chat(self, *a, **kw):
+            return AssistantMessage(content="x", tool_calls=[])
+
+    report = run_task(task, v, StubLLM())  # type: ignore[arg-type]
+    assert report.drafts_archived == 3
+    live = drafts.list()
+    assert len(live) == 2
+    # The two newest survive; oldest three are now in .archive/
+    archive_files = list((v.drafts_dir / ".archive").glob("*.md"))
+    assert len(archive_files) == 3
+
+
 def test_explicit_max_items_overrides_per_task_ceiling(tmp_path: Path, monkeypatch):
     """`mining run --limit N` (CLI) must override the task's stored ceiling."""
     v, _ = _ready_vault(tmp_path)

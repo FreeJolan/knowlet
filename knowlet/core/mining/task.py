@@ -115,6 +115,13 @@ class MiningTask:
     # without blowing through a token budget. None disables the cap (caller
     # opts in to unlimited explicitly).
     max_items_per_run: int | None = 50
+    # Soft cap on the live drafts queue for this task (M6.5 / ADR-0011 §6).
+    # When the count exceeds `max_keep` after a run, the oldest drafts get
+    # moved to `<vault>/drafts/.archive/` (recoverable, not deleted). This
+    # is the "don't make inbox hell" guard — without it, an active feed
+    # piling up untouched drafts becomes Roam-style backlog anxiety.
+    # 30 mirrors what ADR-0011 specced as the default. None = unlimited.
+    max_keep: int | None = 30
     body: str = ""  # free-form Markdown description
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
@@ -143,6 +150,8 @@ class MiningTask:
             meta["output_language"] = self.output_language
         if self.max_items_per_run is not None:
             meta["max_items_per_run"] = self.max_items_per_run
+        if self.max_keep is not None:
+            meta["max_keep"] = self.max_keep
         post = frontmatter.Post(self.body, **meta)
         return frontmatter.dumps(post)
 
@@ -154,14 +163,16 @@ class MiningTask:
         sources_raw = meta.get("sources") or []
         sources = [SourceSpec.parse(s) for s in sources_raw]
         ol_raw = meta.get("output_language")
-        cap_raw = meta.get("max_items_per_run")
-        if cap_raw is None:
-            cap = 50  # match dataclass default for tasks written before the field existed
-        else:
+        def _int_or_default(raw: Any, default: int) -> int:
+            if raw is None:
+                return default
             try:
-                cap = int(cap_raw)
+                return int(raw)
             except (TypeError, ValueError):
-                cap = 50
+                return default
+
+        cap = _int_or_default(meta.get("max_items_per_run"), 50)
+        keep = _int_or_default(meta.get("max_keep"), 30)
         return cls(
             id=str(meta.get("id") or new_id()),
             name=str(meta.get("name") or path.stem),
@@ -171,6 +182,7 @@ class MiningTask:
             prompt=str(meta.get("prompt") or ""),
             output_language=str(ol_raw) if ol_raw else None,
             max_items_per_run=cap,
+            max_keep=keep,
             body=post.content,
             created_at=str(meta.get("created_at") or now_iso()),
             updated_at=str(meta.get("updated_at") or now_iso()),

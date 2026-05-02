@@ -925,6 +925,8 @@ function ui() {
         { id: "clear-chat",     label: tt("palette.cmd.clearchat"), sub: tt("palette.cmd.clearchat.sub"), disabled: !this.chatHistory.length },
         { id: "open-profile",   label: tt("palette.cmd.profile"),   sub: tt("palette.cmd.profile.sub") },
         { id: "new-note",       label: tt("palette.cmd.newnote"),   sub: tt("palette.cmd.newnote.sub") },
+        { id: "reindex",        label: tt("palette.cmd.reindex"),   sub: tt("palette.cmd.reindex.sub") },
+        { id: "doctor",         label: tt("palette.cmd.doctor"),    sub: tt("palette.cmd.doctor.sub") },
       ];
     },
 
@@ -940,6 +942,42 @@ function ui() {
         case "clear-chat":     this.clearChat(); break;
         case "open-profile":   this.openProfile(); break;
         case "new-note":       this.newNote(); break;
+        case "reindex":        this.runReindex(); break;
+        case "doctor":         this.runDoctor(); break;
+      }
+    },
+
+    /** M6.5: palette `重建索引` — fire the reindex on the server and toast
+     * the row counts. Doesn't block the UI. */
+    async runReindex() {
+      try {
+        toast(tt("palette.cmd.reindex.running"), "ok");
+        const r = await api("POST", "/api/system/reindex");
+        toast(
+          ttf("palette.cmd.reindex.done", {
+            changed: r.changed, deleted: r.deleted, unchanged: r.unchanged,
+          }),
+          "ok",
+        );
+      } catch (exc) {
+        toast(`reindex: ${exc.message}`, "error");
+      }
+    },
+
+    /** M6.5: palette `诊断` — run the full doctor check and toast the
+     * pass/fail summary. The full result table is captured but rendered
+     * compactly; M7+ will give it a dedicated focus mode if needed. */
+    async runDoctor() {
+      try {
+        toast(tt("palette.cmd.doctor.running"), "ok");
+        const r = await api("POST", "/api/system/doctor");
+        const ok = (r.failures || 0) === 0;
+        const msg = ttf("palette.cmd.doctor.done", {
+          fail: r.failures || 0, warn: r.warnings || 0,
+        });
+        toast(msg, ok ? "ok" : "error");
+      } catch (exc) {
+        toast(`doctor: ${exc.message}`, "error");
       }
     },
 
