@@ -33,6 +33,7 @@ class RunReport:
     fetched: int = 0
     new_items: int = 0
     drafts_created: int = 0
+    drafts_archived: int = 0  # M6.5: oldest drafts moved to .archive/ to honor max_keep
     skipped_empty: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -44,6 +45,7 @@ class RunReport:
             "fetched": self.fetched,
             "new_items": self.new_items,
             "drafts_created": self.drafts_created,
+            "drafts_archived": self.drafts_archived,
             "skipped_empty": self.skipped_empty,
             "errors": list(self.errors),
         }
@@ -180,6 +182,11 @@ def run_task(
 
     if new_seen_ids:
         _save_seen(vault, task.id, list(seen) + new_seen_ids)
+
+    # Honor `max_keep`: archive oldest drafts produced by this task once
+    # the live queue exceeds the threshold (M6.5 / ADR-0011 §6).
+    if task.max_keep is not None and task.max_keep > 0:
+        report.drafts_archived = drafts.enforce_max_keep(task.id, task.max_keep)
 
     report.finished_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return report

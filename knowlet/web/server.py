@@ -353,6 +353,65 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     # ---------------- health ----------------
 
+    # ---------------- system (M6.5) ----------------
+
+    @app.post("/api/system/reindex")
+    def system_reindex(
+        rebuild: bool = False,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """Rebuild the index from on-disk Notes. Mirrors `knowlet reindex`
+        (ADR-0008). The Cmd+K palette `重建索引` command calls this."""
+        from knowlet.core.embedding import make_backend
+        from knowlet.core.index import Index, reindex_vault
+
+        v = runtime.vault
+        cfg = runtime.config
+        if rebuild and v.db_path.exists():
+            v.db_path.unlink()
+        backend = make_backend(cfg.embedding.backend, cfg.embedding.model, cfg.embedding.dim)
+        if backend.dim != cfg.embedding.dim:
+            cfg.embedding.dim = backend.dim
+            from knowlet.config import save_config as _save_cfg
+            _save_cfg(v.root, cfg)
+        changed, deleted, unchanged = reindex_vault(
+            v.root,
+            v.db_path,
+            backend,
+            chunk_size=cfg.retrieval.chunk_size,
+            chunk_overlap=cfg.retrieval.chunk_overlap,
+            note_paths=list(v.iter_note_paths()),
+        )
+        # The reindex closes/reopens the DB; reload the runtime's index too.
+        runtime.index = Index(v.db_path, backend)
+        runtime.index.connect()
+        runtime.ctx.index = runtime.index
+        return {"changed": changed, "deleted": deleted, "unchanged": unchanged}
+
+    @app.post("/api/system/doctor")
+    def system_doctor(
+        skip_llm: bool = False,
+        skip_embedding: bool = False,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """Run the same health checks as `knowlet doctor`. Returns the raw
+        (status, name, detail) tuples; the palette renders them as a toast
+        summary or links into a richer view."""
+        from knowlet.cli._doctor import run_doctor_checks
+
+        results = run_doctor_checks(
+            runtime.vault, runtime.config,
+            skip_llm=skip_llm, skip_embedding=skip_embedding,
+        )
+        return {
+            "results": [
+                {"status": r[0], "name": r[1], "detail": r[2]}
+                for r in results
+            ],
+            "failures": sum(1 for r in results if r[0] == "fail"),
+            "warnings": sum(1 for r in results if r[0] == "warn"),
+        }
+
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         bs = state.bootstrap_status

@@ -134,3 +134,47 @@ class DraftStore:
             return False
         os.unlink(d.path)
         return True
+
+    # ---------------------------------------------------- archive (M6.5)
+
+    @property
+    def archive_dir(self) -> Path:
+        return self.root / ".archive"
+
+    def archive(self, draft: Draft) -> Path | None:
+        """Soft-delete: move the draft into `.archive/`. Recoverable; the
+        sidebar count + main `list()` ignore archived drafts so they
+        don't pollute the inbox.
+        """
+        if draft.path is None or not draft.path.exists():
+            return None
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
+        target = self.archive_dir / draft.path.name
+        # If a same-named file exists in archive, suffix with timestamp.
+        if target.exists():
+            target = self.archive_dir / f"{draft.path.stem}-{now_iso().replace(':', '-')}.md"
+        draft.path.rename(target)
+        return target
+
+    def list_for_task(self, task_id: str) -> list[Draft]:
+        return [d for d in self.list() if d.task_id == task_id]
+
+    def enforce_max_keep(self, task_id: str, max_keep: int) -> int:
+        """Archive oldest drafts produced by `task_id` until the live
+        queue size drops to `max_keep`. Returns the number archived.
+
+        ADR-0011 §6: prevents the "247 unread" inbox-hell pattern. New
+        drafts kick the oldest out instead of accumulating forever.
+        """
+        if max_keep <= 0:
+            return 0
+        live = self.list_for_task(task_id)
+        if len(live) <= max_keep:
+            return 0
+        # `list()` returns newest first; archive the oldest tail.
+        to_archive = live[max_keep:]
+        archived = 0
+        for d in to_archive:
+            if self.archive(d) is not None:
+                archived += 1
+        return archived

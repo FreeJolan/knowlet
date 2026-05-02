@@ -88,6 +88,15 @@ def mining_add(
             "one LLM avalanche. Default 50; pass 0 to disable.",
         ),
     ] = 50,
+    max_keep: Annotated[
+        int,
+        typer.Option(
+            "--max-keep",
+            help="Soft cap on the live drafts queue for this task. When new items "
+            "push the count over the threshold, the oldest drafts are moved to "
+            "drafts/.archive/ (recoverable). Default 30; pass 0 to disable.",
+        ),
+    ] = 30,
 ) -> None:
     """Create a new mining task."""
     from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
@@ -124,6 +133,7 @@ def mining_add(
         prompt=prompt or "Summarize each item; surface anything new or surprising.",
         output_language=resolved_lang,
         max_items_per_run=None if max_items_per_run <= 0 else max_items_per_run,
+        max_keep=None if max_keep <= 0 else max_keep,
     )
     problems = task.validate()
     if problems:
@@ -271,6 +281,8 @@ def _render_run_report(report) -> None:
         f"  fetched={report.fetched}  new={report.new_items}  "
         f"drafts={report.drafts_created}  skipped_empty={report.skipped_empty}"
     )
+    if getattr(report, "drafts_archived", 0):
+        line += f"  archived={report.drafts_archived}"
     if report.errors:
         line += f"  errors={len(report.errors)}"
     console.print(line)

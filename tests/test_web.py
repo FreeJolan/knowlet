@@ -616,6 +616,36 @@ def test_auto_title_idempotent_when_already_titled(tmp_path: Path):
     assert body["title"] == "manual"
 
 
+def test_system_reindex_endpoint(tmp_path: Path):
+    """M6.5: /api/system/reindex hits reindex_vault and returns counts."""
+    # Pre-create a Note on disk so reindex sees something.
+    v, cfg = _ready_vault(tmp_path)
+    from knowlet.core.note import Note, new_id
+    n = Note(id=new_id(), title="x", body="hello world hello world")
+    v.write_note(n)
+
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.post("/api/system/reindex")
+    assert r.status_code == 200
+    body = r.json()
+    assert "changed" in body
+    assert "deleted" in body
+    assert "unchanged" in body
+
+
+def test_system_doctor_endpoint(tmp_path: Path):
+    """M6.5: /api/system/doctor runs the full check pipeline (skipping LLM
+    so the test stays hermetic) and returns a structured result list."""
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.post("/api/system/doctor?skip_llm=true&skip_embedding=true")
+    assert r.status_code == 200
+    body = r.json()
+    assert "results" in body
+    assert "failures" in body
+    assert "warnings" in body
+    assert any(item["name"] == "vault" for item in body["results"])
+
+
 def test_auto_title_unsaved_session_404(tmp_path: Path):
     """A brand-new session without any turn yet hasn't been persisted to
     disk (we only save after a real exchange — see persist_active()), so
