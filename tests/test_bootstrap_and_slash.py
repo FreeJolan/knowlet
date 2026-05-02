@@ -8,7 +8,7 @@ from knowlet.chat.bootstrap import (
     ChatNotReadyError,
     bootstrap_chat,
 )
-from knowlet.cli.main import _handle_slash
+from knowlet.cli.chat_repl import _handle_slash
 from knowlet.config import KnowletConfig, save_config
 from knowlet.core.note import Note, new_id
 from knowlet.core.vault import Vault
