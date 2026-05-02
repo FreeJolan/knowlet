@@ -31,6 +31,11 @@ class ToolContext:
     cards: CardStore
     tasks: TaskStore
     drafts: DraftStore
+    # Per-turn rate-limit counters. ChatSession resets this at the start of
+    # each `user_turn` / `user_turn_stream`. Tools that need a per-turn cap
+    # (web_search, fetch_url) read+increment their own key here. Free-form
+    # so future tools can add new keys without changing this dataclass.
+    per_turn: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -86,6 +91,7 @@ def _build_default_registry() -> Registry:
     from knowlet.core.tools import (
         approve_draft,
         create_card,
+        fetch_url,
         get_card,
         get_draft,
         get_note,
@@ -98,6 +104,7 @@ def _build_default_registry() -> Registry:
         review_card,
         run_mining_task,
         search_notes,
+        web_search,
     )
 
     reg = Registry()
@@ -115,6 +122,10 @@ def _build_default_registry() -> Registry:
     reg.register(get_draft.TOOL)
     reg.register(approve_draft.TOOL)
     reg.register(reject_draft.TOOL)
+    # M7.5 / ADR-0017: backend-agnostic web search. Two-stage pattern —
+    # web_search returns snippets, fetch_url pulls full bodies.
+    reg.register(web_search.TOOL)
+    reg.register(fetch_url.TOOL)
     return reg
 
 
