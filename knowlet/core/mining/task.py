@@ -108,6 +108,13 @@ class MiningTask:
     sources: list[SourceSpec] = field(default_factory=list)
     prompt: str = ""
     output_language: str | None = None  # "en" | "zh" | None → fall back to cfg.general.language
+    # Hard ceiling on new items processed per run. Without this, a daemon
+    # offline for N days then waking up hits the entire backlog at once and
+    # generates an unbounded number of LLM calls (a real risk for active RSS
+    # feeds). 50 is a default that fits "I'm catching up after a weekend"
+    # without blowing through a token budget. None disables the cap (caller
+    # opts in to unlimited explicitly).
+    max_items_per_run: int | None = 50
     body: str = ""  # free-form Markdown description
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
@@ -134,6 +141,8 @@ class MiningTask:
         }
         if self.output_language:
             meta["output_language"] = self.output_language
+        if self.max_items_per_run is not None:
+            meta["max_items_per_run"] = self.max_items_per_run
         post = frontmatter.Post(self.body, **meta)
         return frontmatter.dumps(post)
 
@@ -145,6 +154,14 @@ class MiningTask:
         sources_raw = meta.get("sources") or []
         sources = [SourceSpec.parse(s) for s in sources_raw]
         ol_raw = meta.get("output_language")
+        cap_raw = meta.get("max_items_per_run")
+        if cap_raw is None:
+            cap = 50  # match dataclass default for tasks written before the field existed
+        else:
+            try:
+                cap = int(cap_raw)
+            except (TypeError, ValueError):
+                cap = 50
         return cls(
             id=str(meta.get("id") or new_id()),
             name=str(meta.get("name") or path.stem),
@@ -153,6 +170,7 @@ class MiningTask:
             sources=sources,
             prompt=str(meta.get("prompt") or ""),
             output_language=str(ol_raw) if ol_raw else None,
+            max_items_per_run=cap,
             body=post.content,
             created_at=str(meta.get("created_at") or now_iso()),
             updated_at=str(meta.get("updated_at") or now_iso()),

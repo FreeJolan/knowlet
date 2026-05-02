@@ -129,8 +129,12 @@ def run_task(
     language without editing each task file.
 
     `max_items` caps the number of *new* items processed in this run.
-    Useful for quick verification (translate a few items first) without
-    spending tokens on the full backlog."""
+    Resolution order: explicit `max_items` arg > `task.max_items_per_run`
+    > unlimited. The per-task ceiling protects against an offline daemon
+    waking up and processing a multi-day backlog in a single LLM
+    avalanche; the explicit arg lets `mining run --limit N` override for
+    quick verification."""
+    effective_cap = max_items if max_items is not None else task.max_items_per_run
     if drafts is None:
         drafts = DraftStore(vault.root / "drafts")
     effective_lang = task.output_language or default_output_language
@@ -155,8 +159,8 @@ def run_task(
 
     seen = _load_seen(vault, task.id)
     new_items = [it for it in items if it.item_id not in seen]
-    if max_items is not None and len(new_items) > max_items:
-        new_items = new_items[: int(max_items)]
+    if effective_cap is not None and len(new_items) > effective_cap:
+        new_items = new_items[: int(effective_cap)]
     report.new_items = len(new_items)
 
     new_seen_ids: list[str] = []

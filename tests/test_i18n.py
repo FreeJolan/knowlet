@@ -102,6 +102,32 @@ def test_supported_languages_contains_en_and_zh():
     assert "zh" in SUPPORTED_LANGUAGES
 
 
+def test_language_isolated_per_thread():
+    """One thread setting language must not leak into another.
+
+    Pre-2026-05-02 the language was a module global; a scheduler thread
+    setting `zh` would silently flip the language under a request handler.
+    Now backed by `contextvars.ContextVar`, contexts are isolated.
+    """
+    import threading
+
+    set_language("en")
+    box: dict[str, str] = {}
+
+    def child() -> None:
+        # Fresh threading.Thread starts with the default contextvars copy.
+        set_language("zh")
+        box["child"] = current_language()
+
+    t = threading.Thread(target=child)
+    t.start()
+    t.join()
+
+    assert box["child"] == "zh"
+    # The main thread's language is unchanged by the child's set_language.
+    assert current_language() == "en"
+
+
 # ------------------------------------------------------- profile template
 
 
