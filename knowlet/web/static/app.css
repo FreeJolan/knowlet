@@ -599,3 +599,30 @@ body {
   border-radius: 2px;
   font-style: normal;
 }
+
+/* M7.0.5: highlight.js theme overrides for paper-light blending.
+   The CDN ships github.min.css; we override the surface so code blocks
+   feel like paper, not a popped-out white card. */
+.prose-note pre {
+  background: var(--card, #fbf8f1);
+  border: 1px solid var(--line-soft, #e5dcc8);
+  border-radius: 6px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.prose-note pre code,
+.prose-note code.hljs {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+.prose-note :not(pre) > code {
+  background: var(--panel, #ede7d9);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}

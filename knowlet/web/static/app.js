@@ -95,6 +95,30 @@ function applyI18n(root) {
 
 // ---------- markdown render with link-target=_blank ----------
 
+// M7.0.5: register highlight.js with marked once at module load. We guard
+// against any of the three globals being missing (offline mode, ad-blockers
+// nuking jsdelivr) so the editor still renders plain (un-highlighted) code.
+(function _wireHighlightOnce() {
+  if (typeof marked === "undefined") return;
+  if (typeof hljs === "undefined" || typeof markedHighlight === "undefined") {
+    console.warn("highlight.js or marked-highlight not loaded; code blocks will be plain.");
+    return;
+  }
+  marked.use(
+    markedHighlight.markedHighlight({
+      langPrefix: "hljs language-",
+      highlight(code, lang) {
+        const language = lang && hljs.getLanguage(lang) ? lang : "plaintext";
+        try {
+          return hljs.highlight(code, { language }).value;
+        } catch (_e) {
+          return hljs.highlight(code, { language: "plaintext" }).value;
+        }
+      },
+    })
+  );
+})();
+
 function renderMarkdown(text) {
   if (typeof marked !== "undefined") {
     // M7.0.4: pre-rewrite `[[Title]]` (or `[[Title|alias]]`) into a sentinel
