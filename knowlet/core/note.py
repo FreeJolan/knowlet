@@ -1,7 +1,14 @@
 """Note entity: Markdown body + frontmatter.
 
 A Note is the only entity type in the MVP. It's stored at
-`<vault>/notes/<id>-<slug>.md` with YAML frontmatter and Markdown body.
+`<vault>/notes/<id>.md` with YAML frontmatter and Markdown body. The
+filename is the ULID alone — no title-derived slug — so renaming a
+note's title is a pure in-place rewrite. With a slug-suffixed filename,
+a rename was a `write new + unlink old` pair, which on iCloud /
+Syncthing fans out as a delete + create event and races into
+`(conflict)` copies on peers that hadn't pulled yet (2026-05-02
+critique #5). The title still lives in frontmatter, so Finder / Obsidian
+users can read it, and the chat / web UI display it directly.
 """
 
 from __future__ import annotations
@@ -52,11 +59,14 @@ class Note:
 
     @property
     def slug(self) -> str:
+        # Kept for callers / tests / scripts that still want a title-derived
+        # slug for a non-filesystem purpose (display, URL hint, etc.). The
+        # filename intentionally does *not* use it.
         return slugify(self.title)
 
     @property
     def filename(self) -> str:
-        return f"{self.id}-{self.slug}.md"
+        return f"{self.id}.md"
 
     @property
     def content_hash(self) -> str:

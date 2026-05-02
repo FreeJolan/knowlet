@@ -110,3 +110,69 @@ def test_config_set_takes_two_arguments():
     usage error (exit code 2), not a crash."""
     result = runner.invoke(app, ["config", "set"])
     assert result.exit_code != 0
+
+
+# ----------------------------------------------------------------- vault migrate-filenames (B3)
+
+
+def test_vault_migrate_filenames_renames_legacy_layout(tmp_path, monkeypatch):
+    """A legacy `<id>-<slug>.md` file gets renamed to `<id>.md`."""
+    import os
+    from knowlet.core.note import Note, new_id
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+    note = Note(id=new_id(), title="Hello world", body="body text")
+    legacy = v.notes_dir / f"{note.id}-{note.slug}.md"
+    legacy.write_text(note.to_markdown(), encoding="utf-8")
+    assert legacy.exists()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("KNOWLET_VAULT", str(tmp_path))
+    result = runner.invoke(app, ["vault", "migrate-filenames"])
+    assert result.exit_code == 0, result.stdout
+
+    target = v.notes_dir / f"{note.id}.md"
+    assert target.exists(), result.stdout
+    assert not legacy.exists()
+
+
+def test_vault_migrate_filenames_idempotent(tmp_path, monkeypatch):
+    """Running twice on a vault that's already canonical is a no-op."""
+    from knowlet.core.note import Note, new_id
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+    note = Note(id=new_id(), title="Already canonical", body="body")
+    canonical = v.notes_dir / f"{note.id}.md"
+    canonical.write_text(note.to_markdown(), encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("KNOWLET_VAULT", str(tmp_path))
+    r1 = runner.invoke(app, ["vault", "migrate-filenames"])
+    r2 = runner.invoke(app, ["vault", "migrate-filenames"])
+    assert r1.exit_code == 0
+    assert r2.exit_code == 0
+    assert canonical.exists()
+    assert "already at <id>.md" in r2.stdout or "already canonical" in r2.stdout
+
+
+def test_vault_migrate_filenames_dry_run_does_not_touch_disk(tmp_path, monkeypatch):
+    from knowlet.core.note import Note, new_id
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+    note = Note(id=new_id(), title="Hello", body="b")
+    legacy = v.notes_dir / f"{note.id}-{note.slug}.md"
+    legacy.write_text(note.to_markdown(), encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("KNOWLET_VAULT", str(tmp_path))
+    result = runner.invoke(app, ["vault", "migrate-filenames", "--dry-run"])
+    assert result.exit_code == 0
+    assert legacy.exists(), "dry-run must not rename"
+    assert not (v.notes_dir / f"{note.id}.md").exists()
+    assert "would rename" in result.stdout
