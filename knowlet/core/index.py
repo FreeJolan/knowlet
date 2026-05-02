@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import struct
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -48,55 +49,81 @@ def _check_trigram(conn: sqlite3.Connection) -> bool:
 
 
 class Index:
-    """Persistent index over Notes. One DB per vault."""
+    """Persistent index over Notes. One DB per vault.
+
+    Concurrency model: one SQLite connection **per thread** (uvicorn's request
+    threadpool, APScheduler executors, the CLI). WAL mode + a 5-second
+    `busy_timeout` lets concurrent readers proceed and serializes writers via
+    SQLite's own file locking. We deliberately keep `check_same_thread=True`
+    (the default) so that misuse — accidentally sharing one connection across
+    threads — fails loudly instead of silently corrupting the DB.
+    """
 
     def __init__(self, db_path: Path, embedding: EmbeddingBackend):
         self.db_path = db_path
         self.embedding = embedding
-        self._conn: sqlite3.Connection | None = None
+        self._tls = threading.local()
+        self._conns: list[sqlite3.Connection] = []
+        self._conns_lock = threading.Lock()
+        self._migrated = False
+        self._migration_lock = threading.Lock()
         self._tokenizer: str | None = None
 
     # ------------------------------------------------------------------ lifecycle
 
     def connect(self) -> sqlite3.Connection:
-        if self._conn is not None:
-            return self._conn
+        conn = getattr(self._tls, "conn", None)
+        if conn is not None:
+            return conn
+
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        # check_same_thread=False is intentional: knowlet's web UI runs sync
-        # endpoints across uvicorn's threadpool, so the same Index connection
-        # is reused from multiple worker threads. SQLite WAL mode + the GIL
-        # serialize writes safely for our single-user, single-writer pattern.
-        # If we ever go multi-user / multi-writer, switch to a per-request
-        # connection or aiosqlite.
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
-        self._conn = conn
-        self._tokenizer = "trigram" if _check_trigram(conn) else "unicode61"
-        self._migrate()
+        # If another thread holds the writer lock, wait up to 5s before
+        # raising `database is locked`. Long enough to absorb routine
+        # contention; short enough to surface a real deadlock.
+        conn.execute("PRAGMA busy_timeout = 5000")
+
+        # Migration runs once across all threads. The first thread to connect
+        # detects the FTS5 tokenizer and creates / upgrades the schema; later
+        # threads skip straight to handing back their own connection.
+        with self._migration_lock:
+            if not self._migrated:
+                self._tokenizer = "trigram" if _check_trigram(conn) else "unicode61"
+                self._migrate(conn)
+                self._migrated = True
+
+        self._tls.conn = conn
+        with self._conns_lock:
+            self._conns.append(conn)
         return conn
 
     def close(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        with self._conns_lock:
+            for c in self._conns:
+                try:
+                    c.close()
+                except sqlite3.Error:
+                    pass
+            self._conns.clear()
+        self._tls = threading.local()
+        self._migrated = False
 
     # ------------------------------------------------------------------ schema
 
-    def _migrate(self) -> None:
-        conn = self._conn
-        assert conn is not None
+    def _migrate(self, conn: sqlite3.Connection) -> None:
         cur = conn.cursor()
         cur.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         row = cur.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         version = int(row["value"]) if row else 0
 
         if version == 0:
-            self._create_v1()
+            self._create_v1(conn)
             cur.execute(
                 "INSERT INTO meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -128,9 +155,7 @@ class Index:
                     f"the new embedding model."
                 )
 
-    def _create_v1(self) -> None:
-        conn = self._conn
-        assert conn is not None
+    def _create_v1(self, conn: sqlite3.Connection) -> None:
         dim = self.embedding.dim
         tok = self._tokenizer or "unicode61"
         conn.executescript(
