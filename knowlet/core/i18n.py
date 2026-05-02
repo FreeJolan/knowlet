@@ -172,6 +172,10 @@ _EN: dict[str, str] = {
     # Header
     "header.palette.label": "Search · Run · Ask",
     "header.palette.title": "Command palette  (⌘K)",
+    # Async bootstrap (B4)
+    "health.indexing.label": "Indexing your notes…",
+    "health.indexing.done": "Index ready — chat is warmed up.",
+    "health.bootstrap.error": "Bootstrap failed",
     "header.save.title": "Save this chat as a note",
     "header.settings.title": "Profile & settings",
     # Cmd+K palette
@@ -415,6 +419,10 @@ _ZH: dict[str, str] = {
     # Header
     "header.palette.label": "搜索 / 命令 / 问 AI",
     "header.palette.title": "命令面板(⌘K)",
+    # 异步启动状态(B4)
+    "health.indexing.label": "正在为笔记建索引…",
+    "health.indexing.done": "索引就绪,可以开始对话了。",
+    "health.bootstrap.error": "启动失败",
     "header.save.title": "把这段对话存成笔记",
     "header.settings.title": "个人资料 · 设置",
     # ⌘K 命令面板

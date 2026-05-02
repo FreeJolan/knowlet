@@ -114,6 +114,8 @@ function ui() {
   return {
     // ---- meta / health ----
     meta: { vault: "", model: "", language: "en" },
+    ready: true,                     // false during async bootstrap (B4)
+    bootstrapStatus: "ready",        // 'idle' | 'running' | 'ready' | 'error'
 
     // ---- notes / tabs ----
     notes: [],
@@ -183,11 +185,20 @@ function ui() {
           model: h.model,
           language: h.language || "en",
         };
+        this.ready = h.ready === true;
+        this.bootstrapStatus = h.bootstrap_status || "idle";
         document.documentElement.lang = h.language || "en";
         await loadI18n(h.language || "en");
         applyI18n();
       } catch (exc) {
         toast(`health: ${exc.message}`, "error");
+      }
+
+      // If the server is still indexing (B4 async lifespan), poll until ready
+      // so chat / search endpoints become usable transparently. Backoff
+      // 1s → 5s caps the noise on a slow first run.
+      if (!this.ready && this.bootstrapStatus !== "idle") {
+        this._pollUntilReady();
       }
 
       // wire Split.js for left vs (center+right). Right rail is collapsed by Alpine,
@@ -236,6 +247,36 @@ function ui() {
         const cur = localStorage.getItem("knowlet:currentNoteId");
         if (cur && this.openTabs.find((t) => t.id === cur)) this.currentNoteId = cur;
       } catch (_) {}
+    },
+
+    /** Poll /api/health until bootstrap_status is 'ready' (or stays in
+     * 'error' for a while). Called from init when the first health check
+     * showed the server still indexing on startup. */
+    async _pollUntilReady() {
+      let delay = 1000;
+      const maxDelay = 5000;
+      while (!this.ready) {
+        await new Promise((r) => setTimeout(r, delay));
+        delay = Math.min(maxDelay, delay + 500);
+        try {
+          const h = await api("GET", "/api/health");
+          this.bootstrapStatus = h.bootstrap_status || "idle";
+          if (h.ready === true) {
+            this.ready = true;
+            toast(tt("health.indexing.done"), "ok");
+            return;
+          }
+          if (this.bootstrapStatus === "error") {
+            toast(
+              tt("health.bootstrap.error") + ": " + (h.bootstrap_error || "?"),
+              "error",
+            );
+            return;
+          }
+        } catch (_) {
+          // transient — keep polling
+        }
+      }
     },
 
     // ============================================================ notes / tree

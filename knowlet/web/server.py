@@ -13,6 +13,7 @@ need a real auth design that is out of scope for the MVP.
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -182,6 +183,13 @@ class WebState:
 
     Kept as a tiny app-state holder (not a global) so tests can construct one
     independently of an actual `uvicorn run`.
+
+    Bootstrap is async by default (production path): the FastAPI lifespan
+    kicks off `start_bootstrap_async` which runs reindex on a daemon thread,
+    so uvicorn accepts connections immediately. Endpoints that need the
+    runtime poll `bootstrap_status`. Tests don't enter lifespan as a context
+    manager, so they keep using `runtime_or_init` which falls back to a
+    synchronous bootstrap on first call.
     """
 
     def __init__(self, vault: Vault, config: KnowletConfig):
@@ -189,22 +197,104 @@ class WebState:
         self.config = config
         self.runtime: ChatRuntime | None = None
         self.scheduler: MiningScheduler | None = None
+        # Bootstrap state (production async path):
+        #   "idle"   — never attempted (no api_key, or tests pre-init)
+        #   "running"— lifespan started a thread; not done
+        #   "ready"  — runtime + scheduler ready
+        #   "error"  — bootstrap raised; bootstrap_error holds the exception
+        self.bootstrap_status: str = "idle"
+        self.bootstrap_error: Exception | None = None
+        self._bootstrap_thread: threading.Thread | None = None
 
-    def runtime_or_init(self) -> ChatRuntime:
-        if self.runtime is None:
+    def start_bootstrap_async(self) -> None:
+        """Kick off bootstrap on a daemon thread. Called from lifespan.
+
+        Idempotent: if a thread is already running or runtime is ready,
+        does nothing.
+        """
+        if self.bootstrap_status in ("running", "ready"):
+            return
+        if not self.config.llm.api_key:
+            # Per ADR-0012, AI is optional; an unconfigured vault is a legal
+            # state. Static + Notes endpoints work; chat endpoints will 503.
+            self.bootstrap_status = "idle"
+            return
+
+        self.bootstrap_status = "running"
+        self.bootstrap_error = None
+
+        def _run() -> None:
             try:
                 runtime, _report = bootstrap_chat(self.vault, self.config)
-            except ChatNotReadyError as exc:
+                self.runtime = runtime
+                scheduler = MiningScheduler(
+                    self.vault,
+                    runtime.llm,
+                    default_output_language=self.config.general.language,
+                )
+                scheduler.start()
+                self.scheduler = scheduler
+                self.bootstrap_status = "ready"
+            except Exception as exc:  # noqa: BLE001
+                self.bootstrap_error = exc
+                self.bootstrap_status = "error"
+
+        self._bootstrap_thread = threading.Thread(
+            target=_run, name="knowlet-bootstrap", daemon=True
+        )
+        self._bootstrap_thread.start()
+
+    def runtime_or_init(self) -> ChatRuntime:
+        """Return the ready runtime, or raise an HTTPException with the
+        right status for the current bootstrap phase.
+
+        - `ready` → return runtime
+        - `running` → 503, "still indexing"
+        - `error` → 500, with the original exception's message
+        - `idle` → fall back to a synchronous bootstrap (test path / first
+          call before lifespan got a chance to spawn the thread)
+        """
+        if self.bootstrap_status == "ready" and self.runtime is not None:
+            return self.runtime
+        if self.bootstrap_status == "running":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="knowlet is still indexing the vault — try again shortly",
+            )
+        if self.bootstrap_status == "error" and self.bootstrap_error is not None:
+            exc = self.bootstrap_error
+            if isinstance(exc, ChatNotReadyError):
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail=str(exc),
-                ) from exc
-            except IndexDimensionMismatchError as exc:
+                )
+            if isinstance(exc, IndexDimensionMismatchError):
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=str(exc),
-                ) from exc
-            self.runtime = runtime
+                )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"bootstrap failed: {exc}",
+            )
+
+        # bootstrap_status == "idle" — fall back to synchronous bootstrap.
+        # This is the test path (TestClient without `with`) and the
+        # api-key-empty path.
+        try:
+            runtime, _report = bootstrap_chat(self.vault, self.config)
+        except ChatNotReadyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        except IndexDimensionMismatchError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(exc),
+            ) from exc
+        self.runtime = runtime
+        self.bootstrap_status = "ready"
         return self.runtime
 
     def close(self) -> None:
@@ -214,6 +304,8 @@ class WebState:
         if self.runtime is not None:
             self.runtime.close()
             self.runtime = None
+        # Don't join the bootstrap thread on shutdown — it's a daemon, and
+        # waiting for an in-flight reindex would hang the server.
 
 
 def _runtime_dep(app: FastAPI):
@@ -241,21 +333,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     async def lifespan(app: FastAPI):
         # Activate the configured UI language for any backend-rendered strings.
         set_language(config.general.language)
-        # Eager-initialize the runtime so the scheduler can share its LLMClient.
-        # If api_key is empty (test fixtures, fresh installs), skip — endpoints
-        # will surface ChatNotReadyError on first call.
-        if config.llm.api_key:
-            try:
-                runtime = state.runtime_or_init()
-                state.scheduler = MiningScheduler(
-                    vault,
-                    runtime.llm,
-                    default_output_language=config.general.language,
-                )
-                state.scheduler.start()
-            except HTTPException:
-                # bootstrap failed (e.g., dim mismatch) — endpoints will surface it
-                pass
+        # Bootstrap (which calls reindex_vault) runs on a background thread
+        # so uvicorn accepts connections immediately. Endpoints that need
+        # the runtime poll `bootstrap_status` and 503 while indexing. The
+        # frontend reads this via `/api/health.ready` and shows a banner.
+        # Without this, a vault with thousands of notes would block uvicorn
+        # for minutes on first launch and look like the server crashed.
+        state.start_bootstrap_async()
         yield
         state.close()
 
@@ -267,14 +351,23 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return {
+        bs = state.bootstrap_status
+        body: dict[str, Any] = {
             "status": "ok",
             "version": __version__,
             "vault": str(vault.root),
             "model": config.llm.model,
             "language": config.general.language,
             "supported_languages": list(SUPPORTED_LANGUAGES),
+            # Async-bootstrap signal. The frontend reads `ready` to show a
+            # "still indexing" banner during the first reindex on a large
+            # vault. `bootstrap_status` exposes finer detail for diagnostics.
+            "ready": bs == "ready",
+            "bootstrap_status": bs,
         }
+        if bs == "error" and state.bootstrap_error is not None:
+            body["bootstrap_error"] = str(state.bootstrap_error)
+        return body
 
     @app.get("/api/i18n/{lang}")
     def i18n_catalog(lang: str) -> dict[str, str]:
