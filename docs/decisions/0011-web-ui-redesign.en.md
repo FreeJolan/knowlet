@@ -168,17 +168,6 @@ Each phase ships as its own commit with its own tag (`m6.0` … `m6.5`); between
 - Triggers `project_knowlet_multi_session_chat` (memory) — must land in M6.4, no more deferral.
 - Resolves the concrete dissatisfactions raised in `project_knowlet_ui_redesign_pending` (memory).
 
-### Decision provenance
-
-This ADR is not a single developer's call. It rests on:
-
-- The user's 2026-05-01 pick: direction A + focus modes.
-- Three independent Claude consultations (`Agent` tool, fresh-eyes, no project history):
-  - `Independent design — IA + focus modes`: produced the three-column + Cmd+K + focus-mode shape.
-  - `Pitfalls check on notes-first AI PKM redesign`: surfaced 5 common failure patterns (right-rail wallpaper / system folder exposure / drafts anxiety / flat backlinks / dumb search).
-  - `Comparative IA across Obsidian / Logseq / Mem / Reflect / Tana / Notion`: produced a "steal vs avoid" list.
-- All three converged on: ① file tree only-notes, ② AI right rail collapsed, ③ Cmd+K is primary navigation, ④ no graph view.
-
 ## Open questions — user has confirmed each (2026-05-01)
 
 1. ✅ Palette `>` prefix ask-AI: **one-shot popup answer in place.**
@@ -194,17 +183,9 @@ This ADR is not a single developer's call. It rests on:
 
 No React / Vue / any SPA framework. No DaisyUI / Naive UI / shadcn / etc. pre-styled component lib (reasons below).
 
-### Candidate comparison
+### Why we don't pick the popular alternatives — short version
 
-| Candidate                          | Shape                              | Why rejected                                                                                                                                                              |
-|------------------------------------|------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Vanilla as-is                      | All hand-rolled                    | Consistency depends on human discipline, which conflicts with the explicit pain "UI/interaction consistency is a hard problem on its own."                                |
-| DaisyUI / Naive UI / Element Plus  | Tailwind / Vue component lib       | Visual tone is "modern SaaS" (rounded corners / generous padding / gradient shadows), conflicts with knowlet's "terminal + programmer-monospace + information-dense" tone. Adopting one means either eating the tone or override-fighting harder than writing it ourselves. |
-| shadcn/ui + React                  | Industry-default modern stack      | React + Tailwind + Vite + TS ≈ 50 MB node_modules + a build pipeline. Violates knowlet's lean / distributable / data-sovereignty tone.                                    |
-| Lit + Shoelace (Web Components)    | Standardized + component lib       | Shoelace tone is also "modern SaaS"; wiring web components together is boilerplate-heavy; mainstream-ness is low, raising onboarding cost for future contributors.        |
-| Vue 3 CDN + Naive UI               | No-build-step framework            | Naive UI is ~300 kb and tonally off; Vue's strengths are in larger apps, which we don't need.                                                                             |
-| htmx + server-rendered             | Server-driven swap                 | Drag-resize / palette / live multi-pane editing — these client-heavy interactions are too much for swap; mixing per-keystroke server requests with streaming is messy.    |
-| **Tailwind + Alpine + Split** ✅   | Token layer + micro-framework + hand-rolled components | See below. |
+Not adopted: **React / Vue / any SPA framework** (50+ MB node_modules + build pipeline; violates ADR-0002's lean / distributable tone); **DaisyUI / Naive UI / shadcn etc. pre-styled component libs** (visual tone is "modern SaaS," clashes with knowlet's "terminal + information-dense" tone; adopting one means override-fighting more code than we'd write from scratch); **htmx + server-rendered** (drag-resize / palette / live multi-pane editing are too client-heavy for swap-based UIs). Detailed comparison in git history.
 
 ### Why Tailwind + Alpine + Split
 
@@ -271,14 +252,6 @@ For comparison: React + shadcn full stack ≈ 250 kb; Vue 3 + Naive UI ≈ 500 k
 - Honors `feedback_no_wheel_reinvention` memory: that memory targets "framework abstractions over LLM workflows" (LangChain / LlamaIndex) and "dependencies whose APIs aren't stable." Tailwind / Alpine / Split are 6+ years mature, API-stable, large communities, high AI-assistant fluency. **Hand-rolled thin components** fit the memory's "small utilities can be self-written."
 - Honors [ADR-0002](./0002-core-principles.en.md): no build-time dependency that fetches remote services; the CDN is a dev-time convenience, not a release-time requirement (release ships a self-contained static file).
 - Resolves the user's question about "is there a library for colors / components?": **the encapsulation is at the token layer, not the component layer.**
-
-### Why no pre-styled component library (restated)
-
-User's exact words: "Is there a library we can use directly for colors and components? If there is, I'd suggest we pick one, because UI/interaction consistency is also a hard problem."
-
-Direct answer: **yes, Tailwind is the "library" for colors; but a "components" library is something we deliberately don't pick, because knowlet's visual tone (terminal / programmer / information-dense) doesn't match any mainstream component lib (all "modern SaaS"). Importing one and overriding 70% of its styles is more work than assembling 8–10 thin components from Tailwind ourselves; the latter actually maintains consistency better, because everything shares the same token base.**
-
-If, in the future, knowlet pivots toward a "commercial SaaS modern" path (M5+), the shadcn/ui-style direction can be revisited. Not at this stage.
 
 ### Evolution path
 

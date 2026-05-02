@@ -8,13 +8,18 @@
 
 <!-- 新增 ADR 时同步更新此处索引 -->
 
-- [0001 — 选择"学习型"作为 Wedge 破局点](./0001-wedge-learning-first.md) · *Superseded by 0003*
 - [0002 — 三条核心原则](./0002-core-principles.md)
 - [0003 — Wedge 破局点修订:AI 长期记忆层 + 减负型 PKM](./0003-wedge-pivot-ai-memory-layer.md)
 - [0004 — AI 编排 + 原子执行(AI compose, code execute)](./0004-ai-compose-code-execute.md)
 - [0005 — LLM 接入策略](./0005-llm-integration-strategy.md)
 - [0006 — 数据存储与同步策略](./0006-storage-and-sync.md)
-- [0007 — MVP 切片范围与技术栈](./0007-mvp-slice.md)
+- [0008 — CLI / UI 平价开发纪律](./0008-cli-parity-discipline.md)
+- [0009 — Mining tasks 与 drafts](./0009-mining-tasks-and-drafts.md)
+- [0010 — i18n 策略](./0010-i18n.md)
+- [0011 — Web UI 重设计:笔记软件本位 + Focus Modes](./0011-web-ui-redesign.md)
+- [0012 — 笔记本位 / AI 是可选增强](./0012-notes-first-ai-optional.md)
+
+历史 / 已不代表当前方向的 ADR 见 [`archive/`](./archive/)。
 
 ## ADR 模板
 

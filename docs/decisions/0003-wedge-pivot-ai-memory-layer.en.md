@@ -115,3 +115,14 @@ See [`../roadmap/`](../roadmap/) for details. Briefly:
 - Sync pipeline brought by the user (iCloud / Dropbox / Syncthing, etc.); knowlet does not implement sync logic in stage 1
 - LLM provider sees user conversations + RAG-hit fragments; knowlet does not proxy or filter; privacy is determined by the user's LLM choice
 - "Rebuild mechanism" (rebuilding derived data from Markdown / JSON) has visible delay on large vaults at first launch — acceptable
+
+## Update 2026-05-02 — Identity vs wedge distinction
+
+This ADR describes "AI long-term memory layer" with enough emphasis that it reads as the product's **identity**. [ADR-0012](./0012-notes-first-ai-optional.en.md) makes the layering explicit:
+
+```
+Identity = personal KB / notes app   ← still true with no AI configured
+Wedge    = AI long-term memory layer ← unlocked when AI is configured
+```
+
+The substantive decision is unchanged — the wedge is still the AI long-term memory layer. But when reading 0003, treat "AI" as **a differentiation layer on top of the notes-app identity**, not the product itself. If anything in 0003 implies "no AI means no knowlet," the hard contract from ADR-0012 takes precedence: **knowlet remains usable when AI is not configured.**

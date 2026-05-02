@@ -168,17 +168,6 @@ A2 pitfall #3 的具体应对:
 - 触发 [project_knowlet_multi_session_chat](memory) 必须在 M6.4 实现,不能再 defer
 - 解决 [project_knowlet_ui_redesign_pending](memory) 提出的所有具体不满
 
-### 决策溯源
-
-本 ADR 不是开发者一人的判断,而是:
-
-- 用户 2026-05-01 选定方向 A + Focus Modes
-- 3 次独立 Claude 咨询(`Agent` 工具,fresh-eyes,不知道项目历史):
-  - `Independent design — IA + focus modes`:出三栏 + Cmd+K + focus 模式具体形状
-  - `Pitfalls check on notes-first AI PKM redesign`:出 5 个常见 fail 模式(右栏壁纸 / 系统目录暴露 / drafts 焦虑 / backlinks 平铺 / search 不智能)
-  - `Comparative IA across Obsidian / Logseq / Mem / Reflect / Tana / Notion`:出"steal vs avoid"列表
-- 三方在以下点高度一致:① file tree only-notes,② AI 右栏折叠,③ Cmd+K 是主导航,④ no graph view
-
 ## Open questions — 用户已确认按推荐走(2026-05-01)
 
 1. ✅ 命令面板里 `>` prefix ask-AI:**就地 popup 一次性回答**
@@ -194,17 +183,9 @@ A2 pitfall #3 的具体应对:
 
 不引入 React / Vue / 任何 SPA framework;不引入 Daisy UI / Naive UI / shadcn 等 pre-styled component lib(原因下面)。
 
-### 候选对比
+### 否决方案的简短理由
 
-| 候选 | 形态 | 否决理由 |
-|---|---|---|
-| Vanilla 现状 | 全自写 | 一致性靠人工纪律,跟"UI/交互一致性是复杂课题"的痛点冲突 |
-| Daisy UI / Naive UI / Element Plus | Tailwind / Vue 上层 component lib | 视觉调性都是"现代 SaaS 风"(圆角/大 padding/渐变阴影),跟 knowlet "终端 + 程序员 monospace + 信息密集"调性冲突;装上要么吃调性,要么疯狂 override 比自写还累 |
-| shadcn/ui + React | 业内默认现代栈 | React + Tailwind + vite + TS 整套 ≈ 50 MB node_modules + 构建管道;违反 knowlet 精简、可分发、数据主权调性 |
-| Lit + Shoelace(Web Components) | 标准化 + 组件库 | Shoelace 调性也"现代 SaaS";web component 之间 wire 起来 boilerplate 多;mainstream 度低,后续贡献者上手成本高 |
-| Vue 3 CDN + Naive UI | 无 build framework | Naive UI 300 kb 且调性冲突;Vue 优势在大型应用,我们用不上 |
-| htmx + server-rendered | server-driven swap | 拖拽 resize / 命令面板 / 实时多面板编辑 这种 client 重交互不够;而且每次 keystroke 都打 server 跟 streaming 混在一起复杂 |
-| **Tailwind + Alpine + Split** ✅ | token 层 + 微 framework + 自写组件 | 见下 |
+不引入的:**React / Vue / SPA framework**(50+ MB node_modules + 构建管道,违反 ADR-0002 精简 / 可分发);**DaisyUI / Naive UI / shadcn 等 pre-styled component lib**(调性都是"现代 SaaS 风",跟 knowlet"终端 + 信息密集"冲突,override 70% 反而比自写累);**htmx + server-rendered**(拖拽 resize / 命令面板 / 实时多面板编辑这类 client-heavy 交互不够)。详细对比见 git history。
 
 ### 为什么是 Tailwind + Alpine + Split
 
@@ -271,14 +252,6 @@ A2 pitfall #3 的具体应对:
 - 遵循 `feedback_no_wheel_reinvention` memory:**这条 memory 反对的是 "framework abstractions over LLM workflows"(LangChain / LlamaIndex)和"API 不稳定的依赖"**;Tailwind / Alpine / Split 都是 6+ 年成熟、API 稳定、社区大、AI assistant 熟练度高的工具。**自写薄组件**完全契合 memory 里"实现简单的小工具可以自造"那条
 - 遵循 [ADR-0002](./0002-core-principles.md):没有引入构建期间联网拉远端服务的依赖;CDN 是开发期可选,release 后是 self-contained 静态文件
 - 解决用户提出的"颜色 / 组件等的封装库"问题:**封装在 token 层而非组件层**
-
-### 不选 pre-styled component lib 的核心理由(再强调一次)
-
-用户原话:"对于颜色、组件等元素,有直接可用的封装库吗?如果有的话,我个人建议我们挑选来用,因为 UI/交互一致性也是个比较复杂的课题。"
-
-直接答:**有,Tailwind 就是"颜色"的封装库;但"组件"的封装库我们故意不选,因为 knowlet 的视觉调性(终端 / 程序员 / 信息密集)跟所有主流 component lib(都是"现代 SaaS 风")不匹配。装一个 lib 然后 override 70% 样式不如直接用 Tailwind 自己组装 8-10 个薄组件;后者反而维持得住一致性,因为它们共享同一份 token。**
-
-如果未来的 knowlet 决定走"商业 SaaS 现代化"路线(M5+),可以重新评估 shadcn/ui style 的方案。当前阶段不是。
 
 ### 演化路径
 

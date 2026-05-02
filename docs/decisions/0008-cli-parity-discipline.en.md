@@ -117,3 +117,30 @@ This evolution is M2-phase work; until then, the CLI directly importing backend 
 - Synergistic with [ADR-0004](./0004-ai-compose-code-execute.en.md): the boundary of an atomic-capability tool schema coincides exactly with that of a backend function; LLM-orchestrating-via-tool = UI-orchestrating-via-function-call = CLI-orchestrating-via-command — three layers sharing one set of atomic capabilities.
 - Reinforces [ADR-0007](./0007-mvp-slice.en.md): the "backend designed daemon-style" promise is given concrete rules by this ADR.
 - Does not affect [ADR-0005](./0005-llm-integration-strategy.en.md) / [ADR-0006](./0006-storage-and-sync.en.md): those concern external interfaces and data; this ADR concerns internal layering.
+
+## Update 2026-05-02 — UI grew, test strategy extends
+
+**Trigger**: actual M6 shape (measured 2026-05-02):
+
+- `frontend/index.html` ≈ **850 lines** (three columns + command palette + three focus modes + modals)
+- `frontend/app.js` ≈ **1130 lines** (Alpine state machine + hand-rolled SSE parser + keyboard bindings + focus stack)
+- Backend tests ≈ 137 cases; UI auto-tests = 0
+
+The §3 assumption "very little UI auto-smoke" held in M0/M1 (a few hundred lines, no state machine); after M6, the UI **has its own state-machine problems**: palette triggered mid-stream / focus stack across three focus modes / hand-rolled SSE buffer with partial chunks / Cmd+K opened inside chat focus / etc. Backend unit tests cover **none** of this; the original "5–10% extra work" estimate is off by an order of magnitude.
+
+### Revised testing discipline (client-side only; backend rules unchanged)
+
+1. **Hand-rolled stream / parser logic must be its own module with unit tests.** `app.js`'s SSE parser, the Markdown render wrapper, future quote-pill parsers — all of them **must** be extracted into an ES module and tested for partial chunks, malformed lines, and edge cases. Framework not locked (Node's native test runner / vitest / jest all OK), but **no tests, no ship**.
+
+2. **UI state machines must be isolatable for tests.** Cmd+K query parsing, focus-stack push/pop ordering, ChatHistory transitions during sediment / clear / mid-stream — these are state-machine behaviors. Extract them as pure functions (or Alpine factories) and unit-test the transitions. Don't test rendered HTML; do test state transitions.
+
+### What we don't do
+
+- **No Playwright / Cypress / E2E.** E2E is high-maintenance, conflicts with ADR-0011's ~75 kb distribution budget and the "AI iteration velocity" gain.
+- **No 100% UI coverage requirement.** Risk-driven: state machines / stream parsers must be tested; pure rendering helpers don't need to be.
+
+### Relation to the original clauses
+
+§3's "very little UI auto-smoke" is **partially superseded**: UI modules with state machines / streaming / parser logic must have unit tests; pure presentation rendering remains untested. The ADR's core assertions (backend is the single source of truth; CLI is a thin shell; tool schema = backend function boundary) **still hold**.
+
+> **Trigger**: critique #3 in the 2026-05-02 second-opinion engineering review. This section is a patch, not a reversal.
