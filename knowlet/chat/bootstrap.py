@@ -142,6 +142,17 @@ def bootstrap_chat(
 
     report.pruned_conversations = prune_old(vault.conversations_dir, days=prune_days)
 
+    # M7.4.3: archive 90+ day quiz sessions on startup. Spares sessions
+    # that produced Cards (the user learned something specific from them
+    # — worth keeping live per ADR-0014 §5.2). Idempotent + cheap; the
+    # store walks `.knowlet/quizzes/*.json` once, no LLM call.
+    try:
+        from knowlet.core.quiz_store import QuizStore
+
+        QuizStore(vault.state_dir).archive_aged()
+    except Exception:  # noqa: BLE001 — boundary; aging is non-critical
+        pass
+
     profile = read_profile(vault.profile_path)
     if profile is not None:
         report.user_profile_loaded = True

@@ -231,19 +231,24 @@ function ui() {
 
     // ---- M7.4 quiz focus mode state ----
     quiz: {
-      stage: "scope",     // 'scope' | 'loading' | 'loop' | 'summary' | 'error'
+      stage: "scope",     // 'scope' | 'loading' | 'loop' | 'summary' | 'error' | 'history'
       session: null,      // QuizSessionPayload from /api/quiz/start
       currentIndex: 0,
       answerDraft: "",
       submitting: false,
       n: 5,               // user-tweakable (advanced settings)
-      scopeNoteIds: [],   // note ids selected for the quiz
+      scopeKind: "notes", // 'notes' | 'tag' (M7.4.3)
+      scopeNoteIds: [],   // when scopeKind === 'notes'
+      scopeTag: "",       // when scopeKind === 'tag'
       error: "",
       // disagreement loop state
       disagreeOpen: -1,   // question index whose disagree textarea is open
       disagreeDraft: "",
       // Cards reflux state — selected indices for batch convert
       refluxSelected: {}, // {questionIdx: true}
+      // M7.4.3 history tab
+      history: [],        // [QuizSummaryRow] from GET /api/quiz
+      historyLoading: false,
     },
 
     // ---- Cmd+K command palette ----
@@ -919,11 +924,15 @@ function ui() {
         answerDraft: "",
         submitting: false,
         n: 5,
+        scopeKind: "notes",
         scopeNoteIds: cur ? [cur.id] : [],
+        scopeTag: "",
         error: "",
         disagreeOpen: -1,
         disagreeDraft: "",
         refluxSelected: {},
+        history: [],
+        historyLoading: false,
       };
       this.focus = "quiz";
     },
@@ -944,17 +953,25 @@ function ui() {
     /** Kick off generation. The backend handles the LLM call; we just
      * show a loading state with retry on failure. */
     async startQuiz() {
-      if (this.quiz.scopeNoteIds.length === 0) {
+      const kind = this.quiz.scopeKind;
+      if (kind === "notes" && this.quiz.scopeNoteIds.length === 0) {
         toast(tt("quiz.scope.empty") || "请至少选一条笔记", "warn");
+        return;
+      }
+      if (kind === "tag" && !this.quiz.scopeTag.trim()) {
+        toast(tt("quiz.scope.tag_empty") || "请选一个 tag", "warn");
         return;
       }
       this.quiz.stage = "loading";
       this.quiz.error = "";
       try {
-        const session = await api("POST", "/api/quiz/start", {
-          note_ids: this.quiz.scopeNoteIds,
+        const payload = {
           n: Math.max(1, Math.min(20, this.quiz.n | 0)),
-        });
+          scope_type: kind,
+        };
+        if (kind === "notes") payload.note_ids = this.quiz.scopeNoteIds;
+        if (kind === "tag") payload.tag = this.quiz.scopeTag.trim();
+        const session = await api("POST", "/api/quiz/start", payload);
         this.quiz.session = session;
         this.quiz.currentIndex = 0;
         this.quiz.answerDraft = "";
@@ -963,6 +980,49 @@ function ui() {
         this.quiz.stage = "error";
         this.quiz.error = exc.message || "generation failed";
       }
+    },
+
+    /** M7.4.3: load past quiz sessions for the history tab. Light list
+     * (no question text), opens the full session via openQuizHistory. */
+    async loadQuizHistory() {
+      this.quiz.historyLoading = true;
+      try {
+        const rows = await api("GET", "/api/quiz?limit=50");
+        this.quiz.history = rows;
+      } catch (exc) {
+        toast(`history failed: ${exc.message}`, "error");
+        this.quiz.history = [];
+      } finally {
+        this.quiz.historyLoading = false;
+      }
+    },
+
+    async openQuizHistory(quizId) {
+      try {
+        const session = await api("GET", `/api/quiz/${encodeURIComponent(quizId)}`);
+        this.quiz.session = session;
+        this.quiz.stage = "summary";
+        // No reflux defaults for historical sessions — user already
+        // saw the summary at completion time; this is read-only review.
+        this.quiz.refluxSelected = {};
+      } catch (exc) {
+        toast(`open failed: ${exc.message}`, "error");
+      }
+    },
+
+    /** Tag list derived from the loaded notes — used by the scope-picker
+     * tag dropdown. Sorted by frequency desc, then alphabetical so the
+     * user's most-used tags surface first. */
+    quizScopeTagOptions() {
+      const counts = new Map();
+      for (const n of this.notes) {
+        for (const t of (n.tags || [])) {
+          counts.set(t, (counts.get(t) || 0) + 1);
+        }
+      }
+      return Array.from(counts.entries())
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([tag, count]) => ({ tag, count }));
     },
 
     /** "再来一组" — regenerate without billing the user mentally. New

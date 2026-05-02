@@ -1344,3 +1344,103 @@ def test_quiz_get_404_for_unknown(tmp_path: Path):
     client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
     r = client.get("/api/quiz/01HXNONEXISTENT00000000000")
     assert r.status_code == 404
+
+
+# ------------------------------------------------------------- M7.4.3 tag scope + list
+
+
+def test_quiz_start_with_tag_scope_resolves_notes(tmp_path: Path):
+    """M7.4.3: scope_type='tag' resolves all notes carrying the tag.
+    No need to send note_ids explicitly."""
+    from knowlet.core.llm import AssistantMessage
+
+    quiz_json = (
+        '{"questions": [{"type": "recall", "question": "Q?", '
+        '"reference_answer": "A", "source_note_ids": []}]}'
+    )
+
+    class GenerateLLM:
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            return AssistantMessage(content=quiz_json, tool_calls=[])
+
+    client, v, _ = _client_with_stub(tmp_path, GenerateLLM())
+    runtime = client.app.state.web_state.runtime_or_init()
+
+    n1 = Note(id=new_id(), title="A", body="body a", tags=["topic-x"])
+    n2 = Note(id=new_id(), title="B", body="body b", tags=["topic-x", "extra"])
+    n3 = Note(id=new_id(), title="C", body="body c", tags=["other"])
+    for n in (n1, n2, n3):
+        v.write_note(n)
+        runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    r = client.post(
+        "/api/quiz/start",
+        json={"scope_type": "tag", "tag": "topic-x", "n": 1},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["scope_type"] == "tag"
+    assert body["scope_tag"] == "topic-x"
+    # Both n1 and n2 carry the tag.
+    assert set(body["scope_note_ids"]) == {n1.id, n2.id}
+
+
+def test_quiz_start_tag_scope_404_when_no_match(tmp_path: Path):
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.post("/api/quiz/start", json={"scope_type": "tag", "tag": "no-match", "n": 5})
+    assert r.status_code == 404
+
+
+def test_quiz_start_tag_scope_400_when_tag_empty(tmp_path: Path):
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.post("/api/quiz/start", json={"scope_type": "tag", "tag": "", "n": 5})
+    assert r.status_code == 400
+
+
+def test_quiz_start_cluster_scope_blocked_until_layer_b(tmp_path: Path):
+    """M7.4.3: cluster scope is wire-compatible but the route returns
+    501 until M8 Layer B lands. Catches any frontend that ships the
+    cluster picker too early."""
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.post(
+        "/api/quiz/start",
+        json={"scope_type": "cluster", "cluster_id": "c1", "n": 5},
+    )
+    assert r.status_code == 501
+
+
+def test_quiz_list_returns_recent_sessions(tmp_path: Path):
+    """M7.4.3: GET /api/quiz lists past sessions (light row, no question text)."""
+    from knowlet.core.quiz import QuizSession
+    from knowlet.core.quiz_store import QuizStore
+    from datetime import UTC, datetime, timedelta
+
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    store = QuizStore(runtime.vault.state_dir)
+    now = datetime.now(UTC)
+    store.save(
+        QuizSession(
+            id="01HXNEW",
+            started_at=(now).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            session_score=80,
+            n_questions=5,
+            n_correct=4,
+        )
+    )
+    store.save(
+        QuizSession(
+            id="01HXOLD",
+            started_at=(now - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            session_score=60,
+            n_questions=5,
+            n_correct=3,
+        )
+    )
+    rows = client.get("/api/quiz?limit=10").json()
+    assert len(rows) == 2
+    # Newest first.
+    assert rows[0]["id"] == "01HXNEW"
+    assert rows[0]["session_score"] == 80
+    # Light shape — no `questions` key.
+    assert "questions" not in rows[0]

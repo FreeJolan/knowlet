@@ -182,8 +182,33 @@ class SimilarNoteRow(BaseModel):
 
 
 class QuizStartRequest(BaseModel):
-    note_ids: list[str]
+    """M7.4.3: scope can now be `notes` (the default — explicit ids) or
+    `tag` (resolve all Notes with the tag to ids server-side). The
+    cluster scope is wire-compatible (`scope_type="cluster" + cluster_id`)
+    but blocked at the route layer until ADR-0013 Layer B (M8) lands."""
+
+    note_ids: list[str] = []
     n: int = DEFAULT_N_QUESTIONS
+    scope_type: str = "notes"  # "notes" | "tag" | "cluster"
+    tag: str = ""
+    cluster_id: str = ""
+
+
+class QuizSummaryRow(BaseModel):
+    """Light row for the past-quizzes list. Avoids shipping every
+    question down the wire when all the user wants is "did I quiz on
+    RAG last week?"."""
+    id: str
+    started_at: str
+    finished_at: str
+    scope_type: str
+    scope_note_ids: list[str]
+    scope_tag: str
+    n_questions: int
+    n_correct: int
+    n_disagreement: int
+    cards_created: int
+    session_score: int
 
 
 class QuizQuestionPayload(BaseModel):
@@ -207,6 +232,7 @@ class QuizSessionPayload(BaseModel):
     model: str = ""
     scope_type: str = "notes"
     scope_note_ids: list[str] = []
+    scope_tag: str = ""
     questions: list[QuizQuestionPayload] = []
     n_questions: int = 0
     n_correct: int = 0
@@ -1305,6 +1331,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             model=session.model,
             scope_type=session.scope_type,
             scope_note_ids=session.scope_note_ids,
+            scope_tag=session.scope_tag,
             questions=[
                 QuizQuestionPayload(
                     type=q.type,
@@ -1328,27 +1355,87 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             session_score=session.session_score,
         )
 
+    @app.get("/api/quiz", response_model=list[QuizSummaryRow])
+    def quiz_list(
+        limit: int = 50,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[QuizSummaryRow]:
+        """M7.4.3: past quizzes list for the focus mode's history tab.
+        Returns light rows (no question text) — opens via /api/quiz/{id}."""
+        store = _quiz_store_for(runtime)
+        sessions = store.list_recent(limit=max(1, min(200, int(limit))))
+        return [
+            QuizSummaryRow(
+                id=s.id,
+                started_at=s.started_at,
+                finished_at=s.finished_at,
+                scope_type=s.scope_type,
+                scope_note_ids=s.scope_note_ids,
+                scope_tag=s.scope_tag,
+                n_questions=s.n_questions,
+                n_correct=s.n_correct,
+                n_disagreement=s.n_disagreement,
+                cards_created=s.cards_created,
+                session_score=s.session_score,
+            )
+            for s in sessions
+        ]
+
     @app.post("/api/quiz/start", response_model=QuizSessionPayload)
     def quiz_start(
         req: QuizStartRequest,
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> QuizSessionPayload:
         """Generate `n` questions over the chosen Notes and persist a fresh
-        QuizSession. The frontend gets the full session back (including
-        reference_answer — the LLM has already seen it; hiding it client-side
-        would be theatre, and ADR-0014 §4.2 anyway requires the user to see
-        the reference for each scored question)."""
+        QuizSession. M7.4.3 adds tag scope (resolves to note ids server-side);
+        cluster scope is reserved for M8 Layer B and blocked here."""
         from knowlet.core.note import Note, new_id
         from datetime import UTC, datetime
 
-        if not req.note_ids:
+        scope_type = (req.scope_type or "notes").lower()
+        if scope_type == "cluster":
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="note_ids must be non-empty",
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="cluster scope requires ADR-0013 Layer B (M8); not yet available",
             )
         n = max(1, min(20, int(req.n)))  # bound LLM call size
+
+        # Resolve scope → list of note ids.
+        if scope_type == "tag":
+            tag = (req.tag or "").strip()
+            if not tag:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="scope_type='tag' requires a non-empty `tag` field",
+                )
+            # In-memory tag filter — list_notes returns all rows with the
+            # tags JSON column already parsed. Linear scan is fine for the
+            # vault sizes the index supports today.
+            scope_ids: list[str] = []
+            for row in runtime.index.list_notes(limit=None):
+                tags = row.get("tags") or []
+                if tag in tags:
+                    scope_ids.append(row["id"])
+            if not scope_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"no notes found with tag {tag!r}",
+                )
+        elif scope_type == "notes":
+            scope_ids = list(req.note_ids)
+            if not scope_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="note_ids must be non-empty when scope_type='notes'",
+                )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"unknown scope_type: {scope_type!r}",
+            )
+
         notes_for_llm: list[tuple[str, str, str]] = []
-        for nid in req.note_ids:
+        for nid in scope_ids:
             meta = runtime.index.get_note_meta(nid)
             if meta is None:
                 raise HTTPException(
@@ -1378,8 +1465,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             id=new_id(),
             started_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             model=runtime.config.llm.model,
-            scope_type="notes",
+            scope_type=scope_type,
             scope_note_ids=[r[0] for r in notes_for_llm],
+            scope_tag=req.tag if scope_type == "tag" else "",
             questions=questions,
         )
         _quiz_store_for(runtime).save(session)
