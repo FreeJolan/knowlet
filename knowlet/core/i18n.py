@@ -260,21 +260,24 @@ _EN: dict[str, str] = {
     "footer.feed.title": "Click to fetch new items now",
     "footer.feed.running": "Fetching…",
     "footer.feed.empty": "(none configured)",
-    # Inbox modal
+    # Inbox / drafts focus mode
     "inbox.title": "Inbox",
     "inbox.empty": "Your inbox is empty.",
     "inbox.source": "Source",
     "inbox.tags": "Tags",
+    "inbox.fetched": "fetched",
+    "inbox.savepath": "Saved to",
     "inbox.action.discard": "Discard",
     "inbox.action.later": "Later",
     "inbox.action.keep": "Keep as note",
     "inbox.done": "Inbox cleared!",
-    # Review (flashcards)
+    # Review / cards focus mode
     "review.title": "Review",
     "review.empty": "No cards due.",
     "review.front": "Front",
     "review.back": "Back",
-    "review.reveal": "⏎ Reveal answer",
+    "review.reveal": "Reveal answer",
+    "review.fsrs.hint": "FSRS · the next interval shows after you flip",
     "review.rate.again": "Again",
     "review.rate.hard": "Hard",
     "review.rate.good": "Good",
@@ -284,6 +287,13 @@ _EN: dict[str, str] = {
     "review.rate.good.title": "Recalled comfortably",
     "review.rate.easy.title": "Trivially easy — push interval out",
     "review.done": "Done for today!",
+    # Focus mode shared chrome
+    "focus.exit": "exit",
+    "focus.prev": "prev",
+    "focus.next": "next",
+    # Chat focus mode
+    "chat.focus.title": "Chat",
+    "chat.focus.singlesession": "Single session · multi-session lands in M6.4",
     # Save chat as note (web flow)
     "sediment.web.title": "Save this chat as a note",
     "sediment.web.drafting": "Composing your note… (Opus takes ~25s)",
@@ -496,18 +506,21 @@ _ZH: dict[str, str] = {
     # 收件箱模态
     "inbox.title": "收件箱",
     "inbox.empty": "收件箱是空的。",
+    "inbox.fetched": "抓取于",
+    "inbox.savepath": "通过后保存到",
     "inbox.source": "来源",
     "inbox.tags": "标签",
     "inbox.action.discard": "不要",
     "inbox.action.later": "稍后再看",
     "inbox.action.keep": "收入笔记",
     "inbox.done": "收件箱审完了。",
-    # 复习(卡片)
+    # 复习(卡片 focus mode)
     "review.title": "复习",
     "review.empty": "今天没有到期的卡片。",
     "review.front": "题面",
     "review.back": "答案",
-    "review.reveal": "⏎ 看答案",
+    "review.reveal": "翻面查看答案",
+    "review.fsrs.hint": "FSRS · 翻面后显示下次间隔",
     "review.rate.again": "不记得",
     "review.rate.hard": "勉强想起",
     "review.rate.good": "记起来了",
@@ -517,6 +530,13 @@ _ZH: dict[str, str] = {
     "review.rate.good.title": "顺利记起",
     "review.rate.easy.title": "太简单了,下次推迟很多",
     "review.done": "今天的复习做完了。",
+    # Focus mode 通用
+    "focus.exit": "退出",
+    "focus.prev": "上一条",
+    "focus.next": "下一条",
+    # Chat focus mode
+    "chat.focus.title": "对话",
+    "chat.focus.singlesession": "单会话 · 多会话归档下一阶段(M6.4)",
     # 把对话存成笔记(web flow)
     "sediment.web.title": "把这段对话存成笔记",
     "sediment.web.drafting": "AI 整理中…(Opus 大约 25 秒)",

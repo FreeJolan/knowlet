@@ -81,6 +81,13 @@
   @keydown.window.ctrl.k.prevent="openPalette()"
   @keydown.window.meta.p.prevent="openPalette('notes-only')"
   @keydown.window.ctrl.p.prevent="openPalette('notes-only')"
+  @keydown.window.meta.shift.c.prevent="handleFocusHotkey($event, 'chat')"
+  @keydown.window.ctrl.shift.c.prevent="handleFocusHotkey($event, 'chat')"
+  @keydown.window.meta.shift.d.prevent="handleFocusHotkey($event, 'drafts')"
+  @keydown.window.ctrl.shift.d.prevent="handleFocusHotkey($event, 'drafts')"
+  @keydown.window.meta.shift.r.prevent="handleFocusHotkey($event, 'cards')"
+  @keydown.window.ctrl.shift.r.prevent="handleFocusHotkey($event, 'cards')"
+  @keydown.window="handleDraftsFocusKey($event); handleCardsFocusKey($event);"
   class="text-text"
 >
 
@@ -369,6 +376,13 @@
           </select>
           <span class="flex-1"></span>
           <button
+            @click="openChatFocus()"
+            class="text-textsoft hover:text-text px-1 py-0.5 rounded hover:bg-surface2"
+            data-i18n-title="rail.ai.expand.title"
+          >
+            <svg class="icon icon-sm"><use href="#i-expand"/></svg>
+          </button>
+          <button
             @click="clearChat()"
             class="text-textsoft hover:text-text px-1.5 py-0.5 rounded hover:bg-surface2 text-[11px]"
             data-i18n-title="rail.ai.clear.title"
@@ -624,68 +638,210 @@
   </div>
 </div>
 
-<!-- Inbox review (M6.3 will move this to focus mode) -->
-<div x-show="modal === 'drafts'" @click.self="modal = null" class="modal" x-cloak>
-  <div class="modal-card">
-    <h3>
-      <span data-i18n="inbox.title">收件箱</span>
-      <span class="text-textsoft text-xs ml-2 mono" x-text="draftsState.queue.length ? `${draftsState.current + 1} / ${draftsState.queue.length}` : ''"></span>
-    </h3>
-    <div x-show="!draftsState.queue.length" class="text-textsoft text-sm py-8 text-center" data-i18n="inbox.empty">收件箱是空的。</div>
-    <template x-if="draftsState.queue.length && draftsState.full">
-      <div>
-        <p class="text-xs text-textsoft">
-          <span data-i18n="inbox.source">来源</span>:
-          <a class="text-accent border-b border-transparent hover:border-accent" target="_blank" :href="draftsState.full.source" x-text="draftsState.full.source || '—'"></a>
-          <span x-show="draftsState.full.tags?.length"> · <span data-i18n="inbox.tags">标签</span>: <span x-text="draftsState.full.tags.join(', ')"></span></span>
-        </p>
-        <h4 class="text-lg font-semibold mt-2 mb-3" x-text="draftsState.full.title"></h4>
-        <div class="prose-note text-sm max-h-[50vh] overflow-y-auto" x-html="renderMarkdown(draftsState.full.body || '')"></div>
-        <div class="flex items-center gap-2 pt-3 mt-3 border-t border-border">
-          <button @click="actDraft('reject')" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text" data-i18n="inbox.action.discard">不要</button>
-          <button @click="actDraft('skip')" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text" data-i18n="inbox.action.later">稍后再看</button>
-          <button @click="actDraft('approve')" class="px-5 py-1.5 rounded bg-accent text-onaccent font-medium hover:bg-accent2" data-i18n="inbox.action.keep">收入笔记</button>
-          <span class="flex-1"></span>
-          <button @click="modal = null" class="text-textsoft hover:text-text text-xs" data-i18n="modal.close">关闭</button>
-        </div>
-      </div>
-    </template>
+<!-- ═══════════════ FOCUS MODES (Cmd+Shift+{C,D,R} · ADR-0011 §5) ═══════════════ -->
+
+<!-- Drafts focus — Cmd+Shift+D / footer drafts icon -->
+<div x-show="focus === 'drafts'" x-cloak class="focus-overlay">
+  <header class="focus-header">
+    <svg class="icon icon-sm" style="color: var(--accent-2);"><use href="#i-inbox"/></svg>
+    <span class="focus-header-title" data-i18n="inbox.title">收件箱</span>
+    <span class="mono text-textmute text-[11.5px]"
+          x-text="draftsState.queue.length ? `${draftsState.current + 1} / ${draftsState.queue.length}` : ''"></span>
+    <span class="flex-1"></span>
+    <button @click="focus = null" class="focus-esc">
+      <span class="kbd">esc</span>
+      <span data-i18n="focus.exit">退出</span>
+    </button>
+  </header>
+  <div class="focus-progress">
+    <div class="focus-progress-bar" :style="`width: ${draftsProgress()}%`"></div>
   </div>
+
+  <div x-show="!draftsState.queue.length" class="flex-1 flex items-center justify-center text-textmute text-sm" data-i18n="inbox.empty">收件箱是空的。</div>
+  <template x-if="draftsState.queue.length && draftsState.full">
+    <div class="flex-1 overflow-y-auto py-10 px-6">
+      <article class="mx-auto" style="max-width: 720px;">
+        <div class="flex items-center gap-2.5 mb-3.5 text-[11.5px] text-textmute flex-wrap">
+          <span class="uppercase tracking-[0.08em] text-[10px]" data-i18n="inbox.source">来源</span>
+          <a class="mono text-accent2 inline-flex items-center gap-1.5 border-b border-transparent hover:border-accent2"
+             target="_blank" :href="draftsState.full.source"
+             x-text="draftsState.full.source || '—'"></a>
+          <span class="text-textfaint">·</span>
+          <span class="mono" data-i18n="inbox.fetched">抓取</span>
+          <span class="mono text-textsoft" x-text="draftsState.full.created_at?.slice(0, 16) || ''"></span>
+        </div>
+        <div x-show="draftsState.full.tags?.length" class="flex gap-1.5 mb-5.5 flex-wrap">
+          <template x-for="tag in (draftsState.full.tags || [])" :key="tag">
+            <span class="kbd" style="text-transform: lowercase;" x-text="tag"></span>
+          </template>
+        </div>
+        <h1 class="font-serif text-[26px] leading-tight font-semibold mt-2 mb-4 text-text" style="letter-spacing: -0.012em;" x-text="draftsState.full.title"></h1>
+        <div class="prose-note" x-html="renderMarkdown(draftsState.full.body || '')"></div>
+        <div class="mt-7 px-3.5 py-2.5 rounded text-xs text-textsoft" style="background: var(--panel); border: 1px solid var(--line-soft);">
+          <span data-i18n="inbox.savepath">通过后保存到</span>
+          <span class="mono text-accent2" x-text="`notes/${draftsState.full.title || ''}.md`"></span>
+        </div>
+      </article>
+    </div>
+  </template>
+
+  <footer class="focus-footer">
+    <div class="mx-auto flex items-center gap-2.5" style="max-width: 720px;">
+      <button @click="actDraft('reject')" class="focus-btn">
+        <span data-i18n="inbox.action.discard">不要</span>
+        <span class="kbd">X</span>
+      </button>
+      <button @click="actDraft('skip')" class="focus-btn">
+        <span data-i18n="inbox.action.later">稍后再看</span>
+        <span class="kbd">S</span>
+      </button>
+      <button @click="actDraft('approve')" class="focus-btn primary flex-1">
+        <span data-i18n="inbox.action.keep">收入笔记</span>
+        <span class="kbd kbd-on-accent">A</span>
+      </button>
+      <span class="mono text-[11px] text-textmute ml-2 hidden md:inline-flex items-center gap-1">
+        <span data-i18n="focus.prev">上一条</span>
+        <span class="kbd">J</span>
+        <span data-i18n="focus.next">下一条</span>
+        <span class="kbd">K</span>
+      </span>
+    </div>
+  </footer>
 </div>
 
-<!-- Cards review (M6.3 will move this to focus mode) -->
-<div x-show="modal === 'cards'" @click.self="modal = null" class="modal" x-cloak>
-  <div class="modal-card">
-    <h3>
-      <span data-i18n="review.title">复习</span>
-      <span class="text-textsoft text-xs ml-2 mono" x-text="cardsState.queue.length ? `${cardsState.current + 1} / ${cardsState.queue.length}` : ''"></span>
-    </h3>
-    <div x-show="!cardsState.queue.length" class="text-textsoft text-sm py-8 text-center" data-i18n="review.empty">没有到期的卡片。</div>
-    <template x-if="cardsState.queue.length">
-      <div>
-        <div class="text-textsoft text-xs mb-2" data-i18n="review.front">题面</div>
-        <div class="prose-note text-base mb-6" x-html="renderMarkdown(cardsState.queue[cardsState.current]?.front || '')"></div>
-        <div x-show="cardsState.revealed">
-          <div class="text-textsoft text-xs mb-2" data-i18n="review.back">答案</div>
-          <div class="prose-note text-base mb-6" x-html="renderMarkdown(cardsState.queue[cardsState.current]?.back || '')"></div>
+<!-- Cards focus — Cmd+Shift+R / footer cards icon -->
+<div x-show="focus === 'cards'" x-cloak class="focus-overlay">
+  <header class="focus-header">
+    <svg class="icon icon-sm" style="color: var(--accent-2);"><use href="#i-cards"/></svg>
+    <span class="focus-header-title" data-i18n="review.title">复习</span>
+    <span class="mono text-textmute text-[11.5px]"
+          x-text="cardsState.queue.length ? `${cardsState.current + 1} / ${cardsState.queue.length}` : ''"></span>
+    <span class="flex-1"></span>
+    <button @click="focus = null" class="focus-esc">
+      <span class="kbd">esc</span>
+      <span data-i18n="focus.exit">退出</span>
+    </button>
+  </header>
+  <div class="focus-progress">
+    <div class="focus-progress-bar" :style="`width: ${cardsProgress()}%`"></div>
+  </div>
+
+  <div x-show="!cardsState.queue.length" class="flex-1 flex items-center justify-center text-textmute text-sm" data-i18n="review.empty">没有到期的卡片。</div>
+  <template x-if="cardsState.queue.length">
+    <div class="flex-1 flex items-center justify-center px-6 py-10">
+      <div class="w-full flex flex-col items-center" style="max-width: 760px;">
+        <!-- big serif card front -->
+        <div class="font-serif text-center text-text font-medium mb-9"
+             style="font-size: 32px; line-height: 1.35; letter-spacing: -0.01em; max-width: 720px;"
+             x-html="renderMarkdown(cardsState.queue[cardsState.current]?.front || '')"></div>
+
+        <!-- reveal button -->
+        <template x-if="!cardsState.revealed">
+          <button @click="cardsState.revealed = true" class="card-reveal-btn">
+            <span class="kbd">⏎</span>
+            <span data-i18n="review.reveal">翻面查看答案</span>
+          </button>
+        </template>
+
+        <!-- back -->
+        <template x-if="cardsState.revealed">
+          <div class="prose-note text-center mb-9" style="max-width: 720px;"
+               x-html="renderMarkdown(cardsState.queue[cardsState.current]?.back || '')"></div>
+        </template>
+
+        <!-- rating row (disabled until reveal) -->
+        <div :class="cardsState.revealed ? '' : 'opacity-40 pointer-events-none'"
+             class="flex items-center gap-2 mt-12">
+          <button @click="rateCard(1)" class="focus-btn" data-i18n-title="review.rate.again.title">
+            <span data-i18n="review.rate.again">不记得</span>
+            <span class="kbd">1</span>
+          </button>
+          <button @click="rateCard(2)" class="focus-btn" data-i18n-title="review.rate.hard.title">
+            <span data-i18n="review.rate.hard">勉强想起</span>
+            <span class="kbd">2</span>
+          </button>
+          <button @click="rateCard(3)" class="focus-btn primary" data-i18n-title="review.rate.good.title">
+            <span data-i18n="review.rate.good">记起来了</span>
+            <span class="kbd kbd-on-accent">3</span>
+          </button>
+          <button @click="rateCard(4)" class="focus-btn" data-i18n-title="review.rate.easy.title">
+            <span data-i18n="review.rate.easy">太简单</span>
+            <span class="kbd">4</span>
+          </button>
         </div>
-        <div class="flex items-center gap-2 pt-3 border-t border-border">
-          <template x-if="!cardsState.revealed">
-            <button @click="cardsState.revealed = true" class="px-5 py-1.5 rounded bg-accent text-onaccent font-medium hover:bg-accent2" data-i18n="review.reveal">⏎ 看答案</button>
-          </template>
-          <template x-if="cardsState.revealed">
-            <div class="flex gap-2">
-              <button @click="rateCard(1)" class="px-3 py-1.5 rounded border border-border text-text" data-i18n-title="review.rate.again.title" data-i18n="review.rate.again">不记得</button>
-              <button @click="rateCard(2)" class="px-3 py-1.5 rounded border border-border text-text" data-i18n-title="review.rate.hard.title" data-i18n="review.rate.hard">勉强想起</button>
-              <button @click="rateCard(3)" class="px-3 py-1.5 rounded border border-accent text-accent" data-i18n-title="review.rate.good.title" data-i18n="review.rate.good">记起来了</button>
-              <button @click="rateCard(4)" class="px-3 py-1.5 rounded border border-border text-text" data-i18n-title="review.rate.easy.title" data-i18n="review.rate.easy">太简单</button>
-            </div>
-          </template>
-          <span class="flex-1"></span>
-          <button @click="modal = null" class="text-textsoft hover:text-text text-xs" data-i18n="modal.close">关闭</button>
-        </div>
+        <div class="mt-3.5 text-[11px] text-textfaint" data-i18n="review.fsrs.hint">FSRS · 翻面后显示下次间隔</div>
       </div>
-    </template>
+    </div>
+  </template>
+</div>
+
+<!-- Chat focus — Cmd+Shift+C / AI rail expand icon -->
+<div x-show="focus === 'chat'" x-cloak class="focus-overlay">
+  <header class="focus-header">
+    <svg class="icon icon-sm" style="color: var(--accent-2);"><use href="#i-sparkles"/></svg>
+    <span class="focus-header-title" data-i18n="chat.focus.title">对话</span>
+    <span class="mono text-textmute text-[11.5px]" data-i18n="chat.focus.singlesession">单会话 · 多会话归档下一阶段</span>
+    <span class="flex-1"></span>
+    <span class="text-textmute text-xs" data-i18n="rail.ai.scope.label">参考范围</span>
+    <select x-model="chatScope" class="bg-bg border border-border rounded px-1.5 py-1 text-xs text-text">
+      <option value="note" data-i18n="rail.ai.scope.note">当前笔记</option>
+      <option value="vault" data-i18n="rail.ai.scope.vault">所有笔记</option>
+      <option value="none" data-i18n="rail.ai.scope.none">不参考</option>
+    </select>
+    <button @click="openSediment()" :disabled="!chatHistory.length"
+            class="text-textsoft hover:text-text p-1 rounded hover:bg-surface2 disabled:opacity-30 disabled:hover:bg-transparent"
+            data-i18n-title="header.save.title">
+      <svg class="icon icon-sm"><use href="#i-save"/></svg>
+    </button>
+    <button @click="clearChat()" :disabled="!chatHistory.length"
+            class="text-textsoft hover:text-text px-2 py-1 rounded hover:bg-surface2 text-[11.5px] disabled:opacity-30"
+            data-i18n="rail.ai.clear.label" data-i18n-title="rail.ai.clear.title">清空</button>
+    <button @click="focus = null" class="focus-esc">
+      <span class="kbd">esc</span>
+      <span data-i18n="focus.exit">退出</span>
+    </button>
+  </header>
+
+  <div class="flex-1 overflow-y-auto px-6 py-8" x-ref="chatFocusScroll">
+    <div class="mx-auto flex flex-col gap-4" style="max-width: 880px;">
+      <template x-for="(msg, i) in chatHistory" :key="i">
+        <div :class="msg.role === 'user' ? 'flex flex-col items-end gap-1' : 'flex flex-col items-start gap-1'">
+          <span class="mono text-[10px] text-textfaint" x-text="msg.role === 'user' ? tt('rail.ai.label.you') : tt('rail.ai.label.ai')"></span>
+          <div
+            :class="msg.role === 'user'
+              ? 'bg-accentsoft border border-[rgba(91,122,156,0.22)] text-text rounded-[12px_12px_3px_12px] px-4 py-3 max-w-[80%]'
+              : 'bg-card border border-bordersoft text-text rounded-[12px_12px_12px_3px] px-4 py-3 max-w-[88%]'"
+            class="leading-relaxed prose-note"
+            style="font-size: 14px;"
+            x-html="renderMarkdown(msg.content || '')"
+          ></div>
+          <template x-for="tc in (msg.tool_calls || [])" :key="tc.id">
+            <div class="text-textmute text-[11px] mono mt-1 pl-2 border-l border-bordersoft" x-text="`· ${tc.name}(${JSON.stringify(tc.args).slice(0, 120)})`"></div>
+          </template>
+        </div>
+      </template>
+      <div x-show="!chatHistory.length" class="text-textmute text-sm leading-relaxed text-center py-12">
+        <p x-html="ttf('rail.ai.empty', { title: currentTab()?.title || tt('rail.ai.empty.notitle') })"></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="border-t border-border px-6 py-4" style="background: var(--panel);">
+    <div class="mx-auto" style="max-width: 880px;">
+      <textarea
+        x-ref="chatFocusInput"
+        x-model="chatDraft"
+        @keydown="handleChatFocusKey($event)"
+        class="w-full bg-bg border border-border rounded-lg p-3 text-[14px] resize-none focus:outline-none focus:border-accent"
+        rows="3"
+        data-i18n-placeholder="rail.ai.placeholder"
+        :disabled="chatStreaming"
+      ></textarea>
+      <div class="flex items-center mt-1.5 text-textfaint">
+        <span class="flex-1"></span>
+        <span class="kbd" data-i18n="rail.ai.composer.hint">⏎ 发送 · ⇧⏎ 换行</span>
+      </div>
+    </div>
   </div>
 </div>
 

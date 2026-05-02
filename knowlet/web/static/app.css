@@ -249,6 +249,120 @@ body {
 }
 *::-webkit-scrollbar-thumb:hover { background: var(--ink-faint); }
 
+/* focus modes (Cmd+Shift+{C,D,R} · ADR-0011 §5) */
+.focus-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  z-index: 105;
+  /* paper texture, same as body */
+  background-image:
+    radial-gradient(1100px 600px at 75% -10%, rgba(91, 122, 156, 0.04), transparent 60%),
+    radial-gradient(900px 500px at -5% 110%, rgba(164, 122, 58, 0.03), transparent 60%);
+  background-color: var(--bg);
+}
+.focus-header {
+  height: 44px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.focus-header-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.focus-progress {
+  height: 1px;
+  background: var(--line-soft);
+  flex-shrink: 0;
+}
+.focus-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 200ms ease;
+}
+.focus-esc {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: transparent;
+  border: 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  cursor: pointer;
+}
+.focus-esc:hover { color: var(--ink); }
+.focus-footer {
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  padding: 14px 24px;
+  flex-shrink: 0;
+}
+.focus-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  font-weight: 500;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.focus-btn:hover {
+  color: var(--ink);
+  border-color: var(--ink-mute);
+}
+.focus-btn.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+  font-weight: 550;
+}
+.focus-btn.primary:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+.kbd-on-accent {
+  background: rgba(22, 24, 33, 0.18) !important;
+  border-color: rgba(22, 24, 33, 0.18) !important;
+  color: rgba(22, 24, 33, 0.7) !important;
+}
+.card-reveal-btn {
+  width: 360px;
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.card-reveal-btn:hover {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
+
 /* command palette (Cmd+K · ADR-0011 §4) */
 .palette-scrim {
   position: fixed;
