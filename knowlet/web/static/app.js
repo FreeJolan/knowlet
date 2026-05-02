@@ -1,10 +1,15 @@
 /**
- * knowlet web UI — Alpine-based, three-column notes-first layout (M6.1).
+ * knowlet web UI — Alpine-based, three-column notes-first layout.
  *
  * Discipline (ADR-0008): no business logic here. Every action is a fetch()
  * to a backend endpoint that has a CLI mirror. Rendering, event handling,
- * modal state — those are this file's only job.
+ * modal state — those are this file's only job. Hand-rolled stream/parser
+ * logic lives in `lib/*.js` (per ADR-0008 §"Update 2026-05-02") so it can
+ * be tested in isolation; imported below.
  */
+
+import { parseSSE } from "./lib/sse.js";
+import { classifyQuery, filterCommands, filterNotes } from "./lib/palette.js";
 
 // ---------- shared helpers ----------
 
@@ -22,33 +27,6 @@ async function api(method, path, body) {
   }
   if (r.status === 204) return null;
   return await r.json();
-}
-
-async function* parseSSE(response) {
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let idx;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const block = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const dataLines = block
-        .split("\n")
-        .filter((l) => l.startsWith("data: "))
-        .map((l) => l.slice(6));
-      const json = dataLines.join("");
-      if (!json) continue;
-      try {
-        yield JSON.parse(json);
-      } catch (err) {
-        console.error("SSE parse error", err, json);
-      }
-    }
-  }
 }
 
 function debounce(fn, wait) {
@@ -810,45 +788,36 @@ function ui() {
      * can index linearly. Each item: {kind, label, sub?, run, header?}.
      */
     paletteItems() {
-      const raw = this.palette.query.trim();
+      const { mode, text } = classifyQuery(this.palette.query);
       const items = [];
 
-      // > ask AI prefix
-      if (raw.startsWith(">")) {
-        const q = raw.slice(1).trim();
+      if (mode === "ask") {
         items.push({ section: "askai", header: tt("palette.section.askai") });
         items.push({
           kind: "ask",
-          label: q || tt("palette.askai.empty"),
+          label: text || tt("palette.askai.empty"),
           sub: tt("palette.askai.sub"),
-          query: q,
-          run: () => this.askOnce(q),
-          disabled: !q,
+          query: text,
+          run: () => this.askOnce(text),
+          disabled: !text,
         });
         return items;
       }
 
-      // + new note prefix
-      if (raw.startsWith("+")) {
-        const title = raw.slice(1).trim();
+      if (mode === "newnote") {
         items.push({ section: "newnote", header: tt("palette.section.newnote") });
         items.push({
           kind: "newnote",
-          label: title || tt("palette.newnote.empty"),
+          label: text || tt("palette.newnote.empty"),
           sub: tt("palette.newnote.sub"),
-          run: () => this.newNoteFromPalette(title),
-          disabled: !title,
+          run: () => this.newNoteFromPalette(text),
+          disabled: !text,
         });
         return items;
       }
 
-      // bare query → fuzzy notes + commands (notes only when palette.mode='notes-only')
-      const q = raw.toLowerCase();
-
-      // Notes section
-      const noteMatches = (this.notes || [])
-        .filter((n) => !q || n.title.toLowerCase().includes(q))
-        .slice(0, 8);
+      // mode is 'fuzzy' (text is a lowercased query) or 'browse' (text is "")
+      const noteMatches = filterNotes(this.notes || [], text, 8);
       if (noteMatches.length) {
         items.push({ section: "notes", header: tt("palette.section.notes") });
         for (const n of noteMatches) {
@@ -862,11 +831,8 @@ function ui() {
         }
       }
 
-      // Commands section (skip in notes-only mode)
       if (this.palette.mode !== "notes-only") {
-        const cmds = this.paletteCommands().filter(
-          (c) => !q || c.label.toLowerCase().includes(q)
-        );
+        const cmds = filterCommands(this.paletteCommands(), text);
         if (cmds.length) {
           items.push({ section: "commands", header: tt("palette.section.commands") });
           for (const c of cmds) {
@@ -875,7 +841,6 @@ function ui() {
         }
       }
 
-      // Empty state hint
       if (!items.length) {
         items.push({
           kind: "empty",
@@ -1128,3 +1093,10 @@ function ui() {
     },
   };
 }
+
+// ES module ⇒ everything above is module-scoped. Alpine reads `ui()` and
+// `toast()` from the global scope (via `x-data="ui()"` and inline @click
+// handlers like `toast(...)`), so re-export them onto window. This is the
+// minimum surface needed; the rest of the helpers stay encapsulated.
+window.ui = ui;
+window.toast = toast;
