@@ -249,6 +249,39 @@ body {
 }
 *::-webkit-scrollbar-thumb:hover { background: var(--ink-faint); }
 
+/* file tree note row (M7.0.1 — adds hover-revealed delete action) */
+.tree-item {
+  display: flex;
+  align-items: stretch;
+  border-radius: 4px;
+  margin: 0 2px;
+}
+.tree-item:hover { background: var(--surface2); }
+.tree-item.active { background: var(--accent-soft); }
+.tree-item.active .tree-row span { color: var(--accent-2); }
+.tree-row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink);
+}
+.tree-action {
+  display: none;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: color 0.1s;
+}
+.tree-item:hover .tree-action { display: inline-flex; }
+
 /* chat focus session sidebar (M6.4 Phase 2) */
 .session-item {
   display: flex;

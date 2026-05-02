@@ -30,7 +30,7 @@ def _help(*argv: str) -> str:
 
 def test_root_help_lists_all_subcommands():
     out = _help()
-    for sub in ("vault", "config", "user", "cards", "mining", "drafts",
+    for sub in ("vault", "config", "user", "cards", "mining", "drafts", "notes",
                 "web", "ls", "reindex", "doctor", "chat"):
         assert sub in out, f"`{sub}` missing from `knowlet --help`"
 
@@ -76,6 +76,12 @@ def test_mining_help():
 def test_drafts_help():
     out = _help("drafts")
     for cmd in ("list", "show", "approve", "reject"):
+        assert cmd in out
+
+
+def test_notes_help():
+    out = _help("notes")
+    for cmd in ("delete", "restore", "trash"):
         assert cmd in out
 
 

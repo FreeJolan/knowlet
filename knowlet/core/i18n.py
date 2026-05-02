@@ -231,6 +231,10 @@ _EN: dict[str, str] = {
     "sidebar.new.title": "New note",
     "sidebar.empty": "No notes yet — tap + to create one.",
     "sidebar.loading": "Loading…",
+    # M7.0.1 sidebar delete (soft-delete to .trash/)
+    "sidebar.note.delete.title": "Move to .trash/",
+    "sidebar.note.delete.confirm": "Move \"{title}\" to .trash/? Recoverable with `knowlet notes restore`.",
+    "sidebar.note.delete.toast": "Moved to .trash/: {title}",
     # Tabs
     "tab.close": "Close",
     "tab.dirty": "Unsaved",
@@ -495,6 +499,10 @@ _ZH: dict[str, str] = {
     "sidebar.new.title": "新建笔记",
     "sidebar.empty": "还没有笔记。点 + 新建第一条。",
     "sidebar.loading": "加载中…",
+    # M7.0.1 侧栏删除(软删到 .trash/)
+    "sidebar.note.delete.title": "移到 .trash/",
+    "sidebar.note.delete.confirm": "把「{title}」移到 .trash/?可用 `knowlet notes restore` 恢复。",
+    "sidebar.note.delete.toast": "已移到 .trash/:{title}",
     # Tabs
     "tab.close": "关闭",
     "tab.dirty": "未保存",
