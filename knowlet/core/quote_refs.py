@@ -41,14 +41,24 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 
 @dataclass(frozen=True)
 class QuoteRef:
-    """One capsule: a quote pulled from a Note, plus enough metadata to
-    re-locate the source even after edits. Lives in the frontend's chat
-    state; serialized to the wire on send."""
+    """One capsule. Two flavors per ADR-0016 §2:
+
+    - `source = "note"` (M7.1 default): a quote pulled from a Note, with
+      paragraph_anchor for fuzzy re-locate after edits. The web layer
+      fetches the Note body and runs `extract_enclosing_section` at send
+      time so the LLM sees the structural backdrop.
+    - `source = "url"` (M7.2): the user pasted a URL, the backend
+      fetched + summarized it. quote_text holds the summary; source_url
+      is the original page. No vault lookup, no enclosing section —
+      summary is already the context.
+    """
 
     note_id: str
     note_title: str
     quote_text: str
     paragraph_anchor: str  # first ~64 normalized chars of the quote's paragraph
+    source: str = "note"  # "note" | "url"
+    source_url: str = ""  # populated when source == "url"
 
 
 def normalize_anchor(text: str) -> str:
@@ -186,15 +196,27 @@ def format_references_block(refs_with_bodies: list[tuple[QuoteRef, str]]) -> str
 
     blocks: list[str] = []
     for ref, body in refs_with_bodies:
-        section = extract_enclosing_section(body, ref)
-        # Indent the section with a `> ` blockquote prefix so it's visually
-        # distinct in the LLM's input. Quote text gets the same treatment.
+        # Both branches build the same blockquote-rendered quote.
         quote_md = "\n".join(f"> {ln}" for ln in (ref.quote_text or "").splitlines())
-        section_md = "\n".join(f"> {ln}" for ln in (section or "").splitlines())
-        blocks.append(
-            f"我想就这段问你(来自笔记《{ref.note_title}》):\n"
-            f"{quote_md}\n\n"
-            f"(为给你上下文,这段所在的标题节是:)\n"
-            f"{section_md}"
-        )
+
+        if ref.source == "url":
+            # M7.2: URL capsule. quote_text is already the LLM-produced
+            # summary; we don't run extract_enclosing_section. The URL is
+            # surfaced so the chat-side LLM can mention / cite it.
+            url_disp = ref.source_url or ""
+            blocks.append(
+                f"我想就这篇文章问你(来自《{ref.note_title}》· {url_disp}):\n"
+                f"{quote_md}"
+            )
+        else:
+            # M7.1: Note-source capsule. Pull the heading-bounded section
+            # around the quote so the chat-side LLM sees structural context.
+            section = extract_enclosing_section(body, ref)
+            section_md = "\n".join(f"> {ln}" for ln in (section or "").splitlines())
+            blocks.append(
+                f"我想就这段问你(来自笔记《{ref.note_title}》):\n"
+                f"{quote_md}\n\n"
+                f"(为给你上下文,这段所在的标题节是:)\n"
+                f"{section_md}"
+            )
     return "\n\n———————————————\n\n".join(blocks) + "\n\n———————————————\n\n"
