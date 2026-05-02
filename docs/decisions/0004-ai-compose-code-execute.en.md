@@ -91,16 +91,20 @@ This ADR is the **engineering boundary** support for the above ADRs, not a new p
 | Zero forced learning curve (ADR-0003) | Users speak in natural language; no UI patterns to learn |
 | Transparent + directable (ADR-0003) | Tool calls are naturally loggable / auditable |
 
-### Implication: Knowlet Is Naturally an MCP Server
+### Relation to MCP (revised 2026-05-02)
 
-If "atomic capability layer = MCP tools", then knowlet requires no extra development to **become an MCP server**:
+**The original draft overstated this.** It claimed "atomic capability layer = MCP tools," "knowlet is naturally an MCP server," and "the atomic-capability tool schema must follow MCP standards from day one." But **the actual `core/tools/_registry.py` is OpenAI function-calling-shaped** (flat dict input / sync handler / per-vault `ToolContext` closure), with no MCP resources / prompts / JSON-RPC framing / capability negotiation. Continuing to claim "naturally MCP" is an ADR that doesn't match the code.
 
-- Stage 1: user uses these tools in knowlet's embedded chat
-- Stage 2 / long-term: Claude Desktop / Cursor / any MCP-compatible tool can directly invoke knowlet's capabilities
+**Revised positioning:**
 
-This is consistent with [ADR-0003](./0003-wedge-pivot-ai-memory-layer.en.md)'s wedge narrative — **knowlet is not an app, it is the user's AI long-term memory layer, accessible across AI tools**.
+- The atomic-capability schema **does not** directly correspond to the MCP protocol; it corresponds to the OpenAI/Anthropic LLM tool-calling shape.
+- Cross-AI-tool exposure **is not a free byproduct.** It requires an **MCP adapter layer** that translates knowlet's registry into an MCP server (URI-keyed resources for notes, JSON-RPC framing, prompts capability).
+- This adapter is **future work** (M5+ / driven by user demand), not a stage-1 architectural hard constraint.
+- When designing the registry, **preserve** the option of bridging to MCP later (handler I/O JSON-serializable; avoid baking tight coupling to OpenAI shape) — but **do not give up any current-day design** to satisfy MCP today.
 
-Architectural requirement: **the atomic-capability tool schema must follow MCP standards from day one**, even if external access is not opened in stage 1.
+**The substance of this section is unchanged**: knowlet is still positioned as "a capability layer accessible across AI tools," extending [ADR-0003](./0003-wedge-pivot-ai-memory-layer.en.md)'s wedge. But cross-tool reach happens via a **future adapter**, not via the schema satisfying MCP today.
+
+> **Trigger**: critique #2 in the 2026-05-02 second-opinion engineering review (MCP claim doesn't match code). The claim is **downgraded** from architectural promise to "reachable through a future adapter."
 
 ## Consequences
 
@@ -110,7 +114,7 @@ Architectural requirement: **the atomic-capability tool schema must follow MCP s
 - **Capability auto-improves with LLM progress**: same atomic capabilities orchestrated more capably as models improve; knowlet doesn't need to chase
 - **New capability ships by adding a tool**: development cadence speeds up, consistent with "plugin-ization"
 - **User learning cost approaches 0**: speak to use it, no UI patterns or shortcuts to memorize
-- **Naturally an MCP server**: cross-AI-tool exposure is a free byproduct
+- **Cross-AI-tool exposure**: reachable via a future MCP adapter (not a free byproduct; see §"Relation to MCP" above)
 
 ### Costs / Constraints
 

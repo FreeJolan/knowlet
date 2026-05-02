@@ -117,3 +117,30 @@ CLI 入口形态可以是:显式子命令(`knowlet user edit`)、slash 命令(`:
 - 协同 [ADR-0004](./0004-ai-compose-code-execute.md):atomic capability 的 tool schema 与 backend 函数边界完全重合;LLM 通过 tool 编排 = UI 通过函数调用编排 = CLI 通过命令编排,三层共享同一组原子能力。
 - 强化 [ADR-0007](./0007-mvp-slice.md):"后端按 daemon 模式设计"的承诺被本 ADR 落到具体规则。
 - 不影响 [ADR-0005](./0005-llm-integration-strategy.md) / [ADR-0006](./0006-storage-and-sync.md):那些是关于外部接口与数据,本 ADR 是关于内部分层。
+
+## Update 2026-05-02 — UI 规模翻番,测试策略扩展
+
+**触发**:M6 ship 后实际形态(2026-05-02 测量):
+
+- `frontend/index.html` ≈ **850 行**(三栏 + 命令面板 + 三个 focus mode + 模态)
+- `frontend/app.js` ≈ **1130 行**(Alpine 状态机 + 手写 SSE 解析 + 键盘绑定 + 焦点 stack)
+- 后端测试 ≈ 137 例,UI 自动测试 = 0
+
+原 ADR §3 "UI 自动 smoke 极少"的假设在 M0/M1 成立(UI 几百行无状态机);M6 后 UI **已经有自己的状态机问题**:命令面板在 stream 进行中触发 / 焦点栈跨三 focus mode / 手写 SSE buffer 处理 partial chunks / Cmd+K 在 chat focus 内开启等。后端单测覆盖**这些行为零**;按原条款"5-10% 多写"估算会差一个数量级。
+
+### 修订后的测试纪律(只针对 client,服务端不动)
+
+1. **手写流 / 解析逻辑必须独立成 module + 单元测试**:`app.js` 里 SSE parser、Markdown render wrapper、未来的引用胶囊 parser 等,**必须**抽成独立 ES module 并测 partial-chunk / 错误行 / 边界 case。框架不锁定(Node 原生 test / vitest / jest 都可),但**没测试不 ship**。
+
+2. **UI 状态机必须可隔离测试**:Cmd+K 查询解析、焦点 stack 的 push/pop、ChatHistory 在 sediment / clear / 流式中途的状态跃迁 —— 这些是 state-machine 行为,从 DOM 抽出纯函数(或 Alpine factory)单测。视图渲染本身(HTML 生成)继续不测,只测状态变迁。
+
+### 不做什么
+
+- **不引入 Playwright / Cypress 等 E2E**。e2e 维护成本极高,违反 ADR-0011 §"代价"的 ~75 kb 分发预算 + AI 协作速度。
+- **不强制 100% UI 覆盖率**。按风险驱动:状态机 / 流解析必测,纯渲染 helper 不测。
+
+### 跟原条款的关系
+
+原 §3 "UI 自动 smoke 极少"**部分作废**:有状态机 / 流式 / 解析逻辑的 UI 模块必须有单测;纯展示渲染继续不测。原 ADR 的核心断言(后端是 single source of truth、CLI 是薄壳、tool schema = 后端函数边界)**继续成立**。
+
+> **触发**:2026-05-02 第二轮独立工程审视 critique #3。本节是补丁,不是反转。
