@@ -57,6 +57,9 @@ class ChatSession:
         on_tool_call: Callable[[ToolCall, dict[str, Any]], None] | None = None,
     ) -> tuple[str, TurnTrace]:
         self.history.append({"role": "user", "content": user_text})
+        # M7.5 / ADR-0017: reset per-turn rate-limit counters so the
+        # web_search budget restarts each turn.
+        self.ctx.per_turn = {}
         trace = TurnTrace()
         tools = self.registry.openai_schema()
 
@@ -90,6 +93,7 @@ class ChatSession:
         events, never reimplement the tool loop.
         """
         self.history.append({"role": "user", "content": user_text})
+        self.ctx.per_turn = {}  # ADR-0017 per-turn tool budget reset
         tools = self.registry.openai_schema()
 
         for _ in range(self.max_tool_iters):

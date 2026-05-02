@@ -54,11 +54,28 @@ class GeneralConfig(BaseModel):
     language: str = "en"  # "en" | "zh" (extend in core/i18n.py)
 
 
+class WebSearchConfig(BaseModel):
+    """ADR-0017: tunes the LLM web-search tool.
+
+    `provider = ""` triggers auto-pick: brave > tavily > searx > ddg.
+    Explicitly set to one of those names to force. API keys + searx URL
+    are checked at provider construction time so a missing key surfaces
+    immediately, not at first chat call.
+    """
+
+    provider: str = ""              # "" | "brave" | "tavily" | "searx" | "ddg"
+    brave_api_key: str = ""
+    tavily_api_key: str = ""
+    searx_url: str = ""             # e.g. "https://searx.example.com"
+    max_per_turn: int = 3           # hard ceiling per turn; tool raises beyond
+
+
 class KnowletConfig(BaseModel):
     general: GeneralConfig = Field(default_factory=GeneralConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
 
 
 class VaultNotFoundError(RuntimeError):
