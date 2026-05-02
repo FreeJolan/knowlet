@@ -165,6 +165,17 @@ function ui() {
     // ---- modals ----
     modal: null,          // null | 'sediment' | 'profile' | 'drafts' | 'cards'
 
+    // ---- Cmd+K command palette ----
+    palette: {
+      open: false,
+      query: "",
+      selected: 0,
+      mode: "all",        // 'all' | 'notes-only' (Cmd+P quick-switcher)
+      asking: false,      // true while > ask AI is streaming
+      askResult: "",      // streamed answer body
+      askError: "",
+    },
+
     // ---- sediment state ----
     sedimentDrafting: false,
     sediment: { title: "", tagsStr: "", body: "" },
@@ -718,9 +729,276 @@ function ui() {
       }
     },
 
+    // ============================================================ Cmd+K palette
+
+    /** Stable list of command actions. Each entry matches a CLI mirror
+     * (ADR-0008): `runMiningNow` ↔ `knowlet mining run-all`,
+     * `clearChat` ↔ `knowlet chat clear`, etc. Adding a new palette command
+     * means: (a) confirm the CLI mirror exists, (b) add the i18n keys, (c)
+     * append here. */
+    paletteCommands() {
+      return [
+        {
+          id: "mining-run-all",
+          label: tt("palette.cmd.mining"),
+          sub: tt("palette.cmd.mining.sub"),
+          run: () => this.runMiningNow(),
+        },
+        {
+          id: "open-drafts",
+          label: tt("palette.cmd.drafts"),
+          sub: tt("palette.cmd.drafts.sub"),
+          run: () => this.openDraftsReview(),
+        },
+        {
+          id: "open-cards",
+          label: tt("palette.cmd.cards"),
+          sub: tt("palette.cmd.cards.sub"),
+          run: () => this.openCardsReview(),
+        },
+        {
+          id: "save-chat",
+          label: tt("palette.cmd.sediment"),
+          sub: tt("palette.cmd.sediment.sub"),
+          run: () => this.openSediment(),
+          disabled: !this.chatHistory.length,
+        },
+        {
+          id: "clear-chat",
+          label: tt("palette.cmd.clearchat"),
+          sub: tt("palette.cmd.clearchat.sub"),
+          run: () => this.clearChat(),
+          disabled: !this.chatHistory.length,
+        },
+        {
+          id: "open-profile",
+          label: tt("palette.cmd.profile"),
+          sub: tt("palette.cmd.profile.sub"),
+          run: () => this.openProfile(),
+        },
+        {
+          id: "new-note",
+          label: tt("palette.cmd.newnote"),
+          sub: tt("palette.cmd.newnote.sub"),
+          run: () => this.newNote(),
+        },
+      ];
+    },
+
+    /** Compute filtered, sectioned palette results. The query syntax is:
+     *  - `> ...`      → Ask AI (one-shot popup, no chat history)
+     *  - `+ <title>`  → New note with that title
+     *  - bare text    → Fuzzy match notes + commands
+     * Returns a flat list with section headers so the keyboard navigation
+     * can index linearly. Each item: {kind, label, sub?, run, header?}.
+     */
+    paletteItems() {
+      const raw = this.palette.query.trim();
+      const items = [];
+
+      // > ask AI prefix
+      if (raw.startsWith(">")) {
+        const q = raw.slice(1).trim();
+        items.push({ section: "askai", header: tt("palette.section.askai") });
+        items.push({
+          kind: "ask",
+          label: q || tt("palette.askai.empty"),
+          sub: tt("palette.askai.sub"),
+          query: q,
+          run: () => this.askOnce(q),
+          disabled: !q,
+        });
+        return items;
+      }
+
+      // + new note prefix
+      if (raw.startsWith("+")) {
+        const title = raw.slice(1).trim();
+        items.push({ section: "newnote", header: tt("palette.section.newnote") });
+        items.push({
+          kind: "newnote",
+          label: title || tt("palette.newnote.empty"),
+          sub: tt("palette.newnote.sub"),
+          run: () => this.newNoteFromPalette(title),
+          disabled: !title,
+        });
+        return items;
+      }
+
+      // bare query → fuzzy notes + commands (notes only when palette.mode='notes-only')
+      const q = raw.toLowerCase();
+
+      // Notes section
+      const noteMatches = (this.notes || [])
+        .filter((n) => !q || n.title.toLowerCase().includes(q))
+        .slice(0, 8);
+      if (noteMatches.length) {
+        items.push({ section: "notes", header: tt("palette.section.notes") });
+        for (const n of noteMatches) {
+          items.push({
+            kind: "note",
+            label: n.title,
+            sub: n.updated_at || "",
+            note: n,
+            run: () => this.openNoteFromPalette(n.id),
+          });
+        }
+      }
+
+      // Commands section (skip in notes-only mode)
+      if (this.palette.mode !== "notes-only") {
+        const cmds = this.paletteCommands().filter(
+          (c) => !q || c.label.toLowerCase().includes(q)
+        );
+        if (cmds.length) {
+          items.push({ section: "commands", header: tt("palette.section.commands") });
+          for (const c of cmds) {
+            items.push({ kind: "cmd", ...c });
+          }
+        }
+      }
+
+      // Empty state hint
+      if (!items.length) {
+        items.push({
+          kind: "empty",
+          label: tt("palette.empty"),
+          disabled: true,
+        });
+      }
+
+      return items;
+    },
+
+    /** Filtered to actionable rows only (for keyboard nav indexing). */
+    paletteActionable() {
+      return this.paletteItems().filter((i) => i.run && !i.disabled);
+    },
+
+    openPalette(mode) {
+      this.palette.open = true;
+      this.palette.mode = mode || "all";
+      this.palette.query = "";
+      this.palette.selected = 0;
+      this.palette.askResult = "";
+      this.palette.askError = "";
+      this.palette.asking = false;
+      this.$nextTick(() => {
+        const el = this.$refs.paletteInput;
+        if (el) el.focus();
+      });
+    },
+
+    closePalette() {
+      this.palette.open = false;
+      this.palette.query = "";
+      this.palette.askResult = "";
+      this.palette.askError = "";
+      this.palette.asking = false;
+    },
+
+    paletteMove(delta) {
+      const n = this.paletteActionable().length;
+      if (!n) return;
+      this.palette.selected = (this.palette.selected + delta + n) % n;
+    },
+
+    paletteEnter(opts) {
+      const items = this.paletteActionable();
+      const it = items[this.palette.selected];
+      if (!it || !it.run || it.disabled) return;
+      // Cmd+Enter on a note opens but keeps palette open and creates a fresh
+      // tab. For other items, Cmd+Enter is identical to Enter.
+      if (opts && opts.newTab && it.kind === "note") {
+        this.openNote(it.note.id);
+        return;
+      }
+      it.run();
+      // Ask-AI keeps palette open to show the streaming answer; everything
+      // else dismisses.
+      if (it.kind !== "ask") this.closePalette();
+    },
+
+    handlePaletteKey(ev) {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        this.closePalette();
+      } else if (ev.key === "ArrowDown") {
+        ev.preventDefault();
+        this.paletteMove(1);
+      } else if (ev.key === "ArrowUp") {
+        ev.preventDefault();
+        this.paletteMove(-1);
+      } else if (ev.key === "Enter") {
+        ev.preventDefault();
+        this.paletteEnter({ newTab: ev.metaKey || ev.ctrlKey });
+      }
+    },
+
+    /** Opening a note from the palette — same as openNote, plus closes overlay. */
+    async openNoteFromPalette(id) {
+      await this.openNote(id);
+    },
+
+    async newNoteFromPalette(title) {
+      try {
+        const r = await api("POST", "/api/notes", {
+          title,
+          tags: [],
+          body: `# ${title}\n\n`,
+        });
+        await this.refreshNotes();
+        await this.openNote(r.note_id);
+        this.editorMode = "edit";
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
+    /** Stream a one-shot answer into palette.askResult — does NOT touch
+     * the persistent chat session (per ADR-0011 §4). */
+    async askOnce(query) {
+      if (!query || this.palette.asking) return;
+      this.palette.asking = true;
+      this.palette.askResult = "";
+      this.palette.askError = "";
+      try {
+        const r = await fetch("/api/chat/ask-once", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: query }),
+        });
+        if (!r.ok) {
+          let detail = `${r.status} ${r.statusText}`;
+          try {
+            const d = await r.json();
+            if (d.detail) detail = d.detail;
+          } catch (_) {}
+          throw new Error(detail);
+        }
+        for await (const ev of parseSSE(r)) {
+          if (ev.type === "reply_chunk") {
+            this.palette.askResult += ev.text;
+          } else if (ev.type === "turn_done" && ev.final_text) {
+            this.palette.askResult = ev.final_text;
+          } else if (ev.type === "error") {
+            this.palette.askError = ev.message;
+          }
+        }
+      } catch (exc) {
+        this.palette.askError = exc.message;
+      } finally {
+        this.palette.asking = false;
+      }
+    },
+
     // ============================================================ overlays
 
     closeAllOverlays() {
+      if (this.palette.open) {
+        this.closePalette();
+        return;
+      }
       if (this.modal) this.modal = null;
     },
 
