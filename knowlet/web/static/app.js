@@ -121,6 +121,7 @@ function ui() {
     notes: [],
     notesLoading: true,
     treeFilter: "",
+    treeFolderState: {},  // {<folder-path>: true=collapsed, false=open}; default open
     openTabs: [],         // [{id, title, path, tags, body, updated_at, dirty, saving}]
     currentNoteId: null,
     editorMode: "preview",
@@ -245,6 +246,14 @@ function ui() {
       // bind debounced save
       this.debouncedSave = debounce(() => this.saveCurrent(), 800);
 
+      // M7.0.2: restore folder collapse state
+      try {
+        const saved = JSON.parse(
+          localStorage.getItem("knowlet:treeFolderState") || "{}",
+        );
+        if (saved && typeof saved === "object") this.treeFolderState = saved;
+      } catch (_) {}
+
       // restore last open notes from localStorage
       try {
         // Dedup at read time: localStorage is user-editable, and earlier
@@ -307,6 +316,106 @@ function ui() {
       const q = this.treeFilter.trim().toLowerCase();
       if (!q) return this.notes;
       return this.notes.filter((n) => n.title.toLowerCase().includes(q));
+    },
+
+    /** Build a folder tree from the flat notes list (M7.0.2). Each node:
+     *   { name, path, folders: [...], notes: [...] }
+     * `path` is the full slash-joined folder path; root has path "".
+     * When a search filter is active, the tree is built from the filtered
+     * subset — folders with no surviving notes collapse out. */
+    noteTree() {
+      const list = this.filteredNotes();
+      const root = { name: "", path: "", folders: [], notes: [] };
+      // Stable folder lookup so we don't rebuild a map every visit.
+      const byPath = new Map();
+      byPath.set("", root);
+
+      for (const n of list) {
+        const folder = (n.folder || "").trim();
+        if (!folder) {
+          root.notes.push(n);
+          continue;
+        }
+        const segs = folder.split("/").filter(Boolean);
+        let cursor = root;
+        let acc = "";
+        for (const seg of segs) {
+          acc = acc ? `${acc}/${seg}` : seg;
+          let child = byPath.get(acc);
+          if (!child) {
+            child = { name: seg, path: acc, folders: [], notes: [] };
+            byPath.set(acc, child);
+            cursor.folders.push(child);
+          }
+          cursor = child;
+        }
+        cursor.notes.push(n);
+      }
+
+      // Sort each level: folders first (alphabetical), then notes
+      // (preserve incoming order — already sorted by recent on the server).
+      const sortNode = (node) => {
+        node.folders.sort((a, b) => a.name.localeCompare(b.name));
+        for (const f of node.folders) sortNode(f);
+      };
+      sortNode(root);
+      return root;
+    },
+
+    /** True if this folder is currently collapsed. Defaults to OPEN —
+     * the user has to actively close folders, matching VS Code / Finder
+     * convention for fresh trees. When the user filter-searches, treat
+     * everything as open so matches aren't hidden. */
+    isFolderCollapsed(folderPath) {
+      if (this.treeFilter.trim()) return false;
+      return !!this.treeFolderState[folderPath];
+    },
+
+    /** Flatten the tree into a render-friendly depth-annotated list:
+     *   [{kind: 'folder'|'note', depth, ...}, ...]
+     * Alpine's nested x-for is awkward; flat indexing is straightforward. */
+    flatTree() {
+      const root = this.noteTree();
+      const out = [];
+      const walk = (node, depth) => {
+        // Don't render the root folder; its children are top-level.
+        for (const f of node.folders) {
+          const collapsed = this.isFolderCollapsed(f.path);
+          out.push({
+            kind: "folder",
+            depth,
+            path: f.path,
+            name: f.name,
+            collapsed,
+            note_count: this._countNotes(f),
+          });
+          if (!collapsed) walk(f, depth + 1);
+        }
+        for (const n of node.notes) {
+          out.push({ kind: "note", depth, note: n });
+        }
+      };
+      walk(root, 0);
+      return out;
+    },
+
+    _countNotes(node) {
+      let total = node.notes.length;
+      for (const f of node.folders) total += this._countNotes(f);
+      return total;
+    },
+
+    toggleFolder(folderPath) {
+      const next = { ...this.treeFolderState };
+      next[folderPath] = !next[folderPath];
+      if (!next[folderPath]) delete next[folderPath];
+      this.treeFolderState = next;
+      try {
+        localStorage.setItem(
+          "knowlet:treeFolderState",
+          JSON.stringify(this.treeFolderState),
+        );
+      } catch (_) {}
     },
 
     async openNote(id, focus) {

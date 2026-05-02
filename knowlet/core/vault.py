@@ -78,9 +78,40 @@ class Vault:
         self.backups_dir.mkdir(parents=True, exist_ok=True)
 
     def iter_note_paths(self) -> Iterator[Path]:
+        """Yield every Note file under `notes/` recursively.
+
+        M7.0.2: previously this was a non-recursive `glob("*.md")` which
+        silently skipped any user-organized subdirectory. Now we walk the
+        whole tree and skip dotdirs (`.trash/` from M7.0.1, plus any
+        future hidden bookkeeping). Subdir layout is **user-controlled**
+        — we never write into nested dirs ourselves; users move files
+        from Finder, then `knowlet reindex` picks them up.
+        """
         if not self.notes_dir.exists():
             return iter(())
-        return (p for p in self.notes_dir.glob("*.md") if p.is_file())
+
+        def _ok(p: Path) -> bool:
+            if not p.is_file():
+                return False
+            try:
+                rel = p.relative_to(self.notes_dir)
+            except ValueError:
+                return False
+            return not any(part.startswith(".") for part in rel.parts)
+
+        return (p for p in self.notes_dir.rglob("*.md") if _ok(p))
+
+    def folder_of(self, note_path: Path) -> str:
+        """Return the folder of `note_path` relative to `notes/`, with `/`
+        as separator. Empty string means top-level. Used by the index +
+        web API to give the sidebar a tree structure (M7.0.2)."""
+        try:
+            rel = note_path.relative_to(self.notes_dir)
+        except ValueError:
+            return ""
+        if len(rel.parts) <= 1:
+            return ""
+        return "/".join(rel.parts[:-1])
 
     def read_note(self, path: Path) -> Note:
         return Note.from_file(path)

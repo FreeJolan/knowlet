@@ -616,6 +616,37 @@ def test_auto_title_idempotent_when_already_titled(tmp_path: Path):
     assert body["title"] == "manual"
 
 
+def test_list_notes_includes_folder_field(tmp_path: Path):
+    """M7.0.2: /api/notes summary now carries `folder` (relative to
+    notes/, "" = top-level). The frontend uses this to build the tree."""
+    from knowlet.core.note import Note, new_id
+
+    v, cfg = _ready_vault(tmp_path)
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+
+    state = client.app.state.web_state
+    runtime = state.runtime_or_init()
+
+    # Top-level note
+    top = Note(id=new_id(), title="t", body="...")
+    v.write_note(top)
+    runtime.index.upsert_note(top, chunk_size=64, chunk_overlap=16)
+
+    # Note in a subdir (manually placed)
+    sub_dir = v.notes_dir / "AI papers"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    sub = Note(id=new_id(), title="s", body="...")
+    sub_path = sub_dir / sub.filename
+    sub_path.write_text(sub.to_markdown(), encoding="utf-8")
+    sub.path = sub_path
+    runtime.index.upsert_note(sub, chunk_size=64, chunk_overlap=16)
+
+    rows = client.get("/api/notes?limit=10").json()
+    by_id = {r["id"]: r for r in rows}
+    assert by_id[top.id]["folder"] == ""
+    assert by_id[sub.id]["folder"] == "AI papers"
+
+
 def test_delete_note_endpoint_soft_deletes_to_trash(tmp_path: Path):
     """M7.0.1: DELETE /api/notes/{id} moves to notes/.trash/, removes
     the index entry, returns 200 with the trashed path."""

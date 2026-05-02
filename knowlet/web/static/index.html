@@ -148,26 +148,45 @@
     </div>
 
     <ul class="py-1 text-sm">
-      <template x-for="n in filteredNotes()" :key="n.id">
+      <template x-for="row in flatTree()" :key="row.kind === 'folder' ? `f:${row.path}` : `n:${row.note.id}`">
         <li>
-          <div
-            :class="currentNoteId === n.id ? 'tree-item active' : 'tree-item'"
-          >
-            <div class="tree-row" @click="openNote(n.id)">
-              <svg class="icon icon-sm flex-shrink-0"
-                   :class="currentNoteId === n.id ? 'text-accent2' : 'text-textmute'">
-                <use href="#i-doc"/>
-              </svg>
-              <span x-text="n.title" class="truncate flex-1"></span>
+          <!-- Folder row -->
+          <template x-if="row.kind === 'folder'">
+            <div class="tree-item" @click="toggleFolder(row.path)">
+              <div class="tree-row" :style="`padding-left: ${10 + row.depth * 14}px;`">
+                <svg class="icon icon-sm flex-shrink-0 text-textmute"
+                     :class="row.collapsed ? '' : 'rotate-90'"
+                     style="transition: transform 80ms;">
+                  <use href="#i-chevron-r"/>
+                </svg>
+                <svg class="icon icon-sm flex-shrink-0 text-textmute">
+                  <use href="#i-folder"/>
+                </svg>
+                <span x-text="row.name" class="truncate flex-1"></span>
+                <span class="mono text-[10px] text-textfaint" x-text="row.note_count"></span>
+              </div>
             </div>
-            <button
-              @click.stop="deleteNote(n.id, n.title)"
-              class="tree-action text-textmute hover:text-danger"
-              data-i18n-title="sidebar.note.delete.title"
-            >
-              <svg class="icon icon-sm"><use href="#i-x"/></svg>
-            </button>
-          </div>
+          </template>
+          <!-- Note row -->
+          <template x-if="row.kind === 'note'">
+            <div :class="currentNoteId === row.note.id ? 'tree-item active' : 'tree-item'">
+              <div class="tree-row" @click="openNote(row.note.id)"
+                   :style="`padding-left: ${10 + row.depth * 14}px;`">
+                <svg class="icon icon-sm flex-shrink-0"
+                     :class="currentNoteId === row.note.id ? 'text-accent2' : 'text-textmute'">
+                  <use href="#i-doc"/>
+                </svg>
+                <span x-text="row.note.title" class="truncate flex-1"></span>
+              </div>
+              <button
+                @click.stop="deleteNote(row.note.id, row.note.title)"
+                class="tree-action text-textmute hover:text-danger"
+                data-i18n-title="sidebar.note.delete.title"
+              >
+                <svg class="icon icon-sm"><use href="#i-x"/></svg>
+              </button>
+            </div>
+          </template>
         </li>
       </template>
       <li

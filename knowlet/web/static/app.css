@@ -264,8 +264,11 @@ body {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 10px;
+  gap: 7px;
+  /* Per-row inline `padding-left` controls indent (depth * 14px). */
+  padding-top: 4px;
+  padding-right: 10px;
+  padding-bottom: 4px;
   cursor: pointer;
   font-size: 13px;
   color: var(--ink);
