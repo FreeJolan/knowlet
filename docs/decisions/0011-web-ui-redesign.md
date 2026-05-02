@@ -154,7 +154,7 @@ A2 pitfall #3 的具体应对:
 
 ### 代价 / 约束
 
-- **当前 web/static/* 几乎完全重写**:`index.html` / `app.js` / `app.css` 都得改;但 backend API 全部保留(ADR-0008 的红利)
+- **当前 frontend/* 几乎完全重写**:`index.html` / `app.js` / `app.css` 都得改;但 backend API 全部保留(ADR-0008 的红利)
 - **新增 backend endpoints**:Note 全文 fuzzy search(给 Cmd+K)、Notes/CRUD endpoints(目前只读)、Backlinks API(M6.2+)
 - **多会话 chat history** 是 ADR-0003 字面承诺却一直没做的事,M6.4 必须做 —— 牵涉 conversation log + storage schema + UI session sidebar
 - **vanilla JS + DOM 写三栏 + drag resize + tab bar + 命令面板**比想象中工程量大;不引入 SPA 框架的承诺不变(per `feedback_no_wheel_reinvention`),但部分组件(命令面板)考虑用 ~30 行的极简自写,不拉 fzf-for-js 这种库
@@ -285,4 +285,4 @@ A2 pitfall #3 的具体应对:
 - M6 全程用本栈
 - M7 视情况:CodeMirror 6(替代 textarea)→ 一个 ~150 kb 的真编辑器,但 tree-shake 后 ~50 kb;独立成自己的"Editor 区域",不污染其他组件
 - M8 视情况:加**暗色可选 toggle**(浅色已是默认骨干;暗色 token 一次性补齐,加 header / 设置里的切换控件 + localStorage 持久化 + 跟随系统选项)
-- M5 / M9 Tauri 桌面壳:同套 web/static 直接打包进 Tauri,不需要重写
+- M5 / M9 Tauri 桌面壳:同套 frontend 直接打包进 Tauri,不需要重写
