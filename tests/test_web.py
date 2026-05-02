@@ -837,3 +837,93 @@ def test_backlinks_endpoint_empty_when_no_inbound(tmp_path: Path):
 
     rows = client.get(f"/api/notes/{n.id}/backlinks").json()
     assert rows == []
+
+
+# ------------------------------------------------------------- M7.1 references
+
+
+def test_chat_turn_with_reference_prepends_quote_block(tmp_path: Path):
+    """M7.1: when ChatTurnRequest carries a `references` capsule, the
+    backend composes a "quote + enclosing section" prefix and feeds the
+    enriched text to Session.user_turn — the LLM sees it, the response
+    schema is unchanged."""
+    from knowlet.core.llm import AssistantMessage
+
+    captured: list[str] = []
+
+    class CapturingLLM:
+        """Stand-in that captures the last user content the session sent
+        to the LLM. Returns an empty assistant reply so the turn closes
+        cleanly without further tool-call cycles."""
+
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            for m in messages:
+                if m.get("role") == "user":
+                    captured.append(m["content"])
+            return AssistantMessage(content="ok", tool_calls=[])
+
+    client, v, _ = _client_with_stub(tmp_path, CapturingLLM())
+    runtime = client.app.state.web_state.runtime_or_init()
+
+    n = Note(
+        id=new_id(),
+        title="Transformers",
+        body="## Attention\n\nself-attention weights tokens by relevance.\n",
+    )
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    payload = {
+        "text": "explain why this matters",
+        "references": [
+            {
+                "note_id": n.id,
+                "note_title": n.title,
+                "quote_text": "self-attention weights tokens by relevance.",
+                "paragraph_anchor": "self-attention weights tokens",
+            }
+        ],
+    }
+    r = client.post("/api/chat/turn", json=payload)
+    assert r.status_code == 200, r.text
+
+    last = captured[-1]
+    assert "我想就这段问你" in last
+    assert "《Transformers》" in last
+    assert "> self-attention weights tokens by relevance." in last
+    assert "## Attention" in last  # enclosing section
+    assert "explain why this matters" in last  # user text preserved
+
+
+def test_chat_turn_drops_capsule_for_deleted_note(tmp_path: Path):
+    """If a capsule's source Note has been deleted between attach and
+    send, that capsule is silently dropped — the rest of the turn proceeds."""
+    from knowlet.core.llm import AssistantMessage
+
+    captured: list[str] = []
+
+    class CapturingLLM:
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            for m in messages:
+                if m.get("role") == "user":
+                    captured.append(m["content"])
+            return AssistantMessage(content="ok", tool_calls=[])
+
+    client, _, _ = _client_with_stub(tmp_path, CapturingLLM())
+
+    payload = {
+        "text": "still asking",
+        "references": [
+            {
+                "note_id": "01HXMISSING0000000000000",
+                "note_title": "ghost",
+                "quote_text": "won't be found",
+                "paragraph_anchor": "won't be found",
+            }
+        ],
+    }
+    r = client.post("/api/chat/turn", json=payload)
+    assert r.status_code == 200
+    # No prefix — capsule dropped, only the bare user text reached the LLM.
+    last = captured[-1]
+    assert last == "still asking"

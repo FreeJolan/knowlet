@@ -38,6 +38,11 @@ from knowlet.chat.sediment import (
 from knowlet.config import KnowletConfig, find_vault, load_config
 from knowlet.core.backlinks import find_backlinks
 from knowlet.core.card import Card, parse_due
+from knowlet.core.quote_refs import (
+    MAX_REFERENCES,
+    QuoteRef,
+    format_references_block,
+)
 from knowlet.core.events import ErrorEvent, event_to_dict
 from knowlet.core.fsrs_wrap import initial_state, schedule_next
 from knowlet.core.i18n import SUPPORTED_LANGUAGES, all_keys, set_language
@@ -63,8 +68,22 @@ class RenameSessionRequest(BaseModel):
     title: str
 
 
+class QuoteRefPayload(BaseModel):
+    """M7.1: one capsule from the editor selection. note_title is sent so
+    the prompt block can quote the source by name without an extra
+    server-side lookup; backend still fetches the body via note_id."""
+    note_id: str
+    note_title: str
+    quote_text: str
+    paragraph_anchor: str = ""
+
+
 class ChatTurnRequest(BaseModel):
     text: str = Field(..., description="user message")
+    references: list[QuoteRefPayload] = Field(
+        default_factory=list,
+        description="M7.1 selection capsules — soft cap 5; over-cap is silently truncated.",
+    )
 
 
 class ToolTrace(BaseModel):
@@ -449,6 +468,49 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     # ---------------- chat ----------------
 
+    def _expand_references(
+        runtime: ChatRuntime,
+        refs: list[QuoteRefPayload],
+    ) -> list[tuple[QuoteRef, str]]:
+        """Resolve each capsule's note_id to the latest on-disk Note body
+        and return (capsule, body) pairs for the prompt formatter. Notes
+        the user has since deleted are dropped silently (the rest of the
+        capsules still go through). Hard-truncates at MAX_REFERENCES."""
+        out: list[tuple[QuoteRef, str]] = []
+        for r in refs[:MAX_REFERENCES]:
+            meta = runtime.index.get_note_meta(r.note_id)
+            if meta is None:
+                continue
+            path = Path(meta["path"])
+            if not path.is_absolute():
+                path = runtime.vault.notes_dir / path.name
+            try:
+                note = runtime.vault.read_note(path)
+            except Exception:
+                continue
+            out.append(
+                (
+                    QuoteRef(
+                        note_id=r.note_id,
+                        note_title=r.note_title or note.title,
+                        quote_text=r.quote_text,
+                        paragraph_anchor=r.paragraph_anchor,
+                    ),
+                    note.body,
+                )
+            )
+        return out
+
+    def _compose_user_text(req: ChatTurnRequest, runtime: ChatRuntime) -> str:
+        """If the request carries capsules, prefix the user text with
+        formatted quote+section blocks. Otherwise return text unchanged.
+        Centralized so /turn and /stream stay in lockstep."""
+        if not req.references:
+            return req.text
+        pairs = _expand_references(runtime, req.references)
+        prefix = format_references_block(pairs)
+        return prefix + req.text if prefix else req.text
+
     @app.post("/api/chat/turn", response_model=ChatTurnResponse)
     def chat_turn(
         req: ChatTurnRequest,
@@ -464,7 +526,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             )
 
         try:
-            reply, _ = runtime.session.user_turn(req.text, on_tool_call=on_tool_call)
+            user_text = _compose_user_text(req, runtime)
+            reply, _ = runtime.session.user_turn(user_text, on_tool_call=on_tool_call)
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -487,9 +550,11 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         `/api/chat/turn` is kept as a fallback for non-browser callers.
         """
 
+        user_text = _compose_user_text(req, runtime)
+
         def event_source():
             try:
-                for event in runtime.session.user_turn_stream(req.text):
+                for event in runtime.session.user_turn_stream(user_text):
                     payload = json.dumps(event_to_dict(event), ensure_ascii=False)
                     yield f"data: {payload}\n\n"
             except Exception as exc:  # noqa: BLE001
