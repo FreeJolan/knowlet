@@ -183,8 +183,8 @@ A2 pitfall #3 的具体应对:
 
 1. ✅ 命令面板里 `>` prefix ask-AI:**就地 popup 一次性回答**
 2. ✅ 多会话 chat 标题:**首条 user message 后台延迟 LLM 摘要,自动起**
-3. ✅ 主题:**先暗色一种**(背景从纯黑 #15161a 软化为 #191b1f),M7+ 再加 light/dark
-4. ✏️ 字体(看完 wireframe v1 后用户翻案,2026-05-01):**正文 sans-serif(Inter / 系统中文)+ 代码 / 路径 / ID / 快捷键 monospace**。原因:全 monospace 渲染出来"太 geek",像 VS Code 而非笔记软件。同步把 ASCII 几何 icon(▸ ↩ ✦)换成 inline SVG(heroicons 风格,~12 个),accent 色由亮蓝 #7eb6ff 软化为 #92b3dc。
+3. ✅ 主题(2026-05-02 翻案):**纸感浅色为默认骨干,暗色保留为可选 toggle**。原因:knowlet 字面定位是"笔记软件",纸感浅色是阅读 / 写作长时间停留的天然底子(Bear / Ulysses / Notion / Apple Notes 的默认形态);暗色作为"夜间 / 高对比偏好"的可选项保留,但不是基线。具体 token 值(`--bg` 接近书页米白而非纯白、`--surface` 略深做层级、`--text` 用近黑而非纯黑、`--accent` 在浅底上重新校准)等 Claude Design mock 回来后再敲定;wireframe.html 当前的暗色 token 仅作历史参考,M6.x 实施时一次性换掉。
+4. ✏️ 字体(看完 wireframe v1 后用户翻案,2026-05-01):**正文 sans-serif(Inter / 系统中文)+ 代码 / 路径 / ID / 快捷键 monospace**。原因:全 monospace 渲染出来"太 geek",像 VS Code 而非笔记软件。同步把 ASCII 几何 icon(▸ ↩ ✦)换成 inline SVG(heroicons 风格,~12 个);accent 色具体值随主题翻案一并在浅底上重新校准(原暗底版本 #92b3dc 不再适用)。
 
 ## 11. Tech stack(2026-05-01 用户确认按推荐走)
 
@@ -211,7 +211,7 @@ A2 pitfall #3 的具体应对:
 **1. Tailwind = 颜色 / 间距 / 排版的"封装库"(token 层而非组件层)**
 
 - 一份 `tailwind.config.js` + 一份 CSS custom properties 决定**全部** token:颜色(`--bg`/`--surface`/`--text`/`--accent` …)、字号(`text-sm` / `text-base` …)、间距(`p-2` / `gap-3` …)、圆角(`rounded` / `rounded-lg` …)
-- 切换主题(M7+ light/dark)= 改 config / 改 CSS variables → 整个 app 自动重 theme
+- 主题骨干已定为纸感浅色(2026-05-02 翻案);暗色作为可选 toggle = 改 config / 改 CSS variables → 整个 app 自动重 theme
 - 不引入 lib 的组件外观 —— 自己用 utility class 组装的组件天然维持 knowlet 终端 monospace 调性
 - AI assistants(包括未来 Claude session)对 Tailwind 极熟,改起来快
 
@@ -284,5 +284,5 @@ A2 pitfall #3 的具体应对:
 
 - M6 全程用本栈
 - M7 视情况:CodeMirror 6(替代 textarea)→ 一个 ~150 kb 的真编辑器,但 tree-shake 后 ~50 kb;独立成自己的"Editor 区域",不污染其他组件
-- M8 视情况:加 light theme(改 CSS variables 一次过)
+- M8 视情况:加**暗色可选 toggle**(浅色已是默认骨干;暗色 token 一次性补齐,加 header / 设置里的切换控件 + localStorage 持久化 + 跟随系统选项)
 - M5 / M9 Tauri 桌面壳:同套 web/static 直接打包进 Tauri,不需要重写

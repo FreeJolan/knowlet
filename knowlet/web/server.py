@@ -341,6 +341,47 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         runtime.session.history = runtime.session.history[:1]
         return {"ok": True}
 
+    @app.post("/api/chat/ask-once")
+    def chat_ask_once(
+        req: ChatTurnRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> StreamingResponse:
+        """One-shot chat turn that does NOT touch the persistent session.
+
+        Cmd+K palette uses this to power the `>` prefix (ADR-0011 §4): the
+        answer pops up inline and is discarded. Reuses the same llm/registry/
+        ctx as the persistent session, but with a fresh `ChatSession` so its
+        history is born and dies in this request.
+        """
+        from knowlet.chat.session import ChatSession
+
+        ephemeral = ChatSession(
+            llm=runtime.session.llm,
+            registry=runtime.session.registry,
+            ctx=runtime.session.ctx,
+            system_prompt=runtime.session.history[0].get("content")
+            if runtime.session.history
+            else None,
+        )
+
+        def event_source():
+            try:
+                for event in ephemeral.user_turn_stream(req.text):
+                    payload = json.dumps(event_to_dict(event), ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
+            except Exception as exc:  # noqa: BLE001
+                err = ErrorEvent(message=f"server error: {exc}")
+                yield f"data: {json.dumps(event_to_dict(err))}\n\n"
+
+        return StreamingResponse(
+            event_source(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     @app.get("/api/chat/history")
     def chat_history(
         runtime: ChatRuntime = Depends(runtime_dep),

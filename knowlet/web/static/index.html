@@ -13,25 +13,41 @@
         extend: {
           fontFamily: {
             sans: [
-              'Inter', '-apple-system', 'BlinkMacSystemFont', '"Helvetica Neue"',
-              '"PingFang SC"', '"Hiragino Sans GB"', '"Microsoft YaHei"',
-              '"Source Han Sans SC"', 'system-ui', 'sans-serif'
+              'Inter', '-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"',
+              '"PingFang SC"', '"Hiragino Sans GB"', '"Noto Sans SC"',
+              'system-ui', 'sans-serif'
             ],
-            mono: ['ui-monospace', '"SF Mono"', '"JetBrains Mono"', '"Fira Code"', 'Consolas', 'monospace'],
+            serif: [
+              '"Source Serif 4"', '"Iowan Old Style"', 'Georgia',
+              '"Noto Serif SC"', 'serif'
+            ],
+            mono: [
+              '"JetBrains Mono"', 'ui-monospace', '"SF Mono"', 'Menlo', 'monospace'
+            ],
           },
+          /* Paper-light tokens (ADR-0011 §"Open questions" #3 — 2026-05-02 翻案).
+           * Dark mode is deferred to a future toggle. */
           colors: {
-            bg: '#191b1f',
-            surface: '#212329',
-            surface2: '#2a2d35',
-            border: '#33363f',
-            text: '#dcdee5',
-            textsoft: '#9095a0',
-            accent: '#92b3dc',
-            accentsoft: '#2c3a4d',
-            user: '#e6c485',
-            ok: '#9dd391',
-            warn: '#e6c889',
-            danger: '#e08585',
+            bg: '#f4f0e8',
+            bg1: '#efe9dd',
+            surface: '#ede7d9',
+            surface2: '#e3dcca',
+            card: '#fbf8f1',
+            border: '#d6cfbd',
+            bordersoft: '#e0d9c8',
+            text: '#2a2823',
+            textsoft: '#5e5b53',
+            textmute: '#8a8678',
+            textfaint: '#b3ad9c',
+            accent: '#5b7a9c',
+            accent2: '#4d6a8a',
+            accentsoft: '#dfe5ef',
+            accenttint: '#ebeef4',
+            onaccent: '#faf7f0',
+            user: '#a87a3a',
+            ok: '#5e8757',
+            warn: '#a47a3a',
+            danger: '#b8554d',
           },
           fontSize: {
             xs: ['11px', '1.5'],
@@ -45,10 +61,10 @@
     };
   </script>
 
-  <!-- Inter (CJK fallback handled by stack) -->
+  <!-- Inter + Source Serif 4 + JetBrains Mono (CJK fallback handled by stack) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
   <!-- Alpine + Split + marked -->
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.10/dist/cdn.min.js"></script>
@@ -61,6 +77,10 @@
   x-data="ui()"
   x-init="init()"
   @keydown.window.escape="closeAllOverlays()"
+  @keydown.window.meta.k.prevent="openPalette()"
+  @keydown.window.ctrl.k.prevent="openPalette()"
+  @keydown.window.meta.p.prevent="openPalette('notes-only')"
+  @keydown.window.ctrl.p.prevent="openPalette('notes-only')"
   class="text-text"
 >
 
@@ -90,23 +110,23 @@
 
 <!-- ═══════════════ HEADER ═══════════════ -->
 <header class="h-10 px-4 flex items-center gap-3 bg-surface border-b border-border">
-  <span class="text-accent font-semibold tracking-tight text-base">knowlet</span>
-  <span class="text-textsoft text-xs hidden sm:block">
-    <span x-text="meta.vault || '—'"></span>
-    <span class="mx-1">·</span>
-    <span class="mono" x-text="meta.model || '—'"></span>
+  <span class="font-serif font-semibold tracking-tight text-[15px] text-accent2">knowlet</span>
+  <span class="text-textmute mono text-[11px] hidden sm:block">
+    <span class="text-textsoft" x-text="meta.vault || '—'"></span>
+    <span class="text-textfaint mx-1.5">·</span>
+    <span class="text-textsoft" x-text="meta.model || '—'"></span>
   </span>
   <div class="flex-1"></div>
 
-  <!-- placeholder Cmd+K palette button (M6.2 will wire it) -->
+  <!-- Cmd+K palette trigger -->
   <button
-    @click="toast(tt('header.palette.toast'), 'ok')"
+    @click="openPalette()"
     class="flex items-center gap-2 px-2.5 py-1 text-xs text-textsoft border border-border rounded hover:border-accent hover:text-text"
     data-i18n-title="header.palette.title"
   >
     <svg class="icon icon-sm"><use href="#i-search"/></svg>
     <span data-i18n="header.palette.label">搜索 / 命令 / 问 AI</span>
-    <span class="mono text-textsoft border border-border rounded px-1 py-0.5 text-[10px]">⌘K</span>
+    <span class="kbd">⌘K</span>
   </button>
 
   <!-- save chat → note -->
@@ -159,10 +179,10 @@
         <li>
           <div
             @click="openNote(n.id)"
-            :class="currentNoteId === n.id ? 'bg-accentsoft text-accent' : 'hover:bg-surface2 text-text'"
+            :class="currentNoteId === n.id ? 'bg-accentsoft text-accent2' : 'hover:bg-surface2 text-text'"
             class="px-2.5 py-1 cursor-pointer flex items-center gap-2"
           >
-            <svg class="icon icon-sm text-textsoft flex-shrink-0"><use href="#i-doc"/></svg>
+            <svg class="icon icon-sm flex-shrink-0" :class="currentNoteId === n.id ? 'text-accent2' : 'text-textmute'"><use href="#i-doc"/></svg>
             <span x-text="n.title" class="truncate"></span>
           </div>
         </li>
@@ -187,18 +207,18 @@
   <!-- CENTER: tabs + editor -->
   <section id="pane-center" class="flex-1 flex flex-col bg-bg overflow-hidden">
     <!-- tab bar -->
-    <div class="flex items-center bg-surface border-b border-border h-9 px-1.5 overflow-x-auto" x-show="openTabs.length">
+    <div class="tab-strip overflow-x-auto" x-show="openTabs.length">
       <template x-for="(tab, i) in openTabs" :key="tab.id">
         <div
           @click="currentNoteId = tab.id"
-          :class="currentNoteId === tab.id ? 'bg-bg border-t border-l border-r border-border text-text' : 'text-textsoft hover:text-text'"
-          class="px-3 py-1.5 text-xs cursor-pointer flex items-center gap-2 -mb-px rounded-t flex-shrink-0"
+          :class="currentNoteId === tab.id ? 'tab-item active' : 'tab-item'"
         >
+          <svg class="icon icon-sm" :class="currentNoteId === tab.id ? 'text-accent2' : 'text-textmute'"><use href="#i-doc"/></svg>
           <span x-text="tab.title"></span>
           <span x-show="tab.dirty" class="w-1.5 h-1.5 rounded-full bg-warn" data-i18n-title="tab.dirty"></span>
           <button
             @click.stop="closeTab(tab.id)"
-            class="text-textsoft hover:text-danger p-0.5 rounded"
+            class="x"
             data-i18n-title="tab.close"
           >
             <svg class="icon icon-sm"><use href="#i-x"/></svg>
@@ -210,12 +230,13 @@
     <!-- breadcrumb / status -->
     <div
       x-show="currentTab()"
-      class="px-4 py-1.5 text-xs text-textsoft border-b border-border flex items-center gap-2"
+      class="px-4 py-1.5 text-[11px] text-textmute border-b border-bordersoft flex items-center gap-2"
     >
-      <span class="mono truncate" x-text="currentTab()?.path?.split('/')?.pop() || ''"></span>
+      <span class="mono truncate" x-text="currentTab()?.path || ''"></span>
       <span class="flex-1"></span>
-      <span x-text="currentTab() ? ttf('editor.chars', { n: (currentTab().body || '').length }) : ''"></span>
-      <span class="mono" x-text="currentTab() ? `· ${currentTab().updated_at || ''}` : ''"></span>
+      <span class="mono" x-text="currentTab() ? ttf('editor.chars', { n: (currentTab().body || '').length }) : ''"></span>
+      <span class="text-textfaint">·</span>
+      <span class="mono" x-text="currentTab()?.updated_at || ''"></span>
       <span x-show="currentTab()?.saving" class="text-textsoft" data-i18n="editor.saving">保存中…</span>
     </div>
 
@@ -229,13 +250,14 @@
         x-model="currentTab() ? currentTab().body : ''"
         @input="markDirty()"
         @blur="saveCurrent()"
-        class="bg-bg text-text px-6 py-5 font-mono text-sm leading-relaxed border-r border-border focus:outline-none resize-none"
+        class="bg-bg text-text px-8 py-6 font-sans text-[15px] leading-[1.75] border-r border-bordersoft focus:outline-none resize-none"
         data-i18n-placeholder="editor.placeholder"
         placeholder="开始写… 支持 Markdown。"
       ></textarea>
       <div
         x-show="editorMode !== 'edit' && currentTab()"
-        class="prose-note overflow-y-auto px-8 py-6 max-w-3xl mx-auto w-full"
+        class="prose-note overflow-y-auto px-12 py-8 mx-auto w-full"
+        style="max-width: 720px;"
         x-html="renderMarkdown(currentTab()?.body || '')"
       ></div>
       <div
@@ -260,13 +282,15 @@
       ]" :key="m.id">
         <button
           @click="editorMode = m.id"
-          :class="editorMode === m.id ? 'bg-accentsoft text-accent' : 'text-textsoft hover:text-text'"
+          :class="editorMode === m.id ? 'bg-accentsoft text-accent2' : 'text-textsoft hover:text-text'"
           class="flex items-center gap-1.5 px-2 py-1 rounded"
         >
           <svg class="icon icon-sm"><use :href="`#${m.icon}`"/></svg>
           <span x-text="tt(m.i18n)"></span>
         </button>
       </template>
+      <span class="flex-1"></span>
+      <span class="mono text-textmute text-[10.5px]" data-i18n="editor.savedmeta">已保存 · UTF-8 · LF</span>
     </div>
   </section>
 
@@ -278,13 +302,13 @@
   >
     <!-- collapsed -->
     <div x-show="!rightOpen" class="flex-1 flex flex-col items-center py-3 gap-1">
-      <button @click="rightOpen = true; rightTab = 'outline'" class="text-textsoft hover:text-accent p-2 rounded hover:bg-surface2" data-i18n-title="rail.tab.outline">
+      <button @click="rightOpen = true; rightTab = 'outline'" class="text-textsoft hover:text-accent2 p-2 rounded hover:bg-surface2" data-i18n-title="rail.tab.outline">
         <svg class="icon"><use href="#i-list"/></svg>
       </button>
-      <button @click="rightOpen = true; rightTab = 'backlinks'" class="text-textsoft hover:text-accent p-2 rounded hover:bg-surface2" data-i18n-title="rail.tab.backlinks">
+      <button @click="rightOpen = true; rightTab = 'backlinks'" class="text-textsoft hover:text-accent2 p-2 rounded hover:bg-surface2" data-i18n-title="rail.tab.backlinks">
         <svg class="icon"><use href="#i-link"/></svg>
       </button>
-      <button @click="rightOpen = true; rightTab = 'ai'" class="text-textsoft hover:text-accent p-2 rounded hover:bg-surface2" data-i18n-title="rail.tab.ai">
+      <button @click="rightOpen = true; rightTab = 'ai'" class="text-accent2 bg-accentsoft p-2 rounded" data-i18n-title="rail.tab.ai">
         <svg class="icon"><use href="#i-sparkles"/></svg>
       </button>
     </div>
@@ -300,7 +324,7 @@
           ]" :key="tab.id">
             <button
               @click="rightTab = tab.id"
-              :class="rightTab === tab.id ? 'bg-accentsoft text-accent' : 'text-textsoft hover:text-text'"
+              :class="rightTab === tab.id ? 'bg-accentsoft text-accent2 font-medium' : 'text-textsoft hover:text-text'"
               class="flex items-center gap-1 px-2 py-1 rounded"
             >
               <svg class="icon icon-sm"><use :href="`#${tab.icon}`"/></svg>
@@ -309,7 +333,7 @@
           </template>
         </div>
         <button @click="rightOpen = false" class="text-textsoft hover:text-text p-1 rounded hover:bg-surface2" data-i18n-title="rail.collapse.title">
-          <svg class="icon icon-sm"><use href="#i-chevron-r"/></svg>
+          <svg class="icon icon-sm" style="transform: scaleX(-1);"><use href="#i-chevron-r"/></svg>
         </button>
       </div>
 
@@ -336,9 +360,9 @@
 
       <!-- AI dock — chat scoped to current note -->
       <div x-show="rightTab === 'ai'" class="flex-1 flex flex-col">
-        <div class="px-3 py-2 text-xs text-textsoft border-b border-border flex items-center gap-2">
-          <span data-i18n="rail.ai.scope.label">参考范围</span>
-          <select x-model="chatScope" class="bg-bg border border-border rounded px-1.5 py-1 text-xs">
+        <div class="px-3 py-2 text-xs text-textsoft border-b border-bordersoft flex items-center gap-2">
+          <span class="text-textmute" data-i18n="rail.ai.scope.label">参考范围</span>
+          <select x-model="chatScope" class="bg-bg border border-border rounded px-1.5 py-1 text-xs text-text">
             <option value="note" data-i18n="rail.ai.scope.note">当前笔记</option>
             <option value="vault" data-i18n="rail.ai.scope.vault">所有笔记</option>
             <option value="none" data-i18n="rail.ai.scope.none">不参考</option>
@@ -352,21 +376,23 @@
           >清空</button>
         </div>
 
-        <div class="flex-1 overflow-y-auto p-4 text-sm space-y-4" x-ref="chatScroll">
+        <div class="flex-1 overflow-y-auto p-4 text-sm space-y-3" x-ref="chatScroll">
           <template x-for="(msg, i) in chatHistory" :key="i">
-            <div>
+            <div :class="msg.role === 'user' ? 'flex flex-col items-end gap-1' : 'flex flex-col items-start gap-1'">
+              <span class="mono text-[10px] text-textfaint" x-text="msg.role === 'user' ? tt('rail.ai.label.you') : tt('rail.ai.label.ai')"></span>
               <div
-                :class="msg.role === 'user' ? 'text-user' : 'text-accent'"
-                class="text-xs uppercase tracking-wide mb-1"
-                x-text="msg.role"
+                :class="msg.role === 'user'
+                  ? 'bg-accentsoft border border-[rgba(91,122,156,0.22)] text-text rounded-[10px_10px_2px_10px] px-3 py-2 max-w-[88%]'
+                  : 'bg-card border border-bordersoft text-text rounded-[10px_10px_10px_2px] px-3 py-2 max-w-[92%]'"
+                class="leading-relaxed prose-note prose-tiny"
+                x-html="renderMarkdown(msg.content || '')"
               ></div>
-              <div class="text-text leading-relaxed prose-note prose-tiny" x-html="renderMarkdown(msg.content || '')"></div>
               <template x-for="tc in (msg.tool_calls || [])" :key="tc.id">
-                <div class="text-textsoft text-[11px] mono mt-1 pl-2 border-l border-border" x-text="`· ${tc.name}(${JSON.stringify(tc.args).slice(0, 80)})`"></div>
+                <div class="text-textmute text-[11px] mono mt-1 pl-2 border-l border-bordersoft" x-text="`· ${tc.name}(${JSON.stringify(tc.args).slice(0, 80)})`"></div>
               </template>
             </div>
           </template>
-          <div x-show="!chatHistory.length" class="text-textsoft text-xs">
+          <div x-show="!chatHistory.length" class="text-textmute text-xs leading-relaxed">
             <p x-html="ttf('rail.ai.empty', { title: currentTab()?.title || tt('rail.ai.empty.notitle') })"></p>
           </div>
         </div>
@@ -376,12 +402,16 @@
             x-ref="chatInput"
             x-model="chatDraft"
             @keydown="handleChatKey($event)"
-            class="w-full bg-bg border border-border rounded p-2 text-sm resize-none focus:outline-none focus:border-accent"
+            class="w-full bg-bg border border-border rounded-lg p-2.5 text-sm resize-none focus:outline-none focus:border-accent"
             rows="2"
             data-i18n-placeholder="rail.ai.placeholder"
             placeholder="问点什么 — Enter 发送, Shift+Enter 换行"
             :disabled="chatStreaming"
           ></textarea>
+          <div class="flex items-center mt-1">
+            <span class="flex-1"></span>
+            <span class="kbd" data-i18n="rail.ai.composer.hint">⏎ 发送 · ⇧⏎ 换行</span>
+          </div>
         </div>
       </div>
     </div>
@@ -389,10 +419,10 @@
 </main>
 
 <!-- ═══════════════ FOOTER ═══════════════ -->
-<footer class="h-8 bg-surface border-t border-border flex items-center px-3 gap-1 text-xs">
+<footer class="h-8 bg-surface border-t border-border flex items-center px-3 gap-1 text-[11.5px]">
   <button
     @click="openDraftsReview()"
-    class="flex items-center gap-1.5 px-2.5 py-1 rounded hover:bg-surface2 text-text"
+    class="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-surface2 text-text"
     data-i18n-title="footer.inbox.title"
   >
     <svg class="icon icon-sm text-textsoft"><use href="#i-inbox"/></svg>
@@ -401,28 +431,148 @@
   </button>
   <button
     @click="openCardsReview()"
-    class="flex items-center gap-1.5 px-2.5 py-1 rounded hover:bg-surface2 text-text"
+    class="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-surface2 text-text"
     data-i18n-title="footer.review.title"
   >
     <svg class="icon icon-sm text-textsoft"><use href="#i-cards"/></svg>
     <span class="text-textsoft" data-i18n="footer.review.label">复习</span>
     <span class="text-ok mono px-1.5 text-[11px]" x-text="cardsCount"></span>
   </button>
-  <div class="flex items-center gap-1.5 px-2.5 py-1 text-textsoft">
+  <div class="flex items-center gap-1.5 px-2 py-1 text-textsoft">
     <svg class="icon icon-sm"><use href="#i-mining"/></svg>
     <span data-i18n="footer.feed.label">订阅</span>
     <button
       @click="runMiningNow()"
       :disabled="miningRunning"
-      class="text-accent hover:text-text disabled:opacity-50"
+      class="text-accent2 hover:text-accent disabled:opacity-50"
       x-text="miningTaskName || tt('footer.feed.empty')"
       data-i18n-title="footer.feed.title"
     ></button>
-    <span x-show="miningRunning" data-i18n="footer.feed.running">抓取中…</span>
+    <span x-show="miningRunning" class="text-textmute" data-i18n="footer.feed.running">抓取中…</span>
   </div>
   <div class="flex-1"></div>
-  <span class="text-textsoft mono">v0.0.1</span>
+  <span class="text-textmute mono text-[10.5px]">v0.0.1</span>
 </footer>
+
+<!-- ═══════════════ COMMAND PALETTE (Cmd+K · ADR-0011 §4) ═══════════════ -->
+
+<div
+  x-show="palette.open"
+  x-cloak
+  @click.self="closePalette()"
+  class="palette-scrim"
+  @keydown="handlePaletteKey($event)"
+>
+  <div class="palette-card">
+    <!-- input -->
+    <div class="flex items-center gap-2.5 px-3.5 py-3 border-b border-bordersoft">
+      <svg class="icon icon-sm text-textmute"><use href="#i-search"/></svg>
+      <input
+        type="text"
+        x-ref="paletteInput"
+        x-model="palette.query"
+        @input="palette.selected = 0; palette.askResult = ''; palette.askError = '';"
+        data-i18n-placeholder="palette.placeholder"
+        placeholder="跳转 Note · 跑命令 · 用 > 直接问 AI · 用 + 新建 Note"
+        class="flex-1 bg-transparent border-0 outline-0 text-sm text-text"
+        style="caret-color: var(--accent);"
+      />
+      <span class="kbd">esc</span>
+    </div>
+
+    <!-- results -->
+    <div class="palette-list">
+      <template x-for="(it, i) in paletteItems()" :key="i">
+        <div>
+          <div
+            x-show="it.header"
+            class="px-3 pt-2.5 pb-1 text-[9.5px] uppercase tracking-[0.1em] text-textmute"
+            x-text="it.header"
+          ></div>
+          <div
+            x-show="it.run || it.kind === 'empty'"
+            @click="if (!it.disabled) { paletteEnter(); }"
+            :class="(it.disabled ? 'opacity-50 cursor-default' : 'cursor-pointer ') +
+                    ((!it.disabled && paletteActionable()[palette.selected] === it) ? 'palette-row active' : 'palette-row')"
+          >
+            <span
+              x-show="it.kind === 'note'"
+              class="palette-kind"
+              style="color: var(--accent-2);"
+              data-i18n="palette.kind.note"
+            >NOTE</span>
+            <span
+              x-show="it.kind === 'cmd'"
+              class="palette-kind"
+              style="color: var(--warn);"
+              data-i18n="palette.kind.cmd"
+            >CMD</span>
+            <span
+              x-show="it.kind === 'ask'"
+              class="palette-kind"
+              style="color: var(--accent-2);"
+              data-i18n="palette.kind.ask"
+            >AI</span>
+            <span
+              x-show="it.kind === 'newnote'"
+              class="palette-kind"
+              style="color: var(--good);"
+              data-i18n="palette.kind.newnote"
+            >NEW</span>
+            <div class="palette-row-body">
+              <div class="palette-row-label" :class="it.kind === 'ask' ? 'mono' : ''">
+                <template x-if="it.kind === 'ask' && it.query"><span style="color: var(--accent-2);">&gt; </span></template>
+                <span x-text="it.label"></span>
+              </div>
+              <div x-show="it.sub" class="palette-row-sub" x-text="it.sub"></div>
+            </div>
+            <span x-show="it.kind === 'note' && !it.disabled" class="kbd" data-i18n="palette.row.open">⏎</span>
+            <span x-show="it.kind === 'cmd' && !it.disabled" class="kbd" data-i18n="palette.row.run">⏎</span>
+            <span x-show="it.kind === 'ask' && !it.disabled" class="kbd" data-i18n="palette.row.ask">⏎ ask</span>
+            <span x-show="it.kind === 'newnote' && !it.disabled" class="kbd" data-i18n="palette.row.create">⏎</span>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- ask-AI streamed result, when applicable -->
+    <div
+      x-show="palette.asking || palette.askResult || palette.askError"
+      class="border-t border-bordersoft px-4 py-3 max-h-[40vh] overflow-y-auto"
+      style="background: var(--bg-1);"
+    >
+      <div class="flex items-center gap-2 mb-2 text-[10px] mono text-textfaint">
+        <svg class="icon icon-sm" style="color: var(--accent);"><use href="#i-sparkles"/></svg>
+        <span x-show="palette.asking" data-i18n="palette.askai.streaming">claude · 思考中…</span>
+        <span x-show="!palette.asking && palette.askResult" data-i18n="palette.askai.done">claude · 回答</span>
+      </div>
+      <div
+        x-show="palette.askResult"
+        class="prose-note prose-tiny"
+        x-html="renderMarkdown(palette.askResult)"
+      ></div>
+      <div x-show="palette.askError" class="text-danger text-xs mono" x-text="palette.askError"></div>
+    </div>
+
+    <!-- footer kbd row -->
+    <div class="palette-footer">
+      <span class="palette-footer-item">
+        <span class="kbd">↑</span><span class="kbd">↓</span>
+        <span data-i18n="palette.kbd.move">选择</span>
+      </span>
+      <span class="palette-footer-item">
+        <span class="kbd">⏎</span>
+        <span data-i18n="palette.kbd.open">打开</span>
+      </span>
+      <span class="palette-footer-item">
+        <span class="kbd">⌘⏎</span>
+        <span data-i18n="palette.kbd.newtab">新 tab</span>
+      </span>
+      <span class="flex-1"></span>
+      <span class="mono text-[10.5px] text-textmute" data-i18n="palette.parity">parity: 每条命令 = CLI · ADR-0008</span>
+    </div>
+  </div>
+</div>
 
 <!-- ═══════════════ MODALS (existing flows preserved) ═══════════════ -->
 
@@ -447,7 +597,7 @@
         </label>
         <div class="flex justify-end gap-2 pt-2">
           <button @click="modal = null" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text" data-i18n="sediment.web.cancel">取消</button>
-          <button @click="commitSediment()" class="px-4 py-1.5 rounded bg-accent text-bg font-medium" data-i18n="sediment.web.commit">保存</button>
+          <button @click="commitSediment()" class="px-4 py-1.5 rounded bg-accent text-onaccent font-medium hover:bg-accent2" data-i18n="sediment.web.commit">保存</button>
         </div>
       </div>
     </template>
@@ -469,7 +619,7 @@
     </label>
     <div class="flex justify-end gap-2 pt-2">
       <button @click="modal = null" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text" data-i18n="profile.web.cancel">取消</button>
-      <button @click="saveProfile()" class="px-4 py-1.5 rounded bg-accent text-bg font-medium" data-i18n="profile.web.save">保存</button>
+      <button @click="saveProfile()" class="px-4 py-1.5 rounded bg-accent text-onaccent font-medium hover:bg-accent2" data-i18n="profile.web.save">保存</button>
     </div>
   </div>
 </div>
@@ -494,7 +644,7 @@
         <div class="flex items-center gap-2 pt-3 mt-3 border-t border-border">
           <button @click="actDraft('reject')" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text" data-i18n="inbox.action.discard">不要</button>
           <button @click="actDraft('skip')" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text" data-i18n="inbox.action.later">稍后再看</button>
-          <button @click="actDraft('approve')" class="px-5 py-1.5 rounded bg-accent text-bg font-medium" data-i18n="inbox.action.keep">收入笔记</button>
+          <button @click="actDraft('approve')" class="px-5 py-1.5 rounded bg-accent text-onaccent font-medium hover:bg-accent2" data-i18n="inbox.action.keep">收入笔记</button>
           <span class="flex-1"></span>
           <button @click="modal = null" class="text-textsoft hover:text-text text-xs" data-i18n="modal.close">关闭</button>
         </div>
@@ -521,7 +671,7 @@
         </div>
         <div class="flex items-center gap-2 pt-3 border-t border-border">
           <template x-if="!cardsState.revealed">
-            <button @click="cardsState.revealed = true" class="px-5 py-1.5 rounded bg-accent text-bg font-medium" data-i18n="review.reveal">⏎ 看答案</button>
+            <button @click="cardsState.revealed = true" class="px-5 py-1.5 rounded bg-accent text-onaccent font-medium hover:bg-accent2" data-i18n="review.reveal">⏎ 看答案</button>
           </template>
           <template x-if="cardsState.revealed">
             <div class="flex gap-2">
