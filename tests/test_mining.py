@@ -427,6 +427,83 @@ def test_runner_max_items_caps_extractions(tmp_path: Path, monkeypatch):
     assert len(calls) == 3
 
 
+def test_per_task_max_items_per_run_applies_when_no_explicit_arg(tmp_path: Path, monkeypatch):
+    """Scheduler-fired runs pass no `max_items` — the task's own ceiling
+    must protect against unbounded LLM calls (B2 / 2026-05-02 critique #4b)."""
+    v, _ = _ready_vault(tmp_path)
+    items = [
+        SourceItem(
+            source_url="https://feed", item_id=f"x{i}", title=f"t{i}",
+            url=f"https://x/{i}", published=None, content=f"content {i}",
+        )
+        for i in range(20)
+    ]
+    monkeypatch.setattr(
+        "knowlet.core.mining.runner.fetch_source",
+        _stub_fetch({"https://feed": items}),
+    )
+
+    class CountingLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            self.calls += 1
+            return AssistantMessage(
+                content='{"title": "T", "tags": [], "body": "b"}', tool_calls=[]
+            )
+
+    task = MiningTask(
+        name="t",
+        sources=[SourceSpec(type="rss", url="https://feed")],
+        prompt="p",
+        max_items_per_run=4,
+    )
+    llm = CountingLLM()
+    report = run_task(task, v, llm)  # type: ignore[arg-type]
+    assert report.fetched == 20
+    assert report.new_items == 4
+    assert llm.calls == 4
+
+
+def test_explicit_max_items_overrides_per_task_ceiling(tmp_path: Path, monkeypatch):
+    """`mining run --limit N` (CLI) must override the task's stored ceiling."""
+    v, _ = _ready_vault(tmp_path)
+    items = [
+        SourceItem(
+            source_url="https://feed", item_id=f"x{i}", title=f"t{i}",
+            url=f"https://x/{i}", published=None, content=f"content {i}",
+        )
+        for i in range(20)
+    ]
+    monkeypatch.setattr(
+        "knowlet.core.mining.runner.fetch_source",
+        _stub_fetch({"https://feed": items}),
+    )
+
+    class CountingLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            self.calls += 1
+            return AssistantMessage(
+                content='{"title": "T", "tags": [], "body": "b"}', tool_calls=[]
+            )
+
+    # task ceiling is 4 — explicit --limit 7 should win.
+    task = MiningTask(
+        name="t",
+        sources=[SourceSpec(type="rss", url="https://feed")],
+        prompt="p",
+        max_items_per_run=4,
+    )
+    llm = CountingLLM()
+    report = run_task(task, v, llm, max_items=7)  # type: ignore[arg-type]
+    assert report.new_items == 7
+    assert llm.calls == 7
+
+
 def test_reset_task_state_clears_seen_only_by_default(tmp_path: Path):
     from knowlet.core.mining.runner import _save_seen, reset_task_state
 

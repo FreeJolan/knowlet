@@ -22,13 +22,20 @@ the rendered string differs from the key.
 
 from __future__ import annotations
 
+import contextvars
 import os
 from typing import Any
 
 DEFAULT_LANGUAGE = "en"
 SUPPORTED_LANGUAGES: tuple[str, ...] = ("en", "zh")
 
-_current_language: str = DEFAULT_LANGUAGE
+# Context-var instead of a module global so language doesn't leak across
+# threads / async tasks. Each FastAPI request, scheduler thread, or worker
+# task that wants its own language calls `set_language` and the change stays
+# in that context. Default value applies to any context that hasn't set one.
+_current_language: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "knowlet_current_language", default=DEFAULT_LANGUAGE
+)
 
 
 def set_language(lang: str | None) -> str:
@@ -36,20 +43,17 @@ def set_language(lang: str | None) -> str:
 
     Returns the language that was actually set (so callers can observe a
     fallback without a try/except)."""
-    global _current_language
     if not lang:
-        _current_language = DEFAULT_LANGUAGE
-        return _current_language
+        _current_language.set(DEFAULT_LANGUAGE)
+        return DEFAULT_LANGUAGE
     norm = lang.strip().lower().split("-")[0]  # zh-CN → zh
-    if norm in SUPPORTED_LANGUAGES:
-        _current_language = norm
-    else:
-        _current_language = DEFAULT_LANGUAGE
-    return _current_language
+    chosen = norm if norm in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE
+    _current_language.set(chosen)
+    return chosen
 
 
 def current_language() -> str:
-    return _current_language
+    return _current_language.get()
 
 
 def init_from_env(default: str = DEFAULT_LANGUAGE) -> str:
@@ -64,7 +68,7 @@ def t(key: str, lang: str | None = None, /, **vars: Any) -> str:
     Missing key → falls back to English. Missing in English too → returns
     the key string itself, which makes gaps obvious during development.
     """
-    target = (lang or _current_language).split("-")[0]
+    target = (lang or _current_language.get()).split("-")[0]
     catalog = _CATALOGS.get(target) or _CATALOGS[DEFAULT_LANGUAGE]
     template = catalog.get(key) or _CATALOGS[DEFAULT_LANGUAGE].get(key) or key
     if vars:

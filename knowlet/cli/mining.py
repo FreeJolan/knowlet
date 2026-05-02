@@ -79,6 +79,15 @@ def mining_add(
             "Default: inherit from cfg.general.language.",
         ),
     ] = None,
+    max_items_per_run: Annotated[
+        int,
+        typer.Option(
+            "--max-items-per-run",
+            help="Hard ceiling on new items processed per run. Protects against an "
+            "offline daemon waking up and chewing through a multi-day backlog in "
+            "one LLM avalanche. Default 50; pass 0 to disable.",
+        ),
+    ] = 50,
 ) -> None:
     """Create a new mining task."""
     from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
@@ -114,6 +123,7 @@ def mining_add(
         schedule=Schedule(every=every, cron=cron),
         prompt=prompt or "Summarize each item; surface anything new or surprising.",
         output_language=resolved_lang,
+        max_items_per_run=None if max_items_per_run <= 0 else max_items_per_run,
     )
     problems = task.validate()
     if problems:
