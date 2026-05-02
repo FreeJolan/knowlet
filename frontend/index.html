@@ -5,61 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>knowlet</title>
 
-  <!-- Tailwind via CDN play script (dev mode; release builds ship purged CSS) -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: [
-              'Inter', '-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"',
-              '"PingFang SC"', '"Hiragino Sans GB"', '"Noto Sans SC"',
-              'system-ui', 'sans-serif'
-            ],
-            serif: [
-              '"Source Serif 4"', '"Iowan Old Style"', 'Georgia',
-              '"Noto Serif SC"', 'serif'
-            ],
-            mono: [
-              '"JetBrains Mono"', 'ui-monospace', '"SF Mono"', 'Menlo', 'monospace'
-            ],
-          },
-          /* Paper-light tokens (ADR-0011 §"Open questions" #3 — 2026-05-02 翻案).
-           * Dark mode is deferred to a future toggle. */
-          colors: {
-            bg: '#f4f0e8',
-            bg1: '#efe9dd',
-            surface: '#ede7d9',
-            surface2: '#e3dcca',
-            card: '#fbf8f1',
-            border: '#d6cfbd',
-            bordersoft: '#e0d9c8',
-            text: '#2a2823',
-            textsoft: '#5e5b53',
-            textmute: '#8a8678',
-            textfaint: '#b3ad9c',
-            accent: '#5b7a9c',
-            accent2: '#4d6a8a',
-            accentsoft: '#dfe5ef',
-            accenttint: '#ebeef4',
-            onaccent: '#faf7f0',
-            user: '#a87a3a',
-            ok: '#5e8757',
-            warn: '#a47a3a',
-            danger: '#b8554d',
-          },
-          fontSize: {
-            xs: ['11px', '1.5'],
-            sm: ['12.5px', '1.55'],
-            base: ['14px', '1.65'],
-            lg: ['16px', '1.55'],
-          },
-          borderRadius: { DEFAULT: '4px', lg: '6px' },
-        },
-      },
-    };
-  </script>
+  <!-- Tailwind: built CSS, no CDN, no JS at runtime. Source: tailwind.input.css.
+       Rebuild with `tools/build-frontend.sh` after editing markup or tokens. -->
+  <link rel="stylesheet" href="/static/tailwind.css" />
 
   <!-- Inter + Source Serif 4 + JetBrains Mono (CJK fallback handled by stack) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />

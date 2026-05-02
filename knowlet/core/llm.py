@@ -9,10 +9,11 @@ shape with tool-calls.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Iterator
 
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 
 from knowlet.config import LLMConfig
 from knowlet.core.events import (
@@ -20,6 +21,8 @@ from knowlet.core.events import (
     ReplyDoneEvent,
     ToolCallEvent,
 )
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -36,21 +39,17 @@ class AssistantMessage:
     raw: Any = None
 
 
-# Anthropic Claude 4.x (Opus 4.7 / 4.6, Sonnet 4.6, Haiku 4.5, …) deprecated
-# the `temperature` request param; sending it makes the API return a 400. We
-# strip it client-side for known-affected model ids. Match by substring so
-# variants like `claude-opus-4-7@some-proxy` still work.
-_NO_TEMPERATURE_MODELS: tuple[str, ...] = (
-    "opus-4-7",
-    "opus-4-6",
-    "sonnet-4-6",
-    "haiku-4-5",
-)
+# Some models reject the `temperature` request param (Anthropic Claude 4.x —
+# Opus 4.7 / 4.6, Sonnet 4.6, Haiku 4.5, … — and likely future ones). Rather
+# than maintain a curated substring list that ages with every release, we
+# learn from a 400 once and cache the result per model id.
+_no_temp_cache: set[str] = set()
 
 
-def model_disallows_temperature(model: str) -> bool:
-    m = (model or "").lower()
-    return any(token in m for token in _NO_TEMPERATURE_MODELS)
+def _is_temp_rejection(exc: BadRequestError) -> bool:
+    """Return True iff the BadRequestError clearly complains about temperature."""
+    msg = str(exc).lower()
+    return "temperature" in msg
 
 
 class LLMClient:
@@ -81,13 +80,25 @@ class LLMClient:
             "max_tokens": max_tokens or self.cfg.max_tokens,
         }
         temp = self.cfg.temperature if temperature is None else temperature
-        if temp is not None and not model_disallows_temperature(self.cfg.model):
+        if temp is not None and self.cfg.model not in _no_temp_cache:
             kwargs["temperature"] = temp
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
-        resp = client.chat.completions.create(**kwargs)
+        try:
+            resp = client.chat.completions.create(**kwargs)
+        except BadRequestError as exc:
+            if "temperature" in kwargs and _is_temp_rejection(exc):
+                _no_temp_cache.add(self.cfg.model)
+                log.info(
+                    "model %r rejected `temperature`; will omit it for the rest "
+                    "of this process.", self.cfg.model
+                )
+                kwargs.pop("temperature", None)
+                resp = client.chat.completions.create(**kwargs)
+            else:
+                raise
         choice = resp.choices[0].message
         tool_calls: list[ToolCall] = []
         for tc in choice.tool_calls or []:
@@ -130,7 +141,7 @@ class LLMClient:
             "stream": True,
         }
         temp = self.cfg.temperature if temperature is None else temperature
-        if temp is not None and not model_disallows_temperature(self.cfg.model):
+        if temp is not None and self.cfg.model not in _no_temp_cache:
             kwargs["temperature"] = temp
         if tools:
             kwargs["tools"] = tools
@@ -139,7 +150,21 @@ class LLMClient:
         content_buf: list[str] = []
         tc_buf: dict[int, dict[str, Any]] = {}
 
-        for chunk in client.chat.completions.create(**kwargs):
+        try:
+            stream = client.chat.completions.create(**kwargs)
+        except BadRequestError as exc:
+            if "temperature" in kwargs and _is_temp_rejection(exc):
+                _no_temp_cache.add(self.cfg.model)
+                log.info(
+                    "model %r rejected `temperature`; will omit it for the rest "
+                    "of this process.", self.cfg.model
+                )
+                kwargs.pop("temperature", None)
+                stream = client.chat.completions.create(**kwargs)
+            else:
+                raise
+
+        for chunk in stream:
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta

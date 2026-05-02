@@ -7,9 +7,10 @@ Config file lives at `<vault>/.knowlet/config.toml`.
 from __future__ import annotations
 
 import os
+import tomllib  # stdlib (3.11+) — read only
 from pathlib import Path
+from typing import Any
 
-import tomlkit
 from pydantic import BaseModel, Field
 
 CONFIG_FILENAME = "config.toml"
@@ -22,7 +23,11 @@ class LLMConfig(BaseModel):
     api_key: str = ""
     model: str = "claude-opus-4-7"
     max_tokens: int = 1024
-    temperature: float = 0.3
+    # `None` means "let the provider pick its default." Claude 4.x models
+    # reject `temperature` outright; setting any value here forces the
+    # client into a 400-then-retry path on first call. Leave None unless
+    # the user explicitly wants determinism on a non-Claude provider.
+    temperature: float | None = None
 
 
 class EmbeddingConfig(BaseModel):
@@ -92,21 +97,42 @@ def load_config(vault: Path) -> KnowletConfig:
     p = config_path(vault)
     if not p.exists():
         return KnowletConfig()
-    with p.open("r", encoding="utf-8") as f:
-        data = tomlkit.parse(f.read()).unwrap()
+    with p.open("rb") as f:
+        data = tomllib.load(f)
     return KnowletConfig.model_validate(data)
+
+
+def _toml_value(v: Any) -> str:
+    """Serialize a single primitive value as TOML.
+
+    Sufficient for knowlet's config schema (str / int / float / bool only —
+    no nested tables, no arrays, no datetimes). When that changes, switch
+    to a real writer.
+    """
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, str):
+        # Use double-quoted strings; escape backslash and double quote.
+        escaped = v.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    raise TypeError(f"unsupported config value type: {type(v).__name__}")
 
 
 def save_config(vault: Path, cfg: KnowletConfig) -> None:
     p = config_path(vault)
     p.parent.mkdir(parents=True, exist_ok=True)
-    doc = tomlkit.document()
+    lines: list[str] = []
     for section, payload in cfg.model_dump().items():
-        table = tomlkit.table()
+        lines.append(f"[{section}]")
         for k, v in payload.items():
-            table.add(k, v)
-        doc.add(section, table)
+            if v is None:
+                continue  # TOML has no null; absence is the canonical encoding
+            lines.append(f"{k} = {_toml_value(v)}")
+        lines.append("")
+    text = "\n".join(lines).rstrip() + "\n"
     tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(tomlkit.dumps(doc), encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8")
     os.chmod(tmp, 0o600)
     tmp.replace(p)

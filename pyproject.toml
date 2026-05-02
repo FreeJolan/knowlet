@@ -18,13 +18,15 @@ dependencies = [
     "watchdog>=4.0",
     "python-ulid>=2.7",
     "sqlite-vec>=0.1.6",
-    "tomlkit>=0.13",
     "numpy>=1.26",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "fsrs>=6.0",
     "feedparser>=6.0",
     "trafilatura>=1.12",
+    # APScheduler 3.x: stable BackgroundScheduler API used in core/mining/scheduler.py.
+    # The 4.x line (alpha as of writing) is a substantial rewrite — async-first, new
+    # data-store / scheduler split, breaking API. Stay on 3 until 4 stabilizes.
     "apscheduler>=3.10,<4",
 ]
 

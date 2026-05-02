@@ -1,0 +1,67 @@
+/* Tailwind v4 source — paper-light tokens.
+ *
+ * Build: ./tools/build-frontend.sh  (or `tailwindcss -i ... -o ...` directly)
+ * Output: frontend/tailwind.css (committed; ships as part of the wheel)
+ *
+ * v4 is CSS-first config: @theme blocks below replace the v3 inline JS
+ * `tailwind.config = {...}` that lived in index.html when we were on the
+ * Play CDN. The class names generated here match what's already in
+ * index.html — bg-bg / bg-accent / text-text / border-bordersoft / etc.
+ */
+
+@import "tailwindcss";
+
+/* The build scans these files for utility-class usage. */
+@source "./index.html";
+@source "./app.js";
+
+@theme {
+  /* surfaces */
+  --color-bg: #f4f0e8;
+  --color-bg1: #efe9dd;
+  --color-surface: #ede7d9;
+  --color-surface2: #e3dcca;
+  --color-card: #fbf8f1;
+  --color-border: #d6cfbd;
+  --color-bordersoft: #e0d9c8;
+
+  /* ink */
+  --color-text: #2a2823;
+  --color-textsoft: #5e5b53;
+  --color-textmute: #8a8678;
+  --color-textfaint: #b3ad9c;
+
+  /* accent (dusk blue) */
+  --color-accent: #5b7a9c;
+  --color-accent2: #4d6a8a;
+  --color-accentsoft: #dfe5ef;
+  --color-accenttint: #ebeef4;
+  --color-onaccent: #faf7f0;
+
+  /* status — warm earth */
+  --color-user: #a87a3a;
+  --color-ok: #5e8757;
+  --color-warn: #a47a3a;
+  --color-danger: #b8554d;
+
+  /* type */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
+  --font-serif: "Source Serif 4", "Iowan Old Style", Georgia,
+    "Noto Serif SC", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* font sizes (override v4 defaults to match the project's tighter scale) */
+  --text-xs: 11px;
+  --text-xs--line-height: 1.5;
+  --text-sm: 12.5px;
+  --text-sm--line-height: 1.55;
+  --text-base: 14px;
+  --text-base--line-height: 1.65;
+  --text-lg: 16px;
+  --text-lg--line-height: 1.55;
+
+  /* radii: v3 had DEFAULT=4px, lg=6px; v4 follows suit via --radius-* */
+  --radius: 4px;
+  --radius-lg: 6px;
+}
