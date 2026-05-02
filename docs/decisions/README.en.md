@@ -18,6 +18,7 @@ This directory records important architectural and product decisions for Knowlet
 - [0010 — i18n Strategy](./0010-i18n.en.md)
 - [0011 — Web UI Redesign: Notes-First + Focus Modes](./0011-web-ui-redesign.en.md)
 - [0012 — Notes-First / AI as Optional Capability](./0012-notes-first-ai-optional.en.md)
+- [0013 — Knowledge-Management Contract / Fragmentation-Governance Framework](./0013-knowledge-management-contract.en.md)
 
 ADRs that no longer represent the current direction are kept in [`archive/`](./archive/).
 
