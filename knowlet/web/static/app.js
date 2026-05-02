@@ -242,7 +242,12 @@ function ui() {
 
       // restore last open notes from localStorage
       try {
-        const ids = JSON.parse(localStorage.getItem("knowlet:openTabs") || "[]");
+        // Dedup at read time: localStorage is user-editable, and earlier
+        // versions of the app could persist duplicates (the now-fixed
+        // double-init bug). Without this, x-for `:key="tab.id"` warns
+        // "Duplicate key" and the editor pane renders twice.
+        const raw = JSON.parse(localStorage.getItem("knowlet:openTabs") || "[]");
+        const ids = [...new Set(Array.isArray(raw) ? raw : [])];
         for (const id of ids) await this.openNote(id, false);
         const cur = localStorage.getItem("knowlet:currentNoteId");
         if (cur && this.openTabs.find((t) => t.id === cur)) this.currentNoteId = cur;
@@ -341,6 +346,24 @@ function ui() {
       return this.openTabs.find((t) => t.id === this.currentNoteId) || null;
     },
 
+    /** Two-way binding target for the center textarea. Alpine's `x-model`
+     * requires a writable left-hand-side expression — a ternary like
+     * `currentTab() ? currentTab().body : ''` raises
+     * `Invalid left-hand side in assignment`. Routing through this
+     * getter/setter keeps the binding clean and lets us mark the tab
+     * dirty + debounce save in one place. */
+    get editorBody() {
+      return this.currentTab()?.body ?? "";
+    },
+    set editorBody(value) {
+      const tab = this.currentTab();
+      if (!tab) return;
+      if (tab.body !== value) {
+        tab.body = value;
+        this.markDirty();
+      }
+    },
+
     persistTabs() {
       try {
         localStorage.setItem(
@@ -385,21 +408,22 @@ function ui() {
       }
     },
 
-    async newNote() {
-      const title = prompt(tt("prompt.new.title")) || "";
-      if (!title.trim()) return;
-      try {
-        const r = await api("POST", "/api/notes", {
-          title: title.trim(),
-          tags: [],
-          body: `# ${title.trim()}\n\n`,
-        });
-        await this.refreshNotes();
-        await this.openNote(r.note_id);
-        this.editorMode = "edit";
-      } catch (exc) {
-        toast(exc.message, "error");
-      }
+    /** Sidebar "+" / palette `New note` command both land here. We open
+     * the Cmd+K palette pre-filled with `+ ` so the user types the title
+     * inline — no browser-native `prompt()` (raw, unstyled, races with
+     * i18n load) and no separate modal to maintain. Enter creates the
+     * note via the existing `newnote` palette branch. */
+    newNote() {
+      this.openPalette("all");
+      this.palette.query = "+ ";
+      this.$nextTick(() => {
+        const el = this.$refs.paletteInput;
+        if (el) {
+          el.focus();
+          // Place caret after the leading "+ " so the user just types.
+          try { el.setSelectionRange(2, 2); } catch (_) {}
+        }
+      });
     },
 
     outline() {
@@ -774,59 +798,42 @@ function ui() {
      * append here. */
     paletteCommands() {
       return [
-        {
-          id: "mining-run-all",
-          label: tt("palette.cmd.mining"),
-          sub: tt("palette.cmd.mining.sub"),
-          run: () => this.runMiningNow(),
-        },
-        {
-          id: "open-drafts",
-          label: tt("palette.cmd.drafts"),
-          sub: tt("palette.cmd.drafts.sub"),
-          run: () => this.openDraftsReview(),
-        },
-        {
-          id: "open-cards",
-          label: tt("palette.cmd.cards"),
-          sub: tt("palette.cmd.cards.sub"),
-          run: () => this.openCardsReview(),
-        },
-        {
-          id: "save-chat",
-          label: tt("palette.cmd.sediment"),
-          sub: tt("palette.cmd.sediment.sub"),
-          run: () => this.openSediment(),
-          disabled: !this.chatHistory.length,
-        },
-        {
-          id: "clear-chat",
-          label: tt("palette.cmd.clearchat"),
-          sub: tt("palette.cmd.clearchat.sub"),
-          run: () => this.clearChat(),
-          disabled: !this.chatHistory.length,
-        },
-        {
-          id: "open-profile",
-          label: tt("palette.cmd.profile"),
-          sub: tt("palette.cmd.profile.sub"),
-          run: () => this.openProfile(),
-        },
-        {
-          id: "new-note",
-          label: tt("palette.cmd.newnote"),
-          sub: tt("palette.cmd.newnote.sub"),
-          run: () => this.newNote(),
-        },
+        { id: "mining-run-all", label: tt("palette.cmd.mining"),    sub: tt("palette.cmd.mining.sub") },
+        { id: "open-drafts",    label: tt("palette.cmd.drafts"),    sub: tt("palette.cmd.drafts.sub") },
+        { id: "open-cards",     label: tt("palette.cmd.cards"),     sub: tt("palette.cmd.cards.sub") },
+        { id: "save-chat",      label: tt("palette.cmd.sediment"),  sub: tt("palette.cmd.sediment.sub"),  disabled: !this.chatHistory.length },
+        { id: "clear-chat",     label: tt("palette.cmd.clearchat"), sub: tt("palette.cmd.clearchat.sub"), disabled: !this.chatHistory.length },
+        { id: "open-profile",   label: tt("palette.cmd.profile"),   sub: tt("palette.cmd.profile.sub") },
+        { id: "new-note",       label: tt("palette.cmd.newnote"),   sub: tt("palette.cmd.newnote.sub") },
       ];
     },
 
-    /** Compute filtered, sectioned palette results. The query syntax is:
+    /** Dispatch a palette command by id. Pulled out of paletteCommands()
+     * to keep that function returning *plain data* (no closures stored on
+     * objects that Alpine's reactive proxy walks). */
+    runPaletteCmd(id) {
+      switch (id) {
+        case "mining-run-all": this.runMiningNow(); break;
+        case "open-drafts":    this.openDraftsReview(); break;
+        case "open-cards":     this.openCardsReview(); break;
+        case "save-chat":      this.openSediment(); break;
+        case "clear-chat":     this.clearChat(); break;
+        case "open-profile":   this.openProfile(); break;
+        case "new-note":       this.newNote(); break;
+      }
+    },
+
+    /** Compute filtered, sectioned palette results.
+     *
+     * Items are PURE DATA — no callback properties. Dispatch happens via
+     * `kind` (+ `cmdId` for command items). Storing arrow functions on
+     * Alpine-tracked objects led to spurious invocation on init in some
+     * proxy paths; pure data dodges the entire class of bug.
+     *
+     * Query syntax:
      *  - `> ...`      → Ask AI (one-shot popup, no chat history)
      *  - `+ <title>`  → New note with that title
      *  - bare text    → Fuzzy match notes + commands
-     * Returns a flat list with section headers so the keyboard navigation
-     * can index linearly. Each item: {kind, label, sub?, run, header?}.
      */
     paletteItems() {
       const { mode, text } = classifyQuery(this.palette.query);
@@ -839,7 +846,6 @@ function ui() {
           label: text || tt("palette.askai.empty"),
           sub: tt("palette.askai.sub"),
           query: text,
-          run: () => this.askOnce(text),
           disabled: !text,
         });
         return items;
@@ -851,7 +857,7 @@ function ui() {
           kind: "newnote",
           label: text || tt("palette.newnote.empty"),
           sub: tt("palette.newnote.sub"),
-          run: () => this.newNoteFromPalette(text),
+          newTitle: text,
           disabled: !text,
         });
         return items;
@@ -866,8 +872,7 @@ function ui() {
             kind: "note",
             label: n.title,
             sub: n.updated_at || "",
-            note: n,
-            run: () => this.openNoteFromPalette(n.id),
+            noteId: n.id,
           });
         }
       }
@@ -877,7 +882,7 @@ function ui() {
         if (cmds.length) {
           items.push({ section: "commands", header: tt("palette.section.commands") });
           for (const c of cmds) {
-            items.push({ kind: "cmd", ...c });
+            items.push({ kind: "cmd", cmdId: c.id, label: c.label, sub: c.sub, disabled: !!c.disabled });
           }
         }
       }
@@ -895,7 +900,9 @@ function ui() {
 
     /** Filtered to actionable rows only (for keyboard nav indexing). */
     paletteActionable() {
-      return this.paletteItems().filter((i) => i.run && !i.disabled);
+      return this.paletteItems().filter((i) =>
+        i.kind && i.kind !== "empty" && !i.disabled
+      );
     },
 
     openPalette(mode) {
@@ -929,14 +936,20 @@ function ui() {
     paletteEnter(opts) {
       const items = this.paletteActionable();
       const it = items[this.palette.selected];
-      if (!it || !it.run || it.disabled) return;
-      // Cmd+Enter on a note opens but keeps palette open and creates a fresh
-      // tab. For other items, Cmd+Enter is identical to Enter.
+      if (!it || it.disabled) return;
+      // Cmd+Enter on a note opens but keeps palette open and creates a
+      // fresh tab. For other kinds, Cmd+Enter is identical to Enter.
       if (opts && opts.newTab && it.kind === "note") {
-        this.openNote(it.note.id);
+        this.openNote(it.noteId);
         return;
       }
-      it.run();
+      switch (it.kind) {
+        case "note":     this.openNoteFromPalette(it.noteId); break;
+        case "ask":      this.askOnce(it.query); break;
+        case "newnote":  this.newNoteFromPalette(it.newTitle); break;
+        case "cmd":      this.runPaletteCmd(it.cmdId); break;
+        default: return;
+      }
       // Ask-AI keeps palette open to show the streaming answer; everything
       // else dismisses.
       if (it.kind !== "ask") this.closePalette();
