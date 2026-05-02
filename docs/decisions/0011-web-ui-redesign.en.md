@@ -154,7 +154,7 @@ Each phase ships as its own commit with its own tag (`m6.0` … `m6.5`); between
 
 ### Costs / constraints
 
-- **`frontend/*` is almost entirely rewritten**: `index.html` / `app.js` / `app.css` all change; backend APIs are fully preserved (the dividend of ADR-0008).
+- **`knowlet/web/static/*` is almost entirely rewritten**: `index.html` / `app.js` / `app.css` all change; backend APIs are fully preserved (the dividend of ADR-0008).
 - **New backend endpoints**: full-text fuzzy note search (for Cmd+K), Notes CRUD endpoints (read-only today), Backlinks API (M6.2+).
 - **Multi-session chat history** is a literal promise from ADR-0003 that has been outstanding; M6.4 must ship it — touches conversation log + storage schema + UI session sidebar.
 - **Vanilla JS + DOM for three columns + drag resize + tab bar + command palette** is more engineering than it looks; the no-SPA-framework promise stands (per `feedback_no_wheel_reinvention`), but a few components (e.g. the palette) will be ~30 lines of hand-rolled minimalism rather than pulling in something like fzf-for-js.
@@ -258,4 +258,4 @@ For comparison: React + shadcn full stack ≈ 250 kb; Vue 3 + Naive UI ≈ 500 k
 - M6 stays on this stack throughout.
 - M7 (if useful): CodeMirror 6 (replaces textarea) — a real editor, ~150 kb full but ~50 kb tree-shaken; lives as its own "Editor area," doesn't pollute other components.
 - M8 (if useful): add the **optional dark toggle** (light is now the default backbone; dark tokens get filled in once, plus a header / settings switch + localStorage persistence + "follow system" option).
-- M5 / M9 Tauri desktop shell: the same `frontend` ships into Tauri unchanged, no rewrite needed.
+- M5 / M9 Tauri desktop shell: the same `knowlet/web/static/` ships into Tauri unchanged, no rewrite needed.

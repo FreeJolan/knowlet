@@ -294,7 +294,7 @@ def cards_new(
 ) -> None:
     """Create a new spaced-repetition Card. The new card is due immediately."""
     from knowlet.core.card import Card
-    from knowlet.core.cards import CardStore
+    from knowlet.core.card_store import CardStore
     from knowlet.core.fsrs_wrap import initial_state
 
     vault = _resolve_vault_or_die()
@@ -319,7 +319,7 @@ def cards_due(
 ) -> None:
     """List Cards that are due now."""
     from knowlet.core.card import parse_due
-    from knowlet.core.cards import CardStore
+    from knowlet.core.card_store import CardStore
 
     vault = _resolve_vault_or_die()
     store = CardStore(vault.cards_dir)
@@ -355,7 +355,7 @@ def cards_review(
 
 def _run_cards_review(limit: int = 20) -> None:
     from knowlet.core.card import parse_due
-    from knowlet.core.cards import CardStore
+    from knowlet.core.card_store import CardStore
     from knowlet.core.fsrs_wrap import schedule_next
 
     vault = _resolve_vault_or_die()
@@ -406,7 +406,7 @@ def cards_show(
     card_id: Annotated[str, typer.Argument(help="Card ULID (full or 8-char prefix).")],
 ) -> None:
     """Print a single Card's content."""
-    from knowlet.core.cards import CardStore
+    from knowlet.core.card_store import CardStore
 
     vault = _resolve_vault_or_die()
     store = CardStore(vault.cards_dir)
@@ -434,7 +434,7 @@ def cards_show(
 @mining_app.command("list")
 def mining_list() -> None:
     """List configured mining tasks."""
-    from knowlet.core.mining.tasks import TaskStore
+    from knowlet.core.mining.task_store import TaskStore
 
     vault = _resolve_vault_or_die()
     store = TaskStore(vault.tasks_dir)
@@ -496,7 +496,7 @@ def mining_add(
 ) -> None:
     """Create a new mining task."""
     from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
-    from knowlet.core.mining.tasks import TaskStore
+    from knowlet.core.mining.task_store import TaskStore
 
     if not (rss or url):
         err_console.print("[red]at least one --rss or --url is required[/red]")
@@ -546,7 +546,7 @@ def mining_edit(
     import os
     import subprocess
 
-    from knowlet.core.mining.tasks import TaskStore
+    from knowlet.core.mining.task_store import TaskStore
 
     vault = _resolve_vault_or_die()
     store = TaskStore(vault.tasks_dir)
@@ -564,7 +564,7 @@ def mining_remove(
     task_id: Annotated[str, typer.Argument(help="Task id (or 8-char prefix).")],
 ) -> None:
     """Remove a mining task. The drafts it produced stay in <vault>/drafts/."""
-    from knowlet.core.mining.tasks import TaskStore
+    from knowlet.core.mining.task_store import TaskStore
 
     vault = _resolve_vault_or_die()
     store = TaskStore(vault.tasks_dir)
@@ -605,7 +605,7 @@ def mining_reset(
     you've changed `output_language` / `prompt` and want fresh drafts."""
     from knowlet.core.drafts import DraftStore
     from knowlet.core.mining.runner import reset_task_state
-    from knowlet.core.mining.tasks import TaskStore
+    from knowlet.core.mining.task_store import TaskStore
 
     vault = _resolve_vault_or_die()
     store = TaskStore(vault.tasks_dir)
@@ -626,7 +626,7 @@ def mining_run_all() -> None:
     """Run every enabled mining task now."""
     from knowlet.core.llm import LLMClient
     from knowlet.core.mining.runner import run_task
-    from knowlet.core.mining.tasks import TaskStore
+    from knowlet.core.mining.task_store import TaskStore
 
     vault = _resolve_vault_or_die()
     cfg = _load_config_or_default(vault)
@@ -650,7 +650,7 @@ def mining_run_all() -> None:
 def _run_one_task(task_id: str, limit: int | None = None) -> None:
     from knowlet.core.llm import LLMClient
     from knowlet.core.mining.runner import run_task
-    from knowlet.core.mining.tasks import TaskStore
+    from knowlet.core.mining.task_store import TaskStore
 
     vault = _resolve_vault_or_die()
     cfg = _load_config_or_default(vault)

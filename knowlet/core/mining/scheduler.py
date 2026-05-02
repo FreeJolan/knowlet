@@ -25,7 +25,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from knowlet.core.llm import LLMClient
 from knowlet.core.mining.runner import RunReport, run_task
 from knowlet.core.mining.task import MiningTask, parse_interval_seconds
-from knowlet.core.mining.tasks import TaskStore
+from knowlet.core.mining.task_store import TaskStore
 from knowlet.core.vault import Vault
 
 log = logging.getLogger(__name__)

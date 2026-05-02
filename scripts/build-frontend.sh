@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Rebuild frontend/tailwind.css from tailwind.input.css.
+# Rebuild knowlet/web/static/tailwind.css from tailwind.input.css.
 #
 # tailwindcss CLI ships as a single Go-built binary. Install once:
 #   brew install tailwindcss   # macOS
 #   # or download from https://github.com/tailwindlabs/tailwindcss/releases
 #
-# This script is idempotent — run after editing markup, tokens, or app.js.
-# The output `frontend/tailwind.css` is committed to the repo so installs
-# work offline (no Play CDN, no Node toolchain at runtime).
+# Run after editing markup, tokens, or app.js. The output is committed
+# to the repo so installs work offline (no Play CDN, no Node at runtime).
 
 set -euo pipefail
 
@@ -19,9 +18,10 @@ if ! command -v tailwindcss >/dev/null 2>&1; then
   exit 1
 fi
 
+STATIC=knowlet/web/static
 tailwindcss \
-  -i frontend/tailwind.input.css \
-  -o frontend/tailwind.css \
+  -i "$STATIC/tailwind.input.css" \
+  -o "$STATIC/tailwind.css" \
   --minify
 
-echo "✓ frontend/tailwind.css rebuilt ($(wc -c < frontend/tailwind.css) bytes)"
+echo "✓ $STATIC/tailwind.css rebuilt ($(wc -c < $STATIC/tailwind.css) bytes)"

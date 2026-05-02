@@ -51,26 +51,7 @@ from knowlet.core.user_profile import (
 )
 from knowlet.core.vault import Vault
 
-def _resolve_static_dir() -> Path:
-    """Locate the frontend assets directory.
-
-    Source layout keeps the frontend at the repo root (`<repo>/frontend/`),
-    peer to `knowlet/`, so that the SPA codebase isn't visually nested
-    inside the Python package. The wheel build (see `pyproject.toml`'s
-    `[tool.hatch.build.targets.wheel.force-include]`) copies it into
-    `knowlet/web/static/` so installed users find it next to this module.
-
-    Resolution order:
-    1. wheel install — `<this module>/static/` exists (force-included)
-    2. editable install / source checkout — `<repo>/frontend/`
-    """
-    packaged = Path(__file__).resolve().parent / "static"
-    if packaged.exists():
-        return packaged
-    return Path(__file__).resolve().parents[2] / "frontend"
-
-
-STATIC_DIR = _resolve_static_dir()
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 # ----------------------------------------------------------------- request/response models

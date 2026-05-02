@@ -82,9 +82,9 @@ def test_list_recent_notes_tool(tmp_path: Path):
     idx.upsert_note(n2, chunk_size=200, chunk_overlap=40)
 
     cfg = KnowletConfig()
-    from knowlet.core.cards import CardStore
+    from knowlet.core.card_store import CardStore
     from knowlet.core.drafts import DraftStore
-    from knowlet.core.mining.tasks import TaskStore
+    from knowlet.core.mining.task_store import TaskStore
     ctx = ToolContext(
         vault=vault, index=idx, config=cfg,
         cards=CardStore(vault.cards_dir),

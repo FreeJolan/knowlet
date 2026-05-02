@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from knowlet.config import KnowletConfig, save_config
 from knowlet.core.card import Card, parse_due
-from knowlet.core.cards import CardStore
+from knowlet.core.card_store import CardStore
 from knowlet.core.fsrs_wrap import (
     initial_state,
     parse_rating,
@@ -148,7 +148,7 @@ def _ctx(tmp_path: Path):
     from knowlet.core.drafts import DraftStore
     from knowlet.core.embedding import DummyBackend
     from knowlet.core.index import Index
-    from knowlet.core.mining.tasks import TaskStore
+    from knowlet.core.mining.task_store import TaskStore
     from knowlet.core.tools._registry import ToolContext
 
     v, cfg = _ready_vault(tmp_path)
