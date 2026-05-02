@@ -48,6 +48,15 @@ from knowlet.core.url_capture import (
     FetchError,
     capture_url,
 )
+from knowlet.core.quiz import (
+    DEFAULT_N_QUESTIONS,
+    QuizQuestion,
+    QuizSession,
+    aggregate_score,
+    generate_quiz,
+    grade_answer,
+)
+from knowlet.core.quiz_store import QuizStore
 from knowlet.core.events import ErrorEvent, event_to_dict
 from knowlet.core.fsrs_wrap import initial_state, schedule_next
 from knowlet.core.i18n import SUPPORTED_LANGUAGES, all_keys, set_language
@@ -167,6 +176,62 @@ class SimilarNoteRow(BaseModel):
     title: str
     path: str
     preview: str
+
+
+# ---------------- M7.4 quiz wire schemas (ADR-0014) ----------------
+
+
+class QuizStartRequest(BaseModel):
+    note_ids: list[str]
+    n: int = DEFAULT_N_QUESTIONS
+
+
+class QuizQuestionPayload(BaseModel):
+    type: str
+    question: str
+    reference_answer: str
+    source_note_ids: list[str] = []
+    user_answer: str = ""
+    ai_score: int | None = None
+    ai_reason: str = ""
+    ai_missing: list[str] = []
+    user_disagrees: bool = False
+    user_disagree_reason: str = ""
+    card_id_after_reflux: str | None = None
+
+
+class QuizSessionPayload(BaseModel):
+    id: str
+    started_at: str
+    finished_at: str = ""
+    model: str = ""
+    scope_type: str = "notes"
+    scope_note_ids: list[str] = []
+    questions: list[QuizQuestionPayload] = []
+    n_questions: int = 0
+    n_correct: int = 0
+    n_disagreement: int = 0
+    cards_created: int = 0
+    session_score: int = 0
+
+
+class QuizAnswerRequest(BaseModel):
+    question_index: int
+    user_answer: str
+
+
+class QuizDisagreeRequest(BaseModel):
+    question_index: int
+    disagree: bool = True
+    reason: str = ""
+
+
+class QuizRefluxRequest(BaseModel):
+    """Convert one quiz question into a Card (M7.4.2 Cards reflux)."""
+    question_index: int
+    front: str = ""  # default = question text
+    back: str = ""   # default = reference_answer (or user's edited version)
+    tags: list[str] = []  # default = source-note tags ∪ {quiz}
 
 
 class ProfilePayload(BaseModel):
@@ -1223,6 +1288,245 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 summary=f"(摘要失败:{exc})",
                 summary_failed=True,
             )
+
+    # ---------------- quiz (M7.4 / ADR-0014) ----------------
+
+    def _quiz_store_for(runtime: ChatRuntime) -> QuizStore:
+        """Lazy QuizStore — vault might not have a `quizzes/` dir until the
+        first session is saved. ADR-0006: `<vault>/.knowlet/quizzes/` is the
+        third LLM-generated persistent surface alongside notes/ and drafts/."""
+        return QuizStore(runtime.vault.state_dir)
+
+    def _session_to_payload(session: QuizSession) -> QuizSessionPayload:
+        return QuizSessionPayload(
+            id=session.id,
+            started_at=session.started_at,
+            finished_at=session.finished_at,
+            model=session.model,
+            scope_type=session.scope_type,
+            scope_note_ids=session.scope_note_ids,
+            questions=[
+                QuizQuestionPayload(
+                    type=q.type,
+                    question=q.question,
+                    reference_answer=q.reference_answer,
+                    source_note_ids=q.source_note_ids,
+                    user_answer=q.user_answer,
+                    ai_score=q.ai_score,
+                    ai_reason=q.ai_reason,
+                    ai_missing=q.ai_missing,
+                    user_disagrees=q.user_disagrees,
+                    user_disagree_reason=q.user_disagree_reason,
+                    card_id_after_reflux=q.card_id_after_reflux,
+                )
+                for q in session.questions
+            ],
+            n_questions=session.n_questions,
+            n_correct=session.n_correct,
+            n_disagreement=session.n_disagreement,
+            cards_created=session.cards_created,
+            session_score=session.session_score,
+        )
+
+    @app.post("/api/quiz/start", response_model=QuizSessionPayload)
+    def quiz_start(
+        req: QuizStartRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> QuizSessionPayload:
+        """Generate `n` questions over the chosen Notes and persist a fresh
+        QuizSession. The frontend gets the full session back (including
+        reference_answer — the LLM has already seen it; hiding it client-side
+        would be theatre, and ADR-0014 §4.2 anyway requires the user to see
+        the reference for each scored question)."""
+        from knowlet.core.note import Note, new_id
+        from datetime import UTC, datetime
+
+        if not req.note_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="note_ids must be non-empty",
+            )
+        n = max(1, min(20, int(req.n)))  # bound LLM call size
+        notes_for_llm: list[tuple[str, str, str]] = []
+        for nid in req.note_ids:
+            meta = runtime.index.get_note_meta(nid)
+            if meta is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"note not found: {nid}",
+                )
+            path = Path(meta["path"])
+            if not path.is_absolute():
+                path = runtime.vault.notes_dir / path.name
+            if not path.exists():
+                raise HTTPException(
+                    status_code=status.HTTP_410_GONE,
+                    detail=f"note file missing on disk: {path}",
+                )
+            note = Note.from_file(path)
+            notes_for_llm.append((note.id, note.title, note.body))
+
+        try:
+            questions = generate_quiz(runtime.llm, notes_for_llm, n=n)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"generation failed: {exc}",
+            ) from exc
+
+        session = QuizSession(
+            id=new_id(),
+            started_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            model=runtime.config.llm.model,
+            scope_type="notes",
+            scope_note_ids=[r[0] for r in notes_for_llm],
+            questions=questions,
+        )
+        _quiz_store_for(runtime).save(session)
+        return _session_to_payload(session)
+
+    @app.get("/api/quiz/{quiz_id}", response_model=QuizSessionPayload)
+    def quiz_get(
+        quiz_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> QuizSessionPayload:
+        session = _quiz_store_for(runtime).load(quiz_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"quiz not found: {quiz_id}",
+            )
+        return _session_to_payload(session)
+
+    @app.post("/api/quiz/{quiz_id}/answer", response_model=QuizSessionPayload)
+    def quiz_answer(
+        quiz_id: str,
+        req: QuizAnswerRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> QuizSessionPayload:
+        store = _quiz_store_for(runtime)
+        session = store.load(quiz_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"quiz not found: {quiz_id}",
+            )
+        if not 0 <= req.question_index < len(session.questions):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"question_index out of range",
+            )
+        q = session.questions[req.question_index]
+        score, reason, missing = grade_answer(runtime.llm, q, req.user_answer)
+        q.user_answer = req.user_answer
+        q.ai_score = score
+        q.ai_reason = reason
+        q.ai_missing = missing
+        store.save(session)
+        return _session_to_payload(session)
+
+    @app.post("/api/quiz/{quiz_id}/disagree", response_model=QuizSessionPayload)
+    def quiz_disagree(
+        quiz_id: str,
+        req: QuizDisagreeRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> QuizSessionPayload:
+        """M7.4.2 disagreement loop. Records the user's mark + optional
+        rationale; n_disagreement is reflected in the next aggregate."""
+        store = _quiz_store_for(runtime)
+        session = store.load(quiz_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"quiz not found: {quiz_id}",
+            )
+        if not 0 <= req.question_index < len(session.questions):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="question_index out of range",
+            )
+        q = session.questions[req.question_index]
+        q.user_disagrees = req.disagree
+        q.user_disagree_reason = req.reason if req.disagree else ""
+        store.save(session)
+        return _session_to_payload(session)
+
+    @app.post("/api/quiz/{quiz_id}/complete", response_model=QuizSessionPayload)
+    def quiz_complete(
+        quiz_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> QuizSessionPayload:
+        from datetime import UTC, datetime
+
+        store = _quiz_store_for(runtime)
+        session = store.load(quiz_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"quiz not found: {quiz_id}",
+            )
+        if not session.finished_at:
+            session.finished_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        aggregate_score(session)
+        store.save(session)
+        return _session_to_payload(session)
+
+    @app.post("/api/quiz/{quiz_id}/reflux", response_model=QuizSessionPayload)
+    def quiz_reflux(
+        quiz_id: str,
+        req: QuizRefluxRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> QuizSessionPayload:
+        """M7.4.2 Cards reflux. Convert one quiz question into a Card.
+        Defaults: front = question, back = (user's edited) reference,
+        tags = source-note tags ∪ {quiz}. Idempotent: if the question
+        already has a card_id_after_reflux, return without re-creating."""
+        from knowlet.core.note import new_id
+
+        store = _quiz_store_for(runtime)
+        session = store.load(quiz_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"quiz not found: {quiz_id}",
+            )
+        if not 0 <= req.question_index < len(session.questions):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="question_index out of range",
+            )
+        q = session.questions[req.question_index]
+        if q.card_id_after_reflux:
+            return _session_to_payload(session)
+
+        front = (req.front or q.question).strip()
+        back = (req.back or q.reference_answer).strip()
+        # Default tags = union of source-Note tags + "quiz".
+        if req.tags:
+            tags = list(req.tags)
+        else:
+            tag_set: set[str] = {"quiz"}
+            for sid in q.source_note_ids:
+                meta = runtime.index.get_note_meta(sid)
+                if meta:
+                    tag_set.update(meta.get("tags") or [])
+            tags = sorted(tag_set)
+
+        card = Card(
+            id=new_id(),
+            type="qa",
+            front=front,
+            back=back,
+            tags=tags,
+            fsrs_state=initial_state(),
+            source_note_id=q.source_note_ids[0] if q.source_note_ids else None,
+        )
+        runtime.ctx.cards.save(card)
+        q.card_id_after_reflux = card.id
+        # Update aggregate so cards_created reflects the new mark.
+        aggregate_score(session)
+        store.save(session)
+        return _session_to_payload(session)
 
     # ---------------- cards ----------------
 

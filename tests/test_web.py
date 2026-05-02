@@ -1077,3 +1077,270 @@ def test_chat_turn_with_url_capsule_uses_summary_directly(tmp_path: Path):
     assert "what's the takeaway?" in last
     # url-source capsules don't carry the enclosing-section hint.
     assert "标题节是" not in last
+
+
+# ------------------------------------------------------------- M7.4 quiz endpoints
+
+
+def test_quiz_start_generates_persists_returns_session(tmp_path: Path):
+    """M7.4.1: POST /api/quiz/start scopes to the given Notes, calls the
+    LLM (stubbed), and persists the QuizSession to .knowlet/quizzes/."""
+    from knowlet.core.llm import AssistantMessage
+
+    quiz_json = (
+        '{"questions": ['
+        '{"type": "recall", "question": "What is RAG?", '
+        ' "reference_answer": "Retrieval-augmented generation.", '
+        ' "source_note_ids": ["__NID__"]},'
+        '{"type": "concept-explanation", "question": "Why fuse?", '
+        ' "reference_answer": "Robust to single-retriever failure.", '
+        ' "source_note_ids": ["__NID__"]}'
+        ']}'
+    )
+
+    class GenerateLLM:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            return AssistantMessage(content=self.payload, tool_calls=[])
+
+    client, v, _ = _client_with_stub(tmp_path, GenerateLLM(quiz_json))
+    runtime = client.app.state.web_state.runtime_or_init()
+
+    n = Note(id=new_id(), title="RAG", body="hybrid retrieval combines FTS + vec")
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    # The stub doesn't substitute __NID__, but generate_quiz tolerates the
+    # source_note_ids string verbatim. We just need the questions to land.
+    r = client.post("/api/quiz/start", json={"note_ids": [n.id], "n": 2})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["questions"]) == 2
+    assert body["scope_note_ids"] == [n.id]
+    assert body["session_score"] == 0  # not aggregated yet
+    # On disk?
+    assert (v.state_dir / "quizzes" / f"{body['id']}.json").exists()
+
+
+def test_quiz_start_404_for_unknown_note(tmp_path: Path):
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.post("/api/quiz/start", json={"note_ids": ["nonexistent"], "n": 5})
+    assert r.status_code == 404
+
+
+def test_quiz_start_400_for_empty_note_list(tmp_path: Path):
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.post("/api/quiz/start", json={"note_ids": [], "n": 5})
+    assert r.status_code == 400
+
+
+def test_quiz_answer_grades_and_persists(tmp_path: Path):
+    from knowlet.core.llm import AssistantMessage
+
+    quiz_json = (
+        '{"questions": [{"type": "recall", "question": "Q1?", '
+        '"reference_answer": "A1", "source_note_ids": []}]}'
+    )
+    grade_json = '{"score": 4, "reason": "Solid.", "missing": []}'
+
+    class TwoCallLLM:
+        """First call returns generation; subsequent calls return grading."""
+
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            self.calls += 1
+            return AssistantMessage(
+                content=quiz_json if self.calls == 1 else grade_json,
+                tool_calls=[],
+            )
+
+    client, v, _ = _client_with_stub(tmp_path, TwoCallLLM())
+    runtime = client.app.state.web_state.runtime_or_init()
+
+    n = Note(id=new_id(), title="t", body="body")
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    start = client.post("/api/quiz/start", json={"note_ids": [n.id], "n": 1}).json()
+    qid = start["id"]
+
+    r = client.post(
+        f"/api/quiz/{qid}/answer",
+        json={"question_index": 0, "user_answer": "RAG fuses retrieval + generation."},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["questions"][0]["ai_score"] == 4
+    assert body["questions"][0]["user_answer"].startswith("RAG fuses")
+    assert "Solid" in body["questions"][0]["ai_reason"]
+
+
+def test_quiz_complete_aggregates_score(tmp_path: Path):
+    """After answering, complete should run aggregate_score (n_correct,
+    session_score, finished_at)."""
+    from knowlet.core.llm import AssistantMessage
+
+    quiz_json = (
+        '{"questions": ['
+        '{"type": "recall", "question": "Q1?", "reference_answer": "A", "source_note_ids": []},'
+        '{"type": "recall", "question": "Q2?", "reference_answer": "A", "source_note_ids": []}'
+        ']}'
+    )
+
+    class ScriptedLLM:
+        def __init__(self):
+            self.replies = [
+                quiz_json,
+                '{"score": 5, "reason": "perfect", "missing": []}',
+                '{"score": 3, "reason": "ok", "missing": []}',
+            ]
+
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            return AssistantMessage(content=self.replies.pop(0), tool_calls=[])
+
+    client, v, _ = _client_with_stub(tmp_path, ScriptedLLM())
+    runtime = client.app.state.web_state.runtime_or_init()
+
+    n = Note(id=new_id(), title="t", body="body")
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    start = client.post("/api/quiz/start", json={"note_ids": [n.id], "n": 2}).json()
+    qid = start["id"]
+    client.post(f"/api/quiz/{qid}/answer", json={"question_index": 0, "user_answer": "ok"})
+    client.post(f"/api/quiz/{qid}/answer", json={"question_index": 1, "user_answer": "ok"})
+
+    final = client.post(f"/api/quiz/{qid}/complete").json()
+    assert final["n_questions"] == 2
+    assert final["n_correct"] == 2  # 5 + 3 both ≥ PASS_QUESTION_SCORE
+    # 5+3 = 8 / (2*5) * 100 = 80
+    assert final["session_score"] == 80
+    assert final["finished_at"]  # populated
+
+
+def test_quiz_disagree_marks_question(tmp_path: Path):
+    from knowlet.core.llm import AssistantMessage
+
+    quiz_json = (
+        '{"questions": [{"type": "recall", "question": "Q?", '
+        '"reference_answer": "A", "source_note_ids": []}]}'
+    )
+
+    class ScriptedLLM:
+        def __init__(self):
+            self.replies = [
+                quiz_json,
+                '{"score": 2, "reason": "weak", "missing": ["x"]}',
+            ]
+
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            return AssistantMessage(content=self.replies.pop(0), tool_calls=[])
+
+    client, v, _ = _client_with_stub(tmp_path, ScriptedLLM())
+    runtime = client.app.state.web_state.runtime_or_init()
+    n = Note(id=new_id(), title="t", body="body")
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    start = client.post("/api/quiz/start", json={"note_ids": [n.id], "n": 1}).json()
+    qid = start["id"]
+    client.post(f"/api/quiz/{qid}/answer", json={"question_index": 0, "user_answer": "ans"})
+    r = client.post(
+        f"/api/quiz/{qid}/disagree",
+        json={"question_index": 0, "disagree": True, "reason": "AI was too strict"},
+    )
+    assert r.status_code == 200
+    q = r.json()["questions"][0]
+    assert q["user_disagrees"] is True
+    assert "too strict" in q["user_disagree_reason"]
+
+
+def test_quiz_reflux_creates_card(tmp_path: Path):
+    """M7.4.2 Cards reflux: convert one quiz question into a Card."""
+    from knowlet.core.llm import AssistantMessage
+
+    quiz_json = (
+        '{"questions": [{"type": "recall", "question": "Why X?", '
+        '"reference_answer": "Because X.", "source_note_ids": ["__NID__"]}]}'
+    )
+
+    class ScriptedLLM:
+        def __init__(self):
+            self.replies = [
+                quiz_json,
+                '{"score": 2, "reason": "missed", "missing": ["X"]}',
+            ]
+
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            return AssistantMessage(content=self.replies.pop(0), tool_calls=[])
+
+    client, v, _ = _client_with_stub(tmp_path, ScriptedLLM())
+    runtime = client.app.state.web_state.runtime_or_init()
+    n = Note(id=new_id(), title="t", body="body", tags=["topic-a"])
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    start = client.post("/api/quiz/start", json={"note_ids": [n.id], "n": 1}).json()
+    qid = start["id"]
+    client.post(f"/api/quiz/{qid}/answer", json={"question_index": 0, "user_answer": "shrug"})
+
+    r = client.post(f"/api/quiz/{qid}/reflux", json={"question_index": 0})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    card_id = body["questions"][0]["card_id_after_reflux"]
+    assert card_id  # populated
+    assert body["cards_created"] == 1
+
+    # And the Card actually lives in the cards dir.
+    card_resp = client.get(f"/api/cards/{card_id}")
+    assert card_resp.status_code == 200
+    cd = card_resp.json()
+    assert cd["front"] == "Why X?"
+    assert cd["back"] == "Because X."
+    # tags = source-note tags ∪ {"quiz"}
+    assert "quiz" in cd["tags"]
+
+
+def test_quiz_reflux_idempotent(tmp_path: Path):
+    """Calling reflux twice on the same question doesn't double-create."""
+    from knowlet.core.llm import AssistantMessage
+
+    quiz_json = (
+        '{"questions": [{"type": "recall", "question": "Q?", '
+        '"reference_answer": "A", "source_note_ids": []}]}'
+    )
+
+    class ScriptedLLM:
+        def __init__(self):
+            self.replies = [
+                quiz_json,
+                '{"score": 2, "reason": "...", "missing": []}',
+            ]
+
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            return AssistantMessage(content=self.replies.pop(0), tool_calls=[])
+
+    client, v, _ = _client_with_stub(tmp_path, ScriptedLLM())
+    runtime = client.app.state.web_state.runtime_or_init()
+    n = Note(id=new_id(), title="t", body="body")
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    start = client.post("/api/quiz/start", json={"note_ids": [n.id], "n": 1}).json()
+    qid = start["id"]
+    client.post(f"/api/quiz/{qid}/answer", json={"question_index": 0, "user_answer": "ans"})
+
+    first = client.post(f"/api/quiz/{qid}/reflux", json={"question_index": 0}).json()
+    second = client.post(f"/api/quiz/{qid}/reflux", json={"question_index": 0}).json()
+    assert first["questions"][0]["card_id_after_reflux"] == second["questions"][0]["card_id_after_reflux"]
+    assert second["cards_created"] == 1
+
+
+def test_quiz_get_404_for_unknown(tmp_path: Path):
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.get("/api/quiz/01HXNONEXISTENT00000000000")
+    assert r.status_code == 404

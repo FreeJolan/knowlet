@@ -227,7 +227,24 @@ function ui() {
     // ---- focus modes (fullscreen overlays per ADR-0011 §5) ----
     // The three focus modes preserve outer layout / open notes / scroll
     // position on Esc — they're overlays, not navigation.
-    focus: null,          // null | 'chat' | 'drafts' | 'cards'
+    focus: null,          // null | 'chat' | 'drafts' | 'cards' | 'quiz'
+
+    // ---- M7.4 quiz focus mode state ----
+    quiz: {
+      stage: "scope",     // 'scope' | 'loading' | 'loop' | 'summary' | 'error'
+      session: null,      // QuizSessionPayload from /api/quiz/start
+      currentIndex: 0,
+      answerDraft: "",
+      submitting: false,
+      n: 5,               // user-tweakable (advanced settings)
+      scopeNoteIds: [],   // note ids selected for the quiz
+      error: "",
+      // disagreement loop state
+      disagreeOpen: -1,   // question index whose disagree textarea is open
+      disagreeDraft: "",
+      // Cards reflux state — selected indices for batch convert
+      refluxSelected: {}, // {questionIdx: true}
+    },
 
     // ---- Cmd+K command palette ----
     palette: {
@@ -888,6 +905,200 @@ function ui() {
       this.openNote(noteId);
     },
 
+    // ============================================================ M7.4 quiz focus mode
+
+    /** Enter the quiz focus mode at the scope picker. Pre-seeds with the
+     * current Note (if any) so the most common path — "quiz me on this" —
+     * is one click. */
+    openQuizFocus() {
+      const cur = this.currentTab();
+      this.quiz = {
+        stage: "scope",
+        session: null,
+        currentIndex: 0,
+        answerDraft: "",
+        submitting: false,
+        n: 5,
+        scopeNoteIds: cur ? [cur.id] : [],
+        error: "",
+        disagreeOpen: -1,
+        disagreeDraft: "",
+        refluxSelected: {},
+      };
+      this.focus = "quiz";
+    },
+
+    exitQuizFocus() {
+      this.focus = null;
+    },
+
+    /** Toggle a Note's inclusion in the quiz scope. Lets the user pick
+     * 1..N notes from a list (the ADR's "manual multi-select" scope). */
+    toggleQuizScopeNote(noteId) {
+      const arr = this.quiz.scopeNoteIds;
+      const i = arr.indexOf(noteId);
+      if (i >= 0) arr.splice(i, 1);
+      else arr.push(noteId);
+    },
+
+    /** Kick off generation. The backend handles the LLM call; we just
+     * show a loading state with retry on failure. */
+    async startQuiz() {
+      if (this.quiz.scopeNoteIds.length === 0) {
+        toast(tt("quiz.scope.empty") || "请至少选一条笔记", "warn");
+        return;
+      }
+      this.quiz.stage = "loading";
+      this.quiz.error = "";
+      try {
+        const session = await api("POST", "/api/quiz/start", {
+          note_ids: this.quiz.scopeNoteIds,
+          n: Math.max(1, Math.min(20, this.quiz.n | 0)),
+        });
+        this.quiz.session = session;
+        this.quiz.currentIndex = 0;
+        this.quiz.answerDraft = "";
+        this.quiz.stage = "loop";
+      } catch (exc) {
+        this.quiz.stage = "error";
+        this.quiz.error = exc.message || "generation failed";
+      }
+    },
+
+    /** "再来一组" — regenerate without billing the user mentally. New
+     * session id, same scope. */
+    async regenerateQuiz() {
+      this.quiz.session = null;
+      this.quiz.currentIndex = 0;
+      this.quiz.answerDraft = "";
+      await this.startQuiz();
+    },
+
+    quizCurrentQuestion() {
+      const s = this.quiz.session;
+      if (!s) return null;
+      return s.questions[this.quiz.currentIndex] || null;
+    },
+
+    /** Submit the current answer for grading; advance to next question
+     * or to the summary if this was the last. */
+    async submitQuizAnswer() {
+      const s = this.quiz.session;
+      if (!s || this.quiz.submitting) return;
+      this.quiz.submitting = true;
+      try {
+        const updated = await api(
+          "POST",
+          `/api/quiz/${encodeURIComponent(s.id)}/answer`,
+          {
+            question_index: this.quiz.currentIndex,
+            user_answer: this.quiz.answerDraft || "",
+          },
+        );
+        this.quiz.session = updated;
+      } catch (exc) {
+        toast(`grading failed: ${exc.message}`, "error");
+      } finally {
+        this.quiz.submitting = false;
+      }
+    },
+
+    /** Move to the next question, or finalize if at the last one. */
+    async advanceQuiz() {
+      const s = this.quiz.session;
+      if (!s) return;
+      const last = this.quiz.currentIndex >= s.questions.length - 1;
+      if (last) {
+        await this.completeQuiz();
+        return;
+      }
+      this.quiz.currentIndex += 1;
+      this.quiz.answerDraft = "";
+    },
+
+    async completeQuiz() {
+      const s = this.quiz.session;
+      if (!s) return;
+      try {
+        const final = await api("POST", `/api/quiz/${encodeURIComponent(s.id)}/complete`);
+        this.quiz.session = final;
+        this.quiz.stage = "summary";
+        // Pre-select error questions for Cards reflux per ADR-0014 §6.
+        this.quiz.refluxSelected = {};
+        for (let i = 0; i < final.questions.length; i++) {
+          if ((final.questions[i].ai_score || 0) < 3) {
+            this.quiz.refluxSelected[i] = true;
+          }
+        }
+      } catch (exc) {
+        toast(`finalize failed: ${exc.message}`, "error");
+      }
+    },
+
+    /** ADR-0014 §4.3 disagreement loop: user clicks ✗,we open a textarea
+     * for an optional reason, then POST it. */
+    openDisagree(qIdx) {
+      const q = this.quiz.session?.questions?.[qIdx];
+      this.quiz.disagreeOpen = qIdx;
+      this.quiz.disagreeDraft = q?.user_disagree_reason || "";
+    },
+
+    closeDisagree() {
+      this.quiz.disagreeOpen = -1;
+      this.quiz.disagreeDraft = "";
+    },
+
+    async submitDisagree(qIdx, disagree) {
+      const s = this.quiz.session;
+      if (!s) return;
+      try {
+        const updated = await api(
+          "POST",
+          `/api/quiz/${encodeURIComponent(s.id)}/disagree`,
+          {
+            question_index: qIdx,
+            disagree,
+            reason: disagree ? this.quiz.disagreeDraft : "",
+          },
+        );
+        this.quiz.session = updated;
+        this.quiz.disagreeOpen = -1;
+        this.quiz.disagreeDraft = "";
+      } catch (exc) {
+        toast(`disagree failed: ${exc.message}`, "error");
+      }
+    },
+
+    /** ADR-0014 §6 Cards reflux: convert each selected error question
+     * into a Card. Defaults front=question, back=reference_answer, tags
+     * derived server-side. */
+    async refluxSelectedCards() {
+      const s = this.quiz.session;
+      if (!s) return;
+      const indices = Object.keys(this.quiz.refluxSelected)
+        .filter((k) => this.quiz.refluxSelected[k])
+        .map((k) => parseInt(k, 10));
+      if (indices.length === 0) {
+        toast("没有选中任何题", "warn");
+        return;
+      }
+      let updated = s;
+      for (const idx of indices) {
+        try {
+          updated = await api(
+            "POST",
+            `/api/quiz/${encodeURIComponent(s.id)}/reflux`,
+            { question_index: idx },
+          );
+        } catch (exc) {
+          toast(`Card 创建失败: ${exc.message}`, "error");
+        }
+      }
+      this.quiz.session = updated;
+      this.refreshCardsCount();
+      toast(`${indices.length} 题已转为 Card`, "ok");
+    },
+
     persistTabs() {
       try {
         localStorage.setItem(
@@ -1493,6 +1704,7 @@ function ui() {
         { id: "reindex",        label: tt("palette.cmd.reindex"),   sub: tt("palette.cmd.reindex.sub") },
         { id: "doctor",         label: tt("palette.cmd.doctor"),    sub: tt("palette.cmd.doctor.sub") },
         { id: "url-capture",    label: tt("palette.cmd.urlcapture"), sub: tt("palette.cmd.urlcapture.sub") },
+        { id: "quiz-me",        label: tt("palette.cmd.quiz"),       sub: tt("palette.cmd.quiz.sub"), disabled: !this.currentTab() && this.notes.length === 0 },
       ];
     },
 
@@ -1511,6 +1723,7 @@ function ui() {
         case "reindex":        this.runReindex(); break;
         case "doctor":         this.runDoctor(); break;
         case "url-capture":    this.runPaletteUrlCapture(); break;
+        case "quiz-me":        this.closePalette(); this.openQuizFocus(); break;
       }
     },
 
@@ -1806,6 +2019,8 @@ function ui() {
         this.openDraftsReview();
       } else if (mode === "cards") {
         this.openCardsReview();
+      } else if (mode === "quiz") {
+        this.openQuizFocus();
       }
     },
 

@@ -33,6 +33,7 @@
     ├── vectors.sqlite            向量索引
     ├── profile/                  AI 派生分析(JSON)
     ├── conversations/            对话 raw payload(30 天保留)
+    ├── quizzes/                  Quiz session 持久化(M7.4 / ADR-0014;90 天老化,有 Card 回流的留长)
     └── backups/                  关键 state 文件备份
 ```
 
@@ -42,6 +43,7 @@
 | **AI 派生分析** | `.knowlet/profile/*.json`(错误模式统计、掌握度向量、学习行为画像) | ❌ | ✅ 可从 Vault 重建 |
 | **系统索引** | `.knowlet/index.sqlite` / `vectors.sqlite` | ❌ | ✅ 可从 Vault 重建 |
 | **对话缓存** | `.knowlet/conversations/` | ❌(永不同步) | ✅ 30 天自动过期 |
+| **Quiz 历史** | `.knowlet/quizzes/<id>.json`(M7.4 / ADR-0014) | ❌ | ⚠️ 90 天后自动归档到 `.knowlet/quizzes/.archive/`;有 Card 回流的留长 |
 
 判断规则:**"丢了这份数据是否丢了用户给我们的真实信息"** —— 是 → Vault 实体(必须同步);否(可从其他数据重建)→ `.knowlet/`(默认不同步)。
 
