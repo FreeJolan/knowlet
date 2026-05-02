@@ -97,15 +97,39 @@ function applyI18n(root) {
 
 function renderMarkdown(text) {
   if (typeof marked !== "undefined") {
-    const html = marked.parse(text || "");
-    return html.replace(
+    let html = marked.parse(text || "");
+    // External-by-default for real links (not in-app fragment links).
+    html = html.replace(
       /<a (?![^>]*\btarget=)/gi,
       '<a target="_blank" rel="noopener noreferrer" '
     );
+    // M7.0.3: rewrite portable relative `_attachments/foo.png` paths in the
+    // markdown into web-served URLs so the preview pane can render them.
+    // The on-disk markdown stays portable (Obsidian / Finder open it as-is);
+    // only the rendered HTML knows about /files/.
+    html = html.replace(
+      /<img([^>]*)\bsrc="(_attachments\/[^"]+)"/gi,
+      '<img$1 src="/files/$2"'
+    );
+    return html;
   }
   const pre = document.createElement("pre");
   pre.textContent = text || "";
   return pre.outerHTML;
+}
+
+// ---------- image paste → upload → insert markdown ----------
+
+async function uploadImageBlob(blob) {
+  const fd = new FormData();
+  fd.append("file", blob, blob.name || "pasted");
+  const res = await fetch("/api/attachments", { method: "POST", body: fd });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`upload failed (${res.status}): ${detail}`);
+  }
+  const { path } = await res.json();
+  return path;
 }
 
 // ---------- main UI factory ----------
@@ -476,6 +500,63 @@ function ui() {
         tab.body = value;
         this.markDirty();
       }
+    },
+
+    /** M7.0.3: intercept image paste in the editor textarea. Uploads each
+     * image clipboard item to `/api/attachments`, then inserts a markdown
+     * link at the caret. Non-image clipboard items (text, etc) fall through
+     * to the browser's default paste so users can still paste regular text.
+     */
+    async onEditorPaste(event) {
+      const items = event.clipboardData?.items;
+      if (!items) return;
+      const images = Array.from(items).filter(
+        (it) => it.kind === "file" && it.type.startsWith("image/")
+      );
+      if (images.length === 0) return;
+      event.preventDefault();
+      const ta = event.target;
+      for (const it of images) {
+        const blob = it.getAsFile();
+        if (!blob) continue;
+        // Show a placeholder so the user has visual confirmation while
+        // the upload is in flight (large pasted screenshots can take a moment).
+        const placeholder = `![uploading…](_attachments/pending-${Date.now()})`;
+        this._insertAtCaret(ta, placeholder + "\n");
+        try {
+          const path = await uploadImageBlob(blob);
+          // Filename without ext makes a friendlier alt text than ULID.
+          const altBase = path.split("/").pop().split(".")[0];
+          const final = `![${altBase}](${path})`;
+          if (ta.value.includes(placeholder)) {
+            ta.value = ta.value.replace(placeholder, final);
+            this.editorBody = ta.value;
+          } else {
+            this._insertAtCaret(ta, final + "\n");
+          }
+        } catch (err) {
+          console.error("paste upload failed:", err);
+          if (ta.value.includes(placeholder)) {
+            ta.value = ta.value.replace(placeholder, "");
+            this.editorBody = ta.value;
+          }
+          toast(`图片上传失败: ${err.message}`, "error");
+        }
+      }
+    },
+
+    _insertAtCaret(ta, text) {
+      const start = ta.selectionStart ?? ta.value.length;
+      const end = ta.selectionEnd ?? start;
+      const before = ta.value.slice(0, start);
+      const after = ta.value.slice(end);
+      const next = before + text + after;
+      ta.value = next;
+      // Move caret to end of inserted text.
+      const pos = start + text.length;
+      ta.selectionStart = ta.selectionEnd = pos;
+      // Push back through Alpine binding so currentTab().body stays in sync.
+      this.editorBody = next;
     },
 
     persistTabs() {

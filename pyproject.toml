@@ -21,6 +21,9 @@ dependencies = [
     "numpy>=1.26",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    # python-multipart is fastapi's dep for `UploadFile` / multipart form data;
+    # used by /api/attachments (M7.0.3 image-paste).
+    "python-multipart>=0.0.9",
     "fsrs>=6.0",
     "feedparser>=6.0",
     "trafilatura>=1.12",
