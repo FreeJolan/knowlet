@@ -50,6 +50,9 @@
   @keydown.window.ctrl.shift.d.prevent="handleFocusHotkey($event, 'drafts')"
   @keydown.window.meta.shift.r.prevent="handleFocusHotkey($event, 'cards')"
   @keydown.window.ctrl.shift.r.prevent="handleFocusHotkey($event, 'cards')"
+  @keydown.window.meta.shift.a.prevent="captureSelectionAsCapsule()"
+  @keydown.window.ctrl.shift.a.prevent="captureSelectionAsCapsule()"
+  @selectionchange.document.debounce.150ms="onEditorSelectionChange()"
   @keydown.window="handleDraftsFocusKey($event); handleCardsFocusKey($event);"
   class="text-text"
 >
@@ -447,6 +450,36 @@
         </div>
 
         <div class="border-t border-border p-2.5">
+          <!-- M7.1 capsule strip — active (clickable to remove) + sent (grayed, click to reuse) -->
+          <div
+            x-show="chatRefs.length > 0 || chatRefsSent.length > 0"
+            class="flex flex-wrap gap-1.5 mb-2"
+          >
+            <template x-for="(r, i) in chatRefs" :key="'a' + i">
+              <span
+                @click="removeChatRef(i)"
+                :title="r.quote_text"
+                class="capsule capsule-active"
+              >
+                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-link"/></svg>
+                <span x-text="`《${r.note_title}》`"></span>
+                <span class="capsule-quote" x-text="r.quote_text.slice(0, 28) + (r.quote_text.length > 28 ? '…' : '')"></span>
+                <span class="capsule-x">×</span>
+              </span>
+            </template>
+            <template x-for="(r, i) in chatRefsSent" :key="'s' + i">
+              <span
+                @click="reuseChatRef(i)"
+                :title="r.quote_text + ' · 再用一次'"
+                class="capsule capsule-sent"
+              >
+                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-link"/></svg>
+                <span x-text="`《${r.note_title}》`"></span>
+                <span class="capsule-quote" x-text="r.quote_text.slice(0, 28) + (r.quote_text.length > 28 ? '…' : '')"></span>
+                <span class="capsule-reuse" data-i18n="chat.reference.reuse">再用</span>
+              </span>
+            </template>
+          </div>
           <textarea
             x-ref="chatInput"
             x-model="chatDraft"
@@ -502,6 +535,21 @@
   <div class="flex-1"></div>
   <span class="text-textmute mono text-[10.5px]">v0.0.1</span>
 </footer>
+
+<!-- ═══════════════ M7.1 SELECTION POPOVER ═══════════════ -->
+<!-- Floats next to the user's text selection. One click → capsule. -->
+
+<button
+  x-show="selectionPopover.visible"
+  x-cloak
+  @click.stop="captureSelectionAsCapsule()"
+  :style="`position: fixed; left: ${selectionPopover.x}px; top: ${selectionPopover.y}px; z-index: 60;`"
+  class="bg-card border border-border shadow-lg rounded px-2.5 py-1 text-xs text-accent hover:bg-accentsoft flex items-center gap-1.5"
+>
+  <svg class="icon icon-sm" aria-hidden="true"><use href="#i-link"/></svg>
+  <span data-i18n="select.attach_to_chat">引用至聊天</span>
+  <span class="mono text-textmute text-[10.5px] ml-1">⌘⇧A</span>
+</button>
 
 <!-- ═══════════════ COMMAND PALETTE (Cmd+K · ADR-0011 §4) ═══════════════ -->
 
@@ -911,6 +959,28 @@
 
       <div class="border-t border-border px-6 py-4" style="background: var(--panel);">
         <div class="mx-auto" style="max-width: 880px;">
+          <!-- M7.1 capsule strip (chat focus mode) -->
+          <div
+            x-show="chatRefs.length > 0 || chatRefsSent.length > 0"
+            class="flex flex-wrap gap-1.5 mb-2"
+          >
+            <template x-for="(r, i) in chatRefs" :key="'fa' + i">
+              <span @click="removeChatRef(i)" :title="r.quote_text" class="capsule capsule-active">
+                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-link"/></svg>
+                <span x-text="`《${r.note_title}》`"></span>
+                <span class="capsule-quote" x-text="r.quote_text.slice(0, 36) + (r.quote_text.length > 36 ? '…' : '')"></span>
+                <span class="capsule-x">×</span>
+              </span>
+            </template>
+            <template x-for="(r, i) in chatRefsSent" :key="'fs' + i">
+              <span @click="reuseChatRef(i)" :title="r.quote_text + ' · 再用一次'" class="capsule capsule-sent">
+                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-link"/></svg>
+                <span x-text="`《${r.note_title}》`"></span>
+                <span class="capsule-quote" x-text="r.quote_text.slice(0, 36) + (r.quote_text.length > 36 ? '…' : '')"></span>
+                <span class="capsule-reuse" data-i18n="chat.reference.reuse">再用</span>
+              </span>
+            </template>
+          </div>
           <textarea
             x-ref="chatFocusInput"
             x-model="chatDraft"

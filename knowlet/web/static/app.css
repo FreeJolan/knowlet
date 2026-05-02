@@ -626,3 +626,55 @@ body {
   font-size: 12px;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+/* M7.1 quote-reference capsules */
+.capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 12px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  cursor: pointer;
+  border: 1px solid var(--accent-soft, var(--line));
+  max-width: 320px;
+}
+.capsule-active {
+  background: var(--accent-soft, transparent);
+  color: var(--accent, var(--ink));
+}
+.capsule-active:hover {
+  background: var(--accent-tint, var(--accent-soft));
+  border-color: var(--accent, var(--line));
+}
+.capsule-sent {
+  background: var(--panel, #ede7d9);
+  color: var(--ink-mute, var(--ink-soft));
+  border-color: var(--line-soft);
+  opacity: 0.78;
+}
+.capsule-sent:hover {
+  opacity: 1;
+  border-color: var(--accent, var(--line));
+  color: var(--accent, var(--ink));
+}
+.capsule .capsule-quote {
+  color: var(--ink-soft, var(--ink-mute));
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+.capsule .capsule-x {
+  color: var(--ink-mute);
+  font-weight: 700;
+  font-size: 13px;
+  margin-left: 2px;
+}
+.capsule .capsule-reuse {
+  color: var(--accent, var(--ink-soft));
+  font-size: 10.5px;
+  margin-left: 2px;
+}

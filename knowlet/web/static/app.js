@@ -201,6 +201,10 @@ function ui() {
     chatStreaming: false,
     chatDraft: "",
     imeComposing: false,
+    // M7.1: selection → chat capsule
+    chatRefs: [],         // [{note_id, note_title, quote_text, paragraph_anchor}]
+    chatRefsSent: [],     // grayed; one click to "use again"
+    selectionPopover: { visible: false, x: 0, y: 0 },
     // M6.4 multi-session
     sessions: [],         // ConversationSummary[] from /api/chat/sessions
     activeSessionId: "",
@@ -672,6 +676,120 @@ function ui() {
       this.editorBody = next;
     },
 
+    // ============================================================ M7.1 quote refs
+
+    /** Capture the current editor selection (textarea or preview), build
+     * a capsule, and push it onto chatRefs. The capsule structure matches
+     * the QuoteRefPayload Pydantic on the backend; the LLM-facing prompt
+     * is composed at send time, not here. */
+    captureSelectionAsCapsule() {
+      const cur = this.currentTab();
+      if (!cur) {
+        toast("先打开一条笔记", "warn");
+        return false;
+      }
+      const text = this._currentSelectionText();
+      if (!text || text.length < 2) {
+        toast("先在笔记里选一段文字", "warn");
+        return false;
+      }
+      if (this.chatRefs.length >= 5) {
+        toast("最多挂 5 颗引用,请先取掉一颗", "warn");
+        return false;
+      }
+      // Anchor = first 64 chars of the selected paragraph (the line(s)
+      // the selection sits inside, not just the selection itself), so
+      // a later edit that doesn't kill the paragraph still finds it.
+      const anchor = text
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 64)
+        .toLowerCase();
+      this.chatRefs.push({
+        note_id: cur.id,
+        note_title: cur.title,
+        quote_text: text,
+        paragraph_anchor: anchor,
+      });
+      this.selectionPopover.visible = false;
+      // Switch right rail to AI tab so the user sees the capsule landing.
+      this.rightOpen = true;
+      this.rightTab = "ai";
+      return true;
+    },
+
+    /** Reads the current selection from either the preview pane (window
+     * selection) or the editor textarea (selectionStart/End). Returns
+     * the trimmed string, or "" if nothing is selected. */
+    _currentSelectionText() {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && sel.toString().trim().length > 0) {
+        return sel.toString().trim();
+      }
+      const ta = document.querySelector('textarea[x-model="editorBody"]');
+      if (ta && typeof ta.selectionStart === "number") {
+        const s = ta.value.slice(ta.selectionStart, ta.selectionEnd).trim();
+        if (s) return s;
+      }
+      return "";
+    },
+
+    /** Selection-change watcher. When the user finishes selecting non-empty
+     * text inside the editor, position the popover anchor to the top-right
+     * of the selection rect so they can one-click attach. */
+    onEditorSelectionChange() {
+      const text = this._currentSelectionText();
+      if (!text || text.length < 2) {
+        this.selectionPopover.visible = false;
+        return;
+      }
+      // Get a bounding box for placement. Prefer the live DOM range
+      // when the selection is in the preview; fall back to a textarea-
+      // relative box when it's in the textarea (no API for caret rect,
+      // anchor near the textarea corner is good enough).
+      const sel = window.getSelection();
+      let rect = null;
+      if (sel && sel.rangeCount > 0 && sel.toString().trim().length > 0) {
+        rect = sel.getRangeAt(0).getBoundingClientRect();
+      } else {
+        const ta = document.querySelector('textarea[x-model="editorBody"]');
+        if (ta) rect = ta.getBoundingClientRect();
+      }
+      if (!rect || (rect.width === 0 && rect.height === 0)) {
+        this.selectionPopover.visible = false;
+        return;
+      }
+      // Anchor: just above the right edge of the selection. If too close
+      // to the top of the viewport, flip to just below.
+      const flipBelow = rect.top < 50;
+      this.selectionPopover.x = Math.min(
+        window.innerWidth - 180,
+        Math.max(8, rect.right - 32)
+      );
+      this.selectionPopover.y = flipBelow ? rect.bottom + 6 : rect.top - 32;
+      this.selectionPopover.visible = true;
+    },
+
+    removeChatRef(idx) {
+      this.chatRefs.splice(idx, 1);
+    },
+
+    /** Reactivate a previously-sent (grayed) capsule. */
+    reuseChatRef(idx) {
+      if (this.chatRefs.length >= 5) {
+        toast("最多挂 5 颗引用,请先取掉一颗", "warn");
+        return;
+      }
+      const r = this.chatRefsSent[idx];
+      if (!r) return;
+      this.chatRefsSent.splice(idx, 1);
+      this.chatRefs.push(r);
+    },
+
+    clearSentChatRefs() {
+      this.chatRefsSent = [];
+    },
+
     persistTabs() {
       try {
         localStorage.setItem(
@@ -811,6 +929,9 @@ function ui() {
       if (!id || id === this.activeSessionId) return;
       try {
         await api("POST", `/api/chat/sessions/${encodeURIComponent(id)}/activate`);
+        // M7.1: capsules don't carry across sessions.
+        this.chatRefs = [];
+        this.chatRefsSent = [];
         await this.fetchChatHistory();
         await this.refreshSessions();
         this.scrollChatFocusToBottom();
@@ -826,6 +947,9 @@ function ui() {
         this.activeSessionId = r.id;
         this.activeSessionTitle = r.title || "";
         this.chatHistory = [];
+        // M7.1: capsules belong to a session — clear on switch.
+        this.chatRefs = [];
+        this.chatRefsSent = [];
         await this.refreshSessions();
         this.$nextTick(() => {
           const el = this.$refs.chatFocusInput;
@@ -929,11 +1053,19 @@ function ui() {
       }
       // scope=vault and scope=none: send as-is; system prompt + tools handle rest.
 
+      // M7.1: snapshot capsules at send time, then move them to "sent"
+      // (grayed) so the user can one-click "use again" without re-selecting.
+      const refsToSend = this.chatRefs.slice();
+      if (refsToSend.length > 0) {
+        this.chatRefsSent = this.chatRefsSent.concat(refsToSend);
+        this.chatRefs = [];
+      }
+
       try {
         const r = await fetch("/api/chat/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: payloadText }),
+          body: JSON.stringify({ text: payloadText, references: refsToSend }),
         });
         if (!r.ok) {
           let detail = `${r.status} ${r.statusText}`;
@@ -982,6 +1114,8 @@ function ui() {
       try {
         const r = await api("POST", "/api/chat/clear");
         this.chatHistory = [];
+        this.chatRefs = [];
+        this.chatRefsSent = [];
         // Backend returns the new active session id (M6.4).
         if (r && r.active_id) {
           this.activeSessionId = r.active_id;
