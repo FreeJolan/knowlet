@@ -817,6 +817,11 @@ def web(
         )
         raise typer.Exit(code=2)
 
+    # Long-running process — make sure scheduler / mining / LLM errors land
+    # somewhere the user can find them, even if they close the terminal.
+    from knowlet._logging import configure_logging
+    configure_logging(vault.root)
+
     fastapi_app = create_app(vault, cfg)
     console.print(
         Panel.fit(
