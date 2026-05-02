@@ -577,14 +577,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_410_GONE,
                 detail=f"note file missing on disk: {path}",
             ) from exc
-        # Apply updates; rename file if title (slug) changed.
-        old_path = path
+        # ULID-only filenames: the on-disk path doesn't change when the
+        # title changes, so this is a pure in-place rewrite — no rename,
+        # no unlink, no sync-conflict (B3 / 2026-05-02 critique #5).
         note.title = payload.title.strip() or note.title
         note.body = payload.body
         note.tags = list(payload.tags)
         new_path = runtime.vault.write_note(note)
-        if new_path != old_path and old_path.exists():
-            old_path.unlink()
         runtime.index.upsert_note(
             note,
             chunk_size=runtime.config.retrieval.chunk_size,

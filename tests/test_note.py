@@ -36,3 +36,13 @@ def test_content_hash_stable():
     assert a.content_hash == b.content_hash
     c = Note(id="x", title="T2", body="B")
     assert a.content_hash != c.content_hash
+
+
+def test_filename_is_ulid_only():
+    """B3: filenames are `<id>.md` — no title slug. Title changes don't
+    rename the file, so iCloud / Syncthing don't see delete+create."""
+    note = Note(id="01HX0000000000000000000000", title="Hello World", body="b")
+    assert note.filename == "01HX0000000000000000000000.md"
+    # Rename the title — filename stays the same.
+    note.title = "Completely different title"
+    assert note.filename == "01HX0000000000000000000000.md"
