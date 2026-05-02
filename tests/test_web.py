@@ -381,3 +381,68 @@ def test_chat_stream_with_tool_call(tmp_path: Path):
     ]
     assert events[1]["name"] == "search_notes"
     assert "results" in events[1]["payload"]
+
+
+# ------------------------------------------------------- async lifespan / ready gate
+
+
+def test_health_exposes_ready_and_bootstrap_status(tmp_path: Path):
+    """Tests don't enter lifespan as a context manager, so bootstrap stays
+    `idle` until something triggers it. Health should still serve."""
+    v, cfg = _ready_vault(tmp_path)
+    client = TestClient(create_app(v, cfg))
+    r = client.get("/api/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert "ready" in body
+    assert body["bootstrap_status"] == "idle"
+    assert body["ready"] is False
+
+
+def test_lifespan_kicks_off_async_bootstrap(tmp_path: Path):
+    """When TestClient is used as a context manager, lifespan runs and
+    `start_bootstrap_async` flips status to running/ready. We wait for the
+    daemon thread to finish (DummyBackend is instant; reindex on an empty
+    vault is fast) and then assert status='ready'."""
+    v, cfg = _ready_vault(tmp_path)
+    app = create_app(v, cfg)
+    state = app.state.web_state
+    with TestClient(app) as client:
+        # status started as 'running' or 'ready' depending on thread-scheduler
+        # luck; either is fine. Wait deterministically.
+        if state._bootstrap_thread is not None:
+            state._bootstrap_thread.join(timeout=5.0)
+        assert state.bootstrap_status == "ready"
+        body = client.get("/api/health").json()
+        assert body["ready"] is True
+        assert body["bootstrap_status"] == "ready"
+
+
+def test_chat_endpoint_503s_while_indexing(tmp_path: Path):
+    """If a request hits while bootstrap is still running, the chat endpoint
+    must return 503 (not crash, not block forever)."""
+    v, cfg = _ready_vault(tmp_path)
+    app = create_app(v, cfg)
+    state = app.state.web_state
+    # Force the running state without actually starting a thread.
+    state.bootstrap_status = "running"
+
+    client = TestClient(app)
+    r = client.post("/api/chat/turn", json={"text": "hi"})
+    assert r.status_code == 503
+    assert "indexing" in r.json()["detail"].lower()
+
+
+def test_chat_endpoint_500s_after_bootstrap_error(tmp_path: Path):
+    """If bootstrap raised a non-recoverable error, endpoints surface 500
+    with the original message."""
+    v, cfg = _ready_vault(tmp_path)
+    app = create_app(v, cfg)
+    state = app.state.web_state
+    state.bootstrap_status = "error"
+    state.bootstrap_error = RuntimeError("simulated bootstrap failure")
+
+    client = TestClient(app)
+    r = client.post("/api/chat/turn", json={"text": "hi"})
+    assert r.status_code == 500
+    assert "simulated bootstrap failure" in r.json()["detail"]

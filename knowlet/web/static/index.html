@@ -74,6 +74,18 @@
     <span class="text-textfaint mx-1.5">·</span>
     <span class="text-textsoft" x-text="meta.model || '—'"></span>
   </span>
+
+  <!-- Async bootstrap indicator (B4): visible only while reindexing on
+       startup. Tells the user "server is up; chat is warming up" so a slow
+       first launch on a big vault doesn't look like a crash. -->
+  <span
+    x-show="!ready && bootstrapStatus === 'running'"
+    class="inline-flex items-center gap-1.5 text-[11px] text-warn"
+  >
+    <span class="inline-block w-1.5 h-1.5 rounded-full bg-warn animate-pulse"></span>
+    <span data-i18n="health.indexing.label">正在为笔记建索引…</span>
+  </span>
+
   <div class="flex-1"></div>
 
   <!-- Cmd+K palette trigger -->
