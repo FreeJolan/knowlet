@@ -1444,3 +1444,44 @@ def test_quiz_list_returns_recent_sessions(tmp_path: Path):
     assert rows[0]["session_score"] == 80
     # Light shape — no `questions` key.
     assert "questions" not in rows[0]
+
+
+# ------------------------------------------------------------- M8.1 structure signals
+
+
+def test_structure_signals_endpoint_shape(tmp_path: Path):
+    """M8.1: GET /api/structure/signals returns the 4-key payload with
+    correct row shapes. Content correctness (which notes group, which
+    are orphans, etc.) is covered by tests/test_structure_signals.py
+    using a controlled embedding fake. Here we just assert the wire
+    contract — and that ADR-0013 §1 is honored: no auto-action verbs
+    or score-as-judgment fields in the response."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n = Note(id=new_id(), title="A", body="some content")
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    r = client.get("/api/structure/signals")
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body.keys()) == {
+        "near_duplicates",
+        "clusters",
+        "orphan_notes",
+        "aging_candidates",
+    }
+    assert isinstance(body["near_duplicates"], list)
+    assert isinstance(body["clusters"], list)
+    assert isinstance(body["orphan_notes"], list)
+    assert isinstance(body["aging_candidates"], list)
+
+
+def test_structure_signals_clamps_cosine(tmp_path: Path):
+    """`near_dup_cosine` is bounded to [0.5, 0.999] server-side so a
+    careless caller passing 2.0 or -1 doesn't break the search."""
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r1 = client.get("/api/structure/signals?near_dup_cosine=2.0")
+    r2 = client.get("/api/structure/signals?near_dup_cosine=-1")
+    assert r1.status_code == 200
+    assert r2.status_code == 200
