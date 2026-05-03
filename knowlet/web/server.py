@@ -57,6 +57,12 @@ from knowlet.core.quiz import (
     grade_answer,
 )
 from knowlet.core.quiz_store import QuizStore
+from knowlet.core.structure_signals import (
+    DEFAULT_AGING_UNTOUCHED_DAYS,
+    DEFAULT_NEAR_DUP_COSINE,
+    DEFAULT_ORPHAN_UNTOUCHED_DAYS,
+    compute_signals,
+)
 from knowlet.core.events import ErrorEvent, event_to_dict
 from knowlet.core.fsrs_wrap import initial_state, schedule_next
 from knowlet.core.i18n import SUPPORTED_LANGUAGES, all_keys, set_language
@@ -192,6 +198,42 @@ class QuizStartRequest(BaseModel):
     scope_type: str = "notes"  # "notes" | "tag" | "cluster"
     tag: str = ""
     cluster_id: str = ""
+
+
+class NearDupPairPayload(BaseModel):
+    a_id: str
+    a_title: str
+    b_id: str
+    b_title: str
+    cosine: float
+
+
+class NoteClusterPayload(BaseModel):
+    note_ids: list[str]
+    note_titles: list[str]
+
+
+class OrphanNotePayload(BaseModel):
+    id: str
+    title: str
+    days_untouched: int
+
+
+class AgingCandidatePayload(BaseModel):
+    id: str
+    title: str
+    days_untouched: int
+
+
+class StructureSignalsPayload(BaseModel):
+    """M8.1 / ADR-0013 Layer B — read-only structure signals over the
+    vault. Pure information per ADR-0013 §1: no scores rendered as
+    judgment, no auto-action verbs in the wire shape. The M8.2
+    knowledge-map sidebar will consume this; no UI yet."""
+    near_duplicates: list[NearDupPairPayload]
+    clusters: list[NoteClusterPayload]
+    orphan_notes: list[OrphanNotePayload]
+    aging_candidates: list[AgingCandidatePayload]
 
 
 class QuizSummaryRow(BaseModel):
@@ -590,6 +632,60 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     @app.get("/api/i18n/{lang}")
     def i18n_catalog(lang: str) -> dict[str, str]:
         return all_keys(lang)
+
+    # ---------------- structure signals (M8.1 / ADR-0013 Layer B) ----------
+
+    @app.get("/api/structure/signals", response_model=StructureSignalsPayload)
+    def structure_signals(
+        near_dup_cosine: float = DEFAULT_NEAR_DUP_COSINE,
+        orphan_days: int = DEFAULT_ORPHAN_UNTOUCHED_DAYS,
+        aging_days: int = DEFAULT_AGING_UNTOUCHED_DAYS,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> StructureSignalsPayload:
+        """Compute the four structure signals over the current vault.
+        Read-only; no UI yet (M8.2 knowledge-map sidebar will consume).
+
+        Per ADR-0013 §1 contract: pure information, no auto-action
+        verbs. The wire payload deliberately ships titles + ids only —
+        the UI decides how (or whether) to surface buttons."""
+        # Bound thresholds defensively: cosine ∈ [0.5, 0.999], days ≥ 1.
+        cos = max(0.5, min(0.999, float(near_dup_cosine)))
+        od = max(1, int(orphan_days))
+        ad = max(1, int(aging_days))
+        result = compute_signals(
+            runtime.index,
+            runtime.vault.iter_note_paths(),
+            near_dup_cosine=cos,
+            orphan_days=od,
+            aging_days=ad,
+        )
+        return StructureSignalsPayload(
+            near_duplicates=[
+                NearDupPairPayload(
+                    a_id=p.a_id,
+                    a_title=p.a_title,
+                    b_id=p.b_id,
+                    b_title=p.b_title,
+                    cosine=round(p.cosine, 4),
+                )
+                for p in result.near_duplicates
+            ],
+            clusters=[
+                NoteClusterPayload(
+                    note_ids=c.note_ids,
+                    note_titles=c.note_titles,
+                )
+                for c in result.clusters
+            ],
+            orphan_notes=[
+                OrphanNotePayload(id=o.id, title=o.title, days_untouched=o.days_untouched)
+                for o in result.orphan_notes
+            ],
+            aging_candidates=[
+                AgingCandidatePayload(id=a.id, title=a.title, days_untouched=a.days_untouched)
+                for a in result.aging_candidates
+            ],
+        )
 
     # ---------------- chat ----------------
 
