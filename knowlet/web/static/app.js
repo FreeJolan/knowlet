@@ -210,6 +210,8 @@ function ui() {
     urlCapturePending: null,  // null | {url, status: 'ready'|'fetching'|'error', error?}
     // M7.2: Layer A ambient (sediment)
     similarNotes: { loading: false, query: "", rows: [] },
+    // Claude Design 2nd pass: per-session dismiss for the inline ambient line.
+    sedimentAmbientDismissed: false,
     // M6.4 multi-session
     sessions: [],         // ConversationSummary[] from /api/chat/sessions
     activeSessionId: "",
@@ -1513,6 +1515,9 @@ function ui() {
       this.modal = "sediment";
       this.sediment = { title: "", tagsStr: "", body: "" };
       this.sedimentDrafting = true;
+      // Claude Design 2nd pass §4: ambient is dismiss-per-modal-open, not
+      // dismiss-per-session — re-open the modal, the ambient is back.
+      this.sedimentAmbientDismissed = false;
       try {
         const draft = await api("POST", "/api/chat/draft");
         this.sediment.title = draft.title;
