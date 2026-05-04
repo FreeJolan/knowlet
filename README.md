@@ -32,6 +32,38 @@ knowlet web               # 默认 http://127.0.0.1:8765
 
 LLM 服务可以是任何兼容 OpenAI Chat Completions 协议的端点 —— 官方 OpenAI、OpenRouter、Ollama,或用社区开源 wrapper 把 Claude Code / Codex / Cursor 等工具暴露成 OpenAI 协议。详见 [ADR-0005](./docs/decisions/0005-llm-integration-strategy.md)。
 
+## 升级流程(数据安全)
+
+knowlet 仍在快速迭代(0.0.x)。每次 `git pull` 拉新代码前,**强烈建议先打一份 vault 快照**,出问题随时能恢复:
+
+```bash
+cd ~/my-vault
+knowlet vault snapshot --label pre-upgrade   # 在 .knowlet/snapshots/ 下生成完整副本
+
+cd ~/path/to/knowlet/source
+git pull && uv sync --extra embed             # 拉新代码 + 同步依赖
+
+cd ~/my-vault
+knowlet doctor                                # 检查:embedding / index / vault 数据完整性
+
+# 一切正常 → 用一段时间确认稳定 → 删快照
+ls .knowlet/snapshots/                        # knowlet vault list-snapshots 也行
+rm -rf .knowlet/snapshots/<ts>-pre-upgrade
+
+# 如果出问题 → 一键恢复(会先把当前坏状态再快照一份,所以 reverse 也安全)
+knowlet vault restore-snapshot pre-upgrade
+knowlet reindex                               # 重建 FTS / 向量索引
+```
+
+**保障**:
+
+- Vault 是普通文件夹 — 你随时能 `cp -R` / git commit / Syncthing 备份
+- 笔记是 Markdown + YAML frontmatter — 任何编辑器都能读 / 修复
+- 写入是原子的(`.tmp` → `rename`),断电不会留半文件
+- 删除是软删除(`notes/.trash/`),CLI `knowlet notes restore <id>` 找回
+- Note frontmatter 有 `schema_version`(v1 默认),未来 schema 变更不会让旧笔记打不开
+- `knowlet doctor` 走一遍每个 Note / Card / Draft / 任务文件,验证 parse 干净
+
 ## 核心理念
 
 - **AI 是可选增强,不是必需品** —— 无 AI 时仍是可用的笔记库

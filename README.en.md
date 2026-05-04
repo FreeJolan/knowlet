@@ -32,6 +32,38 @@ knowlet web               # default http://127.0.0.1:8765
 
 The LLM endpoint can be any OpenAI-Chat-Completions-compatible service — OpenAI, OpenRouter, Ollama, or an open-source community wrapper that exposes Claude Code / Codex / Cursor as an OpenAI endpoint. See [ADR-0005](./docs/decisions/0005-llm-integration-strategy.en.md).
 
+## Upgrade flow (data safety)
+
+knowlet is still iterating fast (0.0.x). Before every `git pull`, **make a vault snapshot first** so you can roll back if anything goes sideways:
+
+```bash
+cd ~/my-vault
+knowlet vault snapshot --label pre-upgrade   # full copy under .knowlet/snapshots/
+
+cd ~/path/to/knowlet/source
+git pull && uv sync --extra embed            # pull new code + sync deps
+
+cd ~/my-vault
+knowlet doctor                               # checks embedding / index / vault data integrity
+
+# All clean → run for a while to confirm → delete the snapshot
+ls .knowlet/snapshots/                       # or `knowlet vault list-snapshots`
+rm -rf .knowlet/snapshots/<ts>-pre-upgrade
+
+# Something broke → one-command rollback (also re-snapshots the broken state first, so you can undo the rollback if needed)
+knowlet vault restore-snapshot pre-upgrade
+knowlet reindex                              # rebuild FTS / vector index
+```
+
+**Guarantees**:
+
+- Vault is a plain folder — you can `cp -R` / git commit / Syncthing back it up anytime
+- Notes are Markdown + YAML frontmatter — any editor can read / repair
+- Writes are atomic (`.tmp` → `rename`); a power cut won't leave half-files
+- Delete is soft (`notes/.trash/`), recoverable via `knowlet notes restore <id>`
+- Note frontmatter has `schema_version` (v1 default); future schema changes won't break old notes
+- `knowlet doctor` walks every Note / Card / Draft / Task file and verifies they parse cleanly
+
 ## Core Principles
 
 - **AI is an optional enhancement, not a requirement** — without AI, it's still a usable note library
