@@ -238,6 +238,92 @@ Attachments (PDF/audio/video) / watch folder / audio recording + transcription /
 
 ---
 
+## 📦 Cross-ADR deferred-items registry (2026-05-04)
+
+> **Purpose**: every ADR / design doc has a §"Out of scope" / §"Defer" / §"Future extensions" — this section catalogs them all **by source** as a single-source-of-truth against forgetting. When a new ADR adds §"Out of scope," its items must register here.
+
+### 🟡 Awaiting dogfood signal to set priority
+
+| Item | Source | Trigger |
+|---|---|---|
+| **ADR-0015b citation back-references** (`[1] [2]` jumps in AI replies) | ADR-0015 §3 | "if dogfood says yes" |
+| **Cross-session capsule draft tray** (M7.1 capsule beyond one message) | ADR-0015 §"Out of scope" | user explicit ask |
+| **CLI `:quote <note_id> <line_range>` REPL** | ADR-0015 §"Out of scope" | low priority, GUI alt exists |
+| **`knowlet://note/<id>?line=42` deep-link** | ADR-0015 §"Out of scope" | desktop / mobile era |
+| **Per-session web-search cap + UI usage monitor** | ADR-0017 §"Out of scope" | dogfood data shows need |
+| **Layer A on "+ blank new note"** | ADR-0016 §"Mitigations" | once user has typed enough |
+| **Drafts approve-time Layer A ambient** | ADR-0016 §"Out of scope" | M7.x follow-up |
+
+### 🔵 Awaiting Claude Design 2nd pass / M8
+
+| Item | Source | Status |
+|---|---|---|
+| `list_mining_tasks` Web mining-config panel | ADR-0004 amendment §"Backlog" | ⏳ |
+| `fetch_url` UI entry (unify with M7.2 url-capture) | ADR-0004 amendment §"Backlog" | ⏳ |
+| **M8.2 knowledge-map sidebar** (consumes M8.1 LLM-inferred signals) | ADR-0013 §3 Layer B + brief §9 | ⏳ |
+| **M8.2b graph view** (user-authored `[[Title]]` link viz) | ADR-0003/0011/0013 amendment + brief §9b | ⏳ |
+| **M8.3 weekly digest** (Sunday-newspaper, no unread badge) | ADR-0013 §3 Layer C + brief §10 | ⏳ |
+| **M8.4 dark toggle** (localStorage + system pref / dark token set) | ADR-0011 §"Schedule" + brief §11 | ⏳ |
+| **M7.4.3 cluster-scope quiz** (currently routes 501) | ADR-0014 §8 | ⏳ depends on M8 Layer B |
+
+### 🟢 Awaiting stage transition (already staged)
+
+| Item | Stage | Source |
+|---|---|---|
+| Plugin system | Stage 2 | ADR-0003 §"Stage 2" |
+| Native mobile | Stage 2 | ADR-0003 §"Stage 2" |
+| knowlet self-hosted sync (CRDT / encrypted) | Stage 2 | ADR-0006 §"Stage 2" |
+| Vault encryption (`git-crypt` / `age` / custom) | Stage 2 | ADR-0006 §127 |
+| Fallback fetching backend (SearXNG / self-hosted; partly ✅ via ADR-0017) | Partial ✅ | ADR-0006 §141 |
+| MCP server | Stage 3 | ADR-0003 §"Stage 3" |
+| Tauri desktop shell (M5 / M9) | M5/M9 | ADR-0011 §"Schedule" |
+| Browser extension / share-target | M9+ Tauri era | ADR-0016 §"Out of scope" |
+
+### ⚪ Editor / interaction defer (M7+)
+
+| Item | Source | Status |
+|---|---|---|
+| **CodeMirror 6 editor upgrade** (replaces textarea) | ADR-0011 §9 + §"Schedule" | ⏳ M7+ (not queued) |
+| **Inline slash menu / Cmd+K in editor** (`summarize this` / `make Card from this`) | ADR-0011 §9 + audit Tier 2 | ⏳ M7+ / Tier 2 |
+| **Drag-rearrange / multi-select bulk ops** | ADR-0011 §9 + Tier 1 gap | ⏳ M7+ / Tier 1 (re-classified upward) |
+
+### 🔴 Explicitly never doing
+
+| Item | Source |
+|---|---|
+| Team collaboration / multi-user | ADR-0003 §"explicitly out of scope" (forever) |
+| Content recommendation / discovery / social | ADR-0003 §"explicitly out of scope" |
+| Tasks / calendar / Todo management | ADR-0003 §"explicitly out of scope" |
+| AI-Chat product feature replicas (model picker / long context / image gen) | ADR-0003 §"explicitly out of scope" |
+| Tag taxonomy (top-down forced classification) | ADR-0013 §3 Layer B |
+| Auto-archive / auto-merge | ADR-0013 §1 contract |
+| LLM auto-modifying vault IA (auto-merge / auto-tag) | ADR-0013 §1 contract |
+| Image / video / PDF content from drafts URL (text only) | ADR-0016 §"Out of scope" |
+| Multi-URL one-shot paste (single URL only) | ADR-0016 §"Out of scope" |
+| LLM fetching PDF / video binaries (trafilatura doesn't process) | ADR-0017 §"Out of scope" |
+| Auto-saving search results to vault (= url-capture; user goes through that flow if they want it) | ADR-0017 §"Out of scope" |
+| Multilingual search-query switching (LLM picks language itself) | ADR-0017 §"Out of scope" |
+
+### 🧠 Tier 1 knowledge-software gaps (M9 candidates, dogfood-feedback-driven order)
+
+(already listed in §"Tier 1 gap summary" above; restated here against forgetting):
+
+1. Block references + block-id anchors
+2. Daily notes / journaling
+3. Math (KaTeX) + Mermaid rendering
+4. Templates
+5. Highlight → Card one-click
+6. Bulk operations (merged with ADR-0011 §9 defer item)
+
+### Maintenance rule
+
+> **Every new / amended ADR must sync this section**:
+> 1. ADR adds §"Out of scope" → register one row here
+> 2. Dogfood feedback returns: 🟡 items promote into 🔵 / 🟢 / 🔴, or jump straight to M9
+> 3. At each stage transition: review 🟢 items for relevance / readiness
+
+---
+
 ## Stage 2 — V1 → V2: User-Demand-Driven Extensions
 
 After stage 1 stabilizes, users naturally surface new needs. Possible directions (in expected priority):

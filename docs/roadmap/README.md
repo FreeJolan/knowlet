@@ -233,6 +233,92 @@ knowlet 是知识软件,不是 AI Chat 套壳(per [ADR-0012](../decisions/0012-n
 
 ---
 
+## 📦 跨 ADR 延期事项总账(2026-05-04 编录)
+
+> **目的**:每条 ADR / design doc 都有 §"Out of scope" / §"Defer" / §"未来扩展点"。本节把它们**全部按出处编录**,作为防遗忘的 single source of truth。每次新增 ADR 时,§"Out of scope" 需同步登记到这里。
+
+### 🟡 等 dogfood 信号定优先级
+
+| 项 | 出处 | 触发条件 |
+|---|---|---|
+| **ADR-0015b citation back-references**(LLM 回答里 `[1] [2]` 跳回原文) | ADR-0015 §3 | "如果 dogfood 显示需要"|
+| **胶囊跨 session 草稿夹**(M7.1 capsule 持久化超过单条 message) | ADR-0015 §"Out of scope" | 用户主动要求 |
+| **CLI `:quote <note_id> <line_range>` REPL 子命令** | ADR-0015 §"Out of scope" | 优先级低,有 GUI 替代 |
+| **`knowlet://note/<id>?line=42` deep-link 协议** | ADR-0015 §"Out of scope" | desktop / mobile 阶段才需要 |
+| **Per-session web search 累计上限 + UI 用量 monitor** | ADR-0017 §"Out of scope" | dogfood 数据显示需要 |
+| **Sediment 模态 Layer A 在 "+ 新建空 Note" 时也触发** | ADR-0016 §"Mitigations" | 用户写到一定篇幅后是否需要 ambient |
+| **Drafts approve 时显示 Layer A ambient** | ADR-0016 §"Out of scope" | M7.x 后续 |
+
+### 🔵 等 Claude Design 第二轮 / M8
+
+| 项 | 出处 | 状态 |
+|---|---|---|
+| `list_mining_tasks` Web 配置面板 | ADR-0004 amendment §"Backlog" | ⏳ |
+| `fetch_url` UI 入口(跟 M7.2 url-capture 流统一)| ADR-0004 amendment §"Backlog" | ⏳ |
+| **M8.2 知识地图侧栏**(消费 M8.1 LLM 推断信号)| ADR-0013 §3 Layer B + 设计 brief §9 | ⏳ |
+| **M8.2b Graph view**(用户认可的 `[[Title]]` 链接可视化)| ADR-0003/0011/0013 amendment + 设计 brief §9b | ⏳ |
+| **M8.3 周报**(Sunday-newspaper 调性 / no unread badge)| ADR-0013 §3 Layer C + 设计 brief §10 | ⏳ |
+| **M8.4 暗色 toggle**(localStorage + 跟随系统 / 暗色 token 套)| ADR-0011 §"Schedule" + 设计 brief §11 | ⏳ |
+| **M7.4.3 cluster scope quiz**(currently routes 501)| ADR-0014 §8 | ⏳ depends on M8 Layer B |
+
+### 🟢 等阶段切换(已 stage)
+
+| 项 | 阶段 | 出处 |
+|---|---|---|
+| Plugin 系统 | 阶段二 | ADR-0003 §"阶段二" |
+| 移动端原生 | 阶段二 | ADR-0003 §"阶段二" |
+| knowlet 自建同步(CRDT / 加密)| 阶段二 | ADR-0006 §"阶段二" |
+| Vault 加密(`git-crypt` / `age` / 自研) | 阶段二 | ADR-0006 §127 |
+| Fallback 抓取后端(SearXNG / 自托管 — 部分已 ship 在 ADR-0017)| 部分 ✅ | ADR-0006 §141 |
+| MCP server | 阶段三 | ADR-0003 §"阶段三" |
+| Tauri 桌面壳(M5 / M9)| M5/M9 | ADR-0011 §"Schedule" |
+| 浏览器扩展 / share-target | M9+ Tauri 阶段 | ADR-0016 §"Out of scope" |
+
+### ⚪ 编辑器 / 交互层 defer(M7+)
+
+| 项 | 出处 | 状态 |
+|---|---|---|
+| **CodeMirror 6 编辑器升级**(替换 textarea)| ADR-0011 §9 + §"Schedule" | ⏳ M7+(还没排) |
+| **内联 slash 菜单 / Cmd+K 编辑器内 AI**(`summarize this` / `make Card from this`)| ADR-0011 §9 + 知识软件审计 Tier 2 | ⏳ M7+ / Tier 2 |
+| **拖拽重排 / 多选批量操作** | ADR-0011 §9 + Tier 1 缺口 | ⏳ M7+ / Tier 1 (已重新升 Tier 1)|
+
+### 🔴 显式不做(永不进路线图)
+
+| 项 | 出处 |
+|---|---|
+| 团队协作 / 多用户 | ADR-0003 §"阶段一明确不做"(终生不做)|
+| 内容推荐 / 信息发现 / 社交 | ADR-0003 §"阶段一明确不做" |
+| 任务 / 日历 / Todo 管理 | ADR-0003 §"阶段一明确不做" |
+| AI Chat 产品功能复刻(模型选择 / 长上下文 / 图像生成)| ADR-0003 §"阶段一明确不做" |
+| Tag taxonomy(top-down 强制分类)| ADR-0013 §3 Layer B |
+| Auto-archive / auto-merge | ADR-0013 §1 契约 |
+| LLM 主动改 vault IA(自动合并 / 自动改 tag)| ADR-0013 §1 契约 |
+| Drafts 提取的 image / video / PDF 内容(只处理文字)| ADR-0016 §"Out of scope" |
+| 多 URL 一次粘贴抓取(只处理单一)| ADR-0016 §"Out of scope" |
+| LLM 抓取 PDF / video(trafilatura 不处理)| ADR-0017 §"Out of scope" |
+| 自动备 search 结果到 vault(等同 url-capture,用户主动走那条流)| ADR-0017 §"Out of scope" |
+| 多语言 search query 切换(让 LLM 自己决定)| ADR-0017 §"Out of scope" |
+
+### 🧠 Tier 1 知识软件缺口(M9 候选,等 dogfood 反馈定顺序)
+
+(已在 §"知识软件核心能力盘点 → Tier 1 汇总" 列出,这里再点名一遍以防遗忘):
+
+1. 块引用 + block-id 锚点
+2. Daily notes / 日记
+3. 数学(KaTeX)+ Mermaid 渲染
+4. 模板系统
+5. 选区 → Card 一键
+6. 批量操作(已跟 ADR-0011 §9 defer 项合并)
+
+### 维护规则
+
+> **每次新增 ADR / 修订现有 ADR 时,本节必须同步**:
+> 1. ADR 里加 §"Out of scope" → 这里登记一行
+> 2. 收到 dogfood 反馈后:🟡 项升入 🔵 / 🟢 / 🔴 之一,或直接进 M9
+> 3. 每条 stage 切换时:🟢 项 review 一遍是否还需要 / 是否 ready
+
+---
+
 ## 阶段二 — V1 → V2:用户需求驱动的扩展
 
 阶段一稳定后,用户自然会浮出新需求。可能演进的方向(按预期优先级):
