@@ -222,7 +222,10 @@ function ui() {
     miningRunning: false,
 
     // ---- modals (small dialogs) ----
-    modal: null,          // null | 'sediment' | 'profile'
+    modal: null,          // null | 'sediment' | 'profile' | 'new-card'
+
+    // ADR-0004 amendment (2026-05-04): UI peer of the create_card LLM tool.
+    newCard: { front: "", back: "", tagsStr: "" },
 
     // ---- focus modes (fullscreen overlays per ADR-0011 §5) ----
     // The three focus modes preserve outer layout / open notes / scroll
@@ -1572,6 +1575,43 @@ function ui() {
       }
     },
 
+    // ============================================================ create_card UI peer (ADR-0004 amendment)
+
+    openCreateCardModal() {
+      this.newCard = { front: "", back: "", tagsStr: "" };
+      this.modal = "new-card";
+    },
+
+    async commitNewCard() {
+      const front = (this.newCard.front || "").trim();
+      const back = (this.newCard.back || "").trim();
+      if (!front || !back) {
+        toast(tt("card.new.empty") || "正面 + 背面都不能为空", "warn");
+        return;
+      }
+      const tags = (this.newCard.tagsStr || "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t);
+      try {
+        await api("POST", "/api/cards", {
+          type: "qa",
+          front,
+          back,
+          tags,
+          source_note_id: null,
+        });
+        this.modal = null;
+        toast(tt("card.new.created") || "Card 已创建", "ok");
+        this.refreshCardsCount();
+        // If the user is in cards focus, refresh the queue so the new
+        // card surfaces immediately (it's due now per FSRS initial state).
+        if (this.focus === "cards") await this.openCardsReview();
+      } catch (exc) {
+        toast(exc.message, "error");
+      }
+    },
+
     // ============================================================ drafts review
 
     async refreshDraftsCount() {
@@ -1765,6 +1805,7 @@ function ui() {
         { id: "doctor",         label: tt("palette.cmd.doctor"),    sub: tt("palette.cmd.doctor.sub") },
         { id: "url-capture",    label: tt("palette.cmd.urlcapture"), sub: tt("palette.cmd.urlcapture.sub") },
         { id: "web-search",     label: tt("palette.cmd.websearch"),  sub: tt("palette.cmd.websearch.sub") },
+        { id: "new-card",       label: tt("palette.cmd.newcard"),    sub: tt("palette.cmd.newcard.sub") },
         { id: "quiz-me",        label: tt("palette.cmd.quiz"),       sub: tt("palette.cmd.quiz.sub"), disabled: !this.currentTab() && this.notes.length === 0 },
       ];
     },
@@ -1785,6 +1826,7 @@ function ui() {
         case "doctor":         this.runDoctor(); break;
         case "url-capture":    this.runPaletteUrlCapture(); break;
         case "web-search":     this.runPaletteWebSearch(); break;
+        case "new-card":       this.closePalette(); this.openCreateCardModal(); break;
         case "quiz-me":        this.closePalette(); this.openQuizFocus(); break;
       }
     },

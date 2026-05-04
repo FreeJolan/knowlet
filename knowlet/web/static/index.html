@@ -793,6 +793,33 @@
   </div>
 </div>
 
+<!-- New Card modal — UI peer of the create_card LLM tool (ADR-0004 amendment 2026-05-04) -->
+<div x-show="modal === 'new-card'" @click.self="modal = null" class="modal" x-cloak>
+  <div class="modal-card">
+    <h3 data-i18n="card.new.title">新建 Card</h3>
+    <p class="text-xs text-textsoft" data-i18n="card.new.intro">前 + 背面是一张原子事实卡。FSRS 会按你的记忆曲线安排复习。</p>
+    <label class="block">
+      <span class="text-xs text-textsoft" data-i18n="card.new.front">正面(问题)</span>
+      <textarea x-model="newCard.front" rows="3" class="w-full bg-bg border border-border rounded px-2.5 py-2 mt-1 text-sm focus:outline-none focus:border-accent"></textarea>
+    </label>
+    <label class="block">
+      <span class="text-xs text-textsoft" data-i18n="card.new.back">背面(答案)</span>
+      <textarea x-model="newCard.back" rows="4" class="w-full bg-bg border border-border rounded px-2.5 py-2 mt-1 text-sm focus:outline-none focus:border-accent"></textarea>
+    </label>
+    <label class="block">
+      <span class="text-xs text-textsoft" data-i18n="card.new.tags">标签(逗号分隔)</span>
+      <input type="text" x-model="newCard.tagsStr" class="w-full bg-bg border border-border rounded px-2.5 py-1.5 mt-1 text-sm focus:outline-none focus:border-accent"/>
+    </label>
+    <div class="flex justify-end gap-2 pt-2">
+      <button @click="modal = null" class="px-3 py-1.5 rounded border border-border text-textsoft hover:text-text" data-i18n="card.new.cancel">取消</button>
+      <button @click="commitNewCard()"
+              :disabled="!newCard.front.trim() || !newCard.back.trim()"
+              class="px-4 py-1.5 rounded bg-accent text-onaccent font-medium hover:bg-accent2 disabled:opacity-50"
+              data-i18n="card.new.commit">创建</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════════ FOCUS MODES (Cmd+Shift+{C,D,R} · ADR-0011 §5) ═══════════════ -->
 
 <!-- Drafts focus — Cmd+Shift+D / footer drafts icon -->
@@ -881,7 +908,24 @@
     <div class="focus-progress-bar" :style="`width: ${cardsProgress()}%`"></div>
   </div>
 
-  <div x-show="!cardsState.queue.length" class="flex-1 flex items-center justify-center text-textmute text-sm" data-i18n="review.empty">没有到期的卡片。</div>
+  <div
+    x-show="!cardsState.queue.length"
+    class="flex-1 flex flex-col items-center justify-center gap-4 text-textmute text-sm"
+  >
+    <span data-i18n="review.empty">没有到期的卡片。</span>
+    <!-- ADR-0004 amendment (2026-05-04): create_card needs a UI peer to the LLM tool. -->
+    <button @click="openCreateCardModal()" class="px-4 py-2 rounded bg-accent text-onaccent font-medium hover:bg-accent2">
+      <span data-i18n="review.create_new">+ 新建 Card</span>
+    </button>
+  </div>
+  <div
+    x-show="cardsState.queue.length"
+    class="absolute" style="top: 12px; right: 80px;"
+  >
+    <button @click="openCreateCardModal()" class="text-textsoft hover:text-text px-2 py-0.5 rounded hover:bg-surface2 text-[11.5px]">
+      <span data-i18n="review.create_new">+ 新建 Card</span>
+    </button>
+  </div>
   <template x-if="cardsState.queue.length">
     <div class="flex-1 flex items-center justify-center px-6 py-10">
       <div class="w-full flex flex-col items-center" style="max-width: 760px;">
