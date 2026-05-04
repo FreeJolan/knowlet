@@ -126,3 +126,33 @@ wedge = AI 长期记忆层            ← 配置 AI 后解锁的差异化
 ```
 
 实质决策不变 —— wedge 仍然是 AI 长期记忆层。但读 0003 时请把"AI"理解为**叠加在笔记软件之上的差异化层**,而不是产品本体。任何 0003 的描述如果暗示"没有 AI 就没有 knowlet",以 ADR-0012 的硬契约为准:**AI 没配置时,knowlet 仍然可用**。
+
+## Amendment(2026-05-04 用户拨乱反正)
+
+原版本第 77 行:
+
+> 传统 PKM 的双链 / 图谱专门 UI(改由 LLM agent + tools 间接达成)
+
+**这条移出"阶段一明确不做"清单。** 双链(bidirectional links)+ 图谱(graph view)
+是知识软件的核心能力,不是"传统 PKM 的可有可无装饰",更不是"LLM agent 间接达成"
+就能替代的体验。理由:
+
+1. **knowlet 本质上是知识软件,不是 AI Chat 套壳**(per ADR-0012 身份契约)。
+   知识软件的核心动作之一是"把已有知识跟新知识连起来"——双链/图谱提供的正是
+   **用户主动表达的连接关系**,而不是 LLM 推断出的可能关系。
+2. **用户主动建立的链接经过用户认可**,是 ground truth;LLM 推断的连接是辅助信号
+   (ADR-0013 §3 Layer B 的 cluster / near-dup 等)。两类是互补的,不是替代关系。
+3. 由 LLM "间接达成"双链 = 用户每次想看链接关系都要起对话 → 跟 ADR-0012 §"AI 是
+   可选增强"矛盾(关掉 AI 用户应该仍然能看到自己的链接图)。
+
+### 落地连锁修改
+
+- **wikilinks `[[Title]]` + 反链面板已在 M7.0.4 落地**(commit 62b4d6e),
+  这部分双链能力已经 ship,与本修订一致。
+- **图谱(graph view)** 此前在 [ADR-0011 §6](./0011-web-ui-redesign.md) 与
+  [ADR-0013](./0013-knowledge-management-contract.md) §3 Layer B 被显式排除(描述为
+  "虚荣功能" / "graph 等不做")。本修订**撤销那些排除**:graph view 重新进入路线图,
+  作为 M8 知识地图侧栏的一种**模式**(列表模式 + 图谱模式并列),不是 either/or。
+- ADR-0011 / ADR-0013 已分别打了对应的 amendment(2026-05-04)。
+- 设计请求 brief(`docs/design/m7-m8-redesign-brief.md`)需更新:不再把 "no graph
+  view" 当成约束传递给 Claude Design;反而要请它设计图谱模式。
