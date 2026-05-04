@@ -12,10 +12,10 @@ Knowlet 是一个先自用、后开源的 AI 长期记忆层 + 减负型 PKM。A
 ## 快速上手
 
 ```bash
-# 一次性安装(需要 Python 3.11+;可选 [embed] 拉本地 embedding 模型)
+# 安装(需要 Python 3.11+;可选 [embed] 拉本地 embedding 模型)
 git clone https://github.com/FreeJolan/knowlet.git && cd knowlet
-uv venv --python 3.12
-uv pip install -e '.[embed]'
+uv sync --extra embed                  # 同步依赖到 project venv
+uv tool install -e .                   # 把 `knowlet` 装到 PATH(推荐,任何目录可用)
 
 # 准备一个 vault(任意目录,推荐放进 iCloud / Syncthing 同步管道)
 mkdir ~/my-vault && cd ~/my-vault
@@ -26,9 +26,18 @@ knowlet user edit         # (可选)写一份你自己的 profile
 
 # 开始用
 knowlet                   # 不带子命令直接进 chat REPL
-# 或者浏览器界面
-knowlet web               # 默认 http://127.0.0.1:8765
+knowlet web               # 浏览器界面 — http://127.0.0.1:8765
 ```
+
+> **不想全局装?** `uv tool install` 那行可以省。从源码目录用 `uv run` 前缀替代:
+> ```bash
+> cd /path/to/knowlet
+> KNOWLET_VAULT=~/my-vault uv run knowlet web --port 8765
+> KNOWLET_VAULT=~/my-vault uv run knowlet vault snapshot --label pre-upgrade
+> ```
+> 或者一次性 `source .venv/bin/activate` 在当前 shell 用裸 `knowlet` 命令(`deactivate` 退出)。
+>
+> **升级方法**(所有路径通用):`cd /path/to/knowlet && git pull && uv sync --extra embed && uv tool install -e . --force`(末尾这条只 `uv tool install` 路径需要)。
 
 LLM 服务可以是任何兼容 OpenAI Chat Completions 协议的端点 —— 官方 OpenAI、OpenRouter、Ollama,或用社区开源 wrapper 把 Claude Code / Codex / Cursor 等工具暴露成 OpenAI 协议。详见 [ADR-0005](./docs/decisions/0005-llm-integration-strategy.md)。
 

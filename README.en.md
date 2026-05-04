@@ -12,10 +12,10 @@ Knowlet is an AI long-term memory layer + lower-burden PKM, built first for pers
 ## Quick start
 
 ```bash
-# One-time install (requires Python 3.11+; optional [embed] extra pulls the local embedding model)
+# Install (requires Python 3.11+; optional [embed] extra pulls the local embedding model)
 git clone https://github.com/FreeJolan/knowlet.git && cd knowlet
-uv venv --python 3.12
-uv pip install -e '.[embed]'
+uv sync --extra embed                  # sync deps into project venv
+uv tool install -e .                   # put `knowlet` on PATH (recommended; usable from any dir)
 
 # Prepare a vault (any directory; iCloud / Syncthing / Dropbox work fine)
 mkdir ~/my-vault && cd ~/my-vault
@@ -26,9 +26,18 @@ knowlet user edit         # (optional) write your own profile
 
 # Use it
 knowlet                   # no subcommand → drops into the chat REPL
-# or, browser-based UI
-knowlet web               # default http://127.0.0.1:8765
+knowlet web               # browser UI — http://127.0.0.1:8765
 ```
+
+> **Don't want a global install?** Skip the `uv tool install` line and prefix commands with `uv run` from the source dir:
+> ```bash
+> cd /path/to/knowlet
+> KNOWLET_VAULT=~/my-vault uv run knowlet web --port 8765
+> KNOWLET_VAULT=~/my-vault uv run knowlet vault snapshot --label pre-upgrade
+> ```
+> Or `source .venv/bin/activate` once for bare `knowlet` commands in the current shell (`deactivate` to exit).
+>
+> **Upgrade** (all paths): `cd /path/to/knowlet && git pull && uv sync --extra embed && uv tool install -e . --force` (the trailing `uv tool install` only matters for that path).
 
 The LLM endpoint can be any OpenAI-Chat-Completions-compatible service — OpenAI, OpenRouter, Ollama, or an open-source community wrapper that exposes Claude Code / Codex / Cursor as an OpenAI endpoint. See [ADR-0005](./docs/decisions/0005-llm-integration-strategy.en.md).
 
