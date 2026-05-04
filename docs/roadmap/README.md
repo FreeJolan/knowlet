@@ -274,6 +274,16 @@ knowlet 是知识软件,不是 AI Chat 套壳(per [ADR-0012](../decisions/0012-n
 | Tauri 桌面壳(M5 / M9)| M5/M9 | ADR-0011 §"Schedule" |
 | 浏览器扩展 / share-target | M9+ Tauri 阶段 | ADR-0016 §"Out of scope" |
 
+### 🟣 数据耐久性(M9 候选,ADR-0018 待起草)
+
+`knowlet vault snapshot` / `restore-snapshot` / `list-snapshots` + `knowlet doctor` 数据完整性检查 + Note `schema_version` 已在 commit `40cfcd0` ship,作为 dogfood 期的运营安全垫。下一步 ADR-0018 把契约钉死:
+
+- Schema 演进规则(只能加字段不能删字段;1 major version backward compat 强制)
+- Vault fixtures 测试套件(M0/M3/M7 各自的 vault snapshot,跑回归测试 "新代码能读旧 vault")
+- 半显式 versioning(讨论 `v0.1.0` 是否就是 M8 dogfood 版)
+- `.knowlet/backups/` 真正用起来(每次 destructive 操作前写副本,跟 ADR-0006 §3 对齐)
+- Card / Draft / MiningTask 也加 `schema_version`(目前只 Note 加了)
+
 ### ⚪ 编辑器 / 交互层 defer(M7+)
 
 | 项 | 出处 | 状态 |

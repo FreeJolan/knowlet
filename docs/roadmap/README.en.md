@@ -279,6 +279,16 @@ Attachments (PDF/audio/video) / watch folder / audio recording + transcription /
 | Tauri desktop shell (M5 / M9) | M5/M9 | ADR-0011 §"Schedule" |
 | Browser extension / share-target | M9+ Tauri era | ADR-0016 §"Out of scope" |
 
+### 🟣 Data durability (M9 candidate, ADR-0018 pending)
+
+`knowlet vault snapshot` / `restore-snapshot` / `list-snapshots` + `knowlet doctor` integrity check + Note `schema_version` shipped in commit `40cfcd0` as the dogfood-phase operational safety net. ADR-0018 will pin the full contract:
+
+- Schema evolution policy (additive only, 1-major-version backwards compat enforced)
+- Vault fixtures test suite (M0/M3/M7 vault snapshots, regression-test "new code reads old vault")
+- Semi-explicit versioning (decide whether `v0.1.0` = M8 dogfood release)
+- Use `.knowlet/backups/` for real (per ADR-0006 §3, not yet implemented)
+- Add `schema_version` to Card / Draft / MiningTask (only Note has it today)
+
 ### ⚪ Editor / interaction defer (M7+)
 
 | Item | Source | Status |
