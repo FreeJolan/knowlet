@@ -46,6 +46,15 @@ def slugify(title: str, max_len: int = 40) -> str:
     return slug
 
 
+# Frontmatter schema version. Bump this whenever a Note field is added,
+# removed, or has its serialization changed in a way old code can't read.
+# Notes without `schema_version` in frontmatter are treated as v1 (pre-
+# tagging era — same shape, just unmarked). Migration policy: code at
+# major version N must be able to read notes written by major version
+# N-1 without manual intervention. ADR-0006-2 (planned) will codify this.
+NOTE_SCHEMA_VERSION = 1
+
+
 @dataclass
 class Note:
     id: str
@@ -56,6 +65,7 @@ class Note:
     updated_at: str = field(default_factory=now_iso)
     source: str | None = None
     path: Path | None = None
+    schema_version: int = NOTE_SCHEMA_VERSION
 
     @property
     def slug(self) -> str:
@@ -78,6 +88,7 @@ class Note:
 
     def to_markdown(self) -> str:
         meta = {
+            "schema_version": self.schema_version,
             "id": self.id,
             "title": self.title,
             "tags": list(self.tags),
@@ -94,6 +105,12 @@ class Note:
         with path.open("r", encoding="utf-8") as f:
             post = frontmatter.load(f)
         meta = post.metadata
+        # Pre-versioned notes default to v1 — same shape, just unmarked.
+        # When v2 lands, code here will branch on schema_version.
+        try:
+            schema_version = int(meta.get("schema_version") or 1)
+        except (TypeError, ValueError):
+            schema_version = 1
         return cls(
             id=str(meta.get("id") or new_id()),
             title=str(meta.get("title") or path.stem),
@@ -103,4 +120,5 @@ class Note:
             updated_at=str(meta.get("updated_at") or now_iso()),
             source=meta.get("source"),
             path=path,
+            schema_version=schema_version,
         )

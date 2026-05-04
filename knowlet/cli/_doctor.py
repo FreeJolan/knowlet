@@ -74,6 +74,25 @@ def run_doctor_checks(
     else:
         warn("index", "skipped (no embedding backend)")
 
+    # Vault integrity: parse every Note / Card / Draft / MiningTask file
+    # and report counts. Anything that fails to parse is a red flag —
+    # could be schema drift, manual edit gone wrong, or a partial write
+    # from a crashed process. Lets the user catch silent corruption
+    # before it bites them. Read-only; never modifies the vault.
+    integrity_failures = _check_vault_integrity(vault)
+    for entity, total, failed_paths in integrity_failures:
+        if not total and not failed_paths:
+            continue
+        if failed_paths:
+            fail(
+                f"vault integrity / {entity}",
+                f"{len(failed_paths)} of {total} failed to parse: "
+                + ", ".join(str(p) for p in failed_paths[:3])
+                + (" …" if len(failed_paths) > 3 else ""),
+            )
+        else:
+            ok(f"vault integrity / {entity}", f"{total} file(s) parse cleanly")
+
     if skip_llm:
         warn("llm ping", "skipped")
     elif not cfg.llm.api_key:
@@ -122,6 +141,63 @@ def run_doctor_checks(
             fail("llm tool-calling", f"{type(exc).__name__}: {exc}")
 
     return results
+
+
+def _check_vault_integrity(vault: Vault) -> list[tuple[str, int, list]]:
+    """Walk every entity file in the vault and try to parse it. Returns
+    [(entity_name, total_count, failed_paths)] per type. Pure read; never
+    modifies anything. Failures might mean schema drift / partial writes
+    / manual edits gone wrong — surface them so the user can investigate
+    before the bad file silently propagates through index rebuilds."""
+    from knowlet.core.card import Card
+    from knowlet.core.drafts import Draft
+    from knowlet.core.mining.task import MiningTask
+    from knowlet.core.note import Note
+
+    out: list[tuple[str, int, list]] = []
+
+    # Notes — recursive walk via vault.iter_note_paths (skips .trash
+    # and _attachments by design).
+    note_paths = list(vault.iter_note_paths())
+    note_failed = []
+    for p in note_paths:
+        try:
+            Note.from_file(p)
+        except Exception:  # noqa: BLE001
+            note_failed.append(p.name)
+    out.append(("notes", len(note_paths), note_failed))
+
+    # Cards — JSON.
+    card_failed = []
+    card_paths = list(vault.cards_dir.glob("*.json")) if vault.cards_dir.exists() else []
+    for p in card_paths:
+        try:
+            Card.from_file(p)
+        except Exception:  # noqa: BLE001
+            card_failed.append(p.name)
+    out.append(("cards", len(card_paths), card_failed))
+
+    # Drafts — Markdown + frontmatter.
+    draft_failed = []
+    draft_paths = list(vault.drafts_dir.glob("*.md")) if vault.drafts_dir.exists() else []
+    for p in draft_paths:
+        try:
+            Draft.from_file(p)
+        except Exception:  # noqa: BLE001
+            draft_failed.append(p.name)
+    out.append(("drafts", len(draft_paths), draft_failed))
+
+    # Mining tasks — Markdown + frontmatter.
+    task_failed = []
+    task_paths = list(vault.tasks_dir.glob("*.md")) if vault.tasks_dir.exists() else []
+    for p in task_paths:
+        try:
+            MiningTask.from_file(p)
+        except Exception:  # noqa: BLE001
+            task_failed.append(p.name)
+    out.append(("mining_tasks", len(task_paths), task_failed))
+
+    return out
 
 
 def print_doctor(results: list[tuple[str, str, str]]) -> None:
