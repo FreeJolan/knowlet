@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>Knowlet — Audit</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;550;600&family=Source+Serif+4:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+<style>
+  html, body { margin: 0; padding: 0; background: #131418; color: #dcdee5; font-family: "Inter", system-ui, sans-serif; }
+  #root { width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="audit-1-selection.jsx"></script>
+<script type="text/babel" src="audit-2-capsules.jsx"></script>
+<script type="text/babel" src="audit-3-url-ghost.jsx"></script>
+<script type="text/babel" src="audit-4-sediment.jsx"></script>
+<script type="text/babel" src="audit-5-tooltip.jsx"></script>
+<script type="text/babel" src="audit-6-tree.jsx"></script>
+<script type="text/babel" src="audit-7-backlinks.jsx"></script>
+<script type="text/babel" src="audit-8-quiz.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const App = () => (
+  <DesignCanvas
+    title="Knowlet — Audit (A 类:已存在但需要重做)"
+    subtitle="8 个 surface · 落进真实 Home 三栏 / focus 语境 · 每个都做 collision / wrap / state 的真实情况"
+  >
+    <DCSection id="editor" title="编辑器表面 · 直接落在 note 内">
+      <DCArtboard id="selection-default" label="01 · Selection popover — 默认在选区上方" width={1280} height={760}>
+        <SelectionScreen flip={false} />
+      </DCArtboard>
+      <DCArtboard id="selection-flip" label="01b · Selection popover — 选区贴顶,翻到下方" width={1280} height={760}>
+        <SelectionScreen flip={true} />
+      </DCArtboard>
+      <DCArtboard id="tooltip" label="05 · 悬浮 quote tooltip — 420px,collision-aware,CJK 1.7 行高" width={1280} height={760}>
+        <QuoteTooltipScreen />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="ai" title="AI 右栏表面 · capsule / sediment / URL">
+      <DCArtboard id="capsules" label="02 · Capsule strip — 5 颗 wrap,NOTE / URL / quote 三色" width={1280} height={760}>
+        <CapsulesScreen />
+      </DCArtboard>
+      <DCArtboard id="url-ghost" label="03 · URL ghost capsule — loading / loaded / failed 三态,无 layout shift" width={1280} height={760}>
+        <UrlGhostScreen />
+      </DCArtboard>
+      <DCArtboard id="sediment" label="04 · 沉淀提示 — inline 一行 / 展开 / 永久关三态" width={1280} height={760}>
+        <SedimentScreen />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="vault" title="Vault 表面 · 树 / 反链">
+      <DCArtboard id="tree" label="06 · 递归树 — 240px,guide line + sticky root" width={1280} height={760}>
+        <RecursiveTreeScreen />
+      </DCArtboard>
+      <DCArtboard id="backlinks" label="07 · 反链面板 — 按 source group,2px 底色横条 mark" width={1280} height={760}>
+        <BacklinksScreen />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="quiz" title="Quiz focus mode · ⌘⇧Q · 4 阶段">
+      <DCArtboard id="quiz-scope" label="08a · Phase 1 · 选范围 — 两步:类型 → 搜索挑 note" width={1280} height={820}>
+        <QuizScopeScreen />
+      </DCArtboard>
+      <DCArtboard id="quiz-loop" label="08b · Phase 2 · 答题 — 左题右源 split,高亮出题段落" width={1280} height={820}>
+        <QuizLoopScreen />
+      </DCArtboard>
+      <DCArtboard id="quiz-summary" label="08c · Phase 3 · 评分 — per-Q 评分卡 + inline 不同意 textarea" width={1280} height={820}>
+        <QuizSummaryScreen />
+      </DCArtboard>
+      <DCArtboard id="quiz-history" label="08d · Phase 4 · 记录 — 列表 + 只读详情 + 趋势" width={1280} height={820}>
+        <QuizHistoryScreen />
+      </DCArtboard>
+    </DCSection>
+  </DesignCanvas>
+);
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
