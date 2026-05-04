@@ -1,13 +1,15 @@
 /* knowlet — paper-light visual system (default backbone)
  * Tokens & component-level styles that Tailwind utility classes can't
  * cleanly express (Markdown prose, modal/toast, scrollbar, Split.js gutters).
- * Dark mode is deferred to a future toggle (ADR-0011 §"Open questions" #3).
+ * Dark-mode tokens defined below mirror the light tokens 1:1; the
+ * toggle UI ships in M8.4 (per Claude Design 2nd pass).
  */
 
 :root {
   /* surfaces — warm paper, slightly stratified */
   --bg: #f4f0e8;          /* page (paper) */
   --bg-1: #efe9dd;        /* slightly recessed */
+  --bg-2: #e8e1d2;
   --panel: #ede7d9;       /* sidebars / header / footer */
   --panel-2: #e3dcca;     /* hover / inset */
   --card: #fbf8f1;        /* lifted card / active tab */
@@ -26,6 +28,7 @@
   --accent-2: #4d6a8a;
   --accent-soft: rgba(91, 122, 156, 0.14);
   --accent-tint: rgba(91, 122, 156, 0.08);
+  --accent-tint-2: rgba(91, 122, 156, 0.16);
   --on-accent: #faf7f0;
 
   /* status — warm earth scale, not neon */
@@ -40,6 +43,57 @@
   --font-serif: 'Source Serif 4', 'Iowan Old Style', Georgia,
     'Noto Serif SC', serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Dark-mode token mirror — Claude Design 2nd pass (M8.4 prep).
+ * Strict 1:1 mirror of the light tokens above; no dark-only colors.
+ * Activated by `<html data-theme="dark">` (toggle UI ships in M8.4).
+ * Defining the tokens now lets later styling already work in dark
+ * if a developer manually flips the attribute via DevTools.
+ * ────────────────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg: #1c1d22;
+  --bg-1: #1f2025;
+  --bg-2: #232428;
+  --panel: #1f2025;
+  --panel-2: #272930;
+  --card: #272930;
+
+  --line: #34363d;
+  --line-soft: #2a2c33;
+
+  --ink: #dcdee5;
+  --ink-soft: #a0a4b0;
+  --ink-mute: #73798a;
+  --ink-faint: #565a66;
+
+  --accent: #8aa9c9;
+  --accent-2: #a3c0dc;
+  --accent-soft: rgba(138, 169, 201, 0.16);
+  --accent-tint: rgba(138, 169, 201, 0.10);
+  --accent-tint-2: rgba(138, 169, 201, 0.22);
+  --on-accent: #14151a;
+
+  --warn: #caa15f;
+  --good: #7eaf78;
+  --user: #cfa66e;
+  --danger: #d97c70;
+}
+
+/* Subtle paper warmth — matches the design canvas backdrop. Optional
+ * utility; wrap the body in `class="kn-paper"` to activate. */
+.kn-paper {
+  background:
+    radial-gradient(1100px 600px at 75% -10%, var(--accent-tint), transparent 60%),
+    radial-gradient(900px 500px at -5% 110%, rgba(164,122,58,0.03), transparent 60%),
+    var(--bg);
+}
+[data-theme="dark"] .kn-paper {
+  background:
+    radial-gradient(1100px 600px at 75% -10%, var(--accent-tint), transparent 60%),
+    radial-gradient(900px 500px at -5% 110%, rgba(164,122,58,0.05), transparent 60%),
+    var(--bg);
 }
 
 html, body {
@@ -265,13 +319,36 @@ body {
   display: flex;
   align-items: center;
   gap: 7px;
-  /* Per-row inline `padding-left` controls indent (depth * 14px). */
+  /* Per-row inline `padding-left` controls indent (depth * 12px,
+   * Claude Design 2nd pass tightened from 14 → 12 for ≥3 depth). */
   padding-top: 4px;
   padding-right: 10px;
   padding-bottom: 4px;
   cursor: pointer;
   font-size: 13px;
   color: var(--ink);
+  position: relative;
+}
+
+/* Indent guide lines (Claude Design 2nd pass §6 — GitHub web style).
+ * `.tree-guide` spans are inserted by app.js per depth; this styles them. */
+.tree-guide {
+  position: relative;
+  width: 12px;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+.tree-guide::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line-soft);
+}
+.tree-item:hover .tree-guide::before {
+  background: var(--line);
 }
 .tree-action {
   display: none;
@@ -591,13 +668,17 @@ body {
   background: var(--accent-soft);
 }
 
-/* M7.0.4 backlink panel: highlight the matched [[Title]] inside the sentence */
+/* M7.0.4 backlink panel: highlight the matched [[Title]] inside the sentence.
+ * Claude Design 2nd pass: switched from `accent-soft` chip to a 2px bottom
+ * line — chip-on-chip in the panel context was hard to read; "use line not
+ * block" preserves emphasis without competing for surface area. */
 .bl-mark {
-  background: var(--accent-soft);
+  background: transparent;
   color: var(--accent-2, var(--accent));
-  padding: 0 2px;
-  border-radius: 2px;
+  border-bottom: 2px solid var(--accent);
+  padding: 0 1px;
   font-style: normal;
+  font-weight: 500;
 }
 
 /* M7.0.5: highlight.js theme overrides for paper-light blending.
@@ -627,32 +708,51 @@ body {
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* M7.1 quote-reference capsules */
+/* M7.1 quote-reference capsules.
+ * Claude Design 2nd pass: switched to color-block differentiation
+ * (NOTE = accent-soft + 2px left bar; URL = bg-1 mid-grey) instead of
+ * relying on icon-only difference. Wrapping to a second row in narrow
+ * rails (~340px) is allowed; we don't compress individual chips. */
 .capsule {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 2px 8px 2px 6px;
-  border-radius: 12px;
+  padding: 2px 8px 2px 8px;
+  border-radius: 4px;        /* 4px (was 12px) — softer pill, sharper info */
   font-size: 11.5px;
   line-height: 1.4;
   cursor: pointer;
-  border: 1px solid var(--accent-soft, var(--line));
-  max-width: 320px;
+  border: 1px solid var(--line);
+  max-width: 220px;
+  height: 22px;
+  position: relative;
+  flex-shrink: 0;
 }
+/* NOTE-source capsule — subtle accent-soft tint + 2px accent left bar.
+ * Reads "this is from your vault." */
 .capsule-active {
-  background: var(--accent-soft, transparent);
-  color: var(--accent, var(--ink));
+  background: var(--accent-soft);
+  color: var(--accent-2, var(--ink));
+  border-color: var(--accent-soft);
+  padding-left: 10px;
+}
+.capsule-active::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 4px 0 0 4px;
 }
 .capsule-active:hover {
-  background: var(--accent-tint, var(--accent-soft));
-  border-color: var(--accent, var(--line));
+  background: var(--accent-tint-2);
+  border-color: var(--accent);
 }
 .capsule-sent {
-  background: var(--panel, #ede7d9);
+  background: var(--panel);
   color: var(--ink-mute, var(--ink-soft));
   border-color: var(--line-soft);
-  opacity: 0.78;
+  opacity: 0.65;
 }
 .capsule-sent:hover {
   opacity: 1;
@@ -665,12 +765,12 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 200px;
+  max-width: 130px;
 }
 .capsule .capsule-x {
   color: var(--ink-mute);
-  font-weight: 700;
-  font-size: 13px;
+  font-weight: 600;
+  font-size: 12px;
   margin-left: 2px;
 }
 .capsule .capsule-reuse {
@@ -679,7 +779,51 @@ body {
   margin-left: 2px;
 }
 
-/* M7.2 URL capture banner — shows above chat textarea on paste detection */
+/* M7.2 URL capsule variant — neutral bg-1 (NOT accent-soft) + globe icon.
+ * Color-block diff from NOTE capsule per Claude Design 2nd pass:
+ * URL = "external content," visually quieter than vault-sourced quote. */
+.capsule-active.capsule-url {
+  background: var(--bg-1);
+  color: var(--ink);
+  border-color: var(--line);
+  padding-left: 8px;
+}
+.capsule-active.capsule-url::before {
+  display: none;             /* no accent bar — URL isn't vault content */
+}
+.capsule-url .capsule-quote {
+  font-style: normal;
+  color: var(--ink-mute);
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+}
+
+/* M7.2 ghost capsule — replaces the old `.url-capture-banner` row.
+ * Same shape as a real capsule; dashed border + spinner; morphs into
+ * the solid capsule on success (no layout shift, per Claude Design
+ * 2nd pass §3 "URL ghost capsule"). */
+.capsule-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  height: 22px;
+  background: transparent;
+  border: 1px dashed var(--line);
+  color: var(--ink-mute);
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.capsule-ghost.error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* M7.2 URL capture banner — DEPRECATED by ghost capsule (still here so
+ * legacy DOM doesn't break during the rolling render swap; remove in
+ * a future pass once all call-sites use the ghost path). */
 .url-capture-banner {
   background: var(--accent-soft, var(--panel));
   border: 1px solid var(--accent-soft, var(--line-soft));
@@ -687,14 +831,6 @@ body {
   padding: 6px 10px;
   margin-bottom: 8px;
   font-size: 12px;
-}
-
-/* M7.2 URL capsule variant — globe icon, slightly different tone */
-.capsule-url .capsule-quote {
-  font-style: normal;
-  color: var(--ink-mute);
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10.5px;
 }
 
 /* M7.2 spinner for the "fetching… summarizing…" hint */
@@ -724,18 +860,21 @@ q[data-original]:hover::after {
   position: absolute;
   top: 100%;
   left: 0;
-  margin-top: 4px;
-  padding: 8px 10px;
+  margin-top: 6px;
+  padding: 10px 12px;
   background: var(--card, #fbf8f1);
   border: 1px solid var(--line-soft, #e5dcc8);
-  border-radius: 5px;
+  border-radius: 6px;
   white-space: pre-wrap;
   width: max-content;
-  max-width: 360px;
-  font-family: "Source Serif 4", Georgia, serif;
-  font-size: 12px;
+  /* Claude Design 2nd pass: bumped from 360 → min(420, 80vw)
+   * — CJK at 360px wraps too aggressively; 80vw caps prevent
+   * edge overflow on narrow viewports. */
+  max-width: min(420px, 80vw);
+  font-family: "Source Serif 4", Georgia, "Noto Serif SC", serif;
+  font-size: 12.5px;
   font-style: normal;
-  line-height: 1.55;
+  line-height: 1.7;
   color: var(--ink-soft, var(--ink));
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
   z-index: 50;

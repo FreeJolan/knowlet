@@ -169,7 +169,11 @@
           <!-- Folder row -->
           <template x-if="row.kind === 'folder'">
             <div class="tree-item" @click="toggleFolder(row.path)">
-              <div class="tree-row" :style="`padding-left: ${10 + row.depth * 14}px;`">
+              <div class="tree-row" style="padding-left: 8px;">
+                <!-- Indent guides (Claude Design 2nd pass §6) — 1 span per depth level -->
+                <template x-for="g in row.depth" :key="g">
+                  <span class="tree-guide" aria-hidden="true"></span>
+                </template>
                 <svg class="icon icon-sm flex-shrink-0 text-textmute"
                      :class="row.collapsed ? '' : 'rotate-90'"
                      style="transition: transform 80ms;">
@@ -186,8 +190,10 @@
           <!-- Note row -->
           <template x-if="row.kind === 'note'">
             <div :class="currentNoteId === row.note.id ? 'tree-item active' : 'tree-item'">
-              <div class="tree-row" @click="openNote(row.note.id)"
-                   :style="`padding-left: ${10 + row.depth * 14}px;`">
+              <div class="tree-row" @click="openNote(row.note.id)" style="padding-left: 8px;">
+                <template x-for="g in row.depth" :key="g">
+                  <span class="tree-guide" aria-hidden="true"></span>
+                </template>
                 <svg class="icon icon-sm flex-shrink-0"
                      :class="currentNoteId === row.note.id ? 'text-accent2' : 'text-textmute'">
                   <use href="#i-doc"/>
@@ -724,33 +730,38 @@
     <div x-show="sedimentDrafting" class="text-textsoft text-sm py-8 text-center" data-i18n="sediment.web.drafting">AI 整理中…(Opus 大约 25 秒)</div>
     <template x-if="!sedimentDrafting">
       <div class="space-y-2">
-        <!-- M7.2 Layer A ambient — top-3 similar Notes (ADR-0013 §3) -->
+        <!-- M7.2 Layer A ambient — top-3 similar Notes (ADR-0013 §3).
+             Claude Design 2nd pass §4: switched from collapsible <details>
+             to inline one-line format. The verbs "建议" / "merge" are
+             explicitly forbidden (ADR-0013 §1); titles are clickable to
+             jump, that's all. Default action stays "save as new note." -->
         <div
-          x-show="similarNotes.rows.length > 0 || similarNotes.loading"
-          class="border border-bordersoft rounded bg-panel/60 p-2.5 text-[12px]"
+          x-show="!sedimentAmbientDismissed && (similarNotes.rows.length > 0 || similarNotes.loading)"
+          class="text-[11.5px] text-textmute leading-relaxed flex items-baseline gap-1.5 flex-wrap"
         >
-          <details>
-            <summary class="cursor-pointer text-textsoft hover:text-text flex items-center gap-1.5">
-              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-search"/></svg>
-              <span data-i18n="sediment.similar.heading">可能相关的笔记</span>
-              <span x-show="!similarNotes.loading" class="text-textmute" x-text="`(${similarNotes.rows.length})`"></span>
-              <span x-show="similarNotes.loading" class="text-textmute" data-i18n="sediment.similar.loading">载入中…</span>
-            </summary>
-            <div class="mt-2 space-y-1.5">
-              <template x-for="row in similarNotes.rows" :key="row.id">
-                <button
-                  @click="openSimilarNote(row.id)"
-                  class="block w-full text-left px-2 py-1.5 rounded hover:bg-surface2"
-                >
-                  <div class="text-text font-medium text-[12.5px] truncate" x-text="row.title"></div>
-                  <div class="text-textsoft text-[11.5px] truncate" x-text="row.preview"></div>
-                </button>
-              </template>
-            </div>
-            <p class="text-textmute text-[10.5px] mt-1.5" data-i18n="sediment.similar.disclaimer">
-              纯供参考。默认动作仍然是「保存为新笔记」。
-            </p>
-          </details>
+          <svg class="icon icon-sm flex-shrink-0 self-center" aria-hidden="true"><use href="#i-search"/></svg>
+          <span x-show="similarNotes.loading" data-i18n="sediment.similar.loading">载入中…</span>
+          <span
+            x-show="!similarNotes.loading && similarNotes.rows.length > 0"
+            x-text="`${similarNotes.rows.length} 条相关 ↗`"
+            class="text-textsoft"
+          ></span>
+          <template x-for="(row, i) in similarNotes.rows" :key="row.id">
+            <span class="inline-flex items-baseline gap-1">
+              <button
+                @click="openSimilarNote(row.id)"
+                class="text-accent2 hover:underline truncate max-w-[160px]"
+                x-text="row.title"
+                :title="row.preview"
+              ></button>
+              <span x-show="i < similarNotes.rows.length - 1" class="text-textfaint">·</span>
+            </span>
+          </template>
+          <button
+            @click="sedimentAmbientDismissed = true"
+            class="ml-auto text-textfaint hover:text-textsoft"
+            title="dismiss · 不再显示(本次会话)"
+          >×</button>
         </div>
         <label class="block">
           <span class="text-xs text-textsoft" data-i18n="sediment.web.field.title">标题</span>
