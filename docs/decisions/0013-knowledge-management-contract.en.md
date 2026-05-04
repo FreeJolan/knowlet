@@ -217,3 +217,30 @@ Implementation must:
   3. Layer B Map UI position deferred to implementation.
   4. ADR-0014 (note-quiz mode) drafted right after this ADR lands.
 - Triggered by 2026-05-02 dogfood + the second-opinion review's critique #6 (product-positioning internal contradiction) — ADR-0012 resolved the macro layer; this ADR handles the natural follow-on "OK, when AI is here, what can it do?"
+
+## Amendment (2026-05-04 — coordinating with ADR-0003 amendment)
+
+§3 Layer B's "explicitly not doing" list, item 1:
+
+> ❌ Graph view (ADR-0011 already decided no)
+
+**Reversed.** Per [ADR-0003 amendment (2026-05-04)](./0003-wedge-pivot-ai-memory-layer.en.md#amendment-2026-05-04--user-course-correction),
+bilinks + graph are core knowledge software capabilities;
+ADR-0011 has also withdrawn its "vanity feature" verdict. The
+matching update here:
+
+- **Graph view ≠ Layer B "knowledge map sidebar"**, but they
+  **coexist in M8**, not either/or:
+  - **Graph view** = visualization of user-authored `[[Title]]`
+    link relationships (ground truth, user-validated relationships)
+  - **Layer B knowledge map sidebar** = LLM-inferred structural
+    signals (cluster / near-duplicate / orphan / aging — *auxiliary*
+    signals, not user-validated relationships)
+  - The two UI layers complement, not replace each other
+
+§3 Layer B's other excluded items **stand**:
+- ❌ Tag taxonomy (top-down forced classification remains a fail mode)
+- ❌ Auto-archive / auto-merge (violates §1 contract)
+
+§7 boundary table (`vs ADR-0011's "explicitly no graph view"`) row is
+likewise voided; ADR-0011's amendment handles the symmetric update.

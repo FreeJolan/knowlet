@@ -259,3 +259,30 @@ For comparison: React + shadcn full stack ≈ 250 kb; Vue 3 + Naive UI ≈ 500 k
 - M7 (if useful): CodeMirror 6 (replaces textarea) — a real editor, ~150 kb full but ~50 kb tree-shaken; lives as its own "Editor area," doesn't pollute other components.
 - M8 (if useful): add the **optional dark toggle** (light is now the default backbone; dark tokens get filled in once, plus a header / settings switch + localStorage persistence + "follow system" option).
 - M5 / M9 Tauri desktop shell: the same `knowlet/web/static/` ships into Tauri unchanged, no rewrite needed.
+
+## Amendment (2026-05-04 — coordinating with ADR-0003 amendment)
+
+§"## Consequences" stated:
+
+> Graph etc. vanity features explicitly not done — concentrate dev
+> resources, not screenshot-driven
+
+**Reversed.** Per [ADR-0003 amendment (2026-05-04)](./0003-wedge-pivot-ai-memory-layer.en.md#amendment-2026-05-04--user-course-correction),
+bilinks + graph are core knowledge-software capabilities, not
+"vanity / screenshot-driven" decorations.
+
+Corrected stance:
+
+- **Graph view re-enters the roadmap** (target: M8; specific landing
+  point depends on Claude Design's second-pass feedback)
+- The original ADR's other intent stays: **graph view shouldn't be
+  the product's narrative spine** (that *would* be screenshot-driven).
+  Graph is a visualization of user-authored link relationships, complementary
+  to LLM-inferred signals (cluster / near-duplicate, ADR-0013 §3 Layer B);
+  the two are layers, not substitutes.
+- M7.0.4 already shipped wikilinks `[[Title]]` + backlinks panel as
+  the **list form** of bilinks (commit 62b4d6e); M8 adds a graph
+  form as another view over the same data, not a fresh build.
+
+Other items in the "explicitly not doing" list (team collab / mobile
+native / etc) are **unchanged**.

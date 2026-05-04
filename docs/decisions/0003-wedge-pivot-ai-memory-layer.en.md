@@ -126,3 +126,43 @@ Wedge    = AI long-term memory layer ← unlocked when AI is configured
 ```
 
 The substantive decision is unchanged — the wedge is still the AI long-term memory layer. But when reading 0003, treat "AI" as **a differentiation layer on top of the notes-app identity**, not the product itself. If anything in 0003 implies "no AI means no knowlet," the hard contract from ADR-0012 takes precedence: **knowlet remains usable when AI is not configured.**
+
+## Amendment (2026-05-04 — user course-correction)
+
+The original line:
+
+> Traditional PKM bidirectional-link / graph dedicated UI (handled
+> indirectly by LLM agent + tools)
+
+**moves OUT of "Phase 1 explicitly not doing."** Bidirectional links
+and graph view are core capabilities of knowledge software, not
+"optional decorations of traditional PKM" and not something an LLM
+agent can substitute for. Reasoning:
+
+1. **knowlet is fundamentally knowledge software, not an AI-Chat
+   wrapper** (per the ADR-0012 identity contract). One of knowledge
+   software's core actions is "connect existing knowledge with new
+   knowledge" — bilinks/graph express **the user's own validated
+   connections**, distinct from LLM-inferred possibilities.
+2. **User-authored links are ground truth**; LLM inferences (cluster /
+   near-duplicate signals from ADR-0013 §3 Layer B) are auxiliary.
+   The two are complementary, not substitutes.
+3. Forcing all link-traversal through an LLM dialogue contradicts
+   ADR-0012 §"AI is optional" — turning off AI shouldn't take away
+   the user's own link graph.
+
+### Cascading changes
+
+- **Wikilinks `[[Title]]` + backlinks panel already shipped in M7.0.4**
+  (commit 62b4d6e) — that's the list-form half of bilinks, consistent
+  with this amendment.
+- **Graph view** was previously excluded by [ADR-0011 §6](./0011-web-ui-redesign.en.md)
+  and [ADR-0013](./0013-knowledge-management-contract.en.md) §3 Layer B
+  ("vanity features" / "graph not done"). This amendment **reverses
+  those exclusions**: graph view re-enters the roadmap as a **mode**
+  in the M8 knowledge-map sidebar (list mode + graph mode in parallel,
+  not either/or).
+- ADR-0011 / ADR-0013 each have a matching 2026-05-04 amendment.
+- The design request brief (`docs/design/m7-m8-redesign-brief.md`)
+  should drop "no graph view" as a constraint and instead ask Claude
+  Design to design the graph mode.

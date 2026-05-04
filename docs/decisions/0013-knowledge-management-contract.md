@@ -213,3 +213,27 @@ threshold 数据集相关:学术论文 vault vs 日常 journal vault 的 similar
   > 在一般的使用场景中,用户会不断通过日常对话以及订阅推送积累大量知识笔记,如果不加管理,用户就会面临碎片"地狱"... 大模型不具备真正意义上的判断力,如果知识最终是为人服务,那么人要为知识的准确性负责。
 - 用户当时给的两个粗略想法(录入前整合、日报/周报+遗忘曲线)被批判性 review 后融合进本 ADR
 - 触发于 2026-05-02 dogfood + 第二轮独立 critique #6(产品定位内在矛盾,经 ADR-0012 解决后,自然引出本 ADR 关心的"那 AI 在的时候到底能干啥")
+
+## Amendment(2026-05-04 协同 ADR-0003 修订)
+
+§3 Layer B 的"显式不做"清单中第一条:
+
+> ❌ Graph view(ADR-0011 已定不做)
+
+**撤销。** [ADR-0003 amendment(2026-05-04)](./0003-wedge-pivot-ai-memory-layer.md#amendment2026-05-04-用户拨乱反正)
+明确双链 + 图谱是知识软件核心能力,ADR-0011 也已撤回"虚荣功能"判断。
+本 ADR 的对应修订:
+
+- **graph view ≠ Layer B"知识地图侧栏"**,但两者**共存于 M8**,不是 either/or:
+  - **Graph view** = 用户主动写的 `[[Title]]` 链接关系可视化(ground truth,
+    用户认可的关系)
+  - **Layer B 知识地图侧栏** = LLM 推断的结构信号(cluster / 近重复 / 孤儿 /
+    衰老,**辅助信号**,不是用户认可的关系)
+  - 两层 UI 互补,不替代
+
+§3 Layer B 的"显式不做"清单中其他两项**不变**:
+- ❌ Tag taxonomy(top-down 强制分类仍然是 fail mode)
+- ❌ 自动归档 / 自动合并(违反 §1 契约)
+
+§7 边界表(`vs ADR-0011 的"显式不做 graph view"`)对应行也无效;
+ADR-0011 amendment 已同步处理。

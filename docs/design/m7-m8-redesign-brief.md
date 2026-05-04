@@ -103,11 +103,24 @@
 >    (no inbound `[[]]` links + last-edited > 90 days), `aging_candidates`
 >    (last-edited > 180 days).
 >    *Constraints*: ADR-0013 §1 — **no auto-action buttons**, **no
->    "merge"/"archive" verbs**. Pure information. ADR-0011 §6 explicitly
->    bans graph-view rendering — show signals as lists, not nodes/edges.
+>    "merge"/"archive" verbs**. Pure information.
 >    *Want*: how to make 4 different signal types navigable without
 >    overwhelming; what's the entry pattern (right-rail tab? new focus
 >    mode? collapsible card?).
+>
+> 9b. **Graph view of user-authored bilinks (NEW after 2026-05-04
+>     ADR amendments)** — visualization of `[[Title]]` link relationships
+>     the user wrote themselves. Conceptually distinct from #9: the
+>     knowledge-map sidebar surfaces *LLM-inferred* signals; this one
+>     surfaces *user-validated* connections (ground truth). The two
+>     should coexist as parallel modes / tabs, not either/or.
+>     *Want*: a graph rendering that doesn't fall into the "Roam
+>     screenshot" anti-pattern (pretty but not actionable). Include
+>     interaction model: hover a node = see Note title + 1-line preview;
+>     click = open Note; pan/zoom for >50 nodes; default landing view
+>     for a vault of any size (pre-computed layout vs on-the-fly?).
+>     *Earlier ADR-0011/0013 said "no graph view" — that's reversed,
+>     graph view is now in scope*.
 >
 > 10. **Weekly digest (M8.3 / ADR-0013 Layer C)** — Sunday-newspaper
 >     tone. **No unread badge, no notification dots.** Default cadence
@@ -158,5 +171,9 @@
 - Focus modes for chat / drafts / cards untouched (those were in scope
   for the first pass and are working)
 - No framework migration request
-- ADR-0011 §6 "no graph view" + ADR-0013 §1 "no auto-action buttons"
-  are non-negotiable; the brief flags both
+- ADR-0013 §1 "no auto-action buttons" is non-negotiable; the brief
+  flags it
+- ⚠ ADR-0011 §6 "no graph view" was **reversed by 2026-05-04
+  amendment** (alongside ADR-0003) — graph view is now requested.
+  The dropped exclusion only applies to graph view; other §6 items
+  (no team collab / no mobile native / etc) still hold

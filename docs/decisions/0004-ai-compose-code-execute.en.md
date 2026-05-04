@@ -129,3 +129,72 @@ This ADR is the **engineering boundary** support for the above ADRs, not a new p
   - Mitigation: the four execution constraints (reversible / second gate / granularity / structured returns)
 - **Depends on model capability floor**: on weak models (small local models / older GPT-3.5), orchestration quality may not meet usable threshold
   - Mitigation: knowlet shows a recommended capability tier in LLM config UI; explicit warning "orchestration quality may degrade" when user picks weak model
+
+## Amendment (2026-05-04 — user clarification: AI ≠ sole entry point)
+
+The original repeatedly emphasizes "code implements only the atomic
+capability layer + LLM orchestrates via tool calls" — which is fine
+in spirit but **easily misread as "the user can only invoke atomic
+capabilities through AI."** This amendment elevates the following
+principle from implicit to **a hard constraint**:
+
+### 5th execution constraint: every AI capability must have a UI alternative path
+
+**Any feature reachable via LLM tool-call must also be reachable via
+a sequence of UI actions that produce an equivalent result.**
+
+Concretely:
+
+| Allowed | Forbidden |
+|---|---|
+| `search_notes` is callable by the LLM AND has manual entries (left-rail search, command palette) | `search_notes` is exposed to the LLM only |
+| `create_card` is a chat tool AND a "make into Card" button on the quiz summary | `create_card` is reachable only by talking to the AI |
+| `web_search` (M7.5) is an LLM tool; UI also provides a search-box entry (**TODO**; M7.5 only has the LLM path today, must add UI) | `web_search` is forever LLM-decision-only |
+
+Reasoning:
+
+1. **AI ≠ the only path**: when the user is unfamiliar with AI, has
+   token budget concerns, wants quick precise actions, or doesn't want
+   to explain intent in natural language, they must still reach the
+   result.
+2. **Avoid "users who don't fluent-speak AI lose the whole feature
+   set"**: gating capability behind AI fluency contradicts ADR-0002
+   "AI is optional augmentation" + ADR-0012 "AI is optional capability."
+3. **Reachability**: UI clicks cost N taps + one-time pattern learning;
+   LLM calls cost typing + waiting + reading tool-trace. Each fits
+   different contexts; there shouldn't be a capability gap.
+
+### Backlog (existing capabilities that still need UI entries)
+
+Audit of the 16 tools after M7.5:
+
+| Tool | Existing UI entry | Status |
+|---|---|---|
+| `search_notes` | Left-rail search / palette `Cmd+P` jump | ✅ |
+| `get_note` | Click a note | ✅ |
+| `list_recent_notes` | Left-rail note list (sorted by updated_at) | ✅ |
+| `get_user_profile` | Profile modal | ✅ |
+| `create_card` | Quiz summary "make Card" + drafts approve flow (partial) | ⚠ Need: Cards focus mode "+ new Card" button |
+| `list_due_cards` | Cards focus mode | ✅ |
+| `get_card` | Same | ✅ |
+| `review_card` | Cards focus mode 1/2/3/4 rating | ✅ |
+| `list_mining_tasks` | CLI `knowlet mining ls` (Web TBD) | ⚠ Need: Web mining-config panel |
+| `run_mining_task` | CLI `knowlet mining run-all` + palette `mining-run-all` | ✅ |
+| `list_drafts` | Drafts focus mode | ✅ |
+| `get_draft` | Same | ✅ |
+| `approve_draft` | Drafts focus mode A key | ✅ |
+| `reject_draft` | Drafts focus mode X key | ✅ |
+| `web_search` (M7.5) | **Missing**: LLM path only | ❗ Need: palette command / left-rail search augment |
+| `fetch_url` (M7.5) | **Missing**: LLM path only | ❗ Need: unify with the M7.2 url-capture flow |
+
+⚠ / ❗ rows go onto the M8 dogfood-polish list, not deferred indefinitely.
+
+### Coordination with ADR-0011 §"explicitly not doing"
+
+ADR-0011 §6 excluded graph view (now amended alongside ADR-0003);
+but ADR-0011 §3's three-pane + palette + focus-mode UI framework was
+designed precisely so **every category of atomic capability has a
+first-class UI entry**. This amendment makes that intent explicit in
+ADR-0004 as the gating criterion for new tools: **every newly
+registered tool must declare its UI entry point at registration
+time**, otherwise it's incomplete.

@@ -259,3 +259,23 @@ A2 pitfall #3 的具体应对:
 - M7 视情况:CodeMirror 6(替代 textarea)→ 一个 ~150 kb 的真编辑器,但 tree-shake 后 ~50 kb;独立成自己的"Editor 区域",不污染其他组件
 - M8 视情况:加**暗色可选 toggle**(浅色已是默认骨干;暗色 token 一次性补齐,加 header / 设置里的切换控件 + localStorage 持久化 + 跟随系统选项)
 - M5 / M9 Tauri 桌面壳:同套 `knowlet/web/static/` 直接打包进 Tauri,不需要重写
+
+## Amendment(2026-05-04 协同 ADR-0003 修订)
+
+§"## Consequences" 写道:
+
+> graph 等虚荣功能显式不做 —— 开发资源集中,不被截图驱动
+
+**这条撤销。** 跟 [ADR-0003 amendment(2026-05-04)](./0003-wedge-pivot-ai-memory-layer.md#amendment2026-05-04-用户拨乱反正)
+一致 —— 双链 + 图谱是知识软件的核心能力,不是"虚荣 / 截图驱动"的可有可无装饰。
+
+修正后的姿态:
+
+- **图谱 view 重新进入路线图**(目标:M8 阶段;具体落点视 Claude Design 第二轮回件而定)
+- 但保留原 ADR 的另一意图:**graph view 不该成为产品卖点叙事的主轴**(那才是"截图驱动")。
+  图谱是用户已经写好的链接关系的可视化,跟 cluster / 近重复 / 孤儿 等 LLM 推断信号
+  (ADR-0013 §3 Layer B)是**互补**的两层。
+- M7.0.4 已 ship 的 wikilinks `[[Title]]` + 反链面板是双链的"列表形态"(commit
+  62b4d6e);M8 加图谱形态作为同一组数据的另一种 view,不是另起炉灶。
+
+§"显式不做"清单中的其他几项(团队协作 / 移动原生 / etc)**不变**。

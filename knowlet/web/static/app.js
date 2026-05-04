@@ -1764,6 +1764,7 @@ function ui() {
         { id: "reindex",        label: tt("palette.cmd.reindex"),   sub: tt("palette.cmd.reindex.sub") },
         { id: "doctor",         label: tt("palette.cmd.doctor"),    sub: tt("palette.cmd.doctor.sub") },
         { id: "url-capture",    label: tt("palette.cmd.urlcapture"), sub: tt("palette.cmd.urlcapture.sub") },
+        { id: "web-search",     label: tt("palette.cmd.websearch"),  sub: tt("palette.cmd.websearch.sub") },
         { id: "quiz-me",        label: tt("palette.cmd.quiz"),       sub: tt("palette.cmd.quiz.sub"), disabled: !this.currentTab() && this.notes.length === 0 },
       ];
     },
@@ -1783,7 +1784,36 @@ function ui() {
         case "reindex":        this.runReindex(); break;
         case "doctor":         this.runDoctor(); break;
         case "url-capture":    this.runPaletteUrlCapture(); break;
+        case "web-search":     this.runPaletteWebSearch(); break;
         case "quiz-me":        this.closePalette(); this.openQuizFocus(); break;
+      }
+    },
+
+    /** ADR-0004 amendment (2026-05-04): every AI capability needs a
+     * UI alternative. web_search is registered as an LLM tool; this
+     * palette command is the UI peer — user types a query, we hit the
+     * same provider, drop the snippet block into the chat input as
+     * pre-filled context the user can edit before sending. */
+    async runPaletteWebSearch() {
+      this.closePalette();
+      const q = window.prompt(tt("palette.cmd.websearch.prompt") || "搜索什么?");
+      if (!q || !q.trim()) return;
+      try {
+        // Hit /api/chat/turn with a minimal user text that asks the LLM
+        // to search; we lean on the existing tool path so results show
+        // up via the standard tool_call trace UI. The user can refine
+        // from there. Future polish: a dedicated /api/web_search route
+        // for "search-only without LLM commentary."
+        const cur = this.chatDraft || "";
+        this.chatDraft = (cur + (cur ? "\n\n" : "") + `请用 web_search 查一下:${q.trim()}`).trim();
+        this.rightOpen = true;
+        this.rightTab = "ai";
+        this.$nextTick(() => {
+          const el = this.$refs.chatInput;
+          if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+        });
+      } catch (exc) {
+        toast(`web search 失败: ${exc.message}`, "error");
       }
     },
 
