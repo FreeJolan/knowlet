@@ -224,6 +224,78 @@ export async function hasRow(page, text) {
   return count > 0;
 }
 
+/**
+ * Assert that `locator`'s first element is the active element in the
+ * page's document. Critical for "did focus actually land?" — Playwright's
+ * `.fill()` force-focuses the input it acts on, so plain visibility
+ * checks don't catch focus regressions.
+ */
+export async function expectFocused(page, locator, msg = "expected element to be focused") {
+  const isFocused = await locator.evaluate((el) => el === document.activeElement);
+  if (!isFocused) {
+    const active = await page.evaluate(() => {
+      const a = document.activeElement;
+      return a ? `${a.tagName}.${a.className?.toString().slice(0, 40)}` : "<none>";
+    });
+    throw new Error(`${msg}; activeElement=${active}`);
+  }
+}
+
+/**
+ * Type into a focused input the way a real user would: keystroke by
+ * keystroke through Playwright's keyboard. Distinct from `input.fill()`
+ * which sets `.value` directly and skips the keydown / input event chain.
+ *
+ * Use this whenever the test path cares about input handlers (IME
+ * composition, keydown propagation, isComposing checks).
+ */
+export async function typeInto(page, locator, text, opts = {}) {
+  await locator.click();
+  await locator.evaluate((el) => {
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      el.value = "";
+    }
+  });
+  await page.keyboard.type(text, { delay: opts.delay ?? 30 });
+}
+
+/**
+ * Simulate a Chinese IME composition: composition events with
+ * isComposing true, an Enter to confirm the candidate (which our input
+ * must NOT treat as submit), then a final composition end + the resolved
+ * characters. Mirrors what macOS pinyin / Sogou actually emits well
+ * enough to catch the "Enter mid-IME submits the form" class of bug.
+ */
+export async function simulateIMEComposition(page, locator, finalText) {
+  await locator.focus();
+  // Open composition.
+  await locator.evaluate((el, text) => {
+    el.dispatchEvent(new CompositionEvent("compositionstart", { data: "" }));
+    el.dispatchEvent(new CompositionEvent("compositionupdate", { data: text }));
+  }, finalText);
+  // The browser dispatches a keydown for Enter with isComposing=true
+  // when the user accepts the IME candidate. Playwright doesn't expose
+  // the isComposing flag directly, so dispatch a synthetic event with it.
+  await locator.evaluate((el) => {
+    const ev = new KeyboardEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    el.dispatchEvent(ev);
+  });
+  // End composition with the chosen text.
+  await locator.evaluate((el, text) => {
+    el.dispatchEvent(new CompositionEvent("compositionend", { data: text }));
+    if (el instanceof HTMLInputElement) {
+      el.value = text;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }, finalText);
+}
+
 /** Run the body, print a green/red line, exit non-zero on failure. */
 export async function runTest(name, fn) {
   const t0 = Date.now();

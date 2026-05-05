@@ -9,12 +9,13 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, FilePlus, FileText, Folder, FolderPlus } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Tree,
   type NodeApi,
   type NodeRendererProps,
+  type RowRendererProps,
   type TreeApi,
 } from "react-arborist";
 
@@ -38,6 +39,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { InlineEditInput } from "@/components/InlineEdit/InlineEditInput";
 import { QK } from "@/lib/queryClient";
 
 import {
@@ -204,6 +206,12 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
   // of popping a browser prompt. Submit (Enter) hits the backend; Esc or
   // outside-click cancels.
   const startCreate = (kind: "note" | "folder", parentPath: string) => {
+    // Defensive: arborist's edit state can survive between renames (e.g.
+    // a Rename right-click that the user Esc'd in a way that didn't
+    // fully clear `editingId`). If we open a pending row while another
+    // row is still in edit mode, the tree shows two inputs and the
+    // user's Enter / pinyin lands in the wrong one. Force-reset here.
+    treeRef.current?.reset();
     if (parentPath) {
       // Auto-open the folder so the placeholder is visible.
       setOpenMap((m) => ({ ...m, [`folder:${parentPath}`]: true }));
@@ -308,6 +316,7 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
             onToggle={(id) => {
               setOpenMap((m) => ({ ...m, [id]: !isNodeOpen(id) }));
             }}
+            renderRow={CustomRow}
           >
             {(props: NodeRendererProps<TreeNodeData>) => (
               <Row
@@ -337,82 +346,29 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
   );
 }
 
-// ----- rename input -----
+// ----- custom Row wrapper -----
 
 /**
- * Inline rename input. We can't rely on `autoFocus` alone because Radix
- * ContextMenu closing after "Rename" returns focus to the body, racing
- * the input mount and causing an immediate blur → exit edit. Use a
- * useEffect + requestAnimationFrame to claim focus *after* the menu's
- * cleanup pass has run. Blur commits (matches Obsidian / Bear); Esc
- * cancels.
+ * Replaces arborist's DefaultRow. The default puts `tabIndex=-1` on the
+ * row + binds an `innerRef` that arborist's RowContainer then calls
+ * `.focus()` on whenever `node.isFocused` flips. That steals focus
+ * from any input we mount inside the row (rename / new-note inline edit).
+ *
+ * Fix: keep `innerRef` (drop hooks need it for hover detection!) but
+ * strip `tabIndex` from the attrs so `.focus()` on the resulting div
+ * is a no-op, leaving the input's focus alone.
  */
-function RenameInput({
-  initial,
-  placeholder = "",
-  onSubmit,
-  onCancel,
-}: {
-  initial: string;
-  placeholder?: string;
-  onSubmit: (v: string) => void;
-  onCancel: () => void;
-}) {
-  const ref = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    // Two RAFs: arborist re-clones the row on edit dispatch, which means
-    // a remount of this input. Schedule focus past that remount so the
-    // cursor lands in the second (final) instance, not the first one
-    // that's about to be discarded.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const el = ref.current;
-        if (!el) return;
-        el.focus();
-        el.select();
-      });
-    });
-    // Cancel the edit when the user clicks anywhere outside the input.
-    // Listen on `pointerdown` (not click) because Radix's own menu close
-    // chain fires after a pointerup on click, by which point we'd already
-    // have a stale focus race.
-    const el = ref.current;
-    if (!el) return;
-    const onOutside = (e: PointerEvent) => {
-      if (e.target instanceof Node && !el.contains(e.target)) onCancel();
-    };
-    document.addEventListener("pointerdown", onOutside, true);
-    return () => document.removeEventListener("pointerdown", onOutside, true);
-  }, [onCancel]);
-
+function CustomRow<T>({ node, attrs, innerRef, children }: RowRendererProps<T>) {
+  const { tabIndex: _ignored, ...rest } = attrs;
   return (
-    <input
-      ref={ref}
-      type="text"
-      defaultValue={initial}
-      placeholder={placeholder}
-      data-rename-input="true"
-      className="flex-1 rounded-sm border bg-background px-1 text-foreground outline-none ring-1 ring-ring/50 focus:ring-ring"
-      style={{ borderColor: "var(--ring)" }}
-      // No onBlur: arborist re-clones nodes on every store update, which
-      // causes synthetic blurs mid-edit (focus shuffles between the row
-      // wrapper and the input across re-renders). Auto-cancel-on-blur
-      // would terminate edit mode immediately. Enter / Escape are the
-      // explicit commit / cancel gestures, matching Obsidian + Bear.
-      // Click-outside cancellation is handled below via a window listener.
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          onSubmit(e.currentTarget.value);
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
-      }}
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}
-    />
+    <div
+      {...rest}
+      ref={innerRef}
+      onFocus={(e) => e.stopPropagation()}
+      onClick={node.handleClick}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -509,7 +465,7 @@ function Row({
           <FileText className="size-4 shrink-0 text-muted-foreground" />
         )}
         {node.isEditing || isPending ? (
-          <RenameInput
+          <InlineEditInput
             initial={node.data.name}
             placeholder={
               isPending

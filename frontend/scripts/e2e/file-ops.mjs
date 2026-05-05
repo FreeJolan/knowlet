@@ -1,6 +1,15 @@
 // E2E: file ops — create folder, rename, delete, restore.
 
-import { assert, exitAfter, expectRow, hasRow, runTest, setupTestEnv } from "./_fixture.mjs";
+import {
+  assert,
+  exitAfter,
+  expectFocused,
+  expectRow,
+  hasRow,
+  runTest,
+  setupTestEnv,
+  typeInto,
+} from "./_fixture.mjs";
 
 const env = await setupTestEnv({
   notes: [
@@ -43,16 +52,19 @@ try {
     assert(await hasRow(page, "zeta"), "zeta note appears in tree");
   });
 
-  await runTest("rename via right-click menu (Enter to commit)", async () => {
+  await runTest("rename via right-click menu (real keyboard, focus assert)", async () => {
     const row = await expectRow(page, "alpha");
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Rename" }).click();
     const input = page.locator('input[data-rename-input="true"]');
     await input.waitFor({ state: "visible", timeout: 3000 });
-    await input.fill("alpha-renamed");
-    await input.press("Enter");
+    await expectFocused(page, input, "rename input is focused on open");
+    await typeInto(page, input, "alpha-renamed");
+    await page.keyboard.press("Enter");
     await page.waitForTimeout(500);
     assert(await hasRow(page, "alpha-renamed"), "renamed row appears");
+    const stray = await page.locator('input[data-rename-input="true"]').count();
+    assert(stray === 0, `no stray rename input (got ${stray})`);
   });
 
   await runTest("delete via right-click → trash → restore", async () => {
