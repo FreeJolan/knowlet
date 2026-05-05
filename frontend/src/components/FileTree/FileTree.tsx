@@ -103,7 +103,12 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
   const createFolderM = useMutation({
     mutationFn: ({ path }: { path: string }) => createFolder(path),
     onMutate: startBusy,
-    onSettled: settled,
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: QK.tree });
+      setPendingCreate(null);
+    },
+    onError: () => setPendingCreate(null),
+    onSettled: () => onMutating?.(false),
   });
   const createNoteM = useMutation({
     mutationFn: ({ title, folder }: { title: string; folder: string }) =>
@@ -121,12 +126,23 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
           return next;
         });
       }
-      // Wait for the tree refetch to land before selecting, otherwise
-      // arborist tries to select a node it doesn't know yet.
+      // Wait for the tree refetch to land before clearing the pending
+      // placeholder + selecting. Otherwise the user sees the inline-edit
+      // row vanish, then a brief empty gap, then the real note appear —
+      // it reads as "my note disappeared".
       await qc.invalidateQueries({ queryKey: QK.tree });
+      setPendingCreate(null);
       onSelectNote(note.id);
     },
-    onSettled: settled,
+    onError: () => {
+      // Mutation failed — drop the placeholder so the user can retry.
+      setPendingCreate(null);
+    },
+    onSettled: () => {
+      onMutating?.(false);
+      // No invalidate here — onSuccess already did. Avoids a second
+      // refetch round-trip.
+    },
   });
   const moveNoteM = useMutation({
     mutationFn: ({ id, target }: { id: string; target: string }) => moveNote(id, target),
@@ -236,7 +252,9 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
         : trimmed;
       createFolderM.mutate({ path });
     }
-    setPendingCreate(null);
+    // Note: do NOT clear pendingCreate here. The placeholder stays in
+    // the tree until the mutation lands so the user doesn't see a gap.
+    // createNoteM / createFolderM clear it in onSuccess.
   };
 
   // Memoize the conversion so arborist's internal open/closed state isn't
@@ -498,7 +516,14 @@ function Row({
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{rowBody}</ContextMenuTrigger>
-      <ContextMenuContent className="w-52">
+      <ContextMenuContent
+        className="w-52"
+        // Radix's default close behavior auto-returns focus to the trigger
+        // (the row's outer div). When the user picks "Rename", the menu
+        // closes ~80 ms later and steals focus from the inline-edit input
+        // we just mounted. preventDefault keeps focus where we put it.
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
         {isFolder && (
           <>
             <ContextMenuItem

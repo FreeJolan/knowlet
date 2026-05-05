@@ -81,8 +81,17 @@ export function InlineEditInput({
       placeholder={placeholder}
       data-rename-input="true"
       data-testid={dataTestId}
-      className="flex-1 rounded-sm border bg-background px-1 text-foreground outline-none ring-1 ring-ring/50 focus:ring-ring"
-      style={{ borderColor: "var(--ring)" }}
+      className="flex-1 rounded-sm border bg-background px-1 text-foreground outline-none ring-2"
+      style={{
+        // The dogfood report showed caret invisible on the warm paper
+        // canvas. Force a high-contrast caret (the dusk-blue ring color)
+        // and a clearly visible 2px ring so the user always sees the
+        // input is focused even if the cursor itself blinks.
+        borderColor: "var(--ring)",
+        // @ts-expect-error css custom prop
+        "--tw-ring-color": "var(--ring)",
+        caretColor: "var(--ring)",
+      }}
       onKeyDown={(e) => {
         // IME composition: Enter / Escape are candidate-confirm /
         // candidate-dismiss for the input method, NOT submit / cancel

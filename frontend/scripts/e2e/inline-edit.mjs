@@ -39,13 +39,36 @@ try {
     await page.waitForTimeout(200);
   });
 
-  await runTest("right-click Rename input gets focus immediately", async () => {
+  await runTest("right-click Rename input gets focus + KEEPS it through menu close", async () => {
     const row = page.locator(".group").filter({ hasText: "alpha" }).first();
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Rename" }).click();
     const input = page.locator('input[data-rename-input="true"]');
     await input.waitFor({ state: "visible", timeout: 3000 });
-    await expectFocused(page, input, "rename input is focused");
+    // Radix returns focus to its trigger ~80ms after menu close. Earlier
+    // tests only checked at +20ms and missed the steal — assert at +200ms
+    // and again at +500ms.
+    await expectFocused(page, input, "rename input focused immediately");
+    await page.waitForTimeout(200);
+    await expectFocused(page, input, "rename input still focused after Radix close");
+    await page.waitForTimeout(300);
+    await expectFocused(page, input, "rename input still focused after 500 ms");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+  });
+
+  await runTest("inline-edit input has a visible caret-color (not text color)", async () => {
+    await page.click('button[aria-label="New note"]');
+    const input = page.locator('input[data-rename-input="true"]');
+    await input.waitFor({ state: "visible", timeout: 3000 });
+    const styles = await input.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { color: cs.color, caretColor: cs.caretColor };
+    });
+    assert(
+      styles.caretColor !== styles.color,
+      `caret-color (${styles.caretColor}) must differ from text color (${styles.color}) so the cursor is visible`,
+    );
     await page.keyboard.press("Escape");
     await page.waitForTimeout(200);
   });
@@ -63,6 +86,28 @@ try {
       // Critical: NO other row should have been pulled into edit mode.
       const inputCount = await page.locator('input[data-rename-input="true"]').count();
       assert(inputCount === 0, `no rogue rename input survived (got ${inputCount})`);
+    },
+  );
+
+  await runTest(
+    "new note stays visible across slow backend (no transient disappearance)",
+    async () => {
+      await page.click('button[aria-label="New note"]');
+      const input = page.locator('input[data-rename-input="true"]');
+      await input.waitFor({ state: "visible", timeout: 3000 });
+      await typeInto(page, input, "persistent");
+      // The placeholder row must stay visible while the backend POST is
+      // in flight + during the tree refetch — no gap where neither the
+      // placeholder nor the real note is on screen.
+      await page.keyboard.press("Enter");
+      // Sample at multiple timestamps. At every point, either the
+      // placeholder row OR the real note must be in the tree. Never both
+      // missing.
+      for (const wait of [10, 30, 80, 150, 400, 800, 1500]) {
+        await page.waitForTimeout(wait);
+        const present = await hasRow(page, "persistent");
+        assert(present, `'persistent' row must be in tree at +${wait}ms`);
+      }
     },
   );
 
