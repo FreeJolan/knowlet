@@ -24,19 +24,31 @@ await page.waitForTimeout(800);
 const initialRows = await page.locator(".group").count();
 console.log("rows visible (default-open):", initialRows);
 
-const firstFolderChevron = page.locator('button[aria-label="collapse"]').first();
-const hasChevron = (await firstFolderChevron.count()) > 0;
-console.log("collapse chevron present:", hasChevron);
-if (hasChevron) {
-  await firstFolderChevron.click();
-  await page.waitForTimeout(150);
+// Toggle by clicking the row body (the entire row should respond, not just
+// the chevron icon). Pick any open folder row — its row text is the folder
+// name; click it once and expect the visible row count to drop because the
+// folder's children fold up.
+const openFolderRow = page
+  .locator(".group")
+  .filter({ hasText: /^archive|^projects|^1$|^2025/ })
+  .first();
+if ((await openFolderRow.count()) > 0) {
+  await openFolderRow.click();
+  await page.waitForTimeout(180);
   const rowsAfterCollapse = await page.locator(".group").count();
-  console.log("rows after one collapse:", rowsAfterCollapse);
-  if (rowsAfterCollapse >= initialRows) console.log("WARN: collapse did not reduce row count");
-  const expandBtn = page.locator('button[aria-label="expand"]').first();
-  if ((await expandBtn.count()) > 0) {
-    await expandBtn.click();
-    await page.waitForTimeout(150);
+  console.log("rows after one row-click:", rowsAfterCollapse);
+  if (rowsAfterCollapse >= initialRows) {
+    console.log("ERR: row click did not collapse the folder");
+    process.exitCode = 1;
+  }
+  // Click again to re-expand
+  await openFolderRow.click();
+  await page.waitForTimeout(180);
+  const rowsAfterReExpand = await page.locator(".group").count();
+  console.log("rows after re-expand:", rowsAfterReExpand);
+  if (rowsAfterReExpand !== initialRows) {
+    console.log("ERR: re-expand did not restore row count");
+    process.exitCode = 1;
   }
 }
 

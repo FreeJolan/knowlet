@@ -9,7 +9,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, FileText, Folder, Plus } from "lucide-react";
-import { useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Tree,
@@ -51,6 +51,15 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
   const { t } = useTranslation();
   const qc = useQueryClient();
   const treeRef = useRef<TreeApi<TreeNodeData> | null>(null);
+  // Controlled open state. Arborist's uncontrolled mode wasn't reflecting
+  // node.toggle() in the DOM in our setup (likely a re-render race with
+  // TanStack Query invalidations); owning the map ourselves is cheap and
+  // makes toggle deterministic.
+  const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
+  const isNodeOpen = useCallback(
+    (id: string) => (openMap[id] === undefined ? true : openMap[id]),
+    [openMap],
+  );
 
   const tree = useQuery({ queryKey: QK.tree, queryFn: getTree });
 
@@ -159,6 +168,15 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
     if (name?.trim()) createFolderM.mutate({ path: name.trim() });
   };
 
+  // Memoize the conversion so arborist's internal open/closed state isn't
+  // reset every render. Without this, every click rebuilds the array and
+  // arborist re-applies `openByDefault`, undoing the toggle. Must be called
+  // before any conditional return so the hook order is stable across renders.
+  const data = useMemo(
+    () => (tree.data ? toArborist(tree.data) : []),
+    [tree.data],
+  );
+
   if (tree.isLoading) {
     return <div className="p-4 text-sm text-muted-foreground">{t("tree.loading")}</div>;
   }
@@ -172,8 +190,6 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
       </div>
     );
   }
-
-  const data = tree.data ? toArborist(tree.data) : [];
 
   return (
     <div className="flex h-full flex-col">
@@ -208,21 +224,22 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
             openByDefault={true}
             width="100%"
             height={5000}
-            rowHeight={22}
+            rowHeight={26}
             indent={14}
             paddingTop={4}
             onRename={onRename}
             onMove={onMove}
             onDelete={onDelete}
             selection={selectedNoteId ? `note:${selectedNoteId}` : undefined}
-            onActivate={(node) => {
-              if (node.data.kind === "note") onSelectNote(node.data.noteId);
-              else node.toggle();
+            onToggle={(id) => {
+              setOpenMap((m) => ({ ...m, [id]: !isNodeOpen(id) }));
             }}
           >
             {(props: NodeRendererProps<TreeNodeData>) => (
               <Row
                 {...props}
+                openMap={openMap}
+                setOpenMap={setOpenMap}
                 onCreateChildFolder={(parentPath) => {
                   const name = window.prompt(t("menu.newFolderPrompt"));
                   if (name?.trim()) {
@@ -253,6 +270,8 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
 // ----- row renderer -----
 
 interface RowProps extends NodeRendererProps<TreeNodeData> {
+  openMap: Record<string, boolean>;
+  setOpenMap: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   onCreateChildFolder: (parentPath: string) => void;
   onDeleteFolder: (folderPath: string, name: string) => void;
   onDeleteNote: (noteId: string, name: string) => void;
@@ -262,86 +281,87 @@ function Row({
   node,
   style,
   dragHandle,
+  openMap,
+  setOpenMap,
   onCreateChildFolder,
   onDeleteFolder,
   onDeleteNote,
 }: RowProps) {
   const { t } = useTranslation();
   const isFolder = node.data.kind === "folder";
-  const isOpen = node.isOpen;
+  // Read from our controlled openMap; default = open (matches openByDefault).
+  const isOpen = openMap[node.id] === undefined ? true : openMap[node.id];
 
-  // VS Code-style: rounded pill with horizontal margin; row container takes
-  // the full row height for hit area, the inner pill carries the visual.
+  // Click anywhere on the row toggles a folder / opens a note (VS Code +
+  // Obsidian convention). Arborist doesn't call onActivate on a single
+  // row click — its onActivate fires on double-click / Enter. So we wire
+  // the click ourselves on the inner pill (the outermost div is the
+  // dragHandle which arborist itself binds events on, so we go one level
+  // deeper to avoid stepping on it).
+  const handleClick = () => {
+    if (node.isEditing) return;
+    if (isFolder) {
+      // Drive both arborist's internal toggle (so it knows to render
+      // children) and our controlled openMap (so the chevron icon flips).
+      // We also call node.toggle() to keep arborist's visibleNodes list
+      // in sync, then mirror the result into our state.
+      node.toggle();
+      setOpenMap((m) => ({ ...m, [node.id]: !isOpen }));
+    } else node.activate();
+  };
+
   const rowBody = (
     <div
       ref={dragHandle}
       style={style}
       className="group flex h-full items-center px-1 select-none cursor-default"
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        node.edit();
+      }}
     >
       <div
+        onClick={handleClick}
         className={`flex h-[calc(100%-2px)] w-full items-center gap-2 rounded-md px-2 text-sm ${
           node.isSelected
             ? "bg-accent/40 text-accent-foreground"
             : "hover:bg-secondary/60"
         }`}
       >
-        {/* Chevron is its own click target — toggling the folder must not fire
-            the row activate (which our onActivate also handles, via
-            arborist's keyboard / row click). Notes get an empty spacer for
-            visual alignment. */}
+        {/* Chevron is purely visual — the row's onPointerUp handles toggle.
+            Notes get an empty spacer for alignment. */}
         {isFolder ? (
-          <button
-            type="button"
-            aria-label={isOpen ? "collapse" : "expand"}
-            onClick={(e) => {
-              e.stopPropagation();
-              node.toggle();
-            }}
-            className="flex size-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
-          >
+          <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground">
             {isOpen ? (
               <ChevronDown className="size-3.5" />
             ) : (
               <ChevronRight className="size-3.5" />
             )}
-          </button>
+          </span>
         ) : (
           <span className="size-4 shrink-0" />
         )}
-        {/* Body part — clicking here activates (file open / folder toggle). */}
-        <div
-          className="flex min-w-0 flex-1 items-center gap-2"
-          onClick={() => {
-            if (isFolder) node.toggle();
-            else node.activate();
-          }}
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            node.edit();
-          }}
-        >
-          {isFolder ? (
-            <Folder className="size-4 shrink-0 text-muted-foreground" />
-          ) : (
-            <FileText className="size-4 shrink-0 text-muted-foreground" />
-          )}
-          {node.isEditing ? (
-            <input
-              className="flex-1 bg-transparent px-1 outline-none ring-1 ring-ring rounded-sm"
-              defaultValue={node.data.name}
-              autoFocus
-              onFocus={(e) => e.currentTarget.select()}
-              onBlur={() => node.reset()}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") node.submit(e.currentTarget.value);
-                if (e.key === "Escape") node.reset();
-              }}
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : (
-            <span className="truncate">{node.data.name || t("tree.untitled")}</span>
-          )}
-        </div>
+        {isFolder ? (
+          <Folder className="size-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <FileText className="size-4 shrink-0 text-muted-foreground" />
+        )}
+        {node.isEditing ? (
+          <input
+            className="flex-1 bg-transparent px-1 outline-none ring-1 ring-ring rounded-sm"
+            defaultValue={node.data.name}
+            autoFocus
+            onFocus={(e) => e.currentTarget.select()}
+            onBlur={() => node.reset()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") node.submit(e.currentTarget.value);
+              if (e.key === "Escape") node.reset();
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span className="truncate">{node.data.name || t("tree.untitled")}</span>
+        )}
       </div>
     </div>
   );
