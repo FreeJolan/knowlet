@@ -193,6 +193,35 @@ try {
     },
   );
 
+  await runTest("F2 on focused row enters rename mode", async () => {
+    if (!(await hasRow(page, "alpha"))) {
+      await page.locator(".group").filter({ hasText: "lab" }).first().click();
+      await page.waitForTimeout(150);
+    }
+    // Click alpha to focus it (in arborist's terms).
+    await page.locator(".group").filter({ hasText: "alpha" }).first().click();
+    await page.waitForTimeout(150);
+    await page.keyboard.press("F2");
+    const input = page.locator('input[data-rename-input="true"]');
+    await input.waitFor({ state: "visible", timeout: 2000 });
+    await expectFocused(page, input, "F2 input is focused");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+  });
+
+  await runTest("F2 inside an existing input does NOT cascade", async () => {
+    // While the user is typing in the rename input, F2 must do nothing.
+    await page.click('button[aria-label="New note"]');
+    const input = page.locator('input[data-rename-input="true"]');
+    await input.waitFor({ state: "visible", timeout: 2000 });
+    await page.keyboard.press("F2");
+    await page.waitForTimeout(150);
+    const stillOne = await page.locator('input[data-rename-input="true"]').count();
+    assert(stillOne === 1, `F2 inside input must not open a second editor (got ${stillOne})`);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+  });
+
   await runTest("Esc cancels without committing", async () => {
     await page.click('button[aria-label="New note"]');
     const input = page.locator('input[data-rename-input="true"]');

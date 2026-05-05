@@ -9,7 +9,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, FilePlus, FileText, Folder, FolderPlus } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Tree,
@@ -128,7 +128,36 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
   // this; Esc / outside-click clears without creating. VS Code-style.
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null);
 
+  // Most recently clicked tree row, used as the F2 rename target. We
+  // track this ourselves rather than read arborist's focusedNode because
+  // the latter only populates when the tree-container DOM has focus,
+  // which it doesn't reliably after our CustomRow strips tabIndex (a
+  // necessary fix for input-focus stealing — see CustomRow comments).
+  const [lastClickedId, setLastClickedId] = useState<string | null>(null);
+
   const tree = useQuery({ queryKey: QK.tree, queryFn: getTree });
+
+  // F2 = rename the focused row. Matches VS Code / Finder. We listen at
+  // the window level so the user doesn't have to first click into the
+  // tree column. No-op if focus is in any text-input field (so F2 in
+  // Cmd+P palette / a future editor doesn't collide).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "F2") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
+        return;
+      }
+      const treeApi = treeRef.current;
+      if (!treeApi || !lastClickedId) return;
+      const node = treeApi.get(lastClickedId);
+      if (!node) return;
+      e.preventDefault();
+      node.edit();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lastClickedId]);
 
   const refresh = () => qc.invalidateQueries({ queryKey: QK.tree });
   const startBusy = () => onMutating?.(true);
@@ -424,6 +453,7 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
                 {...props}
                 openMap={openMap}
                 setOpenMap={setOpenMap}
+                onClickRow={setLastClickedId}
                 onCreateChildNote={(parentPath) => startCreate("note", parentPath)}
                 onCreateChildFolder={(parentPath) => startCreate("folder", parentPath)}
                 onCommitPending={commitPending}
@@ -478,6 +508,7 @@ function CustomRow<T>({ node, attrs, innerRef, children }: RowRendererProps<T>) 
 interface RowProps extends NodeRendererProps<TreeNodeData> {
   openMap: Record<string, boolean>;
   setOpenMap: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  onClickRow: (id: string) => void;
   onCreateChildNote: (parentPath: string) => void;
   onCreateChildFolder: (parentPath: string) => void;
   onCommitPending: (name: string) => void;
@@ -492,6 +523,7 @@ function Row({
   dragHandle,
   openMap,
   setOpenMap,
+  onClickRow,
   onCreateChildNote,
   onCreateChildFolder,
   onCommitPending,
@@ -516,6 +548,7 @@ function Row({
   const handleClick = () => {
     if (isPending) return;
     if (node.isEditing) return;
+    onClickRow(node.id);
     if (isFolder) {
       // Drive both arborist's internal toggle (so it knows to render
       // children) and our controlled openMap (so the chevron icon flips).
@@ -531,10 +564,6 @@ function Row({
       ref={dragHandle}
       style={style}
       className="group flex h-full items-center px-1 select-none cursor-default"
-      onDoubleClick={(e) => {
-        e.stopPropagation();
-        node.edit();
-      }}
     >
       <div
         onClick={handleClick}
