@@ -1,13 +1,16 @@
 /**
- * Vault file tree (Phase 1 A, Slice 2.1 + 2.2 + 2.3).
+ * Vault file tree (Phase 1 A).
  *
  * react-arborist gives us virtualization, drag-drop, multi-select and
  * inline rename for free; we own the row renderer + the wiring between
- * Tree events and the backend mutations.
+ * Tree events and the backend mutations. Right-click is delegated to the
+ * shadcn ContextMenu (Radix under the hood) — `asChild` merges the menu
+ * trigger onto the row element so we don't add an extra DOM node inside
+ * the virtualized row.
  */
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, ChevronDown, FileText, Folder, Plus } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronRight, FileText, Folder, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   Tree,
@@ -28,9 +31,15 @@ import {
   updateNote,
 } from "@/api/client";
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { QK } from "@/lib/queryClient";
 
-import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { toArborist, type TreeNodeData } from "./treeData";
 
 export interface FileTreeProps {
@@ -44,11 +53,6 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
   const qc = useQueryClient();
   const [containerRef, size] = useElementSize();
   const treeRef = useRef<TreeApi<TreeNodeData> | null>(null);
-  const [menu, setMenu] = useState<{
-    node: TreeNodeData;
-    x: number;
-    y: number;
-  } | null>(null);
 
   const tree = useQuery({
     queryKey: QK.tree,
@@ -60,73 +64,55 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
   const refresh = () => qc.invalidateQueries({ queryKey: QK.tree });
   const startBusy = () => onMutating?.(true);
   const endBusy = () => onMutating?.(false);
+  const settled = () => {
+    endBusy();
+    refresh();
+  };
 
   const renameNoteM = useMutation({
     mutationFn: async ({ id, title }: { id: string; title: string }) => {
-      // Pull current note (we need body+tags for PUT).
       const cur = await getNote(id);
       return updateNote(id, { title, tags: cur.tags, body: cur.body });
     },
     onMutate: startBusy,
-    onSettled: () => {
-      endBusy();
-      refresh();
-    },
+    onSettled: settled,
   });
   const renameFolderM = useMutation({
     mutationFn: ({ path, newName }: { path: string; newName: string }) =>
       renameFolder(path, newName),
     onMutate: startBusy,
-    onSettled: () => {
-      endBusy();
-      refresh();
-    },
+    onSettled: settled,
   });
   const createFolderM = useMutation({
     mutationFn: ({ path }: { path: string }) => createFolder(path),
     onMutate: startBusy,
-    onSettled: () => {
-      endBusy();
-      refresh();
-    },
+    onSettled: settled,
   });
   const moveNoteM = useMutation({
     mutationFn: ({ id, target }: { id: string; target: string }) => moveNote(id, target),
     onMutate: startBusy,
-    onSettled: () => {
-      endBusy();
-      refresh();
-    },
+    onSettled: settled,
   });
   const moveFolderM = useMutation({
     mutationFn: ({ src, dstParent }: { src: string; dstParent: string }) =>
       moveFolder(src, dstParent),
     onMutate: startBusy,
-    onSettled: () => {
-      endBusy();
-      refresh();
-    },
+    onSettled: settled,
   });
   const deleteNoteM = useMutation({
     mutationFn: (id: string) => deleteNote(id),
     onMutate: startBusy,
-    onSettled: () => {
-      endBusy();
-      refresh();
-    },
+    onSettled: settled,
   });
   const deleteFolderM = useMutation({
     mutationFn: (path: string) => deleteFolder(path),
     onMutate: startBusy,
-    onSettled: () => {
-      endBusy();
-      refresh();
-    },
+    onSettled: settled,
   });
 
   // ----- arborist event wiring -----
 
-  const onRename = ({ id, name, node }: { id: string; name: string; node: NodeApi<TreeNodeData> }) => {
+  const onRename = ({ name, node }: { id: string; name: string; node: NodeApi<TreeNodeData> }) => {
     const trimmed = name.trim();
     if (!trimmed) return;
     if (node.data.kind === "note") {
@@ -134,7 +120,6 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
     } else {
       renameFolderM.mutate({ path: node.data.folderPath, newName: trimmed });
     }
-    void id; // unused; arborist passes it for our convenience
   };
 
   const onMove = ({
@@ -146,7 +131,6 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
     parentId: string | null;
     index: number;
   }) => {
-    // Target folder is the drop-parent's folderPath; null = root.
     const targetFolderPath = parentNode?.data.folderPath ?? "";
     if (parentNode && parentNode.data.kind !== "folder") return;
     for (const dragId of dragIds) {
@@ -180,66 +164,6 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
     }
   };
 
-  // ----- right-click menu items -----
-
-  const menuItems = (node: TreeNodeData): ContextMenuItem[] => {
-    const items: ContextMenuItem[] = [];
-    if (node.kind === "folder") {
-      items.push({
-        label: "New folder inside",
-        onSelect: () => {
-          const name = window.prompt("Folder name?");
-          if (name?.trim())
-            createFolderM.mutate({
-              path: node.folderPath ? `${node.folderPath}/${name.trim()}` : name.trim(),
-            });
-        },
-      });
-      items.push({
-        label: "Rename",
-        onSelect: () => {
-          const arboristNode = treeRef.current?.get(node.id);
-          arboristNode?.edit();
-        },
-      });
-      items.push({
-        label: "Delete folder",
-        destructive: true,
-        onSelect: () => {
-          if (
-            window.confirm(
-              `Delete "${node.name}"? All notes inside go to .trash/.`,
-            )
-          ) {
-            deleteFolderM.mutate(node.folderPath);
-          }
-        },
-      });
-    } else {
-      items.push({
-        label: "Rename",
-        onSelect: () => {
-          const arboristNode = treeRef.current?.get(node.id);
-          arboristNode?.edit();
-        },
-      });
-      items.push({
-        label: "Move to root",
-        onSelect: () => moveNoteM.mutate({ id: node.noteId, target: "" }),
-      });
-      items.push({
-        label: "Delete",
-        destructive: true,
-        onSelect: () => {
-          if (window.confirm(`Move "${node.name}" to .trash/?`)) {
-            deleteNoteM.mutate(node.noteId);
-          }
-        },
-      });
-    }
-    return items;
-  };
-
   // ----- new-folder at root button -----
 
   const onNewRootFolder = () => {
@@ -266,7 +190,7 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
   return (
     <div className="flex h-full flex-col">
       <div
-        className="flex items-center justify-between border-b px-3 py-2"
+        className="flex shrink-0 items-center justify-between border-b px-3 py-2"
         style={{ borderColor: "var(--line)" }}
       >
         <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground">
@@ -277,74 +201,105 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
           size="icon"
           aria-label="New folder"
           onClick={onNewRootFolder}
+          className="size-7"
         >
           <Plus className="size-4" />
         </Button>
       </div>
-      <div ref={containerRef} className="flex-1 overflow-hidden">
-        <Tree<TreeNodeData>
-          ref={treeRef}
-          data={data}
-          openByDefault={false}
-          width={size.width}
-          height={size.height}
-          rowHeight={28}
-          indent={16}
-          onRename={onRename}
-          onMove={onMove}
-          onDelete={onDelete}
-          selection={selectedNoteId ? `note:${selectedNoteId}` : undefined}
-          onActivate={(node) => {
-            if (node.data.kind === "note") onSelectNote(node.data.noteId);
-            else node.toggle();
-          }}
-          disableEdit={(node: TreeNodeData) =>
-            // Disable inline edit on the synthetic root only; everything else is renamable.
-            node.id === "root"
-          }
-        >
-          {(props: NodeRendererProps<TreeNodeData>) => (
-            <Row
-              {...props}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setMenu({ node: props.node.data, x: e.clientX, y: e.clientY });
+      <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden">
+        {data.length === 0 ? (
+          <div className="px-3 py-6 text-sm text-muted-foreground">
+            Empty vault. Use <kbd className="rounded bg-muted px-1">+</kbd> above
+            to add a folder, or run <code className="font-mono">knowlet add</code>
+            .
+          </div>
+        ) : (
+          size.width > 0 &&
+          size.height > 0 && (
+            <Tree<TreeNodeData>
+              ref={treeRef}
+              data={data}
+              openByDefault={true}
+              width={size.width}
+              height={size.height}
+              rowHeight={28}
+              indent={16}
+              onRename={onRename}
+              onMove={onMove}
+              onDelete={onDelete}
+              selection={selectedNoteId ? `note:${selectedNoteId}` : undefined}
+              onActivate={(node) => {
+                if (node.data.kind === "note") onSelectNote(node.data.noteId);
+                else node.toggle();
               }}
-            />
-          )}
-        </Tree>
+            >
+              {(props: NodeRendererProps<TreeNodeData>) => (
+                <Row
+                  {...props}
+                  onCreateChildFolder={(parentPath) => {
+                    const name = window.prompt("Folder name?");
+                    if (name?.trim()) {
+                      createFolderM.mutate({
+                        path: parentPath ? `${parentPath}/${name.trim()}` : name.trim(),
+                      });
+                    }
+                  }}
+                  onMoveToRoot={(noteId) =>
+                    moveNoteM.mutate({ id: noteId, target: "" })
+                  }
+                  onDeleteFolder={(folderPath, name) => {
+                    if (
+                      window.confirm(
+                        `Delete "${name}"? All notes inside go to .trash/.`,
+                      )
+                    ) {
+                      deleteFolderM.mutate(folderPath);
+                    }
+                  }}
+                  onDeleteNote={(noteId, name) => {
+                    if (window.confirm(`Move "${name}" to .trash/?`)) {
+                      deleteNoteM.mutate(noteId);
+                    }
+                  }}
+                />
+              )}
+            </Tree>
+          )
+        )}
       </div>
-      {menu && (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          items={menuItems(menu.node)}
-          onClose={() => setMenu(null)}
-        />
-      )}
     </div>
   );
 }
 
 // ----- row renderer -----
 
+interface RowProps extends NodeRendererProps<TreeNodeData> {
+  onCreateChildFolder: (parentPath: string) => void;
+  onMoveToRoot: (noteId: string) => void;
+  onDeleteFolder: (folderPath: string, name: string) => void;
+  onDeleteNote: (noteId: string, name: string) => void;
+}
+
 function Row({
   node,
   style,
   dragHandle,
-  onContextMenu,
-}: NodeRendererProps<TreeNodeData> & {
-  onContextMenu: (e: React.MouseEvent) => void;
-}) {
+  onCreateChildFolder,
+  onMoveToRoot,
+  onDeleteFolder,
+  onDeleteNote,
+}: RowProps) {
   const isFolder = node.data.kind === "folder";
   const isOpen = node.isOpen;
-  return (
+
+  const rowBody = (
     <div
       ref={dragHandle}
       style={style}
-      onContextMenu={onContextMenu}
-      className={`group flex items-center gap-1 px-2 text-sm rounded-sm cursor-default select-none ${
-        node.isSelected ? "bg-accent text-accent-foreground" : "hover:bg-secondary"
+      className={`group flex h-full items-center gap-1 px-2 text-sm rounded-sm cursor-default select-none ${
+        node.isSelected
+          ? "bg-accent/20 text-accent-foreground"
+          : "hover:bg-secondary/60"
       }`}
       onClick={() => {
         if (isFolder) node.toggle();
@@ -367,7 +322,7 @@ function Row({
       )}
       {node.isEditing ? (
         <input
-          className="flex-1 bg-transparent outline-none ring-1 ring-ring rounded-sm px-1"
+          className="flex-1 bg-transparent px-1 outline-none ring-1 ring-ring rounded-sm"
           defaultValue={node.data.name}
           autoFocus
           onFocus={(e) => e.currentTarget.select()}
@@ -382,6 +337,38 @@ function Row({
       )}
     </div>
   );
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{rowBody}</ContextMenuTrigger>
+      <ContextMenuContent className="w-56">
+        {isFolder && (
+          <ContextMenuItem
+            onSelect={() => onCreateChildFolder(node.data.folderPath)}
+          >
+            New folder inside
+          </ContextMenuItem>
+        )}
+        <ContextMenuItem onSelect={() => node.edit()}>Rename</ContextMenuItem>
+        {!isFolder && (
+          <ContextMenuItem onSelect={() => onMoveToRoot(node.data.noteId)}>
+            Move to root
+          </ContextMenuItem>
+        )}
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          variant="destructive"
+          onSelect={() =>
+            isFolder
+              ? onDeleteFolder(node.data.folderPath, node.data.name)
+              : onDeleteNote(node.data.noteId, node.data.name)
+          }
+        >
+          Delete
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 }
 
 // ----- size hook -----
@@ -394,6 +381,10 @@ function useElementSize(): [
   const [size, setSize] = useState({ width: 0, height: 0 });
   useEffect(() => {
     if (!ref.current) return;
+    // Read size synchronously on mount in case ResizeObserver doesn't fire
+    // immediately (some Safari builds).
+    const r = ref.current.getBoundingClientRect();
+    setSize({ width: r.width, height: r.height });
     const obs = new ResizeObserver((entries) => {
       const e = entries[0];
       if (e) {

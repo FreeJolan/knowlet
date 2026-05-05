@@ -5,15 +5,19 @@
  * here so a future palette / Cmd+P can also drive it.
  */
 
+import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Group, Panel, Separator } from "react-resizable-panels";
 
 import { FileTree } from "@/components/FileTree/FileTree";
 import { NoteView } from "@/components/NoteView/NoteView";
-import { TrashPanel } from "@/components/Trash/TrashPanel";
 import { CommandPalette } from "@/components/Palette/CommandPalette";
+import { TrashPanel } from "@/components/Trash/TrashPanel";
 import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 
 export function AppShell() {
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
@@ -38,11 +42,11 @@ export function AppShell() {
   return (
     <>
       <div
-        className="grid h-screen grid-rows-[auto_1fr]"
+        className="flex h-screen flex-col"
         style={{ background: "var(--bg)" }}
       >
         <header
-          className="flex items-center justify-between border-b px-4 py-2"
+          className="flex shrink-0 items-center justify-between border-b px-4 py-2"
           style={{ borderColor: "var(--line)", background: "var(--panel)" }}
         >
           <div
@@ -71,22 +75,21 @@ export function AppShell() {
             </Button>
           </div>
         </header>
-        <Group orientation="horizontal" className="overflow-hidden">
-          <Panel defaultSize={26} minSize={16}>
-            <FileTree
-              selectedNoteId={selectedNoteId}
-              onSelectNote={setSelectedNoteId}
-              onMutating={setTreeBusy}
-            />
-          </Panel>
-          <Separator
-            className="w-px cursor-col-resize transition-colors hover:bg-accent data-[separator-state=drag]:bg-accent"
-            style={{ background: "var(--line)" }}
-          />
-          <Panel minSize={30}>
-            <NoteView noteId={selectedNoteId} />
-          </Panel>
-        </Group>
+        <div className="min-h-0 flex-1">
+          <ResizablePanelGroup direction="horizontal">
+            <ResizablePanel defaultSize={26} minSize={16} maxSize={50}>
+              <FileTree
+                selectedNoteId={selectedNoteId}
+                onSelectNote={setSelectedNoteId}
+                onMutating={setTreeBusy}
+              />
+            </ResizablePanel>
+            <ResizableHandle />
+            <ResizablePanel defaultSize={74} minSize={30}>
+              <NoteView noteId={selectedNoteId} />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </div>
       </div>
       <TrashPanel
         open={trashOpen}
