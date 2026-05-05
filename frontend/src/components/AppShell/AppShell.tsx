@@ -7,6 +7,7 @@
 
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { FileTree } from "@/components/FileTree/FileTree";
 import { NoteView } from "@/components/NoteView/NoteView";
@@ -20,6 +21,7 @@ import {
 } from "@/components/ui/resizable";
 
 export function AppShell() {
+  const { t } = useTranslation();
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [trashOpen, setTrashOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -53,7 +55,7 @@ export function AppShell() {
             className="font-mono text-xs uppercase tracking-widest"
             style={{ color: "var(--ink-mute)" }}
           >
-            knowlet
+            {t("app.title")}
           </div>
           <div className="flex items-center gap-1">
             <Button
@@ -63,12 +65,12 @@ export function AppShell() {
               className="font-mono text-xs"
             >
               <span style={{ color: "var(--ink-mute)" }}>⌘P</span>
-              <span className="ml-2">Quick switch</span>
+              <span className="ml-2">{t("app.quickSwitch")}</span>
             </Button>
             <Button
               variant="ghost"
               size="icon"
-              aria-label="Trash"
+              aria-label={t("app.trash")}
               onClick={() => setTrashOpen(true)}
             >
               <Trash2 className="size-4" />
@@ -77,7 +79,7 @@ export function AppShell() {
         </header>
         <div className="min-h-0 flex-1">
           <ResizablePanelGroup direction="horizontal">
-            <ResizablePanel defaultSize={26} minSize={16} maxSize={50}>
+            <ResizablePanel defaultSize={18} minSize={12} maxSize={40}>
               <FileTree
                 selectedNoteId={selectedNoteId}
                 onSelectNote={setSelectedNoteId}
@@ -85,7 +87,7 @@ export function AppShell() {
               />
             </ResizablePanel>
             <ResizableHandle />
-            <ResizablePanel defaultSize={74} minSize={30}>
+            <ResizablePanel defaultSize={82} minSize={30}>
               <NoteView noteId={selectedNoteId} />
             </ResizablePanel>
           </ResizablePanelGroup>

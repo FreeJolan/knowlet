@@ -5,11 +5,13 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 
 import { getNote } from "@/api/client";
 import { QK } from "@/lib/queryClient";
 
 export function NoteView({ noteId }: { noteId: string | null }) {
+  const { t } = useTranslation();
   // Always provide a queryFn — TanStack Query v5 throws synchronously when
   // queryFn is undefined, even with enabled:false. The fn just never runs
   // when noteId is null because `enabled` gates execution.
@@ -25,17 +27,17 @@ export function NoteView({ noteId }: { noteId: string | null }) {
   if (!noteId) {
     return (
       <div className="kn-paper flex h-full items-center justify-center text-sm text-muted-foreground">
-        Select a note from the tree.
+        {t("note.selectPrompt")}
       </div>
     );
   }
   if (note.isLoading) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    return <div className="p-6 text-sm text-muted-foreground">{t("tree.loading")}</div>;
   }
   if (note.isError) {
     return (
       <div className="p-6 text-sm text-destructive">
-        Couldn't load note ({String(note.error)}).
+        {t("note.loadFailed", { error: String(note.error) })}
       </div>
     );
   }
@@ -51,8 +53,8 @@ export function NoteView({ noteId }: { noteId: string | null }) {
           className="mt-2 font-mono text-xs uppercase tracking-wider"
           style={{ color: "var(--ink-mute)" }}
         >
-          {note.data.folder || "root"} · {note.data.id.slice(0, 8)} ·
-          updated {note.data.updated_at.slice(0, 10)}
+          {note.data.folder || t("note.rootLabel")} · {note.data.id.slice(0, 8)} ·{" "}
+          {t("note.updatedPrefix")} {note.data.updated_at.slice(0, 10)}
         </div>
         {note.data.tags.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1">

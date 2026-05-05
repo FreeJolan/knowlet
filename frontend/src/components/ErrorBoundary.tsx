@@ -30,6 +30,9 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.error) {
+      // Plain English here on purpose: the error boundary catches *render*
+      // failures, which may include i18next failing to init. Don't risk
+      // calling t() from a broken state.
       return (
         <div className="flex min-h-screen flex-col items-center justify-center bg-background p-8 text-foreground">
           <div className="max-w-2xl rounded-lg border border-destructive/40 bg-card p-6">

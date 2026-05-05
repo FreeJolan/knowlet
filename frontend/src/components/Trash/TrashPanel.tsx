@@ -8,6 +8,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { emptyTrash, listTrash, purgeTrashed, restoreTrashed } from "@/api/client";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ export function TrashPanel({
   onClose: () => void;
   onRestored?: (noteId: string) => void;
 }) {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const trash = useQuery({
     queryKey: QK.trash,
@@ -64,19 +66,19 @@ export function TrashPanel({
     >
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Trash</DialogTitle>
+          <DialogTitle>{t("trash.title")}</DialogTitle>
         </DialogHeader>
         {trash.isLoading && (
-          <div className="py-6 text-sm text-muted-foreground">Loading…</div>
+          <div className="py-6 text-sm text-muted-foreground">{t("trash.loading")}</div>
         )}
         {trash.isError && (
           <div className="py-6 text-sm text-destructive">
-            Failed to load ({String(trash.error)}).
+            {t("trash.loadFailed", { error: String(trash.error) })}
           </div>
         )}
         {trash.data?.entries.length === 0 && (
           <div className="py-6 text-sm text-muted-foreground">
-            Trash is empty.
+            {t("trash.empty")}
           </div>
         )}
         {(trash.data?.entries.length ?? 0) > 0 && (
@@ -102,13 +104,13 @@ export function TrashPanel({
                   disabled={restoreM.isPending}
                 >
                   <RotateCcw className="mr-1 size-3" />
-                  Restore
+                  {t("trash.restore")}
                 </Button>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => {
-                    if (window.confirm(`Permanently delete ${e.title}?`)) {
+                    if (window.confirm(t("trash.purgeConfirm", { title: e.title }))) {
                       purgeM.mutate(e.name);
                     }
                   }}
@@ -116,7 +118,7 @@ export function TrashPanel({
                   className="text-destructive hover:bg-destructive/10"
                 >
                   <Trash2 className="mr-1 size-3" />
-                  Purge
+                  {t("trash.purge")}
                 </Button>
               </li>
             ))}
@@ -124,18 +126,18 @@ export function TrashPanel({
         )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Close
+            {t("trash.close")}
           </Button>
           <Button
             variant="destructive"
             disabled={(trash.data?.entries.length ?? 0) === 0 || emptyM.isPending}
             onClick={() => {
-              if (window.confirm("Empty the entire trash? This is permanent.")) {
+              if (window.confirm(t("trash.emptyAllConfirm"))) {
                 emptyM.mutate();
               }
             }}
           >
-            Empty trash
+            {t("trash.emptyAll")}
           </Button>
         </DialogFooter>
       </DialogContent>

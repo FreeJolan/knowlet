@@ -8,6 +8,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { getTree } from "@/api/client";
 import {
@@ -44,6 +45,7 @@ export function CommandPalette({
   onClose: () => void;
   onSelectNote: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   const tree = useQuery({
     queryKey: QK.tree,
     queryFn: getTree,
@@ -70,15 +72,15 @@ export function CommandPalette({
       }}
     >
       <DialogContent className="max-w-xl gap-0 p-0">
-        <Command label="Quick switcher" shouldFilter={true}>
+        <Command label={t("app.quickSwitch")} shouldFilter={true}>
           <CommandInput
-            placeholder="Type a title…"
+            placeholder={t("palette.placeholder")}
             value={query}
             onValueChange={setQuery}
           />
           <CommandList>
-            <CommandEmpty>No matches.</CommandEmpty>
-            <CommandGroup heading={`${notes.length} notes`}>
+            <CommandEmpty>{t("palette.noMatches")}</CommandEmpty>
+            <CommandGroup heading={t("palette.notesCount", { count: notes.length })}>
               {notes.map((n) => (
                 <CommandItem
                   key={n.id}

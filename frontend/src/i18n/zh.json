@@ -1,0 +1,55 @@
+{
+  "app": {
+    "title": "knowlet",
+    "quickSwitch": "快速切换",
+    "trash": "垃圾桶"
+  },
+  "tree": {
+    "vault": "笔记库",
+    "newFolder": "新建文件夹",
+    "loading": "加载中…",
+    "loadFailed": "树加载失败。",
+    "retry": "重试",
+    "empty": "笔记库为空。点上方 + 新建文件夹,或在终端运行 `knowlet add`。",
+    "untitled": "(无标题)"
+  },
+  "menu": {
+    "newFolderInside": "在此新建文件夹",
+    "rename": "重命名",
+    "delete": "删除",
+    "newFolderPrompt": "文件夹名称?",
+    "rootFolderPrompt": "新文件夹名称?",
+    "deleteFolderConfirm": "删除「{{name}}」?里面所有笔记会移到 .trash/。",
+    "deleteNoteConfirm": "把「{{name}}」移到 .trash/?",
+    "bulkDeleteConfirm_one": "删除 1 项?会移到垃圾桶。",
+    "bulkDeleteConfirm_other": "删除 {{count}} 项?会移到垃圾桶。"
+  },
+  "note": {
+    "selectPrompt": "从左侧选一篇笔记。",
+    "loadFailed": "笔记加载失败({{error}})。",
+    "rootLabel": "根目录",
+    "updatedPrefix": "更新于"
+  },
+  "trash": {
+    "title": "垃圾桶",
+    "loading": "加载中…",
+    "loadFailed": "加载失败({{error}})。",
+    "empty": "垃圾桶为空。",
+    "restore": "还原",
+    "purge": "永久删除",
+    "purgeConfirm": "永久删除「{{title}}」?",
+    "emptyAll": "清空垃圾桶",
+    "emptyAllConfirm": "清空整个垃圾桶?不可撤销。",
+    "close": "关闭"
+  },
+  "palette": {
+    "placeholder": "输入标题…",
+    "noMatches": "没有匹配。",
+    "notesCount_one": "1 篇笔记",
+    "notesCount_other": "{{count}} 篇笔记"
+  },
+  "errorBoundary": {
+    "title": "出错了。",
+    "reload": "重新加载"
+  }
+}

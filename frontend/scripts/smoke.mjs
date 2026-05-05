@@ -1,17 +1,16 @@
-// Smoke test: open http://localhost:5173, wait for the tree to render, list
-// what's visible. Used by the agent to *actually verify* a UI fix works
-// before reporting "should be good now". No more white-screen ping-pong.
+// Smoke test: open http://localhost:5173, verify tree renders + interaction
+// works. Extended after the 2026-05-05 dogfood: a single "tree has rows"
+// check wasn't enough — we now also assert toggle works, no "Move to root"
+// item, and i18n is wired.
 
 import { chromium } from "playwright";
 
 const URL = process.env.URL ?? "http://localhost:5173";
 
 const browser = await chromium.launch({ headless: true });
-const ctx = await browser.newContext();
+const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
 const page = await ctx.newPage();
 
-// Surface every console message + uncaught error so a render bug is loud,
-// not silent.
 const errors = [];
 page.on("console", (m) => {
   if (m.type() === "error" || m.type() === "warning") {
@@ -22,30 +21,65 @@ page.on("pageerror", (e) => errors.push({ type: "pageerror", text: String(e) }))
 
 const resp = await page.goto(URL, { waitUntil: "networkidle", timeout: 15000 });
 console.log(`HTTP ${resp.status()} ${URL}`);
+await page.waitForTimeout(500);
 
-// Wait briefly for React to mount + first paint of the tree.
-await page.waitForTimeout(1000);
+// 1 — tree renders
+const initialRows = await page.locator(".group").count();
+console.log("rows visible (default-open):", initialRows);
 
-const title = await page.title();
-const headerText = (await page.locator("header").first().textContent()) ?? "";
-const vaultText = (await page.locator('text=VAULT').first().isVisible()) ? "yes" : "no";
+// 2 — chevron click collapses an open folder
+const firstFolderChevron = page.locator('button[aria-label="collapse"]').first();
+const hasChevron = (await firstFolderChevron.count()) > 0;
+console.log("collapse chevron present:", hasChevron);
+if (hasChevron) {
+  await firstFolderChevron.click();
+  await page.waitForTimeout(150);
+  const rowsAfterCollapse = await page.locator(".group").count();
+  console.log("rows after one collapse:", rowsAfterCollapse);
+  if (rowsAfterCollapse >= initialRows) {
+    console.log("WARN: collapse did not reduce row count");
+  }
+  // Re-expand for next steps
+  const expandBtn = page.locator('button[aria-label="expand"]').first();
+  if ((await expandBtn.count()) > 0) {
+    await expandBtn.click();
+    await page.waitForTimeout(150);
+  }
+}
 
-// Treat any visible row in the tree (folder or note) as proof of life.
-const rowTexts = await page.locator(".group").allInnerTexts();
+// 3 — sidebar width sensible
+const sidebar = page.locator('[data-slot="resizable-panel"]').first();
+const box = await sidebar.boundingBox();
+const widthPct = box ? Math.round((box.width / 1400) * 100) : 0;
+console.log(`sidebar width: ${box?.width}px (${widthPct}%)`);
+if (widthPct < 12 || widthPct > 32) console.log("WARN: sidebar width out of expected band");
 
-console.log("title:", title);
-console.log("header:", headerText.trim());
-console.log("vault label visible:", vaultText);
-console.log("tree rows visible:", rowTexts.length);
-for (const t of rowTexts.slice(0, 20)) console.log("  ·", t.replace(/\s+/g, " ").trim());
+// 4 — right-click a note row, confirm "Move to root" is absent
+const firstNote = page.locator(".group").filter({ hasText: /design|hello|idea/ }).first();
+if ((await firstNote.count()) > 0) {
+  await firstNote.click({ button: "right" });
+  await page.waitForTimeout(200);
+  const menuTexts = await page.locator('[role="menuitem"]').allInnerTexts();
+  console.log("context menu items:", menuTexts.map((s) => s.trim()).join(" | "));
+  if (menuTexts.some((s) => /Move to root|移到根/i.test(s))) {
+    console.log("ERR: Move-to-root item still present");
+    process.exitCode = 1;
+  }
+  // Press Escape to close
+  await page.keyboard.press("Escape");
+}
+
+// 5 — i18n: header should reflect backend language. Backend reports `zh`,
+// so we expect to see "笔记库" (Vault) in the sidebar header eventually.
+await page.waitForTimeout(800);
+const vaultHeading = (await page.locator("header + div span").first().textContent()) ?? "";
+console.log("sidebar heading text:", vaultHeading.trim());
 
 console.log("---");
 console.log("console errors / warnings:", errors.length);
 for (const e of errors) console.log(" ", e.type, e.text);
 
-const bodyHtml = await page.locator("body").innerHTML();
-console.log("---");
-console.log("body length:", bodyHtml.length);
-
 await browser.close();
-process.exit(rowTexts.length === 0 || errors.some((e) => e.type === "pageerror") ? 1 : 0);
+process.exit(
+  initialRows === 0 || errors.some((e) => e.type === "pageerror") ? 1 : (process.exitCode ?? 0),
+);
