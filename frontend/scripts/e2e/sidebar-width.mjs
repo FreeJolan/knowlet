@@ -37,11 +37,11 @@ async function checkAtViewport(width, expectedRange, label) {
   }
 }
 
-// 1400px: should land near 220px default.
-await checkAtViewport(1400, [200, 240], "default ≈ 220 px");
-// 800px: 220px would be 27.5% which is fine; should still get ~220px.
-await checkAtViewport(800, [200, 240], "still ≈ 220 px on narrow viewport");
-// 480px: 220 would be 45% (exceeds 40% cap); falls to 40% = 192px.
+// 1400px: should land near 280px default.
+await checkAtViewport(1400, [260, 300], "default ≈ 280 px");
+// 800px: 280px would be 35% which is fine; should still get ~280px.
+await checkAtViewport(800, [260, 300], "still ≈ 280 px on narrow viewport");
+// 480px: 280 would be ~58% (exceeds 40% cap); falls to 40% = 192px.
 // But 192px > 160 floor so we accept somewhere in 160..220 band.
 await checkAtViewport(480, [150, 220], "narrow window — capped at 40%");
 

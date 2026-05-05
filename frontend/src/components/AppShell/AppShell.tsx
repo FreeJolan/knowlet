@@ -22,12 +22,12 @@ import {
 
 /**
  * react-resizable-panels v2 only accepts percent values for defaultSize /
- * minSize / maxSize. We want a px-anchored sidebar (220 px default,
+ * minSize / maxSize. We want a px-anchored sidebar (280 px default,
  * 160 px floor) so the tree column doesn't get squeezed unreadable on
  * small windows. Compute the percentage from the live window width and
  * re-derive on resize.
  */
-const DEFAULT_SIDEBAR_PX = 220;
+const DEFAULT_SIDEBAR_PX = 280;
 const MIN_SIDEBAR_PX = 160;
 const MAX_SIDEBAR_PERCENT = 40;
 

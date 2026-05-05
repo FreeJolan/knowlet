@@ -56,10 +56,10 @@ const sidebar = page.locator('[data-slot="resizable-panel"]').first();
 const box = await sidebar.boundingBox();
 const widthPct = box ? Math.round((box.width / 1400) * 100) : 0;
 console.log(`sidebar width: ${box?.width}px (${widthPct}%)`);
-// Px-anchored: ~220 px default at 1400-wide viewport, with a 160 px floor.
-if (box && (box.width < 200 || box.width > 280)) {
+// Px-anchored: ~280 px default at 1400-wide viewport, with a 160 px floor.
+if (box && (box.width < 260 || box.width > 320)) {
   console.log(
-    `WARN: sidebar width ${box.width}px outside 200..280 band for 1400px window`,
+    `WARN: sidebar width ${box.width}px outside 260..320 band for 1400px window`,
   );
 }
 

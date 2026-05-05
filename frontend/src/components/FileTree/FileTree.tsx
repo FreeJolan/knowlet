@@ -563,7 +563,10 @@ function Row({
     <div
       ref={dragHandle}
       style={style}
-      className="group flex h-full items-center px-1 select-none cursor-default"
+      // pr-3 = 12 px right gutter so the inline-edit input's border /
+      // ring doesn't kiss the panel's right edge (visually merging with
+      // the resize handle when renaming).
+      className="group flex h-full items-center pr-3 pl-1 select-none cursor-default"
     >
       <div
         onClick={handleClick}
