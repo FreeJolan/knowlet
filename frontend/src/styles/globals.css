@@ -1,0 +1,236 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/*
+ * knowlet design tokens — paper-light + dark mirror.
+ *
+ * Two sets of tokens live here:
+ *
+ *   1. shadcn-namespace tokens (`--background` / `--foreground` / `--card` /
+ *      `--primary` / etc) — drive shadcn/ui components. We bind them to
+ *      paper-light values so shadcn buttons and dialogs match the canvas.
+ *   2. knowlet-namespace tokens (`--ink` / `--ink-soft` / `--accent-tint` /
+ *      `--line` / etc) — drive everything that isn't a shadcn primitive
+ *      (Markdown prose, sediment ambient, focus modes, the file tree).
+ *
+ * Both sets switch in lockstep on `<html data-theme="dark">`. We deliberately
+ * use a data-attribute rather than the `.dark` class so the toggle works
+ * without React running (vault-snapshot HTML diff stays meaningful).
+ *
+ * Token values are ported verbatim from `knowlet/web/static/app.css` (Alpine
+ * UI). The Alpine UI is being deleted at the start of Phase 1; the *tokens*
+ * outlive the markup and stay the source of truth across the React rebuild.
+ */
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  /* ─── knowlet namespace ──────────────────────────────────── */
+  /* surfaces — warm paper, slightly stratified */
+  --bg: #f4f0e8;
+  --bg-1: #efe9dd;
+  --bg-2: #e8e1d2;
+  --panel: #ede7d9;
+  --panel-2: #e3dcca;
+  --card-paper: #fbf8f1;
+
+  --line: #d6cfbd;
+  --line-soft: #e0d9c8;
+
+  /* ink — warm near-black scale */
+  --ink: #2a2823;
+  --ink-soft: #5e5b53;
+  --ink-mute: #8a8678;
+  --ink-faint: #b3ad9c;
+
+  /* dusk-blue accent (knowlet-specific shades — see shadcn block for the
+   * primary color shadcn buttons use) */
+  --accent-2: #4d6a8a;
+  --accent-soft: rgb(91 122 156 / 0.14);
+  --accent-tint: rgb(91 122 156 / 0.08);
+  --accent-tint-2: rgb(91 122 156 / 0.16);
+  --on-accent: #faf7f0;
+
+  /* status — warm earth scale, not neon */
+  --warn: #a47a3a;
+  --good: #5e8757;
+  --user: #a87a3a;
+  --danger: #b8554d;
+
+  /* ─── shadcn namespace ───────────────────────────────────── */
+  --background: #f4f0e8; /* matches --bg */
+  --foreground: #2a2823; /* matches --ink */
+  --card: #fbf8f1; /* matches --card-paper */
+  --card-foreground: #2a2823;
+  --popover: #fbf8f1;
+  --popover-foreground: #2a2823;
+  --primary: #5b7a9c; /* dusk-blue accent */
+  --primary-foreground: #faf7f0;
+  --secondary: #ede7d9; /* matches --panel */
+  --secondary-foreground: #2a2823;
+  --muted: #efe9dd;
+  --muted-foreground: #5e5b53;
+  --accent: #5b7a9c;
+  --accent-foreground: #faf7f0;
+  --destructive: #b8554d;
+  --border: #d6cfbd;
+  --input: #d6cfbd;
+  --ring: #5b7a9c;
+  --chart-1: #5b7a9c;
+  --chart-2: #a47a3a;
+  --chart-3: #5e8757;
+  --chart-4: #b8554d;
+  --chart-5: #8a8678;
+  --radius: 0.625rem;
+  --sidebar: #ede7d9;
+  --sidebar-foreground: #2a2823;
+  --sidebar-primary: #5b7a9c;
+  --sidebar-primary-foreground: #faf7f0;
+  --sidebar-accent: #e3dcca;
+  --sidebar-accent-foreground: #2a2823;
+  --sidebar-border: #d6cfbd;
+  --sidebar-ring: #5b7a9c;
+}
+
+[data-theme="dark"] {
+  /* ─── knowlet namespace (dark) ───────────────────────────── */
+  --bg: #1c1d22;
+  --bg-1: #1f2025;
+  --bg-2: #232428;
+  --panel: #1f2025;
+  --panel-2: #272930;
+  --card-paper: #272930;
+
+  --line: #34363d;
+  --line-soft: #2a2c33;
+
+  --ink: #dcdee5;
+  --ink-soft: #a0a4b0;
+  --ink-mute: #73798a;
+  --ink-faint: #565a66;
+
+  --accent-2: #a3c0dc;
+  --accent-soft: rgb(138 169 201 / 0.16);
+  --accent-tint: rgb(138 169 201 / 0.10);
+  --accent-tint-2: rgb(138 169 201 / 0.22);
+  --on-accent: #14151a;
+
+  --warn: #caa15f;
+  --good: #7eaf78;
+  --user: #cfa66e;
+  --danger: #d97c70;
+
+  /* ─── shadcn namespace (dark) ────────────────────────────── */
+  --background: #1c1d22;
+  --foreground: #dcdee5;
+  --card: #272930;
+  --card-foreground: #dcdee5;
+  --popover: #272930;
+  --popover-foreground: #dcdee5;
+  --primary: #8aa9c9;
+  --primary-foreground: #14151a;
+  --secondary: #1f2025;
+  --secondary-foreground: #dcdee5;
+  --muted: #232428;
+  --muted-foreground: #a0a4b0;
+  --accent: #8aa9c9;
+  --accent-foreground: #14151a;
+  --destructive: #d97c70;
+  --border: #34363d;
+  --input: #34363d;
+  --ring: #8aa9c9;
+  --sidebar: #1f2025;
+  --sidebar-foreground: #dcdee5;
+  --sidebar-primary: #8aa9c9;
+  --sidebar-primary-foreground: #14151a;
+  --sidebar-accent: #272930;
+  --sidebar-accent-foreground: #dcdee5;
+  --sidebar-border: #34363d;
+  --sidebar-ring: #8aa9c9;
+}
+
+@theme inline {
+  --font-sans:
+    "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+    "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
+  --font-serif:
+    "Source Serif 4", "Iowan Old Style", Georgia, "Noto Serif SC", serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-heading: var(--font-sans);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 14px;
+    line-height: 1.55;
+    letter-spacing: -0.003em;
+    margin: 0;
+  }
+}
+
+/* `kn-paper` reproduces the subtle radial-gradient warmth from the old UI.
+ * Apply on a top-level container; the placeholder uses it. */
+.kn-paper {
+  background:
+    radial-gradient(1100px 600px at 75% -10%, var(--accent-tint), transparent 60%),
+    radial-gradient(900px 500px at -5% 110%, rgb(164 122 58 / 0.03), transparent 60%),
+    var(--bg);
+}
+
+[data-theme="dark"] .kn-paper {
+  background:
+    radial-gradient(1100px 600px at 75% -10%, var(--accent-tint), transparent 60%),
+    radial-gradient(900px 500px at -5% 110%, rgb(164 122 58 / 0.05), transparent 60%),
+    var(--bg);
+}
