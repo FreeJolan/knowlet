@@ -507,7 +507,12 @@ function Row({
             }}
           />
         ) : (
-          <span className="truncate">{node.data.name || t("tree.untitled")}</span>
+          // Match the input's `border + px-1` box so the text doesn't
+          // visually jump 5 px when the row toggles into edit mode.
+          // Border is transparent, padding is preserved.
+          <span className="flex-1 truncate rounded-sm border border-transparent px-1">
+            {node.data.name || t("tree.untitled")}
+          </span>
         )}
       </div>
     </div>
@@ -521,8 +526,21 @@ function Row({
         // Radix's default close behavior auto-returns focus to the trigger
         // (the row's outer div). When the user picks "Rename", the menu
         // closes ~80 ms later and steals focus from the inline-edit input
-        // we just mounted. preventDefault keeps focus where we put it.
-        onCloseAutoFocus={(e) => e.preventDefault()}
+        // we just mounted. We preventDefault, then re-focus the input
+        // after Radix's full cleanup pass (aria-hidden / inert removal
+        // on portal siblings). The setTimeout(0) lets Radix flush before
+        // we touch focus — without it Chrome warns about focus being
+        // inside an aria-hidden subtree.
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          setTimeout(() => {
+            const input = document.querySelector<HTMLInputElement>(
+              'input[data-rename-input="true"]',
+            );
+            input?.focus();
+            input?.select();
+          }, 0);
+        }}
       >
         {isFolder && (
           <>
