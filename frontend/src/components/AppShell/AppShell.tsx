@@ -6,7 +6,7 @@
  */
 
 import { Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { FileTree } from "@/components/FileTree/FileTree";
@@ -20,11 +20,50 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 
+/**
+ * react-resizable-panels v2 only accepts percent values for defaultSize /
+ * minSize / maxSize. We want a px-anchored sidebar (220 px default,
+ * 160 px floor) so the tree column doesn't get squeezed unreadable on
+ * small windows. Compute the percentage from the live window width and
+ * re-derive on resize.
+ */
+const DEFAULT_SIDEBAR_PX = 220;
+const MIN_SIDEBAR_PX = 160;
+const MAX_SIDEBAR_PERCENT = 40;
+
+function pxToPercent(px: number, windowWidth: number): number {
+  if (windowWidth <= 0) return 18;
+  return (px / windowWidth) * 100;
+}
+
 export function AppShell() {
   const { t } = useTranslation();
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [trashOpen, setTrashOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [windowWidth, setWindowWidth] = useState(() =>
+    typeof window === "undefined" ? 1400 : window.innerWidth,
+  );
+
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const sidebarSizes = useMemo(() => {
+    // Clamp into a sane band so a tiny window doesn't try to ask for
+    // more than max%, and a huge window doesn't pin to 1%.
+    const defaultSize = Math.max(
+      pxToPercent(MIN_SIDEBAR_PX, windowWidth),
+      Math.min(MAX_SIDEBAR_PERCENT, pxToPercent(DEFAULT_SIDEBAR_PX, windowWidth)),
+    );
+    const minSize = Math.min(
+      MAX_SIDEBAR_PERCENT,
+      pxToPercent(MIN_SIDEBAR_PX, windowWidth),
+    );
+    return { defaultSize, minSize };
+  }, [windowWidth]);
   // Reserved for Phase 1 B — when a tree mutation is in flight we may want
   // to mark the editor read-only so the user doesn't type into a stale
   // note that's about to be moved out from under them.
@@ -79,7 +118,11 @@ export function AppShell() {
         </header>
         <div className="min-h-0 flex-1">
           <ResizablePanelGroup direction="horizontal">
-            <ResizablePanel defaultSize={18} minSize={12} maxSize={40}>
+            <ResizablePanel
+              defaultSize={sidebarSizes.defaultSize}
+              minSize={sidebarSizes.minSize}
+              maxSize={MAX_SIDEBAR_PERCENT}
+            >
               <FileTree
                 selectedNoteId={selectedNoteId}
                 onSelectNote={setSelectedNoteId}
@@ -87,7 +130,7 @@ export function AppShell() {
               />
             </ResizablePanel>
             <ResizableHandle />
-            <ResizablePanel defaultSize={82} minSize={30}>
+            <ResizablePanel defaultSize={100 - sidebarSizes.defaultSize} minSize={30}>
               <NoteView noteId={selectedNoteId} />
             </ResizablePanel>
           </ResizablePanelGroup>

@@ -56,6 +56,12 @@ const sidebar = page.locator('[data-slot="resizable-panel"]').first();
 const box = await sidebar.boundingBox();
 const widthPct = box ? Math.round((box.width / 1400) * 100) : 0;
 console.log(`sidebar width: ${box?.width}px (${widthPct}%)`);
+// Px-anchored: ~220 px default at 1400-wide viewport, with a 160 px floor.
+if (box && (box.width < 200 || box.width > 280)) {
+  console.log(
+    `WARN: sidebar width ${box.width}px outside 200..280 band for 1400px window`,
+  );
+}
 
 // Pick a row, hover, take a screenshot for visual review.
 const firstNote = page.locator(".group").filter({ hasText: /design|hello|idea/ }).first();
