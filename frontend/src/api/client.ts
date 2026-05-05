@@ -88,6 +88,19 @@ export const createNote = (
 ): Promise<{ note_id: string; path: string }> =>
   request("POST", "/api/notes", payload);
 
+// Phase 1 A: create an empty note with title + folder placement. Distinct
+// from createNote (sediment-commit shape, flat).
+export const createBlankNote = (payload: {
+  title: string;
+  folder?: string;
+  tags?: string[];
+}): Promise<NoteFull> =>
+  request("POST", "/api/notes/new", {
+    title: payload.title,
+    folder: payload.folder ?? "",
+    tags: payload.tags ?? [],
+  });
+
 // ---------- trash ----------
 
 export const listTrash = (): Promise<TrashListResponse> =>

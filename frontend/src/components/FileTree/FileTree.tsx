@@ -8,8 +8,8 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, FileText, Folder, Plus } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, FilePlus, FileText, Folder, FolderPlus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Tree,
@@ -19,6 +19,7 @@ import {
 } from "react-arborist";
 
 import {
+  createBlankNote,
   createFolder,
   deleteFolder,
   deleteNote,
@@ -87,6 +88,13 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
   const createFolderM = useMutation({
     mutationFn: ({ path }: { path: string }) => createFolder(path),
     onMutate: startBusy,
+    onSettled: settled,
+  });
+  const createNoteM = useMutation({
+    mutationFn: ({ title, folder }: { title: string; folder: string }) =>
+      createBlankNote({ title, folder }),
+    onMutate: startBusy,
+    onSuccess: (note) => onSelectNote(note.id),
     onSettled: settled,
   });
   const moveNoteM = useMutation({
@@ -168,6 +176,11 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
     if (name?.trim()) createFolderM.mutate({ path: name.trim() });
   };
 
+  const onNewRootNote = () => {
+    const title = window.prompt(t("menu.newNotePrompt"));
+    if (title?.trim()) createNoteM.mutate({ title: title.trim(), folder: "" });
+  };
+
   // Memoize the conversion so arborist's internal open/closed state isn't
   // reset every render. Without this, every click rebuilds the array and
   // arborist re-applies `openByDefault`, undoing the toggle. Must be called
@@ -202,15 +215,26 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
         <span className="text-[11px] font-semibold uppercase tracking-wide text-foreground/80">
           {t("tree.vault")}
         </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={t("tree.newFolder")}
-          onClick={onNewRootFolder}
-          className="size-6"
-        >
-          <Plus className="size-3.5" />
-        </Button>
+        <div className="flex items-center gap-0.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t("tree.newNote")}
+            onClick={onNewRootNote}
+            className="size-6"
+          >
+            <FilePlus className="size-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t("tree.newFolder")}
+            onClick={onNewRootFolder}
+            className="size-6"
+          >
+            <FolderPlus className="size-3.5" />
+          </Button>
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         {data.length === 0 ? (
@@ -240,6 +264,12 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
                 {...props}
                 openMap={openMap}
                 setOpenMap={setOpenMap}
+                onCreateChildNote={(parentPath) => {
+                  const title = window.prompt(t("menu.newNotePrompt"));
+                  if (title?.trim()) {
+                    createNoteM.mutate({ title: title.trim(), folder: parentPath });
+                  }
+                }}
                 onCreateChildFolder={(parentPath) => {
                   const name = window.prompt(t("menu.newFolderPrompt"));
                   if (name?.trim()) {
@@ -267,11 +297,77 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
   );
 }
 
+// ----- rename input -----
+
+/**
+ * Inline rename input. We can't rely on `autoFocus` alone because Radix
+ * ContextMenu closing after "Rename" returns focus to the body, racing
+ * the input mount and causing an immediate blur → exit edit. Use a
+ * useEffect + requestAnimationFrame to claim focus *after* the menu's
+ * cleanup pass has run. Blur commits (matches Obsidian / Bear); Esc
+ * cancels.
+ */
+function RenameInput({
+  initial,
+  onSubmit,
+  onCancel,
+}: {
+  initial: string;
+  onSubmit: (v: string) => void;
+  onCancel: () => void;
+}) {
+  const ref = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+    // Cancel the edit when the user clicks anywhere outside the input.
+    // Listen on `pointerdown` (not click) because Radix's own menu close
+    // chain fires after a pointerup on click, by which point we'd already
+    // have a stale focus race.
+    const onOutside = (e: PointerEvent) => {
+      if (e.target instanceof Node && !el.contains(e.target)) onCancel();
+    };
+    document.addEventListener("pointerdown", onOutside, true);
+    return () => document.removeEventListener("pointerdown", onOutside, true);
+  }, [onCancel]);
+
+  return (
+    <input
+      ref={ref}
+      type="text"
+      defaultValue={initial}
+      data-rename-input="true"
+      className="flex-1 rounded-sm bg-transparent px-1 outline-none ring-1 ring-ring"
+      // No onBlur: arborist re-clones nodes on every store update, which
+      // causes synthetic blurs mid-edit (focus shuffles between the row
+      // wrapper and the input across re-renders). Auto-cancel-on-blur
+      // would terminate edit mode immediately. Enter / Escape are the
+      // explicit commit / cancel gestures, matching Obsidian + Bear.
+      // Click-outside cancellation is handled below via a window listener.
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onSubmit(e.currentTarget.value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    />
+  );
+}
+
 // ----- row renderer -----
 
 interface RowProps extends NodeRendererProps<TreeNodeData> {
   openMap: Record<string, boolean>;
   setOpenMap: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  onCreateChildNote: (parentPath: string) => void;
   onCreateChildFolder: (parentPath: string) => void;
   onDeleteFolder: (folderPath: string, name: string) => void;
   onDeleteNote: (noteId: string, name: string) => void;
@@ -283,6 +379,7 @@ function Row({
   dragHandle,
   openMap,
   setOpenMap,
+  onCreateChildNote,
   onCreateChildFolder,
   onDeleteFolder,
   onDeleteNote,
@@ -328,9 +425,10 @@ function Row({
             : "hover:bg-secondary/60"
         }`}
       >
-        {/* Chevron is purely visual — the row's onPointerUp handles toggle.
-            Notes get an empty spacer for alignment. */}
-        {isFolder ? (
+        {/* Chevron is purely visual — the row's onClick handles toggle.
+            Empty folders get the spacer (no chevron) — Obsidian convention,
+            keeps the column visually quieter. */}
+        {isFolder && (node.children?.length ?? 0) > 0 ? (
           <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground">
             {isOpen ? (
               <ChevronDown className="size-3.5" />
@@ -347,17 +445,14 @@ function Row({
           <FileText className="size-4 shrink-0 text-muted-foreground" />
         )}
         {node.isEditing ? (
-          <input
-            className="flex-1 bg-transparent px-1 outline-none ring-1 ring-ring rounded-sm"
-            defaultValue={node.data.name}
-            autoFocus
-            onFocus={(e) => e.currentTarget.select()}
-            onBlur={() => node.reset()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") node.submit(e.currentTarget.value);
-              if (e.key === "Escape") node.reset();
+          <RenameInput
+            initial={node.data.name}
+            onSubmit={(v) => {
+              const trimmed = v.trim();
+              if (trimmed) node.submit(trimmed);
+              else node.reset();
             }}
-            onPointerDown={(e) => e.stopPropagation()}
+            onCancel={() => node.reset()}
           />
         ) : (
           <span className="truncate">{node.data.name || t("tree.untitled")}</span>
@@ -371,11 +466,19 @@ function Row({
       <ContextMenuTrigger asChild>{rowBody}</ContextMenuTrigger>
       <ContextMenuContent className="w-52">
         {isFolder && (
-          <ContextMenuItem
-            onSelect={() => onCreateChildFolder(node.data.folderPath)}
-          >
-            {t("menu.newFolderInside")}
-          </ContextMenuItem>
+          <>
+            <ContextMenuItem
+              onSelect={() => onCreateChildNote(node.data.folderPath)}
+            >
+              {t("menu.newNoteInside")}
+            </ContextMenuItem>
+            <ContextMenuItem
+              onSelect={() => onCreateChildFolder(node.data.folderPath)}
+            >
+              {t("menu.newFolderInside")}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
         )}
         <ContextMenuItem onSelect={() => node.edit()}>
           {t("menu.rename")}

@@ -219,6 +219,16 @@ class NoteMoveRequest(BaseModel):
     target_folder: str = ""
 
 
+class NewNoteRequest(BaseModel):
+    """Phase 1 A: create an empty note with a title and optional folder.
+    Distinct from POST /api/notes which is the sediment-commit shape;
+    this one supports folder placement and accepts an empty body."""
+
+    title: str
+    folder: str = ""
+    tags: list[str] = Field(default_factory=list)
+
+
 class TrashEntry(BaseModel):
     name: str  # basename inside notes/.trash/
     title: str  # frontmatter title if parseable, else stem
@@ -1518,6 +1528,44 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             note_id = trashed_path.stem
             runtime.index.delete_note(note_id)
         return {"ok": True, "trashed_count": len(trashed)}
+
+    @app.post("/api/notes/new", response_model=NoteFull)
+    def create_blank_note(
+        req: NewNoteRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> NoteFull:
+        """Create a new empty Note in the given folder. The folder must
+        already exist (UI mkdirs first if needed)."""
+        from knowlet.core.note import Note as _Note
+        from knowlet.core.note import new_id
+
+        title = req.title.strip()
+        if not title:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="title is empty"
+            )
+        note = _Note(id=new_id(), title=title, body="", tags=list(req.tags))
+        try:
+            path = runtime.vault.write_note(note, folder=req.folder or None)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+        runtime.index.upsert_note(
+            note,
+            chunk_size=runtime.config.retrieval.chunk_size,
+            chunk_overlap=runtime.config.retrieval.chunk_overlap,
+        )
+        return NoteFull(
+            id=note.id,
+            title=note.title,
+            path=str(path),
+            folder=runtime.vault.folder_of(path),
+            tags=note.tags,
+            created_at=note.created_at,
+            updated_at=note.updated_at,
+            body=note.body,
+        )
 
     @app.post("/api/notes/{note_id}/move", response_model=NoteFull)
     def move_note_endpoint(

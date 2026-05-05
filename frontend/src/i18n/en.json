@@ -7,18 +7,21 @@
   "tree": {
     "vault": "Vault",
     "newFolder": "New folder",
+    "newNote": "New note",
     "loading": "Loading…",
     "loadFailed": "Failed to load tree.",
     "retry": "Retry",
-    "empty": "Empty vault. Use the + button above to add a folder, or run `knowlet add`.",
+    "empty": "Empty vault. Use the buttons above to create a note or folder.",
     "untitled": "(untitled)"
   },
   "menu": {
+    "newNoteInside": "New note inside",
     "newFolderInside": "New folder inside",
     "rename": "Rename",
     "delete": "Delete",
     "newFolderPrompt": "Folder name?",
     "rootFolderPrompt": "New folder name?",
+    "newNotePrompt": "Note title?",
     "deleteFolderConfirm": "Delete \"{{name}}\"? All notes inside go to .trash/.",
     "deleteNoteConfirm": "Move \"{{name}}\" to .trash/?",
     "bulkDeleteConfirm_one": "Delete 1 item? It goes to trash.",

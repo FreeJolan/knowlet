@@ -19,7 +19,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { QK } from "@/lib/queryClient";
 
 import type { TreeFolder, TreeNote } from "@/api/types";
@@ -72,6 +72,9 @@ export function CommandPalette({
       }}
     >
       <DialogContent className="max-w-xl gap-0 p-0">
+        <DialogHeader className="sr-only">
+          <DialogTitle>{t("app.quickSwitch")}</DialogTitle>
+        </DialogHeader>
         <Command label={t("app.quickSwitch")} shouldFilter={true}>
           <CommandInput
             placeholder={t("palette.placeholder")}
