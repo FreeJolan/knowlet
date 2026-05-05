@@ -3,6 +3,11 @@
 > 2026-05-03 · Internal record of what we asked Claude Design for in the
 > second design pass (the first pass produced the paper-light + dusk-blue
 > mock at 2026-05-02 that became M6.1.5 visual backbone).
+>
+> ⚠️ **2026-05-05 status note**:此 brief 中提及的所有 11 个 surface(8 audit + 3 new)
+> 设计意图保留,但**实施已不再用 Alpine 栈**(per ADR-0019 弃用决策)。所有 surface
+> 将在 React 重写的 Phase 1-3 中按 [ADR-0021](../decisions/0021-knowledge-base-first-roadmap.md) 顺序实施。
+> Bundle 内容(`docs/design/bundle-2026-05-04/`)继续作为视觉 + 交互参考。
 
 ## Paste-ready brief for Claude Design
 

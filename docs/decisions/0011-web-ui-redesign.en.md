@@ -286,3 +286,22 @@ Corrected stance:
 
 Other items in the "explicitly not doing" list (team collab / mobile
 native / etc) are **unchanged**.
+
+## Amendment (2026-05-05 — owner decision, §"Stack" supersede)
+
+§"Stack" said: **don't introduce a SPA framework**; the stack was pinned at Tailwind + Alpine.js + marked.js + Split.js.
+
+**This rule is superseded by [ADR-0019](./0019-frontend-stack.en.md)**.
+
+Reasons (full detail in ADR-0019):
+
+1. 2026-05-04 dogfood verified the frontend was basically unusable (chat / file ops / visual / interaction all rated 1)
+2. The three original arguments ("fewer deps / easier audit / LLM-maintainable") **all no longer hold** today (see ADR-0019 §"Context")
+3. The project owner admitted never having heard of Alpine — picking a stack so niche that the owner can't read their own project violates the implicit boundary of ADR-0002 §"AI is optional, owner is autonomous"
+4. Chat / file tree / editor are all "solved categories" with mature React-ecosystem components (AI SDK / shadcn / CodeMirror / react-arborist) — writing them ourselves is waste and a bug source
+
+**New stack**: React 19 + Vite + TypeScript + Tailwind (kept) + shadcn/ui + Vercel AI SDK + CodeMirror 6 + react-arborist + Tanstack Query.
+
+**ADR-0011 §"Stack" aside, the other sections (three-pane layout / Cmd+K / focus modes / explicit non-goals) stand**; the visual system (paper-light) tokens carry over, just migrated from inline Alpine to React + Tailwind config.
+
+ADR-0011 is not withdrawn; it stays as the historical record of IA + product positioning decisions.

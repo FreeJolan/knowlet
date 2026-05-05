@@ -279,3 +279,22 @@ A2 pitfall #3 的具体应对:
   62b4d6e);M8 加图谱形态作为同一组数据的另一种 view,不是另起炉灶。
 
 §"显式不做"清单中的其他几项(团队协作 / 移动原生 / etc)**不变**。
+
+## Amendment(2026-05-05 用户决策 — §"Stack" supersede)
+
+§"Stack" 写过:**不引入 SPA 框架**,栈定为 Tailwind + Alpine.js + marked.js + Split.js。
+
+**这条 supersede,由 [ADR-0019](./0019-frontend-stack.md) 替代**。
+
+理由(详见 ADR-0019):
+
+1. 2026-05-04 dogfood 验证前端基本不可用(chat / file ops / 视觉 / 交互全打 1 分)
+2. 三条原始论证("减少依赖 / 好审计 / 可被 LLM 维护")今天**全部不再成立**(详见 ADR-0019 §"Context")
+3. 项目负责人坦白没听过 Alpine — 工具链选偏门到 owner 看不懂自己的项目,违反 ADR-0002 §"AI is optional, owner is autonomous" 的隐性边界
+4. Chat / file tree / 编辑器都是"已解决品类",有现成 React 生态组件库(AI SDK / shadcn / CodeMirror / react-arborist),自写是浪费 + 引 bug
+
+**新栈**:React 19 + Vite + TypeScript + Tailwind(留)+ shadcn/ui + Vercel AI SDK + CodeMirror 6 + react-arborist + Tanstack Query。
+
+**ADR-0011 §"Stack" 之外其他章节(三栏布局 / Cmd+K / focus modes / 显式不做的边界等)继续有效**;视觉系统(纸感浅色)token 也保留,只是从 Alpine 内联迁移到 React + Tailwind config。
+
+ADR-0011 不撤,作为 IA(信息架构)+ 产品定位的历史记录保留。

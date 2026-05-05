@@ -2,18 +2,61 @@
 
 > [English](./README.en.md) | **中文**
 
-Knowlet 按 Wedge 战略分阶段演进。能力同源、相互增强;叙事按阶段聚焦。详见 [ADR-0003](../decisions/0003-wedge-pivot-ai-memory-layer.md)。
+Knowlet 按 Wedge 战略分阶段演进。能力同源、相互增强;叙事按阶段聚焦。详见 [ADR-0003](../decisions/0003-wedge-pivot-ai-memory-layer.md)(及其 2026-05-04 amendment)。
 
-## 阶段总览
+## ⚡ 当前状态(2026-05-05)
+
+**产品阶段** = 开发期(per [ADR-0022](../decisions/0022-product-lifecycle-phases.md))。无外部用户,允许激进迭代。
+
+**项目状态** = **重写中**。2026-05-04 dogfood 验证前端基本不可用,触发以下决策(详见 ADR-0019 / 0020 / 0021):
+
+- **前端**:Alpine 弃用,改 React 19 + Vite + TypeScript + shadcn/ui + AI SDK + CodeMirror 6 + react-arborist + Tanstack Query
+- **后端**:不重写,加 mypy strict + ruff + pre-commit + CI(per ADR-0020)
+- **顺序**:Phase 0 (脚手架 + 后端硬化) → Phase 1 (知识库基线) → Phase 2 (该有但可推) → Phase 3 (AI 能力重做) → Phase 4 (灰度准备)
+- **预估时间**:8-12 周到 Phase 4(灰度入口前)
 
 ```
-阶段一 (MVP / V1):    AI 长期记忆层 + 减负型 PKM
-阶段二 (V1 → V2):     用户需求驱动的扩展
-阶段三 (V2 → V3):     跨 AI 工具的记忆层(MCP server)
-阶段四:               全能形态
+🟢 已 ship 但**待重做** 的后端能力(0 改动,直接复用)
+   notes / cards / drafts / mining tasks 的 CRUD + 索引(FTS + vec)
+   chat 多会话 + sediment + LLM-driven retrieval
+   capsule 后端 (M7.1) + URL capture (M7.2) + critical take + hover quote (M7.3)
+   quiz 模式 (M7.4) + web_search + fetch_url (M7.5)
+   structure signals (M8.1)
+   vault snapshot / doctor 完整性 / Note schema_version
+
+❌ 已 ship 但**会被删除** 的前端
+   knowlet/web/static/* (Alpine + 自写 SSE + 自写 palette)
+   ~2000 行 app.js + ~1100 行 index.html + ~743 行 app.css
+   除 token CSS variables 外几乎全部废弃
+
+⏳ 等待重写
+   全部前端 surface(per ADR-0021 §"Phase 1/2/3")
 ```
 
-## 阶段一 — MVP / V1
+## 重写后的 Phase 计划
+
+详见 [ADR-0021](../decisions/0021-knowledge-base-first-roadmap.md)。摘要:
+
+```
+Phase 0  决策锁定 + 脚手架 + 后端硬化(并行)            2-3 天
+Phase 1  知识库基线 A + B + C(必备)                   4-5 周
+   A. File ops 跟齐 Obsidian:右键菜单 / 拖拽 / 重命名 / 移动 / 多选 / Trash UI / 文件夹创建 UI / 全文搜索
+   B. 编辑器跟齐 Bear:CodeMirror 6 + Math (KaTeX) + Mermaid + 模板 + 块引用
+   C. 知识连接:Wikilinks autocomplete + Backlinks + Graph view + Tag 浏览器
+Phase 2  D + E(该有可推)                              1-2 周(可推到 Phase 4)
+   D. 入口:Daily notes / Quick switcher 强化 / 收藏
+   E. 数据耐久:ADR-0018 落地 / Note version / Import-Export
+Phase 3  AI 能力重做                                   3-4 周
+   Chat (Vercel AI SDK) / 胶囊 / Sediment / Quiz / Mining UI / Web search trace / Cards
+Phase 4  整体 dogfood + 灰度准备                        1-2 周
+   Playwright e2e 测试 / 文档 / 灰度入口准备
+```
+
+**Phase 4 之后** = 进入灰度期(per [ADR-0022](../decisions/0022-product-lifecycle-phases.md))。
+
+## 阶段一(MVP / V1)— 战略层
+
+> Phase 0-4 是 V1 内部的实施切片。本节是战略层"V1 整体在干什么",跟具体 Phase 不绑。
 
 **Slogan:** 会自己整理的个人知识库 / *A personal knowledge base that organizes itself.*
 
@@ -25,7 +68,7 @@ Knowlet 按 Wedge 战略分阶段演进。能力同源、相互增强;叙事按�
 - **场景 B — 信息流订阅与整理**:配置知识挖掘任务 → 定时抓取 + LLM 整理 → 用户审查 → 入库
 - **场景 C — 结构化重复记忆 + AI 增强**:外语词汇 / 专业概念辨析 / 写作批改类场景,SRS 子模块调度 + AI 在交互中按用户上下文调整反馈
 
-### 核心特性
+### 核心特性(战略层)
 
 - **嵌入式 chat**:LLM 由用户自带([ADR-0005](../decisions/0005-llm-integration-strategy.md))
 - **LLM-driven retrieval**:LLM 在每次对话中按需从知识库检索
@@ -34,10 +77,11 @@ Knowlet 按 Wedge 战略分阶段演进。能力同源、相互增强;叙事按�
 - **SRS 子模块(FSRS)**:作为知识库的"主动复习视图"
 - **分层用户上下文**:Markdown 意图 + JSON 派生分析 + SQLite 派生状态
 - **桌面端 + 移动 PWA**:碎片场景兜底
+- **双链 + 图谱**(2026-05-04 amendment):用户认可的连接关系是核心 IA
 
 ### 显式不做
 
-详见 [ADR-0003](../decisions/0003-wedge-pivot-ai-memory-layer.md) "阶段一明确不做"小节。摘要:
+详见 [ADR-0003](../decisions/0003-wedge-pivot-ai-memory-layer.md) "阶段一明确不做"小节(含 2026-05-04 amendment)。摘要:
 
 - 团队协作 / 多用户(终生不做)
 - 内容推荐 / 信息发现 / 社交
@@ -45,303 +89,15 @@ Knowlet 按 Wedge 战略分阶段演进。能力同源、相互增强;叙事按�
 - AI Chat 产品的功能复刻
 - knowlet chat 不抢 Claude / Cursor 的位置
 
-> **2026-05-04 修订**:原"传统 PKM 双链 / 图谱专门 UI(由 LLM agent + tools 间接达成)" 这条**已撤销**。双链 + 图谱是知识软件核心能力,不是装饰。Wikilinks 已在 M7.0.4 落地;graph view 进 M8(详见 ADR-0003 / 0011 / 0013 各自的 2026-05-04 amendment)。
-
-### 衡量是否可进入阶段二
-
-- 三个真实场景的 happy path 能稳定跑通
-- AI 草稿 + 人工审查的沉淀循环在用户实际使用中不令人烦躁
-- LLM-driven retrieval 命中率达可用阈值(具体数值在原型阶段定)
-- 跨场景上下文累积有可观察的效果(写作批改用上历史错误模式 / 阅读促进词汇队列等)
-
-## 阶段一进度(2026-05-04 当前快照)
-
-### ✅ 已 ship
-
-```
-M6.0–M6.5  Obsidian-style UI shell + 多会话 chat + 收尾打磨
-Phase B    并发 / 异步启动 / SSE 抽 module 等 8 项硬骨头
-M7.0       笔记基线 5 项(软删除 / 嵌套 / 图片 / wikilinks / 代码高亮)
-M7.1       选区 → 聊天引用胶囊(ADR-0015)
-M7.2       URL 录入 + sediment ambient(ADR-0016)
-M7.3       草稿质量增强(critical take + hover quote)
-M7.4       笔记考试模式(ADR-0014:CLI + Web + 历史 tab + Cards 回流)
-M7.5       LLM web_search + fetch_url(ADR-0017,backend-agnostic)
-M8.1       Structure signals 后端(near-dup / clusters / orphan / aging)
-ADR-0004 amendment 后修复:web_search palette / 新建 Card UI
-```
-
-### ⏳ 在执行 / 待落地
-
-- **Claude Design 第二轮**(brief 在 [`../design/m7-m8-redesign-brief.md`](../design/m7-m8-redesign-brief.md)):
-  覆盖 8 个 M7 surface audit + M8.2 知识地图侧栏 / M8.2b 图谱 view / M8.3 周报 / M8.4 暗色 token
-- **集中 dogfood**(模版在 [`../dogfood/M7-M8.1-report-template.md`](../dogfood/M7-M8.1-report-template.md)),反馈回流到设计 + bug 修
-
-### 🔧 ADR-0004 修订 backlog(每个 AI 功能必须有 UI 替代)
-
-- ✅ `web_search` — palette 命令(commit `ee0998a`)
-- ✅ `create_card` — Cards focus + palette + 新建 modal(commit `483ed4c`)
-- ⏳ `list_mining_tasks` — 需 Web mining-config 面板(等 design)
-- ⏳ `fetch_url` — 跟 M7.2 url-capture 流统一(等 design)
-
-### 📋 设计回件后(M8 第二轮 + dogfood polish)
-
-```
-M8.2  知识地图侧栏(消费 M8.1 信号)+ graph view(用户认可的双链)
-M8.3  周报(Sunday-newspaper,ADR-0013 Layer C)
-M8.4  暗色 toggle(localStorage + 跟随系统)
-M7.4.3-cluster  cluster scope quiz(目前路由 501,wire-compatible 等 Layer B)
-```
-
-## 知识软件核心能力盘点(2026-05-04)
-
-knowlet 是知识软件,不是 AI Chat 套壳(per [ADR-0012](../decisions/0012-notes-first-ai-optional.md))。这一节横切**知识软件作为品类的核心能力**,看 knowlet 的覆盖度:
-
-### A. 笔记内容(authoring)
-
-| 能力 | 状态 |
-|---|---|
-| Markdown 编辑 + preview | ✅ M6 |
-| 图片粘贴 | ✅ M7.0.3 |
-| 代码语法高亮 | ✅ M7.0.5 |
-| 双链 wikilinks `[[Title]]` | ✅ M7.0.4 |
-| **块引用 `[[Note#Heading]]` / block-id** | ❌ **未规划 — Tier 1 缺口** |
-| **数学公式渲染(KaTeX)** | ❌ **未规划 — Tier 1 缺口**(STEM 笔记必需)|
-| **Mermaid / PlantUML 图表** | ❌ **未规划 — Tier 1 缺口**(技术笔记常需)|
-| **模板系统**(读书笔记 / 会议纪要 等)| ❌ **未规划 — Tier 1 缺口** |
-| 大纲模式(Logseq-style block hierarchy) | ❌ Tier 2 — 是否做需新 ADR(改 IA 范式)|
-| 一般附件(PDF / 音频 / 视频)| ❌ 当前只有图片 |
-| CodeMirror 升级编辑器 | ⏳ ADR-0011 §M7+ defer |
-
-### B. 组织 & 检索(organization)
-
-| 能力 | 状态 |
-|---|---|
-| 文件夹层级 | ✅ M7.0.2(递归)|
-| Tags(frontmatter)| ✅ M0 |
-| 全文搜索(FTS5)| ✅ M0 |
-| 向量搜索 + RRF hybrid | ✅ M0 |
-| 反链面板 | ✅ M7.0.4 |
-| 笔记跳转 palette(Cmd+P) | ✅ M6.2 |
-| Graph view | ⏳ M8(刚 amend 进来)|
-| 知识地图侧栏(LLM 信号)| ⏳ M8.2 |
-| **Daily notes / 日记**(date-based 自动创建)| ❌ **未规划 — Tier 1 缺口**(Roam 入口模式)|
-| **批量操作**(多选 → tag / move / delete)| ❌ **未规划 — Tier 1 缺口** |
-| 标签树 explorer | ❌ Tier 2 |
-| 保存的搜索 / smart folders | ❌ Tier 2 |
-| typed properties(Obsidian properties)| ❌ Tier 2 |
-
-### C. 录入(capture)
-
-| 能力 | 状态 |
-|---|---|
-| 手动新建 + sediment 对话存笔记 | ✅ M0 / M6 |
-| URL → 摘要 → 胶囊 | ✅ M7.2 |
-| 图片粘贴 | ✅ M7.0.3 |
-| RSS / URL mining → drafts | ✅ M3 |
-| Web mining-config 面板 | ⏳ ADR-0004 backlog |
-| **选区 → Card 一键**(highlight-to-card)| ❌ **未规划 — Tier 1 缺口**(跟 ADR-0014 同源)|
-| Watch folder(放入自动入库)| ❌ Tier 3 |
-| 音频录制 + 转写 | ❌ Tier 3 |
-| OCR 图片 → 文字 | ❌ Tier 3 |
-| 浏览器扩展 / web clipper | ❌ M9+(per ADR-0016 §"Out of scope")|
-
-### D. 主动复习(active recall)
-
-| 能力 | 状态 |
-|---|---|
-| Cards / FSRS | ✅ M0 |
-| Quiz 模式(scope-driven recall)| ✅ M7.4 |
-| 错题 → Card 回流 | ✅ M7.4.2 |
-| **Cloze deletions(`{{c1::}}`)** | ❌ **未规划 — Tier 2 缺口** |
-| Anki .apkg 导入 | ❌ Tier 3 |
-
-### E. AI 集成
-
-| 能力 | 状态 |
-|---|---|
-| Chat with vault(RAG)| ✅ M0 |
-| 选区 → 聊天胶囊 | ✅ M7.1 |
-| URL → 摘要 → 胶囊 | ✅ M7.2 |
-| Quiz 出题 + 评分 | ✅ M7.4 |
-| Web search tool | ✅ M7.5 |
-| 多会话 chat history | ✅ M6.4 |
-| **编辑器内联 AI**(Cmd+K → continue / refine / shorten)| ❌ **未规划 — Tier 2 缺口**(Notion AI 风格)|
-| **智能链接建议**(typing 时 AI 建议 `[[...]]` 候选,基于向量)| ❌ Tier 2 |
-| 图片理解(paste 图 → 问 AI)| ❌ Tier 3 |
-| 语音 / TTS / STT | ❌ Tier 3 |
-
-### F. 生命周期(lifecycle / hygiene)
-
-| 能力 | 状态 |
-|---|---|
-| Soft-delete + trash | ✅ M7.0.1 |
-| Layer A ambient(sediment 时显示相似)| ✅ M7.2 |
-| Layer B 结构信号(near-dup / cluster / orphan / aging)| ⏳ Backend ✅ M8.1 / UI 等 design |
-| Layer C 周报 | ⏳ M8.3 |
-| 显式 archive(跟 trash 区分)| ❌ Tier 2 |
-| 笔记 freeze / pin | ❌ Tier 3 |
-| 笔记历史 / diff | ❌ Tier 3(用户用 git 兜底)|
-
-### G. 同步 & 导出
-
-| 能力 | 状态 |
-|---|---|
-| Vault = 普通文件夹(用户自接 Syncthing/iCloud)| ✅ M0(per ADR-0006)|
-| 导出(PDF / HTML / Anki)| ❌ Tier 2 |
-| Vault 导入(Obsidian / Notion / Roam)| ❌ Tier 2 |
-| 自建同步(CRDT / 加密)| ⏳ 阶段二 |
-
-### H. 扩展性
-
-| 能力 | 状态 |
-|---|---|
-| Plugin 系统 | ⏳ 阶段二 |
-| MCP server | ⏳ 阶段三 |
-
-### I. 视觉
-
-| 能力 | 状态 |
-|---|---|
-| 纸感浅色 | ✅ M6.1.5 |
-| 暗色 toggle | ⏳ M8.4 |
-
-### Tier 1 缺口汇总(对"知识软件"身份最 load-bearing,建议进 M9 候选)
-
-**M9 候选**(等 M8 dogfood 反馈定优先级):
-
-1. **块引用 + block-id 锚点** — 双链当前到 note 级,Roam/Obsidian/Logseq 都到 block 级。M7.0.4 wikilinks 是基础,M9 加 `[[Note#Heading]]` 跟 `[[Note^block-id]]` 锚点。
-2. **Daily notes / 日记** — Roam-style date-based 自动创建。要跟 ADR-0013 Layer C 周报澄清边界(daily 是录入入口,周报是回顾入口,不冲突)。
-3. **数学(KaTeX)+ Mermaid 渲染** — STEM / 工程笔记必需。marked 有现成插件,接入成本低,只是没排上。
-4. **模板系统** — `templates/` 目录 + new-note 时 template picker。
-5. **选区 → Card 一键** — 跟 M7.4 Cards 回流同源:笔记中 highlight → 浮窗"做成 Card" → 跳进 New Card modal 预填。补强 active recall 录入端。
-6. **批量操作** — 多选 → 改 tag / 移文件夹 / 删除。dogfood 后期 vault 大了必爆这个需求。
-
-### Tier 2(夹在中间)
-
-7. 大纲模式(Logseq block hierarchy)— 改 IA 范式,需 ADR
-8. Cloze deletions(`{{c1::}}`)— Anki-style 卡面
-9. **编辑器内联 AI**(Cmd+K continue / refine / shorten)— Notion AI 风格;跟 M7.1 capsule 是不同入口
-10. 智能链接建议(打字时向量 retrieval 推 `[[...]]` 候选)
-11. 显式 archive(跟 trash 区分)
-12. 标签树 explorer / saved searches / typed properties
-13. 导出 / 导入(Obsidian / Notion / Roam → knowlet)
-
-### Tier 3(后续阶段 / 低优先)
-
-附件(PDF/audio/video)/ watch folder / 音频录制 + 转写 / OCR / 图片理解 / 语音 / 浏览器扩展 / 移动原生 / Plugin 系统(已在阶段二)/ Anki .apkg 导入
-
----
-
-## 📦 跨 ADR 延期事项总账(2026-05-04 编录)
-
-> **目的**:每条 ADR / design doc 都有 §"Out of scope" / §"Defer" / §"未来扩展点"。本节把它们**全部按出处编录**,作为防遗忘的 single source of truth。每次新增 ADR 时,§"Out of scope" 需同步登记到这里。
-
-### 🟡 等 dogfood 信号定优先级
-
-| 项 | 出处 | 触发条件 |
-|---|---|---|
-| **ADR-0015b citation back-references**(LLM 回答里 `[1] [2]` 跳回原文) | ADR-0015 §3 | "如果 dogfood 显示需要"|
-| **胶囊跨 session 草稿夹**(M7.1 capsule 持久化超过单条 message) | ADR-0015 §"Out of scope" | 用户主动要求 |
-| **CLI `:quote <note_id> <line_range>` REPL 子命令** | ADR-0015 §"Out of scope" | 优先级低,有 GUI 替代 |
-| **`knowlet://note/<id>?line=42` deep-link 协议** | ADR-0015 §"Out of scope" | desktop / mobile 阶段才需要 |
-| **Per-session web search 累计上限 + UI 用量 monitor** | ADR-0017 §"Out of scope" | dogfood 数据显示需要 |
-| **Sediment 模态 Layer A 在 "+ 新建空 Note" 时也触发** | ADR-0016 §"Mitigations" | 用户写到一定篇幅后是否需要 ambient |
-| **Drafts approve 时显示 Layer A ambient** | ADR-0016 §"Out of scope" | M7.x 后续 |
-
-### 🔵 等 Claude Design 第二轮 / M8
-
-| 项 | 出处 | 状态 |
-|---|---|---|
-| `list_mining_tasks` Web 配置面板 | ADR-0004 amendment §"Backlog" | ⏳ |
-| `fetch_url` UI 入口(跟 M7.2 url-capture 流统一)| ADR-0004 amendment §"Backlog" | ⏳ |
-| **M8.2 知识地图侧栏**(消费 M8.1 LLM 推断信号)| ADR-0013 §3 Layer B + 设计 brief §9 | ⏳ |
-| **M8.2b Graph view**(用户认可的 `[[Title]]` 链接可视化)| ADR-0003/0011/0013 amendment + 设计 brief §9b | ⏳ |
-| **M8.3 周报**(Sunday-newspaper 调性 / no unread badge)| ADR-0013 §3 Layer C + 设计 brief §10 | ⏳ |
-| **M8.4 暗色 toggle**(localStorage + 跟随系统 / 暗色 token 套)| ADR-0011 §"Schedule" + 设计 brief §11 | ⏳ |
-| **M7.4.3 cluster scope quiz**(currently routes 501)| ADR-0014 §8 | ⏳ depends on M8 Layer B |
-
-### 🟢 等阶段切换(已 stage)
-
-| 项 | 阶段 | 出处 |
-|---|---|---|
-| Plugin 系统 | 阶段二 | ADR-0003 §"阶段二" |
-| 移动端原生 | 阶段二 | ADR-0003 §"阶段二" |
-| knowlet 自建同步(CRDT / 加密)| 阶段二 | ADR-0006 §"阶段二" |
-| Vault 加密(`git-crypt` / `age` / 自研) | 阶段二 | ADR-0006 §127 |
-| Fallback 抓取后端(SearXNG / 自托管 — 部分已 ship 在 ADR-0017)| 部分 ✅ | ADR-0006 §141 |
-| MCP server | 阶段三 | ADR-0003 §"阶段三" |
-| Tauri 桌面壳(M5 / M9)| M5/M9 | ADR-0011 §"Schedule" |
-| 浏览器扩展 / share-target | M9+ Tauri 阶段 | ADR-0016 §"Out of scope" |
-
-### 🟣 数据耐久性(M9 候选,ADR-0018 待起草)
-
-`knowlet vault snapshot` / `restore-snapshot` / `list-snapshots` + `knowlet doctor` 数据完整性检查 + Note `schema_version` 已在 commit `40cfcd0` ship,作为 dogfood 期的运营安全垫。下一步 ADR-0018 把契约钉死:
-
-- Schema 演进规则(只能加字段不能删字段;1 major version backward compat 强制)
-- Vault fixtures 测试套件(M0/M3/M7 各自的 vault snapshot,跑回归测试 "新代码能读旧 vault")
-- 半显式 versioning(讨论 `v0.1.0` 是否就是 M8 dogfood 版)
-- `.knowlet/backups/` 真正用起来(每次 destructive 操作前写副本,跟 ADR-0006 §3 对齐)
-- Card / Draft / MiningTask 也加 `schema_version`(目前只 Note 加了)
-
-### ⚪ 编辑器 / 交互层 defer(M7+)
-
-| 项 | 出处 | 状态 |
-|---|---|---|
-| **CodeMirror 6 编辑器升级**(替换 textarea)| ADR-0011 §9 + §"Schedule" | ⏳ M7+(还没排) |
-| **内联 slash 菜单 / Cmd+K 编辑器内 AI**(`summarize this` / `make Card from this`)| ADR-0011 §9 + 知识软件审计 Tier 2 | ⏳ M7+ / Tier 2 |
-| **拖拽重排 / 多选批量操作** | ADR-0011 §9 + Tier 1 缺口 | ⏳ M7+ / Tier 1 (已重新升 Tier 1)|
-
-### 🔴 显式不做(永不进路线图)
-
-| 项 | 出处 |
-|---|---|
-| 团队协作 / 多用户 | ADR-0003 §"阶段一明确不做"(终生不做)|
-| 内容推荐 / 信息发现 / 社交 | ADR-0003 §"阶段一明确不做" |
-| 任务 / 日历 / Todo 管理 | ADR-0003 §"阶段一明确不做" |
-| AI Chat 产品功能复刻(模型选择 / 长上下文 / 图像生成)| ADR-0003 §"阶段一明确不做" |
-| Tag taxonomy(top-down 强制分类)| ADR-0013 §3 Layer B |
-| Auto-archive / auto-merge | ADR-0013 §1 契约 |
-| LLM 主动改 vault IA(自动合并 / 自动改 tag)| ADR-0013 §1 契约 |
-| Drafts 提取的 image / video / PDF 内容(只处理文字)| ADR-0016 §"Out of scope" |
-| 多 URL 一次粘贴抓取(只处理单一)| ADR-0016 §"Out of scope" |
-| LLM 抓取 PDF / video(trafilatura 不处理)| ADR-0017 §"Out of scope" |
-| 自动备 search 结果到 vault(等同 url-capture,用户主动走那条流)| ADR-0017 §"Out of scope" |
-| 多语言 search query 切换(让 LLM 自己决定)| ADR-0017 §"Out of scope" |
-
-### 🧠 Tier 1 知识软件缺口(M9 候选,等 dogfood 反馈定顺序)
-
-(已在 §"知识软件核心能力盘点 → Tier 1 汇总" 列出,这里再点名一遍以防遗忘):
-
-1. 块引用 + block-id 锚点
-2. Daily notes / 日记
-3. 数学(KaTeX)+ Mermaid 渲染
-4. 模板系统
-5. 选区 → Card 一键
-6. 批量操作(已跟 ADR-0011 §9 defer 项合并)
-
-### 维护规则
-
-> **每次新增 ADR / 修订现有 ADR 时,本节必须同步**:
-> 1. ADR 里加 §"Out of scope" → 这里登记一行
-> 2. 收到 dogfood 反馈后:🟡 项升入 🔵 / 🟢 / 🔴 之一,或直接进 M9
-> 3. 每条 stage 切换时:🟢 项 review 一遍是否还需要 / 是否 ready
-
----
-
 ## 阶段二 — V1 → V2:用户需求驱动的扩展
 
-阶段一稳定后,用户自然会浮出新需求。可能演进的方向(按预期优先级):
+阶段二是**被用户需求推着走**(灰度期 + 上线期之后)。可能演进的方向(预期优先级):
 
-- **plugin 生态**:开放接口让用户/社区写自定义 tool,扩展原子能力层
+- **Plugin 生态**:开放接口让用户/社区写自定义 tool,扩展原子能力层
 - **移动端原生**:PWA 不够,音频 / OCR / 通知等场景需要原生能力
 - **knowlet 自建同步**:文件级同步的冲突体验不佳时,补 CRDT 或加密同步路径
 - **完整加密路径**:高隐私需求出现时(参见 [ADR-0006](../decisions/0006-storage-and-sync.md))
-- **fallback 抓取后端**:支持不带原生 web_search 的 LLM(SearXNG / Brave / 自托管)
-
-> **2026-05-04 修订**:原"图谱 / 双链可视化"列在阶段二 — **已移到阶段一 M8**(per ADR-0003 / 0011 / 0013 amendment)。双链是知识软件核心,不是 V2 扩展。
-
-阶段二是**被用户需求推着走**,而不是先做出来再找需求。具体特性进入路线图前需通过特性优先级原则(下方)。
+- **Fallback 抓取后端**:支持不带原生 web_search 的 LLM(部分已 ship 在 ADR-0017)
 
 ## 阶段三 — V2 → V3:跨 AI 工具的记忆层
 
@@ -349,7 +105,6 @@ knowlet 阶段一的原子能力按 MCP 标准设计([ADR-0004](../decisions/000
 
 - Claude Desktop / Cursor / 其他 MCP-compatible 工具直接调 knowlet 的能力
 - knowlet 不再只是"打开就用的应用",而是"用户所有 AI 工具的私人记忆层"
-- 这与 ADR-0003 的破局点叙事完全自洽
 
 ## 阶段四 — 长远全能形态
 
@@ -367,13 +122,89 @@ knowlet 阶段一的原子能力按 MCP 标准设计([ADR-0004](../decisions/000
 
 阶段四不再是"叠加新能力",而是把已有能力的反馈环路打满。
 
+## 📦 跨 ADR 延期事项总账(2026-05-05 重整)
+
+> **目的**:每条 ADR / design doc 都有 §"Out of scope" / §"Defer" / §"未来扩展点"。本节按出处编录所有这些事项,作为防遗忘的 single source of truth。
+>
+> **维护规则**:每写一条新 ADR / 修订现有 ADR 时,§"Out of scope" 必须同步登记到这里。
+
+### 🟡 等 dogfood 信号定优先级(Phase 4 之后再排)
+
+| 项 | 出处 | 触发条件 |
+|---|---|---|
+| **ADR-0015b citation back-references**(LLM 回答里 `[1] [2]` 跳回原文) | ADR-0015 §3 | 灰度期 dogfood 显示需要 |
+| **胶囊跨 session 草稿夹**(M7.1 capsule 持久化超过单条 message) | ADR-0015 §"Out of scope" | 用户主动要求 |
+| **CLI `:quote <note_id> <line_range>` REPL 子命令** | ADR-0015 §"Out of scope" | 优先级低,GUI 替代 |
+| **`knowlet://note/<id>?line=42` deep-link 协议** | ADR-0015 §"Out of scope" | 桌面 / 移动阶段才需要 |
+| **Per-session web search 累计上限 + UI 用量 monitor** | ADR-0017 §"Out of scope" | dogfood 数据显示需要 |
+| **Sediment 模态 Layer A 在 "+ 新建空 Note" 时也触发** | ADR-0016 §"Mitigations" | 用户写到一定篇幅后是否需要 |
+| **Drafts approve 时显示 Layer A ambient** | ADR-0016 §"Out of scope" | 后续 |
+
+### 🔵 在新 React 重写时一并实施(Phase 1-3)
+
+| 项 | 出处 | 在哪 phase |
+|---|---|---|
+| `list_mining_tasks` Web 配置面板 | ADR-0004 amendment §"Backlog" | Phase 3 |
+| `fetch_url` UI 入口(跟 url-capture 流统一) | ADR-0004 amendment §"Backlog" | Phase 3 |
+| **知识地图侧栏**(消费 M8.1 LLM 推断信号) | ADR-0013 §3 Layer B | Phase 3 |
+| **Graph view**(用户认可的 `[[Title]]` 链接可视化) | ADR-0003/0011/0013 amendment | **Phase 1 C**(已重新归位) |
+| **周报**(Sunday-newspaper 调性) | ADR-0013 §3 Layer C | Phase 3 或 Phase 4 |
+| **暗色 toggle** | 设计 brief §11 | Phase 1 起就有(token 已就位)/ toggle UI 在 Phase 1 |
+| **M7.4.3 cluster scope quiz** | ADR-0014 §8 | Phase 3(在 quiz 重做时一并)|
+
+### 🟢 等阶段切换(灰度 / 上线 / 阶段二 / 三)
+
+| 项 | 阶段 | 出处 |
+|---|---|---|
+| Plugin 系统 | 阶段二 | ADR-0003 §"阶段二" |
+| 移动端原生 | 阶段二 | ADR-0003 §"阶段二" |
+| knowlet 自建同步(CRDT / 加密) | 阶段二 | ADR-0006 §"阶段二" |
+| Vault 加密(`git-crypt` / `age` / 自研) | 阶段二 | ADR-0006 §127 |
+| MCP server | 阶段三 | ADR-0003 §"阶段三" |
+| Tauri 桌面壳(M9+) | M9+ | ADR-0011 §"Schedule" |
+| 浏览器扩展 / share-target | M9+ Tauri 阶段 | ADR-0016 §"Out of scope" |
+
+### 🟣 数据耐久性(Phase 2 E,ADR-0018 待起草)
+
+`knowlet vault snapshot` / `restore-snapshot` / `list-snapshots` + `knowlet doctor` 数据完整性检查 + Note `schema_version` 已在 commit `40cfcd0` ship,作为 dogfood 期的运营安全垫。下一步 ADR-0018 把契约钉死:
+
+- Schema 演进规则(只能加字段不能删字段;1 major version backward compat 强制)
+- Vault fixtures 测试套件(M0/M3/M7 vault snapshot,跑回归测试 "新代码能读旧 vault")
+- 半显式 versioning(讨论 `v0.1.0` 是否就是灰度入口版)
+- `.knowlet/backups/` 真正用起来(per ADR-0006 §3)
+- Card / Draft / MiningTask 也加 `schema_version`(目前只 Note 加了)
+
+### 🔴 显式永不做
+
+| 项 | 出处 |
+|---|---|
+| 团队协作 / 多用户 | ADR-0003 §"阶段一明确不做"(终生不做)|
+| 内容推荐 / 信息发现 / 社交 | ADR-0003 §"阶段一明确不做" |
+| 任务 / 日历 / Todo 管理 | ADR-0003 §"阶段一明确不做" |
+| AI Chat 产品功能复刻(模型选择 / 长上下文 / 图像生成) | ADR-0003 §"阶段一明确不做" |
+| Tag taxonomy(top-down 强制分类) | ADR-0013 §3 Layer B |
+| Auto-archive / auto-merge | ADR-0013 §1 契约 |
+| LLM 主动改 vault IA | ADR-0013 §1 契约 |
+| Drafts 提取的 image / video / PDF 内容(只处理文字) | ADR-0016 §"Out of scope" |
+| 多 URL 一次粘贴抓取 | ADR-0016 §"Out of scope" |
+| LLM 抓取 PDF / video(trafilatura 不处理) | ADR-0017 §"Out of scope" |
+| 自动备 search 结果到 vault | ADR-0017 §"Out of scope" |
+| 多语言 search query 切换 | ADR-0017 §"Out of scope" |
+
+## 已废弃(2026-05-05)
+
+以下事项之前在路线图,**因 ADR-0019 / 0021 重写决策而失效**:
+
+- ❌ "M8.2 知识地图侧栏作为 Alpine 实现" — 改在 React 重做(Phase 3)
+- ❌ "M8.4 暗色 toggle 在 Alpine UI 实现" — token 已就位,UI 在 Phase 1 React 实现
+- ❌ "Batch 2 / Batch 3 of Claude Design 2nd pass(在 Alpine 上)" — 弃。Design 决定全部映射到 React 实现
+- ❌ "在 Alpine UI 上 polish file ops" — 弃。Phase 1 A 整体重做
+
 ## 特性优先级原则
 
 每条新特性进入路线图前,先过四个问题:
 
 1. **服务于当前阶段的破局点吗?** 否 → backlog
-2. **会损害三条核心原则吗?**(AI 可选 / 数据主权 / 插件化) 是 → 拒绝
-3. **能用现有领域实体表达吗?** 否 → 思考是否需要新增实体,而不是塞进现有实体里
+2. **会损害三条核心原则吗?**(AI 可选 / 数据主权 / 插件化)是 → 拒绝
+3. **能用现有领域实体表达吗?** 否 → 思考是否需要新增实体
 4. **拒绝它的代价是什么?** 如果代价是"失去某类用户但他们不在当前阶段画像里",可以接受
-
-这套原则避免"什么都想做"的早期陷阱,具体每条候选特性的判断结果会在 ADR 或 design 文档里记录。
