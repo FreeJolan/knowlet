@@ -177,13 +177,13 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header — match the row left padding (px-2) so "Vault" lines up with
-          the chevron column visually. */}
+      {/* Header — VS Code-style bold uppercase title; left padding lines up
+          with the row's chevron column (px-2 row + 8px row inner gap). */}
       <div
-        className="flex shrink-0 items-center justify-between border-b py-1.5 pr-1 pl-2"
+        className="flex shrink-0 items-center justify-between border-b py-1.5 pr-1 pl-3"
         style={{ borderColor: "var(--line)" }}
       >
-        <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-foreground/80">
           {t("tree.vault")}
         </span>
         <Button
@@ -208,7 +208,7 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
             openByDefault={true}
             width="100%"
             height={5000}
-            rowHeight={26}
+            rowHeight={22}
             indent={14}
             paddingTop={4}
             onRename={onRename}
@@ -270,74 +270,78 @@ function Row({
   const isFolder = node.data.kind === "folder";
   const isOpen = node.isOpen;
 
-  // Per Obsidian / VS Code convention: select highlight is edge-to-edge, not
-  // a floating pill. `rounded-none` + remove horizontal margins.
+  // VS Code-style: rounded pill with horizontal margin; row container takes
+  // the full row height for hit area, the inner pill carries the visual.
   const rowBody = (
     <div
       ref={dragHandle}
       style={style}
-      className={`group flex h-full items-center gap-1 px-2 text-sm select-none cursor-default ${
-        node.isSelected
-          ? "bg-accent/30 text-accent-foreground"
-          : "hover:bg-secondary/60"
-      }`}
+      className="group flex h-full items-center px-1 select-none cursor-default"
     >
-      {/* Chevron is its own click target — toggling the folder must not fire
-          the row activate (which our onActivate also handles, via
-          arborist's keyboard / row click). Notes get an empty spacer for
-          visual alignment. */}
-      {isFolder ? (
-        <button
-          type="button"
-          aria-label={isOpen ? "collapse" : "expand"}
-          onClick={(e) => {
-            e.stopPropagation();
-            node.toggle();
-          }}
-          className="flex size-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
-        >
-          {isOpen ? (
-            <ChevronDown className="size-3" />
-          ) : (
-            <ChevronRight className="size-3" />
-          )}
-        </button>
-      ) : (
-        <span className="size-4 shrink-0" />
-      )}
-      {/* Body part — clicking here activates (file open / folder toggle). */}
       <div
-        className="flex min-w-0 flex-1 items-center gap-1"
-        onClick={() => {
-          if (isFolder) node.toggle();
-          else node.activate();
-        }}
-        onDoubleClick={(e) => {
-          e.stopPropagation();
-          node.edit();
-        }}
+        className={`flex h-[calc(100%-2px)] w-full items-center gap-2 rounded-md px-2 text-sm ${
+          node.isSelected
+            ? "bg-accent/40 text-accent-foreground"
+            : "hover:bg-secondary/60"
+        }`}
       >
+        {/* Chevron is its own click target — toggling the folder must not fire
+            the row activate (which our onActivate also handles, via
+            arborist's keyboard / row click). Notes get an empty spacer for
+            visual alignment. */}
         {isFolder ? (
-          <Folder className="size-3.5 shrink-0 text-muted-foreground" />
-        ) : (
-          <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
-        {node.isEditing ? (
-          <input
-            className="flex-1 bg-transparent px-1 outline-none ring-1 ring-ring rounded-sm"
-            defaultValue={node.data.name}
-            autoFocus
-            onFocus={(e) => e.currentTarget.select()}
-            onBlur={() => node.reset()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") node.submit(e.currentTarget.value);
-              if (e.key === "Escape") node.reset();
+          <button
+            type="button"
+            aria-label={isOpen ? "collapse" : "expand"}
+            onClick={(e) => {
+              e.stopPropagation();
+              node.toggle();
             }}
-            onClick={(e) => e.stopPropagation()}
-          />
+            className="flex size-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
+          >
+            {isOpen ? (
+              <ChevronDown className="size-3.5" />
+            ) : (
+              <ChevronRight className="size-3.5" />
+            )}
+          </button>
         ) : (
-          <span className="truncate">{node.data.name || t("tree.untitled")}</span>
+          <span className="size-4 shrink-0" />
         )}
+        {/* Body part — clicking here activates (file open / folder toggle). */}
+        <div
+          className="flex min-w-0 flex-1 items-center gap-2"
+          onClick={() => {
+            if (isFolder) node.toggle();
+            else node.activate();
+          }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            node.edit();
+          }}
+        >
+          {isFolder ? (
+            <Folder className="size-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <FileText className="size-4 shrink-0 text-muted-foreground" />
+          )}
+          {node.isEditing ? (
+            <input
+              className="flex-1 bg-transparent px-1 outline-none ring-1 ring-ring rounded-sm"
+              defaultValue={node.data.name}
+              autoFocus
+              onFocus={(e) => e.currentTarget.select()}
+              onBlur={() => node.reset()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") node.submit(e.currentTarget.value);
+                if (e.key === "Escape") node.reset();
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <span className="truncate">{node.data.name || t("tree.untitled")}</span>
+          )}
+        </div>
       </div>
     </div>
   );
