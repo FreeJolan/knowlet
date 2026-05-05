@@ -10,9 +10,15 @@ import { getNote } from "@/api/client";
 import { QK } from "@/lib/queryClient";
 
 export function NoteView({ noteId }: { noteId: string | null }) {
+  // Always provide a queryFn — TanStack Query v5 throws synchronously when
+  // queryFn is undefined, even with enabled:false. The fn just never runs
+  // when noteId is null because `enabled` gates execution.
   const note = useQuery({
     queryKey: noteId ? QK.note(noteId) : ["note", "_empty"],
-    queryFn: noteId ? () => getNote(noteId) : undefined,
+    queryFn: () => {
+      if (!noteId) throw new Error("noteId required");
+      return getNote(noteId);
+    },
     enabled: !!noteId,
   });
 
