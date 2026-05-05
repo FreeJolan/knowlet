@@ -42,6 +42,8 @@ import {
 import { InlineEditInput } from "@/components/InlineEdit/InlineEditInput";
 import { QK } from "@/lib/queryClient";
 
+import type { TreeFolder } from "@/api/types";
+
 import {
   injectPending,
   PENDING_FOLDER_ID,
@@ -49,6 +51,55 @@ import {
   toArborist,
   type TreeNodeData,
 } from "./treeData";
+
+/**
+ * Recursively update a TreeFolder snapshot. Used for optimistic rename:
+ * the user's Enter triggers a PUT, but arborist's submit() synchronously
+ * exits edit mode and the row would render with the *old* cached title
+ * until the backend's response invalidates the tree (~50–200 ms gap).
+ * Mutating the cache here makes the new title visible on the same frame
+ * the user pressed Enter.
+ */
+function applyToTree(
+  root: TreeFolder,
+  fn: (root: TreeFolder) => TreeFolder,
+): TreeFolder {
+  return fn(root);
+}
+
+function updateNoteInTree(
+  root: TreeFolder,
+  noteId: string,
+  patch: { title?: string },
+): TreeFolder {
+  return {
+    ...root,
+    notes: root.notes.map((n) =>
+      n.id === noteId ? { ...n, ...(patch.title !== undefined && { title: patch.title }) } : n,
+    ),
+    folders: root.folders.map((f) => updateNoteInTree(f, noteId, patch)),
+  };
+}
+
+function renameFolderInTree(root: TreeFolder, path: string, newName: string): TreeFolder {
+  if (!path) return root;
+  const parts = path.split("/");
+  function walk(node: TreeFolder, depth: number): TreeFolder {
+    return {
+      ...node,
+      folders: node.folders.map((f) => {
+        if (f.name !== parts[depth]) return f;
+        if (depth === parts.length - 1) {
+          // Compute the new path with the renamed segment.
+          const newSegs = [...parts.slice(0, depth), newName];
+          return { ...f, name: newName, path: newSegs.join("/") };
+        }
+        return walk(f, depth + 1);
+      }),
+    };
+  }
+  return walk(root, 0);
+}
 
 type PendingCreate = { kind: "note" | "folder"; parentPath: string };
 
@@ -91,13 +142,45 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
       const cur = await getNote(id);
       return updateNote(id, { title, tags: cur.tags, body: cur.body });
     },
-    onMutate: startBusy,
+    // Optimistic update: write the new title into the tree query cache
+    // BEFORE the PUT round-trips. Otherwise arborist's submit() flips
+    // the row out of edit mode immediately, the row re-renders the
+    // <span> with the OLD cached title, the user sees "alpha" for
+    // ~100 ms, then the refetch replaces with "newname". User reads
+    // it as a flash of the old name.
+    onMutate: ({ id, title }) => {
+      onMutating?.(true);
+      const previous = qc.getQueryData<TreeFolder>(QK.tree);
+      if (previous) {
+        qc.setQueryData<TreeFolder>(
+          QK.tree,
+          applyToTree(previous, (root) => updateNoteInTree(root, id, { title })),
+        );
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) qc.setQueryData(QK.tree, ctx.previous);
+    },
     onSettled: settled,
   });
   const renameFolderM = useMutation({
     mutationFn: ({ path, newName }: { path: string; newName: string }) =>
       renameFolder(path, newName),
-    onMutate: startBusy,
+    onMutate: ({ path, newName }) => {
+      onMutating?.(true);
+      const previous = qc.getQueryData<TreeFolder>(QK.tree);
+      if (previous) {
+        qc.setQueryData<TreeFolder>(
+          QK.tree,
+          applyToTree(previous, (root) => renameFolderInTree(root, path, newName)),
+        );
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) qc.setQueryData(QK.tree, ctx.previous);
+    },
     onSettled: settled,
   });
   const createFolderM = useMutation({

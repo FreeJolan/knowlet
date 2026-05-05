@@ -163,6 +163,36 @@ try {
     },
   );
 
+  await runTest(
+    "rename does NOT flash the old name between Enter and refetch",
+    async () => {
+      // The optimistic cache update should make the new title appear on
+      // the same frame as Enter. Sample row text at multiple short
+      // timestamps; the OLD title must not appear at any of them.
+      // Earlier tests may have collapsed the `lab` folder — make sure
+      // alpha is reachable before we right-click it.
+      if (!(await hasRow(page, "alpha"))) {
+        await page.locator(".group").filter({ hasText: "lab" }).first().click();
+        await page.waitForTimeout(150);
+      }
+      const row = page.locator(".group").filter({ hasText: "alpha" }).first();
+      await row.click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Rename" }).click();
+      const input = page.locator('input[data-rename-input="true"]');
+      await input.waitFor({ state: "visible", timeout: 3000 });
+      await typeInto(page, input, "alpha-renamed");
+      await page.keyboard.press("Enter");
+      // Sample at progressively-later checkpoints. At every one the
+      // tree must show "alpha-renamed" (optimistic), never plain
+      // "alpha" alone (would be the flash).
+      for (const wait of [0, 30, 80, 150, 400, 800]) {
+        await page.waitForTimeout(wait);
+        const hasNew = await hasRow(page, "alpha-renamed");
+        assert(hasNew, `'alpha-renamed' must be present at +${wait}ms`);
+      }
+    },
+  );
+
   await runTest("Esc cancels without committing", async () => {
     await page.click('button[aria-label="New note"]');
     const input = page.locator('input[data-rename-input="true"]');
