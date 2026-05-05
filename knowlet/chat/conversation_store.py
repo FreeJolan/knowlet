@@ -150,12 +150,8 @@ class ConversationStore:
             id=str(payload.get("id") or p.stem),
             title=str(payload.get("title") or ""),
             model=str(payload.get("model") or ""),
-            started_at=str(
-                payload.get("started_at") or payload.get("ended_at") or _now_iso()
-            ),
-            updated_at=str(
-                payload.get("updated_at") or payload.get("ended_at") or _now_iso()
-            ),
+            started_at=str(payload.get("started_at") or payload.get("ended_at") or _now_iso()),
+            updated_at=str(payload.get("updated_at") or payload.get("ended_at") or _now_iso()),
             messages=list(payload.get("messages") or []),
         )
 

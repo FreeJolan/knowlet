@@ -22,9 +22,7 @@ def user_show() -> None:
     vault = resolve_vault_or_die()
     profile = read_profile(vault.profile_path)
     if profile is None:
-        console.print(
-            "[dim]no profile yet — `knowlet user edit` to create one.[/dim]"
-        )
+        console.print("[dim]no profile yet — `knowlet user edit` to create one.[/dim]")
         return
     console.print(Panel(Markdown(profile.body), title=str(vault.profile_path)))
     console.print(f"[dim]updated_at: {profile.updated_at}[/dim]")
@@ -39,11 +37,9 @@ def user_edit() -> None:
     try:
         profile = edit_profile_in_editor(vault.profile_path)
     except FileNotFoundError as exc:
-        err_console.print(
-            f"[red]editor not found:[/red] {exc} — set $EDITOR to a working editor."
-        )
+        err_console.print(f"[red]editor not found:[/red] {exc} — set $EDITOR to a working editor.")
         raise typer.Exit(code=2) from exc
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         err_console.print(f"[red]editor failed:[/red] {exc}")
         raise typer.Exit(code=2) from exc
     console.print(f"[green]profile saved[/green] → {profile.path}")

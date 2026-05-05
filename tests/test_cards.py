@@ -1,7 +1,6 @@
 """Tests for M3 — Card entity, CardStore, FSRS wrapper, and the four tools."""
 
 import json
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -156,7 +155,9 @@ def _ctx(tmp_path: Path):
     idx = Index(v.db_path, backend)
     idx.connect()
     return ToolContext(
-        vault=v, index=idx, config=cfg,
+        vault=v,
+        index=idx,
+        config=cfg,
         cards=CardStore(v.cards_dir),
         tasks=TaskStore(v.tasks_dir),
         drafts=DraftStore(v.drafts_dir),
@@ -191,16 +192,12 @@ def test_tool_create_card_validates(tmp_path: Path):
 def test_tool_list_due_then_review(tmp_path: Path):
     ctx, idx = _ctx(tmp_path)
     reg = default_registry()
-    create = reg.dispatch(
-        "create_card", {"front": "q1", "back": "a1"}, ctx
-    )
+    create = reg.dispatch("create_card", {"front": "q1", "back": "a1"}, ctx)
     listed = reg.dispatch("list_due_cards", {"limit": 5}, ctx)
     assert listed["count"] == 1
     assert listed["results"][0]["card_id"] == create["card_id"]
 
-    reviewed = reg.dispatch(
-        "review_card", {"card_id": create["card_id"], "rating": 3}, ctx
-    )
+    reviewed = reg.dispatch("review_card", {"card_id": create["card_id"], "rating": 3}, ctx)
     assert "next_due" in reviewed
     # After good rating, card should be pushed past now → no longer due immediately.
     listed2 = reg.dispatch("list_due_cards", {"limit": 5}, ctx)

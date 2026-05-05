@@ -8,6 +8,8 @@ avoid cycles.
 
 from __future__ import annotations
 
+from typing import Any
+
 import typer
 from rich.console import Console
 
@@ -44,9 +46,7 @@ def load_config_or_default(vault: Vault) -> KnowletConfig:
 
 
 def make_index(vault: Vault, cfg: KnowletConfig) -> Index:
-    backend = make_backend(
-        cfg.embedding.backend, cfg.embedding.model, cfg.embedding.dim
-    )
+    backend = make_backend(cfg.embedding.backend, cfg.embedding.model, cfg.embedding.dim)
     idx = Index(vault.db_path, backend)
     idx.connect()
     # Sync dim into config if backend reports something different.
@@ -65,7 +65,7 @@ def mask(value: str, keep: int = 4) -> str:
     return value[:keep] + "*" * (len(value) - keep)
 
 
-def render_notes_table(rows: list[dict], recent: bool) -> None:
+def render_notes_table(rows: list[dict[str, Any]], recent: bool) -> None:
     """Render a Notes listing. Used by `knowlet ls` and the chat REPL `:ls`."""
     from rich.table import Table
 

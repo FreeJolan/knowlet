@@ -108,22 +108,21 @@ def web(
     vault = resolve_vault_or_die()
     cfg = load_config_or_default(vault)
     if not cfg.llm.api_key:
-        err_console.print(
-            "[red]LLM api_key is empty. Run `knowlet config init` first.[/red]"
-        )
+        err_console.print("[red]LLM api_key is empty. Run `knowlet config init` first.[/red]")
         raise typer.Exit(code=2)
 
     try:
         import uvicorn
-    except ImportError as exc:  # noqa: F841
+    except ImportError as exc:
         err_console.print(
             "[red]uvicorn is not installed. Reinstall knowlet to pull web deps.[/red]"
         )
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from exc
 
     # Long-running process — make sure scheduler / mining / LLM errors land
     # somewhere the user can find them, even if they close the terminal.
     from knowlet._logging import configure_logging
+
     configure_logging(vault.root)
 
     fastapi_app = create_app(vault, cfg)
@@ -192,9 +191,7 @@ def reindex(
         chunk_overlap=cfg.retrieval.chunk_overlap,
         note_paths=list(vault.iter_note_paths()),
     )
-    console.print(
-        f"reindex done: {changed} updated, {deleted} removed, {unchanged} unchanged"
-    )
+    console.print(f"reindex done: {changed} updated, {deleted} removed, {unchanged} unchanged")
 
 
 # ------------------------------------------------------------------ doctor
@@ -265,14 +262,10 @@ def _ensure_ready_or_wizard() -> tuple[Vault, KnowletConfig]:
                 title=t("vault.welcome.title"),
             )
         )
-        proceed = Prompt.ask(
-            t("vault.init.prompt"), choices=["y", "n"], default="y"
-        )
+        proceed = Prompt.ask(t("vault.init.prompt"), choices=["y", "n"], default="y")
         if proceed != "y":
-            raise typer.Exit(code=0)
-        target = Path(
-            Prompt.ask(t("vault.dir.prompt"), default=str(cwd))
-        ).expanduser().resolve()
+            raise typer.Exit(code=0) from None
+        target = Path(Prompt.ask(t("vault.dir.prompt"), default=str(cwd))).expanduser().resolve()
         target.mkdir(parents=True, exist_ok=True)
         vault = Vault(target)
         vault.init_layout()
@@ -296,9 +289,7 @@ def _ensure_ready_or_wizard() -> tuple[Vault, KnowletConfig]:
         if api_key:
             cfg.llm.api_key = api_key
         save_config(vault.root, cfg)
-        console.print(
-            f"[green]{t('config.saved', path=str(config_path(vault.root)))}[/green]\n"
-        )
+        console.print(f"[green]{t('config.saved', path=str(config_path(vault.root)))}[/green]\n")
     return vault, cfg
 
 

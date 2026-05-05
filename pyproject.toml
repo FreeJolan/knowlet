@@ -39,7 +39,11 @@ embed = [
 ]
 dev = [
     "pytest>=8.0",
+    "pytest-cov>=5.0",
     "ruff>=0.5",
+    "mypy>=1.11",
+    "pre-commit>=3.7",
+    "types-PyYAML",
 ]
 
 [project.scripts]
@@ -60,5 +64,61 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
-ignore = ["E501"]
+# Per ADR-0020 §Layer 2.
+select = [
+    "E", "W",      # pycodestyle
+    "F",           # pyflakes
+    "B",           # bugbear
+    "I",           # isort
+    "UP",          # pyupgrade
+    "RUF",         # ruff-specific
+    "SIM",         # simplify
+    "S",           # security (bandit-like)
+]
+ignore = [
+    "E501",        # line length handled by formatter
+    "S101",        # assert in tests is fine
+    "B008",        # default arg in function call (FastAPI Depends)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S"]  # security rules irrelevant in tests
+"scripts/**/*.py" = ["S"]
+
+[tool.mypy]
+# Per ADR-0020 §Layer 1. Strict mode catches a class of runtime AttributeError /
+# TypeError / None-deref bugs at type-check time. First run is expected to expose
+# 50-100 holes; subsequent commits stay clean via pre-commit + CI.
+python_version = "3.11"
+strict = true
+disallow_untyped_defs = true
+disallow_any_unimported = true
+warn_return_any = true
+warn_unused_ignores = true
+no_implicit_optional = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# Third-party libraries without type stubs. Allow Any to leak from these
+# boundaries only; the rest of the codebase stays typed.
+module = [
+    "sqlite_vec",
+    "trafilatura",
+    "trafilatura.*",
+    "feedparser",
+    "fsrs",
+    "ulid",
+    "frontmatter",
+    "mistune",
+    "mistune.*",
+    "apscheduler.*",
+    "watchdog.*",
+    "sentence_transformers",
+    "sentence_transformers.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

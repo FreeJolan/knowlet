@@ -16,9 +16,9 @@ without further chopping.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from knowlet.core.note import Note
 
@@ -79,7 +79,7 @@ def _sentence_preview(line_text: str, target: str) -> str:
     needle = f"[[{target}"
     idx = line_text.lower().find(needle.lower())
     if idx < 0:
-        return line_text[: _PREVIEW_MAX] + "…"
+        return line_text[:_PREVIEW_MAX] + "…"
     half = _PREVIEW_MAX // 2
     start = max(0, idx - half)
     end = min(len(line_text), idx + half)
@@ -108,7 +108,7 @@ def find_backlinks(
     for path in sources:
         try:
             note = Note.from_file(path)
-        except Exception:
+        except Exception:  # noqa: S112 — see comment below
             # A malformed note shouldn't break the whole panel. Caller
             # already filtered to valid `.md` files via iter_note_paths.
             continue

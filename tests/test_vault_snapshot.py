@@ -8,10 +8,10 @@ from pathlib import Path
 
 import typer.testing
 
-from knowlet.cli.vault import _SNAPSHOT_SKIP, app as vault_app
+from knowlet.cli.vault import _SNAPSHOT_SKIP
+from knowlet.cli.vault import app as vault_app
 from knowlet.core.note import Note, new_id
 from knowlet.core.vault import Vault
-
 
 runner = typer.testing.CliRunner()
 
@@ -136,7 +136,6 @@ def test_restore_ambiguous_prefix_errors_out(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("KNOWLET_VAULT", str(tmp_path))
     runner.invoke(vault_app, ["snapshot", "--label", "alpha"])
     runner.invoke(vault_app, ["snapshot", "--label", "beta"])
-    snap_root = tmp_path / ".knowlet" / "snapshots"
     # Both snapshots start with "20" (year prefix); use that to make ambiguous.
     result = runner.invoke(vault_app, ["restore-snapshot", "20", "--yes"])
     assert result.exit_code == 2  # ambiguous

@@ -7,7 +7,7 @@ for environments without torch (tests, smoke runs without API access).
 from __future__ import annotations
 
 import hashlib
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -58,7 +58,9 @@ class SentenceTransformersBackend:
 
     def __init__(self, model_name: str):
         self.model_name = model_name
-        self._model = None
+        # `Any` because sentence_transformers is in the no-stub allowlist; we don't
+        # want its untyped Module type leaking through the rest of the module.
+        self._model: Any = None
         self._dim: int | None = None
 
     def _ensure(self) -> None:
@@ -66,9 +68,10 @@ class SentenceTransformersBackend:
             from sentence_transformers import SentenceTransformer  # heavy import
 
             self._model = SentenceTransformer(self.model_name)
-            getter = getattr(
-                self._model, "get_embedding_dimension", None
-            ) or getattr(self._model, "get_sentence_embedding_dimension")
+            getter = (
+                getattr(self._model, "get_embedding_dimension", None)
+                or self._model.get_sentence_embedding_dimension
+            )
             self._dim = int(getter())
 
     @property
@@ -81,13 +84,15 @@ class SentenceTransformersBackend:
         self._ensure()
         if not texts:
             return np.zeros((0, self.dim), dtype=np.float32)
-        v = self._model.encode(  # type: ignore[union-attr]
+        v = self._model.encode(
             texts, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=False
         )
-        return v.astype(np.float32)
+        result: np.ndarray = v.astype(np.float32)
+        return result
 
     def embed_query(self, text: str) -> np.ndarray:
-        return self.embed_documents([text])[0]
+        result: np.ndarray = self.embed_documents([text])[0]
+        return result
 
 
 def make_backend(backend: str, model: str, dim: int) -> EmbeddingBackend:

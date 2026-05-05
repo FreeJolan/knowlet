@@ -1,6 +1,5 @@
 """Tests for the i18n layer (ADR-0010)."""
 
-import os
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -21,7 +20,6 @@ from knowlet.core.user_profile import (
 )
 from knowlet.core.vault import Vault
 from knowlet.web.server import create_app
-
 
 # ------------------------------------------------------- core/i18n
 

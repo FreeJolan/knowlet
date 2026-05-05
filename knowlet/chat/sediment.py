@@ -5,6 +5,7 @@ LLM drafts → user reviews (y/n/e) → on accept, write to vault and index.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -72,20 +73,16 @@ def open_in_editor(draft: Draft) -> Draft:
     note = draft.to_note()  # gives us a temporary id; thrown away after edit
     initial = note.to_markdown()
     editor = os.environ.get("EDITOR") or "vi"
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".md", encoding="utf-8", delete=False
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", encoding="utf-8", delete=False) as f:
         f.write(initial)
         tmp_path = Path(f.name)
     try:
-        subprocess.run([editor, str(tmp_path)], check=True)
+        subprocess.run([editor, str(tmp_path)], check=True)  # noqa: S603 — editor is the user's own $EDITOR
         edited = Note.from_file(tmp_path)
         return Draft(title=edited.title, tags=edited.tags, body=edited.body)
     finally:
-        try:
+        with contextlib.suppress(OSError):
             tmp_path.unlink()
-        except OSError:
-            pass
 
 
 def commit_draft(
@@ -134,9 +131,12 @@ def _parse_json_object(text: str) -> dict[str, Any]:
         text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
         text = re.sub(r"```$", "", text).strip()
     try:
-        return json.loads(text)
+        result: Any = json.loads(text)
     except json.JSONDecodeError:
         m = _JSON_BLOCK.search(text)
         if m is None:
             raise
-        return json.loads(m.group(0))
+        result = json.loads(m.group(0))
+    if not isinstance(result, dict):
+        raise ValueError(f"_parse_json_object: expected JSON object, got {type(result).__name__}")
+    return result

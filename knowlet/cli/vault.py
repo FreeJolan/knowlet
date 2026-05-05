@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.panel import Panel
@@ -20,7 +21,7 @@ app = typer.Typer(help="Vault layout and lifecycle.", no_args_is_help=True)
 @app.command("init")
 def vault_init(
     path: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Argument(help="Vault directory. Defaults to current directory."),
     ] = None,
 ) -> None:
@@ -72,7 +73,7 @@ def vault_migrate_filenames(
             continue
         try:
             note = Note.from_file(path)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             err_console.print(f"[yellow]skip[/yellow] {path.name}: {exc}")
             skipped_no_id.append(path)
             continue
@@ -145,7 +146,7 @@ def _should_skip(name: str) -> bool:
     return any(name == s or name.startswith(s + "-") for s in _SNAPSHOT_SKIP_STEMS)
 
 
-def _iter_snapshot_targets(vault_root: Path):
+def _iter_snapshot_targets(vault_root: Path) -> Iterator[tuple[Path, Path]]:
     """Yield top-level (src, rel_dst) pairs for a vault snapshot. Skips
     the snapshot dir + rebuildable indexes."""
     for entry in vault_root.iterdir():
@@ -165,7 +166,7 @@ def _copy_skip_filter(src: str, names: list[str]) -> list[str]:
 @app.command("snapshot")
 def vault_snapshot(
     label: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--label",
             help="Optional label appended to the snapshot directory name "
@@ -173,7 +174,7 @@ def vault_snapshot(
         ),
     ] = None,
     to: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option(
             "--to",
             help="Custom destination directory. Default = "
@@ -224,9 +225,7 @@ def vault_snapshot(
                     files_copied += 1
 
     mb = bytes_copied / (1024 * 1024)
-    console.print(
-        f"[green]snapshot ok[/green] · {files_copied} files / {mb:.1f} MB"
-    )
+    console.print(f"[green]snapshot ok[/green] · {files_copied} files / {mb:.1f} MB")
     console.print(f"[dim]→ {target}[/dim]")
     console.print(
         "[dim]hint: keep until you've confirmed the upgrade works; "
@@ -284,6 +283,7 @@ def vault_restore_snapshot(
     """
     import shutil
     from datetime import UTC, datetime
+
     from rich.prompt import Confirm
 
     vault = resolve_vault_or_die()
@@ -329,9 +329,15 @@ def vault_restore_snapshot(
     console.print(f"[dim]· current state snapshotted to {pre_path.name}[/dim]")
 
     # 2. Wipe live entity dirs (the ones we restore over).
-    for d in (vault.notes_dir, vault.cards_dir, vault.drafts_dir,
-              vault.tasks_dir, vault.users_dir, vault.conversations_dir,
-              vault.backups_dir):
+    for d in (
+        vault.notes_dir,
+        vault.cards_dir,
+        vault.drafts_dir,
+        vault.tasks_dir,
+        vault.users_dir,
+        vault.conversations_dir,
+        vault.backups_dir,
+    ):
         if d.exists():
             shutil.rmtree(d)
 

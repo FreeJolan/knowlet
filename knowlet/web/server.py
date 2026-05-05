@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
-
-from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
@@ -31,46 +31,48 @@ from knowlet.chat.bootstrap import (
     bootstrap_chat,
 )
 from knowlet.chat.sediment import (
-    Draft,
+    Draft as SedimentDraft,
+)
+from knowlet.chat.sediment import (
     commit_draft,
     draft_from_conversation,
 )
 from knowlet.config import KnowletConfig, find_vault, load_config
 from knowlet.core.backlinks import find_backlinks
 from knowlet.core.card import Card, parse_due
-from knowlet.core.quote_refs import (
-    MAX_REFERENCES,
-    QuoteRef,
-    format_references_block,
-)
-from knowlet.core.url_capture import (
-    ExtractionError,
-    FetchError,
-    capture_url,
-)
+from knowlet.core.drafts import Draft
+from knowlet.core.events import ErrorEvent, event_to_dict
+from knowlet.core.fsrs_wrap import initial_state, schedule_next
+from knowlet.core.i18n import SUPPORTED_LANGUAGES, all_keys, set_language
+from knowlet.core.index import IndexDimensionMismatchError
+from knowlet.core.llm import ToolCall
+from knowlet.core.mining.runner import reset_task_state, run_task
+from knowlet.core.mining.scheduler import MiningScheduler
+from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
 from knowlet.core.quiz import (
     DEFAULT_N_QUESTIONS,
-    QuizQuestion,
     QuizSession,
     aggregate_score,
     generate_quiz,
     grade_answer,
 )
 from knowlet.core.quiz_store import QuizStore
+from knowlet.core.quote_refs import (
+    MAX_REFERENCES,
+    QuoteRef,
+    format_references_block,
+)
 from knowlet.core.structure_signals import (
     DEFAULT_AGING_UNTOUCHED_DAYS,
     DEFAULT_NEAR_DUP_COSINE,
     DEFAULT_ORPHAN_UNTOUCHED_DAYS,
     compute_signals,
 )
-from knowlet.core.events import ErrorEvent, event_to_dict
-from knowlet.core.fsrs_wrap import initial_state, schedule_next
-from knowlet.core.i18n import SUPPORTED_LANGUAGES, all_keys, set_language
-from knowlet.core.index import IndexDimensionMismatchError
-from knowlet.core.llm import LLMClient
-from knowlet.core.mining.runner import reset_task_state, run_task
-from knowlet.core.mining.scheduler import MiningScheduler
-from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
+from knowlet.core.url_capture import (
+    ExtractionError,
+    FetchError,
+    capture_url,
+)
 from knowlet.core.user_profile import (
     UserProfile,
     read_profile,
@@ -93,6 +95,7 @@ class QuoteRefPayload(BaseModel):
     the backend fetches the Note body via note_id and runs the enclosing-
     section algorithm. `source = "url"` (M7.2) → quote_text is already
     the LLM-produced summary; source_url surfaces the page reference."""
+
     note_id: str
     note_title: str
     quote_text: str
@@ -151,6 +154,7 @@ class NoteFull(NoteSummary):
 
 class BacklinkRow(BaseModel):
     """M7.0.4: one inbound `[[Title]]` reference for the right-rail panel."""
+
     source_id: str
     source_title: str
     target: str  # the wikilink target as written
@@ -166,6 +170,7 @@ class UrlCaptureResponse(BaseModel):
     """M7.2: result of fetching + summarizing a URL. summary may be empty
     if the LLM call failed but the page extracted — frontend surfaces a
     "(摘要失败)" capsule in that case so the user can still attach + ask."""
+
     url: str
     title: str
     hostname: str
@@ -178,6 +183,7 @@ class SimilarNoteRow(BaseModel):
     modal. No `score` field on the wire to discourage UIs from showing
     confidence numbers (the contract says no auto-actions, no implied
     judgment). Just title + path + a short preview."""
+
     id: str
     title: str
     path: str
@@ -230,6 +236,7 @@ class StructureSignalsPayload(BaseModel):
     vault. Pure information per ADR-0013 §1: no scores rendered as
     judgment, no auto-action verbs in the wire shape. The M8.2
     knowledge-map sidebar will consume this; no UI yet."""
+
     near_duplicates: list[NearDupPairPayload]
     clusters: list[NoteClusterPayload]
     orphan_notes: list[OrphanNotePayload]
@@ -240,6 +247,7 @@ class QuizSummaryRow(BaseModel):
     """Light row for the past-quizzes list. Avoids shipping every
     question down the wire when all the user wants is "did I quiz on
     RAG last week?"."""
+
     id: str
     started_at: str
     finished_at: str
@@ -296,10 +304,11 @@ class QuizDisagreeRequest(BaseModel):
 
 class QuizRefluxRequest(BaseModel):
     """Convert one quiz question into a Card (M7.4.2 Cards reflux)."""
+
     question_index: int
     front: str = ""  # default = question text
-    back: str = ""   # default = reference_answer (or user's edited version)
-    tags: list[str] = []  # default = source-note tags ∪ {quiz}
+    back: str = ""  # default = reference_answer (or user's edited version)
+    tags: list[str] = []  # default = source-note tags ∪ {quiz}  # noqa: RUF003
 
 
 class ProfilePayload(BaseModel):
@@ -436,7 +445,7 @@ class WebState:
                 scheduler.start()
                 self.scheduler = scheduler
                 self.bootstrap_status = "ready"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self.bootstrap_error = exc
                 self.bootstrap_status = "error"
 
@@ -509,7 +518,7 @@ class WebState:
         # waiting for an in-flight reindex would hang the server.
 
 
-def _runtime_dep(app: FastAPI):
+def _runtime_dep(app: FastAPI) -> Callable[[], ChatRuntime]:
     """FastAPI dependency: hand back the ChatRuntime, initializing on demand."""
 
     def _dep() -> ChatRuntime:
@@ -531,7 +540,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     state = WebState(vault=vault, config=config)
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Activate the configured UI language for any backend-rendered strings.
         set_language(config.general.language)
         # Bootstrap (which calls reindex_vault) runs on a background thread
@@ -570,6 +579,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         if backend.dim != cfg.embedding.dim:
             cfg.embedding.dim = backend.dim
             from knowlet.config import save_config as _save_cfg
+
             _save_cfg(v.root, cfg)
         changed, deleted, unchanged = reindex_vault(
             v.root,
@@ -594,17 +604,16 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         """Run the same health checks as `knowlet doctor`. Returns the raw
         (status, name, detail) tuples; the palette renders them as a toast
         summary or links into a richer view."""
-        from knowlet.cli._doctor import run_doctor_checks
+        from knowlet.core.doctor import run_doctor_checks
 
         results = run_doctor_checks(
-            runtime.vault, runtime.config,
-            skip_llm=skip_llm, skip_embedding=skip_embedding,
+            runtime.vault,
+            runtime.config,
+            skip_llm=skip_llm,
+            skip_embedding=skip_embedding,
         )
         return {
-            "results": [
-                {"status": r[0], "name": r[1], "detail": r[2]}
-                for r in results
-            ],
+            "results": [{"status": r[0], "name": r[1], "detail": r[2]} for r in results],
             "failures": sum(1 for r in results if r[0] == "fail"),
             "warnings": sum(1 for r in results if r[0] == "warn"),
         }
@@ -729,7 +738,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 path = runtime.vault.notes_dir / path.name
             try:
                 note = runtime.vault.read_note(path)
-            except Exception:
+            except Exception:  # noqa: S112 — skip unreadable notes; quote panel is best-effort
                 continue
             out.append(
                 (
@@ -762,12 +771,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     ) -> ChatTurnResponse:
         traces: list[ToolTrace] = []
 
-        def on_tool_call(tc, payload) -> None:
-            traces.append(
-                ToolTrace(
-                    name=tc.name, arguments=tc.arguments, result=payload
-                )
-            )
+        def on_tool_call(tc: ToolCall, payload: dict[str, Any]) -> None:
+            traces.append(ToolTrace(name=tc.name, arguments=tc.arguments, result=payload))
 
         try:
             user_text = _compose_user_text(req, runtime)
@@ -796,21 +801,19 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
         user_text = _compose_user_text(req, runtime)
 
-        def event_source():
+        def event_source() -> Iterator[str]:
             try:
                 for event in runtime.session.user_turn_stream(user_text):
                     payload = json.dumps(event_to_dict(event), ensure_ascii=False)
                     yield f"data: {payload}\n\n"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 err = ErrorEvent(message=f"server error: {exc}")
                 yield f"data: {json.dumps(event_to_dict(err))}\n\n"
             finally:
                 # Persist the (possibly partial) turn so a refresh mid-stream
                 # doesn't drop the exchange.
-                try:
+                with suppress(Exception):
                     runtime.persist_active()
-                except Exception:  # noqa: BLE001
-                    pass
 
         return StreamingResponse(
             event_source(),
@@ -855,12 +858,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             else None,
         )
 
-        def event_source():
+        def event_source() -> Iterator[str]:
             try:
                 for event in ephemeral.user_turn_stream(req.text):
                     payload = json.dumps(event_to_dict(event), ensure_ascii=False)
                     yield f"data: {payload}\n\n"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 err = ErrorEvent(message=f"server error: {exc}")
                 yield f"data: {json.dumps(event_to_dict(err))}\n\n"
 
@@ -878,9 +881,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> dict[str, Any]:
         # Skip the system message in the response — the UI doesn't need it.
-        public = [
-            m for m in runtime.session.history if m.get("role") in ("user", "assistant")
-        ]
+        public = [m for m in runtime.session.history if m.get("role") in ("user", "assistant")]
         return {
             "history": public,
             "active_id": runtime.active_conversation.id,
@@ -1000,9 +1001,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         prompt = (
             "Give a 3-to-5-word title for this short conversation excerpt. "
             "Output the title only — no quotes, no preamble, no period. "
-            "Use the same language the user wrote in.\n\n"
-            + "\n\n".join(excerpt)
-            + "\n\nTitle:"
+            "Use the same language the user wrote in.\n\n" + "\n\n".join(excerpt) + "\n\nTitle:"
         )
         try:
             resp = runtime.llm.chat(
@@ -1010,7 +1009,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 max_tokens=32,
                 temperature=0,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"auto-title LLM error: {exc}",
@@ -1074,7 +1073,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         payload: CommitDraftRequest,
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> CommitDraftResponse:
-        draft = Draft(title=payload.title, tags=payload.tags, body=payload.body)
+        draft = SedimentDraft(title=payload.title, tags=payload.tags, body=payload.body)
         note = commit_draft(draft, runtime.vault, runtime.index, runtime.config)
         return CommitDraftResponse(note_id=note.id, path=str(note.path))
 
@@ -1086,9 +1085,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         recent: bool = False,
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> list[NoteSummary]:
-        rows = runtime.index.list_notes(
-            limit=limit, order="updated_at" if recent else "created_at"
-        )
+        rows = runtime.index.list_notes(limit=limit, order="updated_at" if recent else "created_at")
         # M7.0.2: derive folder (relative to notes_dir) for each row so
         # the sidebar can build a tree without extra round-trips.
         out: list[NoteSummary] = []
@@ -1134,9 +1131,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         ]
 
     @app.get("/api/notes/{note_id}", response_model=NoteFull)
-    def get_note(
-        note_id: str, runtime: ChatRuntime = Depends(runtime_dep)
-    ) -> NoteFull:
+    def get_note(note_id: str, runtime: ChatRuntime = Depends(runtime_dep)) -> NoteFull:
         meta = runtime.index.get_note_meta(note_id)
         if meta is None:
             raise HTTPException(
@@ -1284,7 +1279,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     @app.post("/api/attachments")
     async def upload_attachment(
-        file: UploadFile = File(...),  # noqa: B008
+        file: UploadFile = File(...),
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> dict[str, Any]:
         """Save a pasted image into `notes/_attachments/<ULID>.<ext>` and
@@ -1393,11 +1388,11 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             # _CONTENT and deprecated _ENTITY; either name is a
             # version-coupling hazard, the integer isn't.
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # Page fetched + extracted, but the LLM step blew up. Per
             # ADR-0016 §3 we still return a capsule so the user can
             # attach the URL and ask manually.
-            from knowlet.core.url_capture import fetch_and_extract, _hostname
+            from knowlet.core.url_capture import _hostname, fetch_and_extract
 
             try:
                 title, _ = fetch_and_extract(url)
@@ -1485,8 +1480,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         """Generate `n` questions over the chosen Notes and persist a fresh
         QuizSession. M7.4.3 adds tag scope (resolves to note ids server-side);
         cluster scope is reserved for M8 Layer B and blocked here."""
-        from knowlet.core.note import Note, new_id
         from datetime import UTC, datetime
+
+        from knowlet.core.note import Note, new_id
 
         scope_type = (req.scope_type or "notes").lower()
         if scope_type == "cluster":
@@ -1598,7 +1594,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         if not 0 <= req.question_index < len(session.questions):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"question_index out of range",
+                detail="question_index out of range",
             )
         q = session.questions[req.question_index]
         score, reason, missing = grade_answer(runtime.llm, q, req.user_answer)
@@ -1664,7 +1660,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         """M7.4.2 Cards reflux. Convert one quiz question into a Card.
         Defaults: front = question, back = (user's edited) reference,
         tags = source-note tags ∪ {quiz}. Idempotent: if the question
-        already has a card_id_after_reflux, return without re-creating."""
+        already has a card_id_after_reflux, return without re-creating."""  # noqa: RUF002
         from knowlet.core.note import new_id
 
         store = _quiz_store_for(runtime)
@@ -1974,7 +1970,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     # ---------------- drafts ----------------
 
-    def _draft_summary(d) -> DraftSummary:
+    def _draft_summary(d: Draft) -> DraftSummary:
         return DraftSummary(
             id=d.id,
             title=d.title,
@@ -1989,7 +1985,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     def list_drafts_endpoint(
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> list[DraftSummary]:
-        return [_draft_summary(d) for d in runtime.ctx.drafts.list()]
+        return [_draft_summary(d) for d in runtime.ctx.drafts.all_drafts()]
 
     @app.get("/api/drafts/{draft_id}", response_model=DraftFull)
     def get_draft_endpoint(

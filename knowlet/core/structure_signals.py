@@ -30,12 +30,11 @@ changing the wire payload.
 
 from __future__ import annotations
 
-import sqlite3
 import struct
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 

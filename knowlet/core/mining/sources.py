@@ -11,7 +11,7 @@ JS-rendered pages are explicitly out of scope.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any
 
 import httpx
 
@@ -69,7 +69,7 @@ def _fetch_rss(url: str) -> list[SourceItem]:
     return items
 
 
-def _entry_text(entry: dict) -> str:
+def _entry_text(entry: dict[str, Any]) -> str:
     """Best-effort plain-text content for a feed entry."""
     content_blocks = entry.get("content") or []
     if isinstance(content_blocks, list) and content_blocks:
@@ -89,7 +89,7 @@ def _strip_html(html: str) -> str:
 
         out = trafilatura.extract(html, include_links=False, include_tables=False)
         return out or ""
-    except Exception:  # noqa: BLE001 — defensive
+    except Exception:
         # Fallback: naive tag strip
         import re
 
@@ -99,11 +99,13 @@ def _strip_html(html: str) -> str:
 def _fetch_url(url: str) -> list[SourceItem]:
     """Fetch a single page, extract main content via trafilatura."""
     try:
-        with httpx.Client(timeout=_HTTP_TIMEOUT, headers=_HTTP_HEADERS, follow_redirects=True) as client:
+        with httpx.Client(
+            timeout=_HTTP_TIMEOUT, headers=_HTTP_HEADERS, follow_redirects=True
+        ) as client:
             r = client.get(url)
             r.raise_for_status()
             html = r.text
-    except httpx.HTTPError as exc:
+    except httpx.HTTPError:
         return []  # caller's run report counts errors; empty here is fine
 
     import trafilatura

@@ -3,8 +3,6 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pytest
-
 import numpy as np
 
 from knowlet.config import KnowletConfig
@@ -47,7 +45,7 @@ class _GroupedBackend:
         v = np.zeros(self._dim, dtype=np.float32)
         # Find a "GROUP_X" tag in the text — X is a single ASCII letter
         # mapped to dimension index by ord(letter) % dim.
-        for ch in text:
+        for _ch in text:
             pass
         for tag in ("GROUP_A", "GROUP_B", "GROUP_C", "GROUP_D", "GROUP_E"):
             if tag in text:
@@ -108,7 +106,7 @@ def _add(v: Vault, idx: Index, *, title: str, body: str, updated_days_ago: int =
 
 
 def test_near_duplicates_empty_vault(tmp_path: Path):
-    v, _, idx = _ready_vault(tmp_path)
+    _v, _, idx = _ready_vault(tmp_path)
     assert near_duplicates(idx) == []
 
 
@@ -128,9 +126,7 @@ def test_near_duplicates_finds_same_group(tmp_path: Path):
     a = _add(v, idx, title="A", body="GROUP_A discussion of attention")
     b = _add(v, idx, title="A copy", body="GROUP_A another take on attention")
     pairs = near_duplicates(idx, cosine_threshold=0.95)
-    assert any(
-        {p.a_id, p.b_id} == {a.id, b.id} for p in pairs
-    )
+    assert any({p.a_id, p.b_id} == {a.id, b.id} for p in pairs)
 
 
 def test_near_duplicates_caps_at_max_pairs(tmp_path: Path):

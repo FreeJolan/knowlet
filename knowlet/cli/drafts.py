@@ -26,7 +26,7 @@ def drafts_list() -> None:
 
     vault = resolve_vault_or_die()
     store = DraftStore(vault.drafts_dir)
-    drafts = store.list()
+    drafts = store.all_drafts()
     if not drafts:
         console.print("[dim]no drafts pending — your inbox is empty[/dim]")
         return

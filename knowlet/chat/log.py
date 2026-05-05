@@ -10,7 +10,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,9 @@ class ConversationLog:
     dir: Path
     model: str
     id: str = field(default_factory=lambda: str(ULID()))
-    started_at: str = field(default_factory=lambda: datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    started_at: str = field(
+        default_factory=lambda: datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
 
     def write(self, history: list[dict[str, Any]]) -> Path | None:
         if not history or len(history) <= 1:

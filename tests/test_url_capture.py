@@ -1,7 +1,5 @@
 """Unit tests for `knowlet/core/url_capture.py` (M7.2)."""
 
-from unittest.mock import patch
-
 import httpx
 import pytest
 
@@ -16,7 +14,6 @@ from knowlet.core.url_capture import (
     is_likely_url,
     summarize_content,
 )
-
 
 # -------------------------------------------------- is_likely_url
 
@@ -58,7 +55,10 @@ def test_extract_title_basic():
 
 
 def test_extract_title_decodes_common_entities():
-    assert _extract_title("<title>Tom &amp; Jerry &quot;quoted&quot;</title>") == 'Tom & Jerry "quoted"'
+    assert (
+        _extract_title("<title>Tom &amp; Jerry &quot;quoted&quot;</title>")
+        == 'Tom & Jerry "quoted"'
+    )
 
 
 def test_extract_title_returns_empty_when_missing():
@@ -68,8 +68,13 @@ def test_extract_title_returns_empty_when_missing():
 # -------------------------------------------------- fetch_and_extract
 
 
-_MIN_HTML = """<html><head><title>The Test Page</title></head>
-<body><article><p>""" + "This is the main article body. " * 30 + "</p></article></body></html>"""
+_MIN_HTML = (
+    """<html><head><title>The Test Page</title></head>
+<body><article><p>"""
+    + "This is the main article body. " * 30
+    + "</p></article></body></html>"
+    ""
+)
 
 
 def test_fetch_and_extract_happy_path(monkeypatch):

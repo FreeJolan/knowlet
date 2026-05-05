@@ -234,5 +234,6 @@ def test_restore_note_collision_raises(tmp_path):
     v.write_note(Note(id=n.id, title="something else", body="b2"))
 
     import pytest
+
     with pytest.raises(FileExistsError):
         v.restore_note(trashed)

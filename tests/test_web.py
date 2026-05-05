@@ -8,7 +8,6 @@ error paths produce structured responses.
 import json
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from knowlet.config import KnowletConfig, save_config
@@ -19,7 +18,6 @@ from knowlet.core.events import (
 )
 from knowlet.core.llm import AssistantMessage, ToolCall
 from knowlet.core.note import Note, new_id
-from knowlet.core.user_profile import UserProfile, write_profile
 from knowlet.core.vault import Vault
 from knowlet.web.server import create_app
 
@@ -246,9 +244,7 @@ def test_profile_get_when_missing(tmp_path: Path):
 def test_profile_round_trip(tmp_path: Path):
     v, cfg = _ready_vault(tmp_path)
     client = TestClient(create_app(v, cfg))
-    r = client.put(
-        "/api/profile", json={"name": "Jolan", "body": "I prefer concise replies."}
-    )
+    r = client.put("/api/profile", json={"name": "Jolan", "body": "I prefer concise replies."})
     assert r.status_code == 200
     g = client.get("/api/profile").json()
     assert g["exists"] is True
@@ -261,7 +257,7 @@ def test_profile_update_refreshes_runtime_system_prompt(tmp_path: Path):
     sees the new profile (single-source-of-truth: profile change = system
     prompt change everywhere)."""
     stub = StubLLM([AssistantMessage(content="ack", tool_calls=[])])
-    client, v, cfg = _client_with_stub(tmp_path, stub)
+    client, _v, _cfg = _client_with_stub(tmp_path, stub)
 
     state = client.app.state.web_state  # type: ignore[attr-defined]
     runtime = state.runtime
@@ -296,8 +292,7 @@ class StreamStubLLM:
 
     def chat_stream(self, messages, tools=None, max_tokens=None, temperature=None):
         events = self.scripts.pop(0)
-        for ev in events:
-            yield ev
+        yield from events
 
 
 def _parse_sse(raw: str) -> list[dict]:
@@ -307,9 +302,7 @@ def _parse_sse(raw: str) -> list[dict]:
         if not block:
             continue
         data_lines = [
-            line[len("data: "):]
-            for line in block.split("\n")
-            if line.startswith("data: ")
+            line[len("data: ") :] for line in block.split("\n") if line.startswith("data: ")
         ]
         if not data_lines:
             continue
@@ -332,9 +325,7 @@ def test_chat_stream_yields_events(tmp_path: Path):
             ]
         ]
     )
-    with client.stream(
-        "POST", "/api/chat/stream", json={"text": "hi"}
-    ) as r:
+    with client.stream("POST", "/api/chat/stream", json={"text": "hi"}) as r:
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("text/event-stream")
         body = "".join(r.iter_text())
@@ -356,9 +347,7 @@ def test_chat_stream_with_tool_call(tmp_path: Path):
     runtime.session.llm = StreamStubLLM(  # type: ignore[assignment]
         [
             [
-                ToolCallEvent(
-                    id="c1", name="search_notes", arguments={"query": "x", "limit": 1}
-                ),
+                ToolCallEvent(id="c1", name="search_notes", arguments={"query": "x", "limit": 1}),
                 ReplyDoneEvent(final_text=""),
             ],
             [
@@ -367,9 +356,7 @@ def test_chat_stream_with_tool_call(tmp_path: Path):
             ],
         ]
     )
-    with client.stream(
-        "POST", "/api/chat/stream", json={"text": "search for x"}
-    ) as r:
+    with client.stream("POST", "/api/chat/stream", json={"text": "search for x"}) as r:
         body = "".join(r.iter_text())
     events = _parse_sse(body)
     types = [e["type"] for e in events]
@@ -621,7 +608,7 @@ def test_list_notes_includes_folder_field(tmp_path: Path):
     notes/, "" = top-level). The frontend uses this to build the tree."""
     from knowlet.core.note import Note, new_id
 
-    v, cfg = _ready_vault(tmp_path)
+    v, _cfg = _ready_vault(tmp_path)
     client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
 
     state = client.app.state.web_state
@@ -652,7 +639,7 @@ def test_delete_note_endpoint_soft_deletes_to_trash(tmp_path: Path):
     the index entry, returns 200 with the trashed path."""
     from knowlet.core.note import Note, new_id
 
-    v, cfg = _ready_vault(tmp_path)
+    v, _cfg = _ready_vault(tmp_path)
     client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
 
     # Seed a note via the runtime so it lands in the index too.
@@ -684,8 +671,9 @@ def test_delete_note_endpoint_404_for_unknown_id(tmp_path: Path):
 def test_system_reindex_endpoint(tmp_path: Path):
     """M6.5: /api/system/reindex hits reindex_vault and returns counts."""
     # Pre-create a Note on disk so reindex sees something.
-    v, cfg = _ready_vault(tmp_path)
+    v, _cfg = _ready_vault(tmp_path)
     from knowlet.core.note import Note, new_id
+
     n = Note(id=new_id(), title="x", body="hello world hello world")
     v.write_note(n)
 
@@ -728,6 +716,7 @@ def _png_bytes() -> bytes:
     """Smallest possible valid PNG — 1x1 transparent pixel. Saves us from
     needing Pillow as a test dep."""
     import base64
+
     return base64.b64decode(
         b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
     )
@@ -936,6 +925,7 @@ def test_url_capture_endpoint_happy_path(tmp_path: Path, monkeypatch):
     """M7.2: POST /api/url/capture fetches via httpx (mocked) + summarizes
     via the runtime LLM stub, returns {url, title, hostname, summary}."""
     import httpx
+
     from knowlet.core.llm import AssistantMessage
 
     html = (
@@ -1012,7 +1002,9 @@ def test_similar_notes_returns_top_k(tmp_path: Path):
     client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
     runtime = client.app.state.web_state.runtime_or_init()
 
-    n1 = Note(id=new_id(), title="RAG retrieval", body="hybrid retrieval combines FTS and vector search")
+    n1 = Note(
+        id=new_id(), title="RAG retrieval", body="hybrid retrieval combines FTS and vector search"
+    )
     n2 = Note(id=new_id(), title="Embeddings", body="embeddings power semantic search")
     n3 = Note(id=new_id(), title="Cards", body="spaced repetition with FSRS")
     for n in (n1, n2, n3):
@@ -1095,7 +1087,7 @@ def test_quiz_start_generates_persists_returns_session(tmp_path: Path):
         '{"type": "concept-explanation", "question": "Why fuse?", '
         ' "reference_answer": "Robust to single-retriever failure.", '
         ' "source_note_ids": ["__NID__"]}'
-        ']}'
+        "]}"
     )
 
     class GenerateLLM:
@@ -1188,7 +1180,7 @@ def test_quiz_complete_aggregates_score(tmp_path: Path):
         '{"questions": ['
         '{"type": "recall", "question": "Q1?", "reference_answer": "A", "source_note_ids": []},'
         '{"type": "recall", "question": "Q2?", "reference_answer": "A", "source_note_ids": []}'
-        ']}'
+        "]}"
     )
 
     class ScriptedLLM:
@@ -1301,7 +1293,7 @@ def test_quiz_reflux_creates_card(tmp_path: Path):
     cd = card_resp.json()
     assert cd["front"] == "Why X?"
     assert cd["back"] == "Because X."
-    # tags = source-note tags ∪ {"quiz"}
+    # tags = source-note tags ∪ {"quiz"}  # noqa: RUF003
     assert "quiz" in cd["tags"]
 
 
@@ -1336,7 +1328,10 @@ def test_quiz_reflux_idempotent(tmp_path: Path):
 
     first = client.post(f"/api/quiz/{qid}/reflux", json={"question_index": 0}).json()
     second = client.post(f"/api/quiz/{qid}/reflux", json={"question_index": 0}).json()
-    assert first["questions"][0]["card_id_after_reflux"] == second["questions"][0]["card_id_after_reflux"]
+    assert (
+        first["questions"][0]["card_id_after_reflux"]
+        == second["questions"][0]["card_id_after_reflux"]
+    )
     assert second["cards_created"] == 1
 
 
@@ -1411,9 +1406,10 @@ def test_quiz_start_cluster_scope_blocked_until_layer_b(tmp_path: Path):
 
 def test_quiz_list_returns_recent_sessions(tmp_path: Path):
     """M7.4.3: GET /api/quiz lists past sessions (light row, no question text)."""
+    from datetime import UTC, datetime, timedelta
+
     from knowlet.core.quiz import QuizSession
     from knowlet.core.quiz_store import QuizStore
-    from datetime import UTC, datetime, timedelta
 
     client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
     runtime = client.app.state.web_state.runtime_or_init()

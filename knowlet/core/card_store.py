@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 from knowlet.core.card import Card, parse_due
 from knowlet.core.note import now_iso

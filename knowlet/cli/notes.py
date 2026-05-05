@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Confirm
 
@@ -86,14 +85,14 @@ def notes_restore(
     """Restore a Note from `notes/.trash/` back to `notes/`."""
     vault = resolve_vault_or_die()
     # Find matching trashed file
-    candidates = [p for p in vault.iter_trashed_paths() if p.stem.startswith(name) or p.name == name]
+    candidates = [
+        p for p in vault.iter_trashed_paths() if p.stem.startswith(name) or p.name == name
+    ]
     if not candidates:
         err_console.print(f"[red]no trashed note matches:[/red] {name}")
         raise typer.Exit(code=1)
     if len(candidates) > 1:
-        err_console.print(
-            f"[red]ambiguous prefix {name!r} matches {len(candidates)} files:[/red]"
-        )
+        err_console.print(f"[red]ambiguous prefix {name!r} matches {len(candidates)} files:[/red]")
         for p in candidates:
             err_console.print(f"  · {p.name}")
         raise typer.Exit(code=2)
@@ -104,9 +103,7 @@ def notes_restore(
         err_console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
     console.print(f"[green]restored[/green] → {target}")
-    console.print(
-        "[dim]hint: run `knowlet reindex` so the index picks the file back up.[/dim]"
-    )
+    console.print("[dim]hint: run `knowlet reindex` so the index picks the file back up.[/dim]")
 
 
 @app.command("trash")
@@ -124,6 +121,7 @@ def notes_trash() -> None:
     table.add_column("size", justify="right")
     table.add_column("trashed at", style="dim")
     import datetime
+
     for p in paths:
         st = p.stat()
         table.add_row(

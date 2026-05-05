@@ -100,7 +100,7 @@ class UserProfile:
         if self.name:
             meta["name"] = self.name
         post = frontmatter.Post(self.body, **{k: v for k, v in meta.items() if v is not None})
-        return frontmatter.dumps(post)
+        return str(frontmatter.dumps(post))
 
     def truncated_for_prompt(self, limit: int = PROFILE_BODY_CHAR_LIMIT) -> str:
         body = self.body.strip()
@@ -170,7 +170,7 @@ def edit_profile_in_editor(profile_path: Path, lang: str = "en") -> UserProfile:
 
     ensure_profile(profile_path, lang=lang)
     editor = os.environ.get("EDITOR") or "vi"
-    subprocess.run([editor, str(profile_path)], check=True)
+    subprocess.run([editor, str(profile_path)], check=True)  # noqa: S603 — editor is the user's own $EDITOR
     profile = read_profile(profile_path)
     assert profile is not None  # ensure_profile guaranteed it exists
     # Refresh updated_at since the user may have edited the body without touching frontmatter.

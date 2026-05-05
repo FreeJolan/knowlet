@@ -85,8 +85,11 @@ def test_list_recent_notes_tool(tmp_path: Path):
     from knowlet.core.card_store import CardStore
     from knowlet.core.drafts import DraftStore
     from knowlet.core.mining.task_store import TaskStore
+
     ctx = ToolContext(
-        vault=vault, index=idx, config=cfg,
+        vault=vault,
+        index=idx,
+        config=cfg,
         cards=CardStore(vault.cards_dir),
         tasks=TaskStore(vault.tasks_dir),
         drafts=DraftStore(vault.drafts_dir),

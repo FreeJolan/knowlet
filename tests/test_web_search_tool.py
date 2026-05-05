@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import httpx
-import pytest
 
 from knowlet.config import KnowletConfig, WebSearchConfig
 from knowlet.core.card_store import CardStore
@@ -11,9 +10,9 @@ from knowlet.core.drafts import DraftStore
 from knowlet.core.embedding import make_backend
 from knowlet.core.index import Index
 from knowlet.core.mining.task_store import TaskStore
-from knowlet.core.tools._registry import ToolContext
 from knowlet.core.tools import fetch_url as fetch_url_tool
 from knowlet.core.tools import web_search as web_search_tool
+from knowlet.core.tools._registry import ToolContext
 from knowlet.core.vault import Vault
 
 
@@ -46,7 +45,8 @@ def test_web_search_returns_results_via_provider(tmp_path: Path, monkeypatch):
     """Happy path — DDG provider, faked response, tool returns the
     structured payload + decrements budget."""
     monkeypatch.setattr(
-        httpx.Client, "get",
+        httpx.Client,
+        "get",
         lambda self, url, **kw: httpx.Response(
             200,
             json={
@@ -152,7 +152,8 @@ def test_fetch_url_extraction_failure_returns_error(tmp_path: Path, monkeypatch)
     """JS-heavy / paywall page → trafilatura extracts < 80 chars → tool
     surfaces a clear error so the LLM tries another result."""
     monkeypatch.setattr(
-        httpx.Client, "get",
+        httpx.Client,
+        "get",
         lambda self, url, **kw: httpx.Response(
             200,
             text="<html><body></body></html>",
@@ -178,7 +179,8 @@ def test_fetch_url_truncates_long_body(tmp_path: Path, monkeypatch):
         f"<body><article><p>{long_body}</p></article></body></html>"
     )
     monkeypatch.setattr(
-        httpx.Client, "get",
+        httpx.Client,
+        "get",
         lambda self, url, **kw: httpx.Response(200, text=html, request=httpx.Request("GET", url)),
     )
     ctx = _ctx(tmp_path, WebSearchConfig())
@@ -194,7 +196,8 @@ def test_web_search_and_fetch_url_have_independent_budgets(tmp_path: Path, monke
     """ADR-0017 §5: separate budgets so an answer that legitimately needs
     web_search + fetch_url + fetch_url isn't penalized by sharing a pool."""
     monkeypatch.setattr(
-        httpx.Client, "get",
+        httpx.Client,
+        "get",
         lambda self, url, **kw: httpx.Response(
             200,
             json={"Heading": "X", "AbstractURL": "https://x", "Abstract": "x"},

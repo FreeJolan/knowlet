@@ -6,8 +6,9 @@ in cli/main.py is a thin wrapper)."""
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator
+from typing import Any
 
 from knowlet.chat.prompts import CHAT_SYSTEM_PROMPT
 from knowlet.core.events import (
@@ -101,7 +102,7 @@ class ChatSession:
             tool_calls: list[ToolCall] = []
             try:
                 stream = self.llm.chat_stream(self.history, tools=tools)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 yield ErrorEvent(message=f"LLM stream error: {exc}")
                 return
 
@@ -110,15 +111,11 @@ class ChatSession:
                     content_buf.append(ev.text)
                     yield ev
                 elif isinstance(ev, ToolCallEvent):
-                    tool_calls.append(
-                        ToolCall(id=ev.id, name=ev.name, arguments=ev.arguments)
-                    )
+                    tool_calls.append(ToolCall(id=ev.id, name=ev.name, arguments=ev.arguments))
                     yield ev
                 elif isinstance(ev, ReplyDoneEvent):
                     final_text = "".join(content_buf)
-                    assistant_msg = AssistantMessage(
-                        content=final_text, tool_calls=tool_calls
-                    )
+                    assistant_msg = AssistantMessage(content=final_text, tool_calls=tool_calls)
                     self.history = messages_with_assistant(self.history, assistant_msg)
 
                     if not tool_calls:

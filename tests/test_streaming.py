@@ -5,8 +5,9 @@ This is the discipline ADR-0008 codifies: any UI that renders these events
 gets coverage by virtue of the backend tests.
 """
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from knowlet.chat.bootstrap import bootstrap_chat
 from knowlet.config import KnowletConfig, save_config
@@ -41,13 +42,10 @@ class StreamStubLLM:
         self.scripts = list(scripts)
         self.calls = 0
 
-    def chat_stream(
-        self, messages, tools=None, max_tokens=None, temperature=None
-    ) -> Iterator[Any]:
+    def chat_stream(self, messages, tools=None, max_tokens=None, temperature=None) -> Iterator[Any]:
         self.calls += 1
         events = self.scripts.pop(0)
-        for ev in events:
-            yield ev
+        yield from events
 
 
 # ----------------------------------------------------- events module

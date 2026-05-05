@@ -49,8 +49,8 @@ def test_temperature_rejection_is_cached_and_retried_transparently():
     client = LLMClient(cfg)
     fake_client = mock.Mock()
     fake_client.chat.completions.create.side_effect = [
-        _temp_rejection(),       # first attempt: rejected
-        _ok_response("hello"),   # retry without temperature: succeeds
+        _temp_rejection(),  # first attempt: rejected
+        _ok_response("hello"),  # retry without temperature: succeeds
     ]
     client._client = fake_client
 

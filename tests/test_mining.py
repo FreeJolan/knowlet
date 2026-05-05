@@ -63,7 +63,10 @@ def test_source_spec_parse_dict_or_str():
 def test_mining_task_round_trip(tmp_path: Path):
     t = MiningTask(
         name="AI papers",
-        sources=[SourceSpec(type="rss", url="https://feed/a"), SourceSpec(type="url", url="https://x")],
+        sources=[
+            SourceSpec(type="rss", url="https://feed/a"),
+            SourceSpec(type="url", url="https://x"),
+        ],
         schedule=Schedule(every="1h"),
         prompt="summarize each item",
         body="some explanation",
@@ -159,12 +162,12 @@ def test_draft_store_list_get_delete(tmp_path: Path):
     d2 = Draft(title="B", body="y")
     store.save(d1)
     store.save(d2)
-    listed = store.list()
+    listed = store.all_drafts()
     assert len(listed) == 2
     assert store.get(d1.id) is not None
     assert store.delete(d1.id) is True
     assert store.delete(d1.id) is False  # idempotent
-    assert len(store.list()) == 1
+    assert len(store.all_drafts()) == 1
 
 
 # ------------------------------------------------------- runner
@@ -191,7 +194,7 @@ def _good_extraction_response(title: str, body: str = "## Summary\nfoo") -> Assi
 
 
 def test_runner_creates_drafts_for_new_items(tmp_path: Path, monkeypatch):
-    v, cfg = _ready_vault(tmp_path)
+    v, _cfg = _ready_vault(tmp_path)
     items = [
         SourceItem(
             source_url="https://feed",
@@ -221,20 +224,18 @@ def test_runner_creates_drafts_for_new_items(tmp_path: Path, monkeypatch):
         schedule=Schedule(every="1h"),
         prompt="summarize",
     )
-    llm = StubLLM(
-        [_good_extraction_response("Draft A"), _good_extraction_response("Draft B")]
-    )
+    llm = StubLLM([_good_extraction_response("Draft A"), _good_extraction_response("Draft B")])
     report = run_task(task, v, llm)  # type: ignore[arg-type]
     assert report.fetched == 2
     assert report.new_items == 2
     assert report.drafts_created == 2
     assert not report.errors
-    drafts = DraftStore(v.drafts_dir).list()
+    drafts = DraftStore(v.drafts_dir).all_drafts()
     assert {d.title for d in drafts} == {"Draft A", "Draft B"}
 
 
 def test_runner_skips_already_seen(tmp_path: Path, monkeypatch):
-    v, cfg = _ready_vault(tmp_path)
+    v, _cfg = _ready_vault(tmp_path)
     items = [
         SourceItem(
             source_url="https://feed",
@@ -267,7 +268,7 @@ def test_runner_skips_already_seen(tmp_path: Path, monkeypatch):
 
 
 def test_runner_fetch_error_surfaces(tmp_path: Path, monkeypatch):
-    v, cfg = _ready_vault(tmp_path)
+    v, _cfg = _ready_vault(tmp_path)
 
     def explode(spec: SourceSpec):
         raise RuntimeError("network down")
@@ -433,8 +434,12 @@ def test_per_task_max_items_per_run_applies_when_no_explicit_arg(tmp_path: Path,
     v, _ = _ready_vault(tmp_path)
     items = [
         SourceItem(
-            source_url="https://feed", item_id=f"x{i}", title=f"t{i}",
-            url=f"https://x/{i}", published=None, content=f"content {i}",
+            source_url="https://feed",
+            item_id=f"x{i}",
+            title=f"t{i}",
+            url=f"https://x/{i}",
+            published=None,
+            content=f"content {i}",
         )
         for i in range(20)
     ]
@@ -475,6 +480,7 @@ def test_max_keep_archives_oldest_drafts(tmp_path: Path, monkeypatch):
     # Pre-seed 5 drafts for our task — newest first ordering uses created_at.
     from knowlet.core.drafts import Draft, DraftStore
     from knowlet.core.note import new_id
+
     drafts = DraftStore(v.drafts_dir)
     seed_ids: list[str] = []
     for i in range(5):
@@ -485,11 +491,11 @@ def test_max_keep_archives_oldest_drafts(tmp_path: Path, monkeypatch):
             tags=[],
             source=None,
             task_id="my-task",
-            created_at=f"2026-04-{i+1:02d}T00:00:00Z",
+            created_at=f"2026-04-{i + 1:02d}T00:00:00Z",
         )
         drafts.save(d)
         seed_ids.append(d.id)
-    assert len(drafts.list()) == 5
+    assert len(drafts.all_drafts()) == 5
 
     # No fetched items — we just want to verify max_keep enforcement after a
     # no-op run.
@@ -511,7 +517,7 @@ def test_max_keep_archives_oldest_drafts(tmp_path: Path, monkeypatch):
 
     report = run_task(task, v, StubLLM())  # type: ignore[arg-type]
     assert report.drafts_archived == 3
-    live = drafts.list()
+    live = drafts.all_drafts()
     assert len(live) == 2
     # The two newest survive; oldest three are now in .archive/
     archive_files = list((v.drafts_dir / ".archive").glob("*.md"))
@@ -523,8 +529,12 @@ def test_explicit_max_items_overrides_per_task_ceiling(tmp_path: Path, monkeypat
     v, _ = _ready_vault(tmp_path)
     items = [
         SourceItem(
-            source_url="https://feed", item_id=f"x{i}", title=f"t{i}",
-            url=f"https://x/{i}", published=None, content=f"content {i}",
+            source_url="https://feed",
+            item_id=f"x{i}",
+            title=f"t{i}",
+            url=f"https://x/{i}",
+            published=None,
+            content=f"content {i}",
         )
         for i in range(20)
     ]
@@ -560,19 +570,15 @@ def test_reset_task_state_clears_seen_only_by_default(tmp_path: Path):
     from knowlet.core.mining.runner import _save_seen, reset_task_state
 
     v, _ = _ready_vault(tmp_path)
-    DraftStore(v.drafts_dir).save(
-        Draft(title="A", body="x", task_id="task-1")
-    )
-    DraftStore(v.drafts_dir).save(
-        Draft(title="B", body="y", task_id="task-2")
-    )
+    DraftStore(v.drafts_dir).save(Draft(title="A", body="x", task_id="task-1"))
+    DraftStore(v.drafts_dir).save(Draft(title="B", body="y", task_id="task-2"))
     _save_seen(v, "task-1", ["a", "b", "c"])
 
     out = reset_task_state(v, "task-1")
     assert out["seen_cleared"] == 3
     assert out["drafts_deleted"] == 0
     # task-1 drafts still on disk
-    assert any(d.task_id == "task-1" for d in DraftStore(v.drafts_dir).list())
+    assert any(d.task_id == "task-1" for d in DraftStore(v.drafts_dir).all_drafts())
 
 
 def test_reset_task_state_with_delete_drafts(tmp_path: Path):
@@ -585,7 +591,7 @@ def test_reset_task_state_with_delete_drafts(tmp_path: Path):
 
     out = reset_task_state(v, "task-1", delete_drafts=True)
     assert out["drafts_deleted"] == 1
-    remaining = DraftStore(v.drafts_dir).list()
+    remaining = DraftStore(v.drafts_dir).all_drafts()
     assert all(d.task_id != "task-1" for d in remaining)
     # task-2 drafts untouched
     assert any(d.task_id == "task-2" for d in remaining)

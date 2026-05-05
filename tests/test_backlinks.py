@@ -3,13 +3,11 @@
 from pathlib import Path
 
 from knowlet.core.backlinks import (
-    Wikilink,
     extract_wikilinks,
     find_backlinks,
 )
 from knowlet.core.note import Note, new_id
 from knowlet.core.vault import Vault
-
 
 # -------------------------------------------------------------- extract
 
@@ -17,21 +15,21 @@ from knowlet.core.vault import Vault
 def test_extract_wikilinks_basic():
     body = "see [[Attention is All You Need]] and [[Transformer]] for more"
     links = extract_wikilinks(body)
-    assert [l.target for l in links] == ["Attention is All You Need", "Transformer"]
-    assert all(l.line == 1 for l in links)
+    assert [link.target for link in links] == ["Attention is All You Need", "Transformer"]
+    assert all(link.line == 1 for link in links)
 
 
 def test_extract_wikilinks_multiline():
     body = "first line has [[A]]\nsecond line\nthird line has [[B]] and [[C]]"
     links = extract_wikilinks(body)
-    targets = [(l.target, l.line) for l in links]
+    targets = [(link.target, link.line) for link in links]
     assert targets == [("A", 1), ("B", 3), ("C", 3)]
 
 
 def test_extract_wikilinks_strips_alias():
     """`[[Title|alias]]` resolves to `Title` for matching purposes."""
     links = extract_wikilinks("see [[RAG|retrieval-aug-gen]] details")
-    assert [l.target for l in links] == ["RAG"]
+    assert [link.target for link in links] == ["RAG"]
 
 
 def test_extract_wikilinks_ignores_empty():
@@ -116,7 +114,7 @@ def test_find_backlinks_long_sentence_is_trimmed(tmp_path: Path):
     v.init_layout()
     target = _write(v, "Target", "x")
     long_body = "lead-in " * 200 + "[[Target]] is the seminal " + "tail " * 200
-    src = _write(v, "Long", long_body)
+    _write(v, "Long", long_body)
 
     backs = find_backlinks("Target", v.iter_note_paths(), exclude_id=target.id)
     assert len(backs) == 1

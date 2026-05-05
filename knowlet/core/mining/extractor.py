@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from knowlet.core.drafts import Draft
 from knowlet.core.llm import LLMClient
@@ -53,16 +54,16 @@ Do not include any text outside the JSON object.
 """
 
 _CRITICAL_TAKE_SECTION = (
-    "    - \"## Critical take\" — 2-3 sentences. **Content-grounded** opinion: "
+    '    - "## Critical take" — 2-3 sentences. **Content-grounded** opinion: '
     "what's actually new vs prior art, where the claim might be overstated, "
     "what assumption is load-bearing, what's missing. Avoid generic praise "
-    "(\"represents an important step\", \"groundbreaking\", \"will revolutionize\"). "
+    '("represents an important step", "groundbreaking", "will revolutionize"). '
     "If you can't say something specific, omit this section entirely.\n"
 )
 
 _HOVER_QUOTE_DIRECTIVE = (
     "When you translate or paraphrase the source's most important 1-3 "
-    "sentences into the body, wrap them as `<q data-original=\"...\">"
+    'sentences into the body, wrap them as `<q data-original="...">'
     "translated/paraphrased text</q>` with the verbatim original-language "
     "sentence in `data-original`. Pick sentences whose precise wording "
     "matters (claims with numbers, definitions, key arguments). Don't wrap "
@@ -116,18 +117,21 @@ def _instructions_for(
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 
-def _parse_json(text: str) -> dict:
+def _parse_json(text: str) -> dict[str, Any]:
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
         text = re.sub(r"```$", "", text).strip()
     try:
-        return json.loads(text)
+        result: Any = json.loads(text)
     except json.JSONDecodeError:
         m = _JSON_BLOCK.search(text)
         if m is None:
             raise
-        return json.loads(m.group(0))
+        result = json.loads(m.group(0))
+    if not isinstance(result, dict):
+        raise ValueError(f"_parse_json: expected JSON object, got {type(result).__name__}")
+    return result
 
 
 def extract_one(
@@ -167,7 +171,7 @@ def extract_one(
             tools=None,
             temperature=0.2,
         )
-    except Exception as exc:  # noqa: BLE001 — boundary
+    except Exception as exc:
         return ExtractionResult(item=item, draft=None, error=f"LLM error: {exc}")
 
     raw = (resp.content or "").strip()

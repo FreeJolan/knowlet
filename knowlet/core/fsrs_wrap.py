@@ -10,7 +10,7 @@ adapter glue.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from fsrs import Card as FSRSCard
 from fsrs import Rating, Scheduler
@@ -51,8 +51,7 @@ def parse_rating(rating: int | str) -> Rating:
         if key in _NAME_TO_INT:
             return Rating(_NAME_TO_INT[key])
     raise ValueError(
-        f"invalid rating: {rating!r}; expected 1-4 or one of "
-        f"{list(_RATING_NAMES.values())}"
+        f"invalid rating: {rating!r}; expected 1-4 or one of {list(_RATING_NAMES.values())}"
     )
 
 
@@ -67,16 +66,18 @@ def schedule_next(card: Card, rating: int | str, now: datetime | None = None) ->
         now = datetime.now(UTC)
     sched = _scheduler_singleton()
 
-    if card.fsrs_state:
-        fsrs_card = FSRSCard.from_dict(card.fsrs_state)
+    if card.fsrs_state:  # noqa: SIM108 — keep if/else for the cast comment
+        # `card.fsrs_state` is persisted as a plain JSON dict; fsrs.Card.from_dict
+        # types it as a TypedDict CardDict. Cast at the boundary.
+        fsrs_card = FSRSCard.from_dict(cast(Any, card.fsrs_state))
     else:
         fsrs_card = FSRSCard()  # brand new
 
     new_fsrs_card, _log = sched.review_card(fsrs_card, parse_rating(rating), now)
-    card.fsrs_state = new_fsrs_card.to_dict()
+    card.fsrs_state = cast(dict[str, Any], new_fsrs_card.to_dict())
     return card
 
 
 def initial_state() -> dict[str, Any]:
     """FSRS state for a freshly-created card (due = now, learning state)."""
-    return FSRSCard().to_dict()
+    return cast(dict[str, Any], FSRSCard().to_dict())

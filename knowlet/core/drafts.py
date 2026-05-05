@@ -14,9 +14,9 @@ files be plain Markdown the user can edit/inspect at any time.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
 
 import frontmatter
 
@@ -59,7 +59,7 @@ class Draft:
         if self.task_id:
             meta["task_id"] = self.task_id
         post = frontmatter.Post(self.body, **meta)
-        return frontmatter.dumps(post)
+        return str(frontmatter.dumps(post))
 
     @classmethod
     def from_file(cls, path: Path) -> Draft:
@@ -102,7 +102,7 @@ class DraftStore:
             return iter(())
         return (p for p in self.root.glob("*.md") if p.is_file())
 
-    def list(self) -> list[Draft]:
+    def all_drafts(self) -> list[Draft]:
         out: list[Draft] = []
         for p in self.iter_paths():
             try:
@@ -157,7 +157,7 @@ class DraftStore:
         return target
 
     def list_for_task(self, task_id: str) -> list[Draft]:
-        return [d for d in self.list() if d.task_id == task_id]
+        return [d for d in self.all_drafts() if d.task_id == task_id]
 
     def enforce_max_keep(self, task_id: str, max_keep: int) -> int:
         """Archive oldest drafts produced by `task_id` until the live

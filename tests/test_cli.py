@@ -22,16 +22,27 @@ def _help(*argv: str) -> str:
     """Run `knowlet ... --help` and assert it succeeds. Returns stdout."""
     result = runner.invoke(app, [*argv, "--help"])
     assert result.exit_code == 0, (
-        f"`knowlet {' '.join(argv)} --help` exit={result.exit_code}\n"
-        f"stdout:\n{result.stdout}"
+        f"`knowlet {' '.join(argv)} --help` exit={result.exit_code}\nstdout:\n{result.stdout}"
     )
     return result.stdout
 
 
 def test_root_help_lists_all_subcommands():
     out = _help()
-    for sub in ("vault", "config", "user", "cards", "mining", "drafts", "notes",
-                "web", "ls", "reindex", "doctor", "chat"):
+    for sub in (
+        "vault",
+        "config",
+        "user",
+        "cards",
+        "mining",
+        "drafts",
+        "notes",
+        "web",
+        "ls",
+        "reindex",
+        "doctor",
+        "chat",
+    ):
         assert sub in out, f"`{sub}` missing from `knowlet --help`"
 
 
@@ -87,6 +98,7 @@ def test_notes_help():
 
 # ----------------------------------------------------------------- top-level commands
 
+
 def test_top_level_command_helps():
     """Each top-level command (web/ls/reindex/doctor/chat) parses --help."""
     for cmd in ("web", "ls", "reindex", "doctor", "chat"):
@@ -106,8 +118,7 @@ def test_cards_new_options_parse():
 
 def test_mining_add_options_parse():
     out = _help("mining", "add")
-    for opt in ("--name", "--rss", "--url", "--every", "--cron",
-                "--prompt", "--output-language"):
+    for opt in ("--name", "--rss", "--url", "--every", "--cron", "--prompt", "--output-language"):
         assert opt in out
 
 
@@ -123,7 +134,6 @@ def test_config_set_takes_two_arguments():
 
 def test_vault_migrate_filenames_renames_legacy_layout(tmp_path, monkeypatch):
     """A legacy `<id>-<slug>.md` file gets renamed to `<id>.md`."""
-    import os
     from knowlet.core.note import Note, new_id
     from knowlet.core.vault import Vault
 

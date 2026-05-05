@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import httpx
@@ -34,8 +34,7 @@ _HTTP_HEADERS = {
         "Chrome/124.0.0.0 Safari/537.36 knowlet/0"
     ),
     "Accept": (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
-        "image/webp,*/*;q=0.8"
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
     ),
     "Accept-Language": "en-US,en;q=0.9",
 }
@@ -74,6 +73,7 @@ class ExtractionError(Exception):
 @dataclass(frozen=True)
 class UrlCapsule:
     """One captured URL, ready to be wrapped in a chat reference capsule."""
+
     url: str
     title: str
     hostname: str
@@ -86,8 +86,8 @@ class _LLMLike(Protocol):
 
     def chat(
         self,
-        messages: list[dict],
-        tools: list[dict] | None = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> object:  # AssistantMessage; .content is what we read
@@ -141,9 +141,7 @@ def fetch_and_extract(url: str) -> tuple[str, str]:
         include_tables=False,
     )
     if not extracted or len(extracted.strip()) < 80:
-        raise ExtractionError(
-            f"抓取到页面但没有提取到可读正文(可能是 JS 重度页面 / 付费墙)"
-        )
+        raise ExtractionError("抓取到页面但没有提取到可读正文(可能是 JS 重度页面 / 付费墙)")
     title = _extract_title(html) or url
     return title, extracted.strip()
 

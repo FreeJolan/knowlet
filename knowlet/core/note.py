@@ -98,7 +98,7 @@ class Note:
         if self.source:
             meta["source"] = self.source
         post = frontmatter.Post(self.body, **meta)
-        return frontmatter.dumps(post)
+        return str(frontmatter.dumps(post))
 
     @classmethod
     def from_file(cls, path: Path) -> Note:

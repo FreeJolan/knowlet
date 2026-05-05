@@ -27,6 +27,7 @@ from knowlet.cli._common import (
     make_index,
     resolve_vault_or_die,
 )
+from knowlet.core.index import Index
 from knowlet.core.llm import LLMClient
 
 app = typer.Typer(
@@ -35,7 +36,7 @@ app = typer.Typer(
 )
 
 
-def _resolve_note_id(idx, note_id_or_prefix: str) -> tuple[str, str, str]:
+def _resolve_note_id(idx: Index, note_id_or_prefix: str) -> tuple[str, str, str]:
     """Resolve an 8-char-prefix or full ULID to (id, title, body). Raises
     typer.Exit on miss. Body is read from disk via `Note.from_file` so
     frontmatter is stripped and we always quiz against the latest text."""
@@ -80,15 +81,15 @@ def quiz_run(
     grades each answer, prints a summary. M7.4.0 — no persistence; once
     you exit, the session is gone. M7.4.1 wires the on-disk quiz store.
     """
+    from datetime import UTC, datetime
+
     from knowlet.core.note import new_id
     from knowlet.core.quiz import (
-        QuizQuestion,
         QuizSession,
         aggregate_score,
         generate_quiz,
         grade_answer,
     )
-    from datetime import datetime, UTC
 
     if n < 1:
         err_console.print("[red]--num must be ≥ 1[/red]")
@@ -116,7 +117,7 @@ def quiz_run(
     )
     try:
         questions = generate_quiz(llm, notes_for_llm, n=n)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         err_console.print(f"[red]generation failed:[/red] {exc}")
         raise typer.Exit(code=1) from None
 
@@ -149,9 +150,7 @@ def quiz_run(
         color = "green" if score >= 4 else ("yellow" if score >= 3 else "red")
         console.print(f"[{color}]score: {score}/5[/{color}] · {reason}")
         if missing:
-            console.print(
-                "[dim]missing:[/dim] " + " · ".join(f"[dim]{m}[/dim]" for m in missing)
-            )
+            console.print("[dim]missing:[/dim] " + " · ".join(f"[dim]{m}[/dim]" for m in missing))
         if score < 3:
             console.print(f"[dim]reference:[/dim] {q.reference_answer}")
 

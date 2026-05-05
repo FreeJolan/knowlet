@@ -204,10 +204,7 @@ def format_references_block(refs_with_bodies: list[tuple[QuoteRef, str]]) -> str
             # summary; we don't run extract_enclosing_section. The URL is
             # surfaced so the chat-side LLM can mention / cite it.
             url_disp = ref.source_url or ""
-            blocks.append(
-                f"我想就这篇文章问你(来自《{ref.note_title}》· {url_disp}):\n"
-                f"{quote_md}"
-            )
+            blocks.append(f"我想就这篇文章问你(来自《{ref.note_title}》· {url_disp}):\n{quote_md}")
         else:
             # M7.1: Note-source capsule. Pull the heading-bounded section
             # around the quote so the chat-side LLM sees structural context.

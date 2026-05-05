@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 from openai import BadRequestError, OpenAI
 
@@ -60,9 +61,7 @@ class LLMClient:
     def _ensure(self) -> OpenAI:
         if self._client is None:
             if not self.cfg.api_key:
-                raise RuntimeError(
-                    "LLM api_key is empty. Run `knowlet config init` to configure."
-                )
+                raise RuntimeError("LLM api_key is empty. Run `knowlet config init` to configure.")
             self._client = OpenAI(base_url=self.cfg.base_url, api_key=self.cfg.api_key)
         return self._client
 
@@ -92,8 +91,8 @@ class LLMClient:
             if "temperature" in kwargs and _is_temp_rejection(exc):
                 _no_temp_cache.add(self.cfg.model)
                 log.info(
-                    "model %r rejected `temperature`; will omit it for the rest "
-                    "of this process.", self.cfg.model
+                    "model %r rejected `temperature`; will omit it for the rest of this process.",
+                    self.cfg.model,
                 )
                 kwargs.pop("temperature", None)
                 resp = client.chat.completions.create(**kwargs)
@@ -156,8 +155,8 @@ class LLMClient:
             if "temperature" in kwargs and _is_temp_rejection(exc):
                 _no_temp_cache.add(self.cfg.model)
                 log.info(
-                    "model %r rejected `temperature`; will omit it for the rest "
-                    "of this process.", self.cfg.model
+                    "model %r rejected `temperature`; will omit it for the rest of this process.",
+                    self.cfg.model,
                 )
                 kwargs.pop("temperature", None)
                 stream = client.chat.completions.create(**kwargs)

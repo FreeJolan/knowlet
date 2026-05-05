@@ -16,9 +16,7 @@ def _handler(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
             "suggestion": "pass a non-empty natural-language query",
         }
     limit = max(1, min(limit, 20))
-    hits = ctx.index.search(
-        query, top_k=limit, rrf_k=ctx.config.retrieval.rrf_k
-    )
+    hits = ctx.index.search(query, top_k=limit, rrf_k=ctx.config.retrieval.rrf_k)
     return {
         "results": [
             {

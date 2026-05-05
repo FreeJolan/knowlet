@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from knowlet.core.mining.task import MiningTask
 from knowlet.core.note import now_iso
@@ -45,10 +46,8 @@ class TaskStore:
         # If the slug changed, remove the old file (id-prefix matches but slug differs).
         for p in self.iter_paths():
             if p.stem.startswith(task.id) and p.name != target.name:
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(p)
-                except OSError:
-                    pass
         task.path = target
         tmp = target.with_suffix(target.suffix + ".tmp")
         tmp.write_text(task.to_markdown(), encoding="utf-8")

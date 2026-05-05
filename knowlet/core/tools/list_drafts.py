@@ -8,7 +8,7 @@ from knowlet.core.tools._registry import ToolContext, ToolDef
 
 
 def _handler(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
-    drafts = ctx.drafts.list()
+    drafts = ctx.drafts.all_drafts()
     return {
         "results": [
             {

@@ -12,8 +12,9 @@ and errors carry a `suggestion` field for the LLM to recover from.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from knowlet.config import KnowletConfig
 from knowlet.core.card_store import CardStore
@@ -80,7 +81,7 @@ class Registry:
             }
         try:
             return tool.handler(args, ctx)
-        except Exception as exc:  # noqa: BLE001 — boundary
+        except Exception as exc:
             return {
                 "error": f"{type(exc).__name__}: {exc}",
                 "suggestion": "check the input shape and retry",

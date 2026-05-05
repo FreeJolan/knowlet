@@ -16,7 +16,7 @@ Per ADR-0009:
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -47,7 +47,7 @@ class MiningScheduler:
         self.llm = llm
         self.on_run = on_run
         self.default_output_language = default_output_language
-        self._sched: BackgroundScheduler | None = None
+        self._sched: BackgroundScheduler | None = None  # type: ignore[no-any-unimported]
         self._task_store = TaskStore(vault.root / "tasks")
 
     # ----------------------------------------------------- lifecycle
@@ -112,14 +112,16 @@ class MiningScheduler:
         sched = task.schedule
         if sched.cron:
             try:
-                return CronTrigger.from_crontab(sched.cron)
-            except Exception as exc:  # noqa: BLE001
+                trigger: object = CronTrigger.from_crontab(sched.cron)
+                return trigger
+            except Exception as exc:
                 log.warning("task %s bad cron %r: %s", task.id, sched.cron, exc)
                 return None
         if sched.every:
             try:
                 seconds = parse_interval_seconds(sched.every)
-                return IntervalTrigger(seconds=seconds)
+                interval: object = IntervalTrigger(seconds=seconds)
+                return interval
             except ValueError as exc:
                 log.warning("task %s bad interval %r: %s", task.id, sched.every, exc)
                 return None
@@ -142,11 +144,11 @@ class MiningScheduler:
                 self.llm,
                 default_output_language=self.default_output_language,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("task %s crashed", task_id)
             return
         if self.on_run is not None:
             try:
                 self.on_run(task, report)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("on_run callback raised for %s", task_id)

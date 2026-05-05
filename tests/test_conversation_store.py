@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from knowlet.chat.conversation_store import (
@@ -39,6 +40,7 @@ def test_save_updates_updated_at(tmp_path: Path):
     first = conv.updated_at
     # Force a different second so the timestamp changes.
     import time
+
     time.sleep(1.05)
     conv.messages.append({"role": "user", "content": "hi"})
     store.save(conv)
@@ -52,9 +54,9 @@ def test_list_sorted_by_updated_at_desc(tmp_path: Path):
     b = Conversation(title="b", messages=list(msgs))
     c = Conversation(title="c", messages=list(msgs))
     store.save(a)
-    import time; time.sleep(1.05)
+    time.sleep(1.05)
     store.save(b)
-    import time; time.sleep(1.05)
+    time.sleep(1.05)
     store.save(c)
 
     rows = store.list()

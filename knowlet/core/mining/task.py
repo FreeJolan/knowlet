@@ -93,9 +93,7 @@ _INTERVAL_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 def parse_interval_seconds(spec: str) -> int:
     m = _INTERVAL_RE.match(spec)
     if not m:
-        raise ValueError(
-            f"invalid interval {spec!r}; expected like '30s' / '15m' / '2h' / '1d'"
-        )
+        raise ValueError(f"invalid interval {spec!r}; expected like '30s' / '15m' / '2h' / '1d'")
     return int(m.group(1)) * _INTERVAL_UNITS[m.group(2).lower()]
 
 
@@ -161,7 +159,7 @@ class MiningTask:
         if self.include_critical_take:
             meta["include_critical_take"] = True
         post = frontmatter.Post(self.body, **meta)
-        return frontmatter.dumps(post)
+        return str(frontmatter.dumps(post))
 
     @classmethod
     def from_file(cls, path: Path) -> MiningTask:
@@ -171,6 +169,7 @@ class MiningTask:
         sources_raw = meta.get("sources") or []
         sources = [SourceSpec.parse(s) for s in sources_raw]
         ol_raw = meta.get("output_language")
+
         def _int_or_default(raw: Any, default: int) -> int:
             if raw is None:
                 return default

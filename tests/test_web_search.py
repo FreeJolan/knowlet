@@ -7,14 +7,13 @@ from knowlet.config import WebSearchConfig
 from knowlet.core.web_search import (
     BraveSearch,
     DDGInstantAnswer,
-    SearxSearch,
     SearchResult,
+    SearxSearch,
     TavilySearch,
     WebSearchError,
     WebSearchUnconfigured,
     pick_provider,
 )
-
 
 # -------------------------------------------------- pick_provider
 
@@ -122,8 +121,11 @@ def test_brave_skips_results_without_url(monkeypatch):
         }
     }
     monkeypatch.setattr(
-        httpx.Client, "get",
-        lambda self, url, **kw: httpx.Response(200, json=payload, request=httpx.Request("GET", url)),
+        httpx.Client,
+        "get",
+        lambda self, url, **kw: httpx.Response(
+            200, json=payload, request=httpx.Request("GET", url)
+        ),
     )
     out = BraveSearch("k").search("q")
     assert len(out) == 1
@@ -141,8 +143,11 @@ def test_tavily_parses_results(monkeypatch):
         ]
     }
     monkeypatch.setattr(
-        httpx.Client, "post",
-        lambda self, url, **kw: httpx.Response(200, json=payload, request=httpx.Request("POST", url)),
+        httpx.Client,
+        "post",
+        lambda self, url, **kw: httpx.Response(
+            200, json=payload, request=httpx.Request("POST", url)
+        ),
     )
     out = TavilySearch("tvly-k").search("q", top_k=2)
     assert [r.title for r in out] == ["T1", "T2"]
@@ -150,8 +155,11 @@ def test_tavily_parses_results(monkeypatch):
 
 def test_tavily_401_raises_unconfigured(monkeypatch):
     monkeypatch.setattr(
-        httpx.Client, "post",
-        lambda self, url, **kw: httpx.Response(401, text="bad key", request=httpx.Request("POST", url)),
+        httpx.Client,
+        "post",
+        lambda self, url, **kw: httpx.Response(
+            401, text="bad key", request=httpx.Request("POST", url)
+        ),
     )
     with pytest.raises(WebSearchUnconfigured):
         TavilySearch("bad").search("q")
@@ -173,8 +181,11 @@ def test_searx_parses_results(monkeypatch):
         ]
     }
     monkeypatch.setattr(
-        httpx.Client, "get",
-        lambda self, url, **kw: httpx.Response(200, json=payload, request=httpx.Request("GET", url)),
+        httpx.Client,
+        "get",
+        lambda self, url, **kw: httpx.Response(
+            200, json=payload, request=httpx.Request("GET", url)
+        ),
     )
     out = SearxSearch("https://searx.x").search("q", top_k=5)
     assert len(out) == 2
@@ -194,8 +205,11 @@ def test_ddg_uses_abstract_when_present(monkeypatch):
         ],
     }
     monkeypatch.setattr(
-        httpx.Client, "get",
-        lambda self, url, **kw: httpx.Response(200, json=payload, request=httpx.Request("GET", url)),
+        httpx.Client,
+        "get",
+        lambda self, url, **kw: httpx.Response(
+            200, json=payload, request=httpx.Request("GET", url)
+        ),
     )
     out = DDGInstantAnswer().search("knowlet", top_k=5)
     assert out[0].url == "https://example.com/knowlet"
@@ -205,7 +219,8 @@ def test_ddg_uses_abstract_when_present(monkeypatch):
 
 def test_ddg_empty_when_no_abstract_or_related(monkeypatch):
     monkeypatch.setattr(
-        httpx.Client, "get",
+        httpx.Client,
+        "get",
         lambda self, url, **kw: httpx.Response(200, json={}, request=httpx.Request("GET", url)),
     )
     out = DDGInstantAnswer().search("rare query", top_k=5)
@@ -216,16 +231,21 @@ def test_ddg_flattens_nested_topics(monkeypatch):
     """DDG sometimes nests RelatedTopics under {Topics: [...]} subgroups."""
     payload = {
         "RelatedTopics": [
-            {"Topics": [
-                {"FirstURL": "https://a", "Text": "A - x"},
-                {"FirstURL": "https://b", "Text": "B - y"},
-            ]},
+            {
+                "Topics": [
+                    {"FirstURL": "https://a", "Text": "A - x"},
+                    {"FirstURL": "https://b", "Text": "B - y"},
+                ]
+            },
             {"FirstURL": "https://c", "Text": "C"},
         ],
     }
     monkeypatch.setattr(
-        httpx.Client, "get",
-        lambda self, url, **kw: httpx.Response(200, json=payload, request=httpx.Request("GET", url)),
+        httpx.Client,
+        "get",
+        lambda self, url, **kw: httpx.Response(
+            200, json=payload, request=httpx.Request("GET", url)
+        ),
     )
     out = DDGInstantAnswer().search("q", top_k=5)
     assert [r.url for r in out] == ["https://a", "https://b", "https://c"]
@@ -238,8 +258,11 @@ def test_ddg_caps_to_top_k(monkeypatch):
         ],
     }
     monkeypatch.setattr(
-        httpx.Client, "get",
-        lambda self, url, **kw: httpx.Response(200, json=payload, request=httpx.Request("GET", url)),
+        httpx.Client,
+        "get",
+        lambda self, url, **kw: httpx.Response(
+            200, json=payload, request=httpx.Request("GET", url)
+        ),
     )
     out = DDGInstantAnswer().search("q", top_k=3)
     assert len(out) == 3

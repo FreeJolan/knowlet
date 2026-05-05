@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from knowlet.cli._doctor import _check_vault_integrity
+from knowlet.core.doctor import _check_vault_integrity
 from knowlet.core.note import Note, new_id
 from knowlet.core.vault import Vault
 
@@ -61,13 +61,9 @@ def test_integrity_skips_trash_and_attachments(tmp_path: Path):
     v.init_layout()
     # Stage a "deleted" note in .trash + an attachment
     v.trash_dir.mkdir(parents=True, exist_ok=True)
-    (v.trash_dir / "01HXDELETED.md").write_text(
-        "---\n  bad: [unclosed\n---\n", encoding="utf-8"
-    )
+    (v.trash_dir / "01HXDELETED.md").write_text("---\n  bad: [unclosed\n---\n", encoding="utf-8")
     v.attachments_dir.mkdir(parents=True, exist_ok=True)
-    (v.attachments_dir / "01HXIMG.md").write_text(
-        "---\n  also: [unclosed\n---\n", encoding="utf-8"
-    )
+    (v.attachments_dir / "01HXIMG.md").write_text("---\n  also: [unclosed\n---\n", encoding="utf-8")
     out = _check_vault_integrity(v)
     by_entity = {row[0]: row for row in out}
     # Both bad files are in skipped dirs → not counted, not failed

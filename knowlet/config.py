@@ -63,11 +63,11 @@ class WebSearchConfig(BaseModel):
     immediately, not at first chat call.
     """
 
-    provider: str = ""              # "" | "brave" | "tavily" | "searx" | "ddg"
+    provider: str = ""  # "" | "brave" | "tavily" | "searx" | "ddg"
     brave_api_key: str = ""
     tavily_api_key: str = ""
-    searx_url: str = ""             # e.g. "https://searx.example.com"
-    max_per_turn: int = 3           # hard ceiling per turn; tool raises beyond
+    searx_url: str = ""  # e.g. "https://searx.example.com"
+    max_per_turn: int = 3  # hard ceiling per turn; tool raises beyond
 
 
 class KnowletConfig(BaseModel):

@@ -98,8 +98,7 @@ _EN: dict[str, str] = {
     ),
     "vault.init.title": "vault init",
     "vault.notfound": (
-        "No vault found in {cwd} or any parent.\n"
-        "Initialize one here so you can start chatting?"
+        "No vault found in {cwd} or any parent.\nInitialize one here so you can start chatting?"
     ),
     "vault.welcome.title": "welcome",
     "vault.init.prompt": "initialize vault here?",
@@ -233,7 +232,7 @@ _EN: dict[str, str] = {
     "sidebar.loading": "Loading…",
     # M7.0.1 sidebar delete (soft-delete to .trash/)
     "sidebar.note.delete.title": "Move to .trash/",
-    "sidebar.note.delete.confirm": "Move \"{title}\" to .trash/? Recoverable with `knowlet notes restore`.",
+    "sidebar.note.delete.confirm": 'Move "{title}" to .trash/? Recoverable with `knowlet notes restore`.',
     "sidebar.note.delete.toast": "Moved to .trash/: {title}",
     # Tabs
     "tab.close": "Close",
@@ -288,14 +287,14 @@ _EN: dict[str, str] = {
     "palette.cmd.quiz.sub": "Open the active-recall quiz over your notes (Cmd+Shift+Q)",
     "sediment.similar.heading": "Possibly related notes",
     "sediment.similar.loading": "Loading…",
-    "sediment.similar.disclaimer": "Information only. Default action is still \"save as new note.\"",
+    "sediment.similar.disclaimer": 'Information only. Default action is still "save as new note."',
     "quiz.title": "Quiz me",
     "quiz.tab.new": "New quiz",
     "quiz.tab.history": "History",
     "quiz.history.heading": "Past quizzes",
     "quiz.history.intro": "Click a row to open the summary. Sessions older than 90 days that didn't produce Cards are auto-archived (the ones with Cards stay live).",
     "quiz.history.loading": "Loading…",
-    "quiz.history.empty": "No quiz history yet. Switch back to \"New quiz\" to start one.",
+    "quiz.history.empty": 'No quiz history yet. Switch back to "New quiz" to start one.',
     "quiz.scope.kind": "Scope kind",
     "quiz.scope.kind.notes": "Pick notes",
     "quiz.scope.kind.tag": "By tag",
@@ -414,8 +413,7 @@ _EN: dict[str, str] = {
     # Profile modal (web)
     "profile.web.title": "Profile",
     "profile.web.intro": (
-        "AI reads this every time you chat — your interests, preferences, "
-        "background. Edit freely."
+        "AI reads this every time you chat — your interests, preferences, background. Edit freely."
     ),
     "profile.web.field.name": "Name (optional)",
     "profile.web.field.body": "Body (Markdown)",
@@ -447,10 +445,7 @@ _ZH: dict[str, str] = {
         "  .knowlet/config.toml  ← 运行 `knowlet config init` 来配置 LLM"
     ),
     "vault.init.title": "vault 初始化",
-    "vault.notfound": (
-        "在 {cwd} 及其父目录都没找到 vault。\n"
-        "在这里初始化一个,马上开始用?"
-    ),
+    "vault.notfound": ("在 {cwd} 及其父目录都没找到 vault。\n在这里初始化一个,马上开始用?"),
     "vault.welcome.title": "欢迎",
     "vault.init.prompt": "在这里初始化 vault?",
     "vault.dir.prompt": "vault 目录",
@@ -477,8 +472,7 @@ _ZH: dict[str, str] = {
     ),
     "config.llm_setup.title": "LLM 配置",
     "config.llm_setup.intro": (
-        "LLM 还没配置 —— 现在就配。\n"
-        "knowlet 跟任何兼容 OpenAI 协议的 HTTP 服务对话。"
+        "LLM 还没配置 —— 现在就配。\nknowlet 跟任何兼容 OpenAI 协议的 HTTP 服务对话。"
     ),
     "chat.banner.title": "knowlet {version}",
     "chat.banner.body": (
@@ -601,8 +595,7 @@ _ZH: dict[str, str] = {
     "rail.collapse.title": "折叠",
     "rail.outline.empty": "这条笔记还没有章节标题(用 #、##、### 开头那种)。",
     "rail.backlinks.placeholder": (
-        "这一栏会显示「引用了当前笔记的其它笔记」,带句子级预览。"
-        "下一阶段(M6.2)实装。"
+        "这一栏会显示「引用了当前笔记的其它笔记」,带句子级预览。下一阶段(M6.2)实装。"
     ),
     "rail.backlinks.no_note": "选一条笔记后查看反链。",
     "rail.backlinks.loading": "载入中…",

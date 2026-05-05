@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from knowlet.config import VAULT_MARKER_DIR
 from knowlet.core.note import Note, now_iso
@@ -170,9 +170,7 @@ class Vault:
         self.notes_dir.mkdir(parents=True, exist_ok=True)
         target = self.notes_dir / trashed_path.name
         if target.exists():
-            raise FileExistsError(
-                f"cannot restore: {target} already exists in notes/"
-            )
+            raise FileExistsError(f"cannot restore: {target} already exists in notes/")
         trashed_path.rename(target)
         return target
 

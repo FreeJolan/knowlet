@@ -13,8 +13,10 @@ two-stage tool design per ADR-0017 §5.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
-from urllib.parse import quote_plus, urlparse
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from knowlet.config import WebSearchConfig
 
 import httpx
 
@@ -61,8 +63,7 @@ class SearchProvider(Protocol):
 
     name: str
 
-    def search(self, query: str, top_k: int = DEFAULT_TOP_K) -> list[SearchResult]:
-        ...
+    def search(self, query: str, top_k: int = DEFAULT_TOP_K) -> list[SearchResult]: ...
 
 
 # ---------------------------------------------------------------- providers
@@ -180,8 +181,7 @@ class SearxSearch:
     def __init__(self, url: str):
         if not url:
             raise WebSearchUnconfigured(
-                "Searx provider requires `web_search.searx_url` "
-                "(e.g. https://searx.example.com)."
+                "Searx provider requires `web_search.searx_url` (e.g. https://searx.example.com)."
             )
         self.url = url.rstrip("/")
 
@@ -224,7 +224,7 @@ class DDGInstantAnswer:
 
     name = "ddg"
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     def search(self, query: str, top_k: int = DEFAULT_TOP_K) -> list[SearchResult]:
@@ -260,21 +260,21 @@ class DDGInstantAnswer:
             )
         # RelatedTopics — flatten one level of "Topics" subgroups.
         related = data.get("RelatedTopics") or []
-        flat: list[dict] = []
+        flat: list[dict[str, Any]] = []
         for entry in related:
             if "Topics" in entry:
                 flat.extend(entry["Topics"])
             else:
                 flat.append(entry)
-        for r in flat:
-            url = str(r.get("FirstURL") or "").strip()
+        for topic in flat:
+            url = str(topic.get("FirstURL") or "").strip()
             if not url:
                 continue
             out.append(
                 SearchResult(
-                    title=_first_line(str(r.get("Text") or "")),
+                    title=_first_line(str(topic.get("Text") or "")),
                     url=url,
-                    snippet=str(r.get("Text") or "").strip()[:400],
+                    snippet=str(topic.get("Text") or "").strip()[:400],
                     rank=len(out),
                 )
             )
@@ -293,7 +293,7 @@ def _first_line(s: str) -> str:
 # ---------------------------------------------------------------- factory
 
 
-def pick_provider(cfg) -> SearchProvider:
+def pick_provider(cfg: WebSearchConfig) -> SearchProvider:
     """Resolve a SearchProvider from a WebSearchConfig.
 
     Auto mode (`provider == ""`):

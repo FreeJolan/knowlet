@@ -12,14 +12,15 @@ Steps:
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Any
 
 from knowlet.core.drafts import DraftStore
 from knowlet.core.llm import LLMClient
-from knowlet.core.mining.extractor import ExtractionResult, extract_one
+from knowlet.core.mining.extractor import extract_one
 from knowlet.core.mining.sources import SourceItem, fetch_source
 from knowlet.core.mining.task import MiningTask
 from knowlet.core.vault import Vault
@@ -37,7 +38,7 @@ class RunReport:
     skipped_empty: int = 0
     errors: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
             "started_at": self.started_at,
@@ -101,7 +102,7 @@ def reset_task_state(
 
     drafts_deleted = 0
     if delete_drafts:
-        for d in drafts.list():
+        for d in drafts.all_drafts():
             if d.task_id == task_id:
                 drafts.delete(d.id)
                 drafts_deleted += 1
@@ -153,7 +154,7 @@ def run_task(
     for spec in task.sources:
         try:
             fetched = fetch_source(spec)
-        except Exception as exc:  # noqa: BLE001 — boundary
+        except Exception as exc:
             report.errors.append(f"fetch {spec.type}:{spec.url}: {type(exc).__name__}: {exc}")
             continue
         items.extend(fetched)

@@ -67,12 +67,7 @@ class ErrorEvent:
 
 
 ChatEvent = (
-    ToolCallEvent
-    | ToolResultEvent
-    | ReplyChunkEvent
-    | ReplyDoneEvent
-    | TurnDoneEvent
-    | ErrorEvent
+    ToolCallEvent | ToolResultEvent | ReplyChunkEvent | ReplyDoneEvent | TurnDoneEvent | ErrorEvent
 )
 
 

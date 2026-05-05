@@ -115,7 +115,9 @@ def config_set(
         else:
             coerced = value
     except ValueError as exc:
-        err_console.print(f"[red]value {value!r} not convertible to {field_type.__name__}: {exc}[/red]")
+        err_console.print(
+            f"[red]value {value!r} not convertible to {field_type.__name__}: {exc}[/red]"
+        )
         raise typer.Exit(code=2) from exc
 
     setattr(section, field, coerced)

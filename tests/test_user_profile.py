@@ -138,8 +138,12 @@ def test_get_user_profile_tool_when_missing(tmp_path: Path):
     runtime, _ = bootstrap_chat(v, cfg)
     try:
         ctx = ToolContext(
-            vault=v, index=runtime.index, config=cfg,
-            cards=runtime.ctx.cards, tasks=runtime.ctx.tasks, drafts=runtime.ctx.drafts,
+            vault=v,
+            index=runtime.index,
+            config=cfg,
+            cards=runtime.ctx.cards,
+            tasks=runtime.ctx.tasks,
+            drafts=runtime.ctx.drafts,
         )
         res = runtime.registry.dispatch("get_user_profile", {}, ctx)
         assert res["exists"] is False
@@ -154,8 +158,12 @@ def test_get_user_profile_tool_when_present(tmp_path: Path):
     runtime, _ = bootstrap_chat(v, cfg)
     try:
         ctx = ToolContext(
-            vault=v, index=runtime.index, config=cfg,
-            cards=runtime.ctx.cards, tasks=runtime.ctx.tasks, drafts=runtime.ctx.drafts,
+            vault=v,
+            index=runtime.index,
+            config=cfg,
+            cards=runtime.ctx.cards,
+            tasks=runtime.ctx.tasks,
+            drafts=runtime.ctx.drafts,
         )
         res = runtime.registry.dispatch("get_user_profile", {}, ctx)
         assert res["exists"] is True

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.table import Table
@@ -13,6 +13,7 @@ from knowlet.cli._common import (
     load_config_or_default,
     resolve_vault_or_die,
 )
+from knowlet.core.mining.runner import RunReport
 
 app = typer.Typer(help="Knowledge-mining tasks (scenario B).", no_args_is_help=True)
 
@@ -36,8 +37,10 @@ def mining_list() -> None:
     table.add_column("on?", style="dim")
     for t in tasks:
         sched = (
-            t.schedule.every and f"every {t.schedule.every}"
-        ) or (t.schedule.cron and f"cron {t.schedule.cron}") or "—"
+            (t.schedule.every and f"every {t.schedule.every}")
+            or (t.schedule.cron and f"cron {t.schedule.cron}")
+            or "—"
+        )
         srcs = ", ".join(s.url[:40] + ("…" if len(s.url) > 40 else "") for s in t.sources)
         table.add_row(t.id[:8] + "…", t.name, sched, srcs, "yes" if t.enabled else "no")
     console.print(table)
@@ -47,32 +50,30 @@ def mining_list() -> None:
 def mining_add(
     name: Annotated[str, typer.Option("--name", help="Human-readable task name.")],
     rss: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--rss", help="RSS / Atom feed URL (repeatable via comma)."),
     ] = None,
     url: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--url", help="Plain URL fetch (repeatable via comma)."),
     ] = None,
     every: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--every",
             help="Interval: '30m' / '1h' / '6h' / '1d'. Use --cron for cron expressions.",
         ),
     ] = None,
     cron: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--cron", help="5-field cron expression (e.g. '0 9 * * *')."),
     ] = None,
     prompt: Annotated[
-        Optional[str],
-        typer.Option(
-            "--prompt", help="Extraction guidance for the LLM."
-        ),
+        str | None,
+        typer.Option("--prompt", help="Extraction guidance for the LLM."),
     ] = None,
     output_language: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--output-language",
             help="'en' | 'zh' | 'none' (skip translation). "
@@ -171,7 +172,7 @@ def mining_edit(
         err_console.print(f"[red]task not found:[/red] {task_id}")
         raise typer.Exit(code=1)
     editor = os.environ.get("EDITOR") or "vi"
-    subprocess.run([editor, str(task.path)], check=True)
+    subprocess.run([editor, str(task.path)], check=True)  # noqa: S603 — editor is the user's own $EDITOR
     console.print(f"[green]edited[/green] → {task.path}")
 
 
@@ -194,9 +195,10 @@ def mining_remove(
 def mining_run(
     task_id: Annotated[str, typer.Argument(help="Task id (or 8-char prefix).")],
     limit: Annotated[
-        Optional[int],
+        int | None,
         typer.Option(
-            "--limit", "-n",
+            "--limit",
+            "-n",
             help="Cap the number of new items processed this run (useful for quick verification).",
         ),
     ] = None,
@@ -256,9 +258,7 @@ def mining_run_all() -> None:
     llm = LLMClient(cfg.llm)
     for t in tasks:
         console.print(f"[bold]running[/bold] {t.name} ({t.id[:8]}…)")
-        report = run_task(
-            t, vault, llm, default_output_language=cfg.general.language
-        )
+        report = run_task(t, vault, llm, default_output_language=cfg.general.language)
         _render_run_report(report)
 
 
@@ -280,14 +280,16 @@ def _run_one_task(task_id: str, limit: int | None = None) -> None:
     llm = LLMClient(cfg.llm)
     console.print(f"[bold]running[/bold] {task.name} ({task.id[:8]}…)")
     report = run_task(
-        task, vault, llm,
+        task,
+        vault,
+        llm,
         default_output_language=cfg.general.language,
         max_items=limit,
     )
     _render_run_report(report)
 
 
-def _render_run_report(report) -> None:
+def _render_run_report(report: RunReport) -> None:
     line = (
         f"  fetched={report.fetched}  new={report.new_items}  "
         f"drafts={report.drafts_created}  skipped_empty={report.skipped_empty}"

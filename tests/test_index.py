@@ -69,13 +69,17 @@ def test_index_dedup_on_unchanged_content(tmp_path: Path):
     idx.upsert_note(n, chunk_size=200, chunk_overlap=40)
 
     # Count chunks
-    before = idx.connect().execute(
-        "SELECT COUNT(*) AS c FROM chunks WHERE note_id = ?", (n.id,)
-    ).fetchone()["c"]
+    before = (
+        idx.connect()
+        .execute("SELECT COUNT(*) AS c FROM chunks WHERE note_id = ?", (n.id,))
+        .fetchone()["c"]
+    )
     idx.upsert_note(n, chunk_size=200, chunk_overlap=40)  # idempotent
-    after = idx.connect().execute(
-        "SELECT COUNT(*) AS c FROM chunks WHERE note_id = ?", (n.id,)
-    ).fetchone()["c"]
+    after = (
+        idx.connect()
+        .execute("SELECT COUNT(*) AS c FROM chunks WHERE note_id = ?", (n.id,))
+        .fetchone()["c"]
+    )
     assert before == after
     idx.close()
 
@@ -137,10 +141,7 @@ def test_concurrent_upserts_from_many_threads(tmp_path: Path):
     idx = Index(vault.db_path, DummyBackend(dim=16))
     idx.connect()  # ensure migration has run before threads pile in
 
-    notes = [
-        Note(id=new_id(), title=f"note-{i}", body=f"body number {i} " * 20)
-        for i in range(20)
-    ]
+    notes = [Note(id=new_id(), title=f"note-{i}", body=f"body number {i} " * 20) for i in range(20)]
     for n in notes:
         vault.write_note(n)
 

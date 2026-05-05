@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 # ADR-0014 §3.3: 5 default; user can override per-session via the scope picker
 # advanced-settings entry (M7.4.1+) or persist via vault config.
@@ -124,7 +124,7 @@ class QuizSession:
     cards_created: int = 0
     session_score: int = 0  # 0..100
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -133,8 +133,8 @@ class LLMLike(Protocol):
 
     def chat(
         self,
-        messages: list[dict],
-        tools: list[dict] | None = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> object:  # AssistantMessage; we read .content
@@ -147,7 +147,7 @@ class LLMLike(Protocol):
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 
-def _parse_strict_json(text: str) -> dict:
+def _parse_strict_json(text: str) -> dict[str, Any]:
     """Tolerate the LLM's occasional ```json fence or leading prose. We
     asked for strict JSON; this is the safety net so a single stray
     markdown char doesn't tank the whole quiz."""
@@ -156,12 +156,15 @@ def _parse_strict_json(text: str) -> dict:
         text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
         text = re.sub(r"```$", "", text).strip()
     try:
-        return json.loads(text)
+        result: Any = json.loads(text)
     except json.JSONDecodeError:
         m = _JSON_BLOCK.search(text)
         if m is None:
             raise
-        return json.loads(m.group(0))
+        result = json.loads(m.group(0))
+    if not isinstance(result, dict):
+        raise ValueError(f"_parse_strict_json: expected JSON object, got {type(result).__name__}")
+    return result
 
 
 def _format_notes_block(notes: list[tuple[str, str, str]]) -> str:
@@ -170,12 +173,7 @@ def _format_notes_block(notes: list[tuple[str, str, str]]) -> str:
     most one-or-multi-Note quizzes will fit comfortably."""
     parts = []
     for note_id, title, body in notes:
-        parts.append(
-            f"[[note id={note_id}]]\n"
-            f"# {title}\n"
-            f"{body}\n"
-            f"[[/note]]"
-        )
+        parts.append(f"[[note id={note_id}]]\n# {title}\n{body}\n[[/note]]")
     return "\n\n".join(parts)
 
 
@@ -237,7 +235,7 @@ def generate_quiz(
             )
         )
     if not out:
-        raise ValueError(f"generate_quiz: parsed 0 valid questions from LLM output")
+        raise ValueError("generate_quiz: parsed 0 valid questions from LLM output")
     return out
 
 
@@ -271,7 +269,7 @@ def grade_answer(
             max_tokens=600,
             temperature=0.1,
         )
-    except Exception as exc:  # noqa: BLE001 — boundary
+    except Exception as exc:
         return PASS_QUESTION_SCORE, f"(grading failed: {exc})", []
     raw = (getattr(msg, "content", "") or "").strip()
     if not raw:
@@ -282,7 +280,7 @@ def grade_answer(
         return PASS_QUESTION_SCORE, f"(grading failed: malformed JSON: {raw[:120]!r})", []
     score_raw = payload.get("score")
     try:
-        score = int(score_raw)
+        score = int(score_raw) if score_raw is not None else PASS_QUESTION_SCORE
     except (TypeError, ValueError):
         score = PASS_QUESTION_SCORE
     score = max(MIN_QUESTION_SCORE, min(MAX_QUESTION_SCORE, score))
@@ -314,10 +312,6 @@ def aggregate_score(session: QuizSession) -> None:
         return
     total = sum(int(q.ai_score or 0) for q in questions)
     session.session_score = round((total / (n * MAX_QUESTION_SCORE)) * 100)
-    session.n_correct = sum(
-        1 for q in questions if (q.ai_score or 0) >= PASS_QUESTION_SCORE
-    )
+    session.n_correct = sum(1 for q in questions if (q.ai_score or 0) >= PASS_QUESTION_SCORE)
     session.n_disagreement = sum(1 for q in questions if q.user_disagrees)
-    session.cards_created = sum(
-        1 for q in questions if q.card_id_after_reflux
-    )
+    session.cards_created = sum(1 for q in questions if q.card_id_after_reflux)

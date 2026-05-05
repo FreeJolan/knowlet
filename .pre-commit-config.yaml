@@ -1,0 +1,36 @@
+# Pre-commit hooks per ADR-0020 §Layer 3.
+# Install with: `uv run pre-commit install`
+# Skip on a one-off commit (rare): `git commit --no-verify` (avoid).
+#
+# Ordering: ruff first (cheap, also formats), then mypy (slower), then pytest
+# (slowest). A failure short-circuits, so this minimizes wasted time.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff lint
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: mypy
+        name: mypy strict
+        entry: uv run mypy knowlet
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: pytest-fast
+        name: pytest -x (fast subset)
+        entry: uv run pytest -x -q -m "not slow"
+        language: system
+        types: [python]
+        pass_filenames: false

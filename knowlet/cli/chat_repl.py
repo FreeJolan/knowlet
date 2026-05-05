@@ -8,7 +8,12 @@ and the sediment workflow all live here.
 from __future__ import annotations
 
 import json
-from typing import Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from knowlet.config import KnowletConfig
+    from knowlet.core.vault import Vault
 
 import typer
 from rich.markdown import Markdown
@@ -25,7 +30,11 @@ from knowlet.core.i18n import t
 from knowlet.core.index import Index
 
 
-def run_chat(*, save_after: bool, ensure_ready) -> None:
+def run_chat(
+    *,
+    save_after: bool,
+    ensure_ready: Callable[[], tuple[Vault, KnowletConfig]],
+) -> None:
     """Inner chat entry. `ensure_ready` is the bootstrap closure from main —
     we accept it as a callable to avoid an import cycle with the setup wizard.
     """
@@ -44,9 +53,7 @@ def run_chat(*, save_after: bool, ensure_ready) -> None:
         raise typer.Exit(code=2) from exc
 
     if report.pruned_conversations:
-        console.print(
-            f"[dim]pruned {report.pruned_conversations} old conversation log(s)[/dim]"
-        )
+        console.print(f"[dim]pruned {report.pruned_conversations} old conversation log(s)[/dim]")
 
     console.print(
         Panel.fit(
@@ -79,7 +86,7 @@ def run_chat(*, save_after: bool, ensure_ready) -> None:
 
             try:
                 _stream_turn_to_console(runtime, user_text)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 err_console.print(f"[red]LLM error:[/red] {exc}")
                 continue
     finally:
@@ -116,9 +123,7 @@ def _handle_slash(text: str, runtime: Any) -> tuple[bool, bool]:
         return True, False
     if name == "ls":
         recent = "--recent" in args or "-r" in args
-        rows = runtime.index.list_notes(
-            limit=20, order="updated_at" if recent else "created_at"
-        )
+        rows = runtime.index.list_notes(limit=20, order="updated_at" if recent else "created_at")
         render_notes_table(rows, recent=recent)
         return True, False
     if name == "reindex":
@@ -229,7 +234,7 @@ def _handle_slash(text: str, runtime: Any) -> tuple[bool, bool]:
     if name == "drafts":
         sub = args[0] if args else "list"
         if sub == "list":
-            drafts = runtime.ctx.drafts.list()
+            drafts = runtime.ctx.drafts.all_drafts()
             if not drafts:
                 console.print("[dim]inbox empty[/dim]")
             else:
@@ -298,7 +303,7 @@ def _handle_slash(text: str, runtime: Any) -> tuple[bool, bool]:
         elif sub == "new":
             console.print(
                 "[yellow]inside chat, ask me to create the card "
-                "(e.g. \"add a card: front=… back=…\") or run "
+                '(e.g. "add a card: front=… back=…") or run '
                 "`knowlet cards new` from a separate shell.[/yellow]"
             )
         else:
@@ -313,18 +318,14 @@ def _handle_slash(text: str, runtime: Any) -> tuple[bool, bool]:
         if sub == "show":
             profile = read_profile(runtime.vault.profile_path)
             if profile is None:
-                console.print(
-                    "[dim]no profile yet — `:user edit` to create one.[/dim]"
-                )
+                console.print("[dim]no profile yet — `:user edit` to create one.[/dim]")
             else:
-                console.print(
-                    Panel(Markdown(profile.body), title=str(runtime.vault.profile_path))
-                )
+                console.print(Panel(Markdown(profile.body), title=str(runtime.vault.profile_path)))
                 console.print(f"[dim]updated_at: {profile.updated_at}[/dim]")
         elif sub == "edit":
             try:
                 profile = edit_profile_in_editor(runtime.vault.profile_path)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 err_console.print(f"[red]editor failed:[/red] {exc}")
                 return True, False
             runtime.user_profile = profile
@@ -335,9 +336,7 @@ def _handle_slash(text: str, runtime: Any) -> tuple[bool, bool]:
                 runtime.session.history[0]["content"] = new_system
             console.print(f"[green]profile saved[/green] → {profile.path}")
         else:
-            console.print(
-                f"[yellow]unknown :user subcommand: {sub}  (use show | edit)[/yellow]"
-            )
+            console.print(f"[yellow]unknown :user subcommand: {sub}  (use show | edit)[/yellow]")
         return True, False
 
     console.print(f"[yellow]unknown slash command: :{name}  (try :help)[/yellow]")
@@ -381,13 +380,9 @@ def _stream_turn_to_console(runtime: Any, user_text: str) -> None:
             console.print(f"[dim]· {ev.name}({args_preview})[/dim]")
         elif isinstance(ev, ToolResultEvent):
             if isinstance(ev.payload, dict) and "error" in ev.payload:
-                console.print(
-                    f"[dim]  → {ev.name} error: {ev.payload['error']}[/dim]"
-                )
+                console.print(f"[dim]  → {ev.name} error: {ev.payload['error']}[/dim]")
             else:
-                count = (
-                    ev.payload.get("count") if isinstance(ev.payload, dict) else None
-                )
+                count = ev.payload.get("count") if isinstance(ev.payload, dict) else None
                 tail = f" ({count} hits)" if count is not None else ""
                 console.print(f"[dim]  → {ev.name}{tail}[/dim]")
         elif isinstance(ev, TurnDoneEvent):
@@ -403,9 +398,7 @@ def _stream_turn_to_console(runtime: Any, user_text: str) -> None:
 
 
 def _print_help() -> None:
-    console.print(
-        Panel.fit(t("slash.help.body"), title=t("slash.help.title"))
-    )
+    console.print(Panel.fit(t("slash.help.body"), title=t("slash.help.title")))
 
 
 def _do_sediment(runtime: Any, quiet_skip: bool = False) -> None:
@@ -422,16 +415,12 @@ def _do_sediment(runtime: Any, quiet_skip: bool = False) -> None:
     console.print("[dim]drafting Note from conversation…[/dim]")
     try:
         draft = draft_from_conversation(runtime.llm, runtime.session.history)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         err_console.print(f"[red]draft failed:[/red] {exc}")
         return
 
     while True:
-        preview = (
-            f"# {draft.title}\n\n"
-            f"_tags: {', '.join(draft.tags) or '—'}_\n\n"
-            f"{draft.body}"
-        )
+        preview = f"# {draft.title}\n\n_tags: {', '.join(draft.tags) or '—'}_\n\n{draft.body}"
         console.print(Panel(Markdown(preview), title="draft"))
         choice = Prompt.ask(
             "save? [y]es / [n]o / [e]dit",
@@ -444,7 +433,7 @@ def _do_sediment(runtime: Any, quiet_skip: bool = False) -> None:
         if choice == "e":
             try:
                 draft = open_in_editor(draft)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 err_console.print(f"[red]editor failed:[/red] {exc}")
                 return
             continue

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.markdown import Markdown
@@ -20,7 +20,7 @@ def cards_new(
     front: Annotated[str, typer.Option("--front", "-f", help="Card front (cue).")],
     back: Annotated[str, typer.Option("--back", "-b", help="Card back (answer).")],
     tags: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--tags", "-t", help="Comma-separated tags."),
     ] = None,
     card_type: Annotated[
@@ -35,9 +35,7 @@ def cards_new(
 
     vault = resolve_vault_or_die()
     store = CardStore(vault.cards_dir)
-    parsed_tags = (
-        [t.strip() for t in tags.split(",") if t.strip()] if tags else []
-    )
+    parsed_tags = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
     card = Card(
         type=card_type,
         front=front,
@@ -132,9 +130,7 @@ def run_cards_review(limit: int = 20) -> None:
             return
         schedule_next(card, int(rating))
         store.save(card)
-        console.print(
-            f"[dim]next due: {parse_due(card).strftime('%Y-%m-%d %H:%M')}[/dim]"
-        )
+        console.print(f"[dim]next due: {parse_due(card).strftime('%Y-%m-%d %H:%M')}[/dim]")
     console.print("\n[green]done[/green]")
 
 

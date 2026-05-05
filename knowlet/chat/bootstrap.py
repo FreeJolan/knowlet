@@ -41,8 +41,8 @@ class ChatRuntime:
     registry: Registry
     ctx: ToolContext
     conversations: ConversationStore  # the multi-session repo (M6.4)
-    session: ChatSession              # active in-memory session
-    active_conversation: Conversation # currently-loaded persisted record
+    session: ChatSession  # active in-memory session
+    active_conversation: Conversation  # currently-loaded persisted record
     user_profile: UserProfile | None = None
 
     def close(self) -> None:
@@ -150,7 +150,7 @@ def bootstrap_chat(
         from knowlet.core.quiz_store import QuizStore
 
         QuizStore(vault.state_dir).archive_aged()
-    except Exception:  # noqa: BLE001 — boundary; aging is non-critical
+    except Exception:  # noqa: S110 — best-effort housekeeping; never block bootstrap on it
         pass
 
     profile = read_profile(vault.profile_path)
@@ -165,12 +165,14 @@ def bootstrap_chat(
     tasks = TaskStore(vault.tasks_dir)
     drafts = DraftStore(vault.drafts_dir)
     ctx = ToolContext(
-        vault=vault, index=idx, config=cfg,
-        cards=cards, tasks=tasks, drafts=drafts,
+        vault=vault,
+        index=idx,
+        config=cfg,
+        cards=cards,
+        tasks=tasks,
+        drafts=drafts,
     )
-    session = ChatSession(
-        llm=llm, registry=registry, ctx=ctx, system_prompt=system_prompt
-    )
+    session = ChatSession(llm=llm, registry=registry, ctx=ctx, system_prompt=system_prompt)
     conversations = ConversationStore(vault.conversations_dir)
 
     # Resume the most recent meaningful conversation (M6.4): a user closing

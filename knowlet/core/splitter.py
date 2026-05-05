@@ -30,7 +30,6 @@ def chunk_text(text: str, size: int = 500, overlap: int = 100) -> list[Chunk]:
         return [Chunk(position=0, text=text)]
 
     chunks: list[Chunk] = []
-    step = size - overlap
     pos = 0
     idx = 0
     while pos < len(text):

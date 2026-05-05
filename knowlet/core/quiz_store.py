@@ -13,10 +13,9 @@ the user learned something specific, worth keeping live).
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Iterator
+from typing import Any
 
 from knowlet.core.quiz import QuizQuestion, QuizSession
 
@@ -71,9 +70,7 @@ class QuizStore:
         rows: list[QuizSession] = []
         for p in self.quizzes_dir.glob("*.json"):
             try:
-                rows.append(
-                    _session_from_json(json.loads(p.read_text(encoding="utf-8")))
-                )
+                rows.append(_session_from_json(json.loads(p.read_text(encoding="utf-8"))))
             except (json.JSONDecodeError, KeyError):
                 continue
         rows.sort(key=lambda s: s.started_at, reverse=True)
@@ -122,7 +119,7 @@ class QuizStore:
         return moved
 
 
-def _session_from_json(payload: dict) -> QuizSession:
+def _session_from_json(payload: dict[str, Any]) -> QuizSession:
     """Inverse of `QuizSession.to_dict()`. Tolerates older JSON shapes
     by falling back to dataclass defaults for absent fields."""
     questions = [

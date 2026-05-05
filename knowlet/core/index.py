@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import struct
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any
 
 import numpy as np
 import sqlite_vec
@@ -72,7 +74,7 @@ class Index:
     # ------------------------------------------------------------------ lifecycle
 
     def connect(self) -> sqlite3.Connection:
-        conn = getattr(self._tls, "conn", None)
+        conn: sqlite3.Connection | None = getattr(self._tls, "conn", None)
         if conn is not None:
             return conn
 
@@ -106,10 +108,8 @@ class Index:
     def close(self) -> None:
         with self._conns_lock:
             for c in self._conns:
-                try:
+                with contextlib.suppress(sqlite3.Error):
                     c.close()
-                except sqlite3.Error:
-                    pass
             self._conns.clear()
         self._tls = threading.local()
         self._migrated = False
@@ -142,9 +142,7 @@ class Index:
             )
 
         # Existing schema — verify embedding dim matches.
-        dim_row = cur.execute(
-            "SELECT value FROM meta WHERE key = 'embedding_dim'"
-        ).fetchone()
+        dim_row = cur.execute("SELECT value FROM meta WHERE key = 'embedding_dim'").fetchone()
         if dim_row is not None:
             stored_dim = int(dim_row["value"])
             if stored_dim != self.embedding.dim:
@@ -158,6 +156,7 @@ class Index:
     def _create_v1(self, conn: sqlite3.Connection) -> None:
         dim = self.embedding.dim
         tok = self._tokenizer or "unicode61"
+        # `tok` and `dim` come from pinned constants/config, not user input.
         conn.executescript(
             f"""
             CREATE TABLE notes (
@@ -203,7 +202,7 @@ class Index:
                 chunk_id INTEGER PRIMARY KEY,
                 embedding FLOAT[{dim}]
             );
-            """
+            """  # noqa: S608
         )
 
     # ------------------------------------------------------------------ upsert
@@ -216,9 +215,7 @@ class Index:
     ) -> None:
         conn = self.connect()
         cur = conn.cursor()
-        existing = cur.execute(
-            "SELECT content_hash FROM notes WHERE id = ?", (note.id,)
-        ).fetchone()
+        existing = cur.execute("SELECT content_hash FROM notes WHERE id = ?", (note.id,)).fetchone()
         if existing and existing["content_hash"] == note.content_hash:
             return  # unchanged, skip reindex
 
@@ -254,10 +251,11 @@ class Index:
                 "INSERT INTO chunks(note_id, position, text) VALUES (?, ?, ?)",
                 (note.id, c.position, c.text),
             )
+            assert cur.lastrowid is not None
             chunk_ids.append(int(cur.lastrowid))
 
         embeddings = self.embedding.embed_documents([c.text for c in chunks])
-        for cid, vec in zip(chunk_ids, embeddings):
+        for cid, vec in zip(chunk_ids, embeddings, strict=False):
             cur.execute(
                 "INSERT INTO chunks_vec(chunk_id, embedding) VALUES (?, ?)",
                 (cid, _vec_to_blob(vec)),
@@ -268,13 +266,11 @@ class Index:
         conn = self.connect()
         cur = conn.cursor()
         # Collect chunk ids first because vec table is independent (no FK).
-        chunk_rows = cur.execute(
-            "SELECT id FROM chunks WHERE note_id = ?", (note_id,)
-        ).fetchall()
+        chunk_rows = cur.execute("SELECT id FROM chunks WHERE note_id = ?", (note_id,)).fetchall()
         if chunk_rows:
             ids = [int(r["id"]) for r in chunk_rows]
             placeholders = ",".join("?" * len(ids))
-            cur.execute(f"DELETE FROM chunks_vec WHERE chunk_id IN ({placeholders})", ids)
+            cur.execute(f"DELETE FROM chunks_vec WHERE chunk_id IN ({placeholders})", ids)  # noqa: S608 — placeholders are only `?` repeats, ids are bound parameters
         cur.execute("DELETE FROM notes WHERE id = ?", (note_id,))  # cascades to chunks
         conn.commit()
 
@@ -283,7 +279,7 @@ class Index:
         rows = conn.execute("SELECT id FROM notes").fetchall()
         return {r["id"] for r in rows}
 
-    def get_note_meta(self, note_id: str) -> dict | None:
+    def get_note_meta(self, note_id: str) -> dict[str, Any] | None:
         conn = self.connect()
         row = conn.execute(
             "SELECT id, title, path, tags, created_at, updated_at FROM notes WHERE id = ?",
@@ -300,10 +296,13 @@ class Index:
             "updated_at": row["updated_at"],
         }
 
-    def list_notes(self, limit: int | None = None, order: str = "updated_at") -> list[dict]:
+    def list_notes(
+        self, limit: int | None = None, order: str = "updated_at"
+    ) -> list[dict[str, Any]]:
         conn = self.connect()
         col = "updated_at" if order == "updated_at" else "created_at"
-        sql = f"SELECT id, title, path, tags, created_at, updated_at FROM notes ORDER BY {col} DESC"
+        # `col` is a closed set of ORDER BY columns; `limit` is coerced to int.
+        sql = f"SELECT id, title, path, tags, created_at, updated_at FROM notes ORDER BY {col} DESC"  # noqa: S608
         if limit is not None:
             sql += f" LIMIT {int(limit)}"
         rows = conn.execute(sql).fetchall()
@@ -456,13 +455,15 @@ def reindex_vault(
     for path in note_paths:
         try:
             note = Note.from_file(path)
-        except Exception:
+        except Exception:  # noqa: S112 — skip malformed notes; reindex is best-effort
             continue
         seen.add(note.id)
         before = idx.get_note_meta(note.id)
         idx.upsert_note(note, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         after = idx.get_note_meta(note.id)
-        if before is None or (after is not None and after["updated_at"] != (before or {}).get("updated_at")):
+        if before is None or (
+            after is not None and after["updated_at"] != (before or {}).get("updated_at")
+        ):
             changed += 1
         else:
             unchanged += 1

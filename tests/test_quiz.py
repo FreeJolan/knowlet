@@ -17,7 +17,6 @@ from knowlet.core.quiz import (
     grade_answer,
 )
 
-
 # -------------------------------------------------- ADR-0014 constants
 
 
@@ -187,7 +186,7 @@ def test_grade_answer_degrades_on_malformed_json():
     """Malformed grading output → score=3 + reason flags the failure.
     Lets the quiz finish rather than crashing mid-loop."""
     llm = _StubLLM("not even close to json")
-    score, reason, missing = grade_answer(llm, _q(), "ans")
+    score, reason, _missing = grade_answer(llm, _q(), "ans")
     assert score == PASS_QUESTION_SCORE
     assert "grading failed" in reason.lower()
 
@@ -197,7 +196,7 @@ def test_grade_answer_degrades_on_llm_exception():
         def chat(self, *a, **kw):
             raise RuntimeError("boom")
 
-    score, reason, missing = grade_answer(BlowsUp(), _q(), "ans")
+    score, reason, _missing = grade_answer(BlowsUp(), _q(), "ans")
     assert score == PASS_QUESTION_SCORE
     assert "boom" in reason
 
