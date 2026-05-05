@@ -11,7 +11,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, FileText, Folder, Plus } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import {
   Tree,
   type NodeApi,
@@ -51,7 +51,6 @@ export interface FileTreeProps {
 
 export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeProps) {
   const qc = useQueryClient();
-  const [containerRef, size] = useElementSize();
   const treeRef = useRef<TreeApi<TreeNodeData> | null>(null);
 
   const tree = useQuery({
@@ -206,7 +205,7 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
           <Plus className="size-4" />
         </Button>
       </div>
-      <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-hidden">
         {data.length === 0 ? (
           <div className="px-3 py-6 text-sm text-muted-foreground">
             Empty vault. Use <kbd className="rounded bg-muted px-1">+</kbd> above
@@ -214,14 +213,15 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
             .
           </div>
         ) : (
-          size.width > 0 &&
-          size.height > 0 && (
-            <Tree<TreeNodeData>
+          // Pass percentage strings so react-arborist sizes itself against
+          // its parent — no ResizeObserver / ref dance needed. The parent
+          // is `flex-1` inside a `flex-col` Panel, so it has finite px space.
+          <Tree<TreeNodeData>
               ref={treeRef}
               data={data}
               openByDefault={true}
-              width={size.width}
-              height={size.height}
+              width="100%"
+              height={5000}
               rowHeight={28}
               indent={16}
               onRename={onRename}
@@ -264,7 +264,6 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
                 />
               )}
             </Tree>
-          )
         )}
       </div>
     </div>
@@ -371,29 +370,3 @@ function Row({
   );
 }
 
-// ----- size hook -----
-
-function useElementSize(): [
-  React.RefObject<HTMLDivElement | null>,
-  { width: number; height: number },
-] {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const [size, setSize] = useState({ width: 0, height: 0 });
-  useEffect(() => {
-    if (!ref.current) return;
-    // Read size synchronously on mount in case ResizeObserver doesn't fire
-    // immediately (some Safari builds).
-    const r = ref.current.getBoundingClientRect();
-    setSize({ width: r.width, height: r.height });
-    const obs = new ResizeObserver((entries) => {
-      const e = entries[0];
-      if (e) {
-        const { width, height } = e.contentRect;
-        setSize({ width, height });
-      }
-    });
-    obs.observe(ref.current);
-    return () => obs.disconnect();
-  }, []);
-  return [ref, size];
-}
