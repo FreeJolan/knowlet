@@ -40,7 +40,15 @@ import {
 } from "@/components/ui/context-menu";
 import { QK } from "@/lib/queryClient";
 
-import { toArborist, type TreeNodeData } from "./treeData";
+import {
+  injectPending,
+  PENDING_FOLDER_ID,
+  PENDING_NOTE_ID,
+  toArborist,
+  type TreeNodeData,
+} from "./treeData";
+
+type PendingCreate = { kind: "note" | "folder"; parentPath: string };
 
 export interface FileTreeProps {
   selectedNoteId: string | null;
@@ -61,6 +69,11 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
     (id: string) => (openMap[id] === undefined ? true : openMap[id]),
     [openMap],
   );
+
+  // Inline-create state. When set, the tree gets a phantom row in edit
+  // mode under the named parent. Submit POSTs the real entity and clears
+  // this; Esc / outside-click clears without creating. VS Code-style.
+  const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null);
 
   const tree = useQuery({ queryKey: QK.tree, queryFn: getTree });
 
@@ -94,7 +107,23 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
     mutationFn: ({ title, folder }: { title: string; folder: string }) =>
       createBlankNote({ title, folder }),
     onMutate: startBusy,
-    onSuccess: (note) => onSelectNote(note.id),
+    onSuccess: async (note) => {
+      // Force-open every ancestor folder so the new row is visible.
+      if (note.folder) {
+        setOpenMap((m) => {
+          const next = { ...m };
+          const parts = note.folder.split("/");
+          for (let i = 1; i <= parts.length; i++) {
+            next[`folder:${parts.slice(0, i).join("/")}`] = true;
+          }
+          return next;
+        });
+      }
+      // Wait for the tree refetch to land before selecting, otherwise
+      // arborist tries to select a node it doesn't know yet.
+      await qc.invalidateQueries({ queryKey: QK.tree });
+      onSelectNote(note.id);
+    },
     onSettled: settled,
   });
   const moveNoteM = useMutation({
@@ -171,24 +200,45 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
     }
   };
 
-  const onNewRootFolder = () => {
-    const name = window.prompt(t("menu.rootFolderPrompt"));
-    if (name?.trim()) createFolderM.mutate({ path: name.trim() });
+  // VS Code-style inline create: stage a pending row in the tree instead
+  // of popping a browser prompt. Submit (Enter) hits the backend; Esc or
+  // outside-click cancels.
+  const startCreate = (kind: "note" | "folder", parentPath: string) => {
+    if (parentPath) {
+      // Auto-open the folder so the placeholder is visible.
+      setOpenMap((m) => ({ ...m, [`folder:${parentPath}`]: true }));
+    }
+    setPendingCreate({ kind, parentPath });
   };
-
-  const onNewRootNote = () => {
-    const title = window.prompt(t("menu.newNotePrompt"));
-    if (title?.trim()) createNoteM.mutate({ title: title.trim(), folder: "" });
+  const onNewRootFolder = () => startCreate("folder", "");
+  const onNewRootNote = () => startCreate("note", "");
+  const cancelPending = () => setPendingCreate(null);
+  const commitPending = (rawName: string) => {
+    if (!pendingCreate) return;
+    const trimmed = rawName.trim().replace(/\.md$/i, "");
+    if (!trimmed) {
+      cancelPending();
+      return;
+    }
+    if (pendingCreate.kind === "note") {
+      createNoteM.mutate({ title: trimmed, folder: pendingCreate.parentPath });
+    } else {
+      const path = pendingCreate.parentPath
+        ? `${pendingCreate.parentPath}/${trimmed}`
+        : trimmed;
+      createFolderM.mutate({ path });
+    }
+    setPendingCreate(null);
   };
 
   // Memoize the conversion so arborist's internal open/closed state isn't
   // reset every render. Without this, every click rebuilds the array and
   // arborist re-applies `openByDefault`, undoing the toggle. Must be called
   // before any conditional return so the hook order is stable across renders.
-  const data = useMemo(
-    () => (tree.data ? toArborist(tree.data) : []),
-    [tree.data],
-  );
+  const data = useMemo(() => {
+    const base = tree.data ? toArborist(tree.data) : [];
+    return pendingCreate ? injectPending(base, pendingCreate) : base;
+  }, [tree.data, pendingCreate]);
 
   if (tree.isLoading) {
     return <div className="p-4 text-sm text-muted-foreground">{t("tree.loading")}</div>;
@@ -264,20 +314,10 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
                 {...props}
                 openMap={openMap}
                 setOpenMap={setOpenMap}
-                onCreateChildNote={(parentPath) => {
-                  const title = window.prompt(t("menu.newNotePrompt"));
-                  if (title?.trim()) {
-                    createNoteM.mutate({ title: title.trim(), folder: parentPath });
-                  }
-                }}
-                onCreateChildFolder={(parentPath) => {
-                  const name = window.prompt(t("menu.newFolderPrompt"));
-                  if (name?.trim()) {
-                    createFolderM.mutate({
-                      path: parentPath ? `${parentPath}/${name.trim()}` : name.trim(),
-                    });
-                  }
-                }}
+                onCreateChildNote={(parentPath) => startCreate("note", parentPath)}
+                onCreateChildFolder={(parentPath) => startCreate("folder", parentPath)}
+                onCommitPending={commitPending}
+                onCancelPending={cancelPending}
                 onDeleteFolder={(folderPath, name) => {
                   if (window.confirm(t("menu.deleteFolderConfirm", { name }))) {
                     deleteFolderM.mutate(folderPath);
@@ -309,24 +349,36 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
  */
 function RenameInput({
   initial,
+  placeholder = "",
   onSubmit,
   onCancel,
 }: {
   initial: string;
+  placeholder?: string;
   onSubmit: (v: string) => void;
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.focus();
-    el.select();
+    // Two RAFs: arborist re-clones the row on edit dispatch, which means
+    // a remount of this input. Schedule focus past that remount so the
+    // cursor lands in the second (final) instance, not the first one
+    // that's about to be discarded.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = ref.current;
+        if (!el) return;
+        el.focus();
+        el.select();
+      });
+    });
     // Cancel the edit when the user clicks anywhere outside the input.
     // Listen on `pointerdown` (not click) because Radix's own menu close
     // chain fires after a pointerup on click, by which point we'd already
     // have a stale focus race.
+    const el = ref.current;
+    if (!el) return;
     const onOutside = (e: PointerEvent) => {
       if (e.target instanceof Node && !el.contains(e.target)) onCancel();
     };
@@ -339,8 +391,10 @@ function RenameInput({
       ref={ref}
       type="text"
       defaultValue={initial}
+      placeholder={placeholder}
       data-rename-input="true"
-      className="flex-1 rounded-sm bg-transparent px-1 outline-none ring-1 ring-ring"
+      className="flex-1 rounded-sm border bg-background px-1 text-foreground outline-none ring-1 ring-ring/50 focus:ring-ring"
+      style={{ borderColor: "var(--ring)" }}
       // No onBlur: arborist re-clones nodes on every store update, which
       // causes synthetic blurs mid-edit (focus shuffles between the row
       // wrapper and the input across re-renders). Auto-cancel-on-blur
@@ -369,6 +423,8 @@ interface RowProps extends NodeRendererProps<TreeNodeData> {
   setOpenMap: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   onCreateChildNote: (parentPath: string) => void;
   onCreateChildFolder: (parentPath: string) => void;
+  onCommitPending: (name: string) => void;
+  onCancelPending: () => void;
   onDeleteFolder: (folderPath: string, name: string) => void;
   onDeleteNote: (noteId: string, name: string) => void;
 }
@@ -381,11 +437,16 @@ function Row({
   setOpenMap,
   onCreateChildNote,
   onCreateChildFolder,
+  onCommitPending,
+  onCancelPending,
   onDeleteFolder,
   onDeleteNote,
 }: RowProps) {
   const { t } = useTranslation();
-  const isFolder = node.data.kind === "folder";
+  const isPending =
+    node.id === PENDING_NOTE_ID || node.id === PENDING_FOLDER_ID;
+  const isFolder =
+    node.data.kind === "folder" || node.data.kind === "pending-folder";
   // Read from our controlled openMap; default = open (matches openByDefault).
   const isOpen = openMap[node.id] === undefined ? true : openMap[node.id];
 
@@ -396,6 +457,7 @@ function Row({
   // dragHandle which arborist itself binds events on, so we go one level
   // deeper to avoid stepping on it).
   const handleClick = () => {
+    if (isPending) return;
     if (node.isEditing) return;
     if (isFolder) {
       // Drive both arborist's internal toggle (so it knows to render
@@ -420,9 +482,11 @@ function Row({
       <div
         onClick={handleClick}
         className={`flex h-[calc(100%-2px)] w-full items-center gap-2 rounded-md px-2 text-sm ${
-          node.isSelected
-            ? "bg-accent/40 text-accent-foreground"
-            : "hover:bg-secondary/60"
+          node.isEditing || isPending
+            ? "" // Editing rows: input ring is the focus indicator; no row bg.
+            : node.isSelected
+              ? "bg-secondary text-foreground"
+              : "hover:bg-muted/60"
         }`}
       >
         {/* Chevron is purely visual — the row's onClick handles toggle.
@@ -444,15 +508,29 @@ function Row({
         ) : (
           <FileText className="size-4 shrink-0 text-muted-foreground" />
         )}
-        {node.isEditing ? (
+        {node.isEditing || isPending ? (
           <RenameInput
             initial={node.data.name}
+            placeholder={
+              isPending
+                ? node.data.kind === "pending-note"
+                  ? t("tree.newNote")
+                  : t("tree.newFolder")
+                : ""
+            }
             onSubmit={(v) => {
+              if (isPending) {
+                onCommitPending(v);
+                return;
+              }
               const trimmed = v.trim();
               if (trimmed) node.submit(trimmed);
               else node.reset();
             }}
-            onCancel={() => node.reset()}
+            onCancel={() => {
+              if (isPending) onCancelPending();
+              else node.reset();
+            }}
           />
         ) : (
           <span className="truncate">{node.data.name || t("tree.untitled")}</span>

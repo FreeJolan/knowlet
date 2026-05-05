@@ -23,16 +23,22 @@ try {
     await expectRow(page, "inner");
   });
 
-  await runTest("new folder via toolbar +", async () => {
-    page.once("dialog", (d) => d.accept("scratch"));
+  await runTest("new folder via toolbar (inline)", async () => {
     await page.click('button[aria-label="New folder"]');
-    await page.waitForTimeout(400);
+    const input = page.locator('input[data-rename-input="true"]');
+    await input.waitFor({ state: "visible", timeout: 3000 });
+    await input.fill("scratch");
+    await input.press("Enter");
+    await page.waitForTimeout(500);
     assert(await hasRow(page, "scratch"), "scratch folder appears in tree");
   });
 
-  await runTest("new note via toolbar", async () => {
-    page.once("dialog", (d) => d.accept("zeta"));
+  await runTest("new note via toolbar (inline)", async () => {
     await page.click('button[aria-label="New note"]');
+    const input = page.locator('input[data-rename-input="true"]');
+    await input.waitFor({ state: "visible", timeout: 3000 });
+    await input.fill("zeta");
+    await input.press("Enter");
     await page.waitForTimeout(500);
     assert(await hasRow(page, "zeta"), "zeta note appears in tree");
   });
