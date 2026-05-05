@@ -1,8 +1,9 @@
-"""`knowlet notes` — Note delete / restore (M7.0.1).
+"""`knowlet notes` — Note file ops (delete / restore + Phase 1 A folder ops).
 
 `knowlet ls` (top-level) and the chat REPL `:ls` slash already cover
-listing. This sub-app adds the destructive operations and their inverse,
-both of which need an id and confirmation.
+listing. This sub-app adds the destructive + organizational operations
+that the React UI mirrors over `/api/folders`, `/api/trash`, and
+`/api/notes/{id}/move` (per ADR-0008 CLI/UI parity discipline).
 """
 
 from __future__ import annotations
@@ -130,3 +131,163 @@ def notes_trash() -> None:
             datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M"),
         )
     console.print(table)
+
+
+@app.command("purge")
+def notes_purge(
+    name: Annotated[
+        str,
+        typer.Argument(help="Trashed file name (full basename, e.g. '01HX....md')."),
+    ],
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip the confirmation prompt."),
+    ] = False,
+) -> None:
+    """Permanently delete one entry from `.trash/` (irreversible)."""
+    vault = resolve_vault_or_die()
+    target = vault.trash_dir / name
+    if not target.exists():
+        err_console.print(f"[red]not in .trash/:[/red] {name}")
+        raise typer.Exit(code=1)
+    if not yes:
+        console.print(f"[bold red]permanent delete:[/bold red] {target}")
+        if not Confirm.ask("really purge?", default=False):
+            console.print("[dim]cancelled[/dim]")
+            return
+    vault.purge_trashed(name)
+    console.print(f"[red]purged[/red] {name}")
+
+
+@app.command("mkdir")
+def notes_mkdir(
+    folder: Annotated[
+        str,
+        typer.Argument(help="Forward-slash path under notes/, e.g. 'projects/knowlet'."),
+    ],
+) -> None:
+    """Create a folder under `notes/` (idempotent)."""
+    vault = resolve_vault_or_die()
+    try:
+        target = vault.mkdir_folder(folder)
+    except ValueError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+    console.print(f"[green]created[/green] → {target}")
+
+
+@app.command("mv")
+def notes_mv(
+    note_id: Annotated[str, typer.Argument(help="Note id (or 8-char prefix).")],
+    target_folder: Annotated[
+        str,
+        typer.Argument(help="Target folder under notes/ (empty / '.' = root)."),
+    ] = "",
+) -> None:
+    """Move a single Note to a target folder. Filename (ULID) preserved."""
+    vault = resolve_vault_or_die()
+    cfg = load_config_or_default(vault)
+    idx = make_index(vault, cfg)
+    try:
+        meta = idx.get_note_meta(note_id)
+        if meta is None:
+            for row in idx.list_notes(limit=10000):
+                if row["id"].startswith(note_id):
+                    meta = idx.get_note_meta(row["id"])
+                    break
+        if meta is None:
+            err_console.print(f"[red]note not found:[/red] {note_id}")
+            raise typer.Exit(code=1)
+        path = Path(meta["path"])
+        if not path.is_absolute():
+            path = vault.notes_dir / path.name
+        clean_folder = "" if target_folder in (".", "/") else target_folder
+        try:
+            new_path = vault.move_note(path, clean_folder)
+        except (ValueError, FileExistsError) as exc:
+            err_console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=2) from exc
+        idx.update_note_path(meta["id"], str(new_path))
+        console.print(f"[green]moved[/green] → {new_path}")
+    finally:
+        idx.close()
+
+
+@app.command("mvfolder")
+def notes_mvfolder(
+    src: Annotated[str, typer.Argument(help="Source folder under notes/.")],
+    dst_parent: Annotated[
+        str,
+        typer.Argument(help="Destination parent folder ('.' = root)."),
+    ] = "",
+) -> None:
+    """Move a folder under a different parent. Index paths re-sync."""
+    vault = resolve_vault_or_die()
+    cfg = load_config_or_default(vault)
+    idx = make_index(vault, cfg)
+    try:
+        clean_parent = "" if dst_parent in (".", "/") else dst_parent
+        try:
+            new_path = vault.move_folder(src, clean_parent)
+        except (ValueError, FileNotFoundError, FileExistsError) as exc:
+            err_console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=2) from exc
+        for md in new_path.rglob("*.md"):
+            if md.is_file() and not any(p.startswith(".") for p in md.relative_to(new_path).parts):
+                idx.update_note_path(md.stem, str(md))
+        console.print(f"[green]moved[/green] → {new_path}")
+    finally:
+        idx.close()
+
+
+@app.command("rnfolder")
+def notes_rnfolder(
+    folder: Annotated[str, typer.Argument(help="Existing folder path under notes/.")],
+    new_name: Annotated[str, typer.Argument(help="New basename (no slashes).")],
+) -> None:
+    """Rename a folder in place. Index paths re-sync."""
+    vault = resolve_vault_or_die()
+    cfg = load_config_or_default(vault)
+    idx = make_index(vault, cfg)
+    try:
+        try:
+            new_path = vault.rename_folder(folder, new_name)
+        except (ValueError, FileNotFoundError, FileExistsError) as exc:
+            err_console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=2) from exc
+        for md in new_path.rglob("*.md"):
+            if md.is_file() and not any(p.startswith(".") for p in md.relative_to(new_path).parts):
+                idx.update_note_path(md.stem, str(md))
+        console.print(f"[green]renamed[/green] → {new_path}")
+    finally:
+        idx.close()
+
+
+@app.command("rmfolder")
+def notes_rmfolder(
+    folder: Annotated[str, typer.Argument(help="Folder under notes/ to delete.")],
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip confirmation prompt."),
+    ] = False,
+) -> None:
+    """Delete a folder. All notes inside are soft-deleted to `.trash/`."""
+    vault = resolve_vault_or_die()
+    cfg = load_config_or_default(vault)
+    idx = make_index(vault, cfg)
+    try:
+        if not yes:
+            console.print(f"[bold yellow]about to trash every note under:[/bold yellow] {folder}")
+            if not Confirm.ask("continue?", default=False):
+                console.print("[dim]cancelled[/dim]")
+                return
+        try:
+            trashed = vault.delete_folder(folder)
+        except (ValueError, FileNotFoundError) as exc:
+            err_console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=2) from exc
+        for trashed_path in trashed:
+            idx.delete_note(trashed_path.stem)
+        console.print(f"[yellow]trashed {len(trashed)} note(s) → .trash/[/yellow]")
+    finally:
+        idx.close()

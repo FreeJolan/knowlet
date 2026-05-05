@@ -119,16 +119,168 @@ class Vault:
     def read_note(self, path: Path) -> Note:
         return Note.from_file(path)
 
-    def write_note(self, note: Note) -> Path:
-        """Atomically write a Note. Returns the final path."""
-        self.notes_dir.mkdir(parents=True, exist_ok=True)
-        target = self.notes_dir / note.filename
+    def write_note(self, note: Note, *, folder: str | None = None) -> Path:
+        """Atomically write a Note. Returns the final path.
+
+        Resolution order for the destination folder (under `notes/`):
+          1. Explicit `folder` arg (e.g. "projects/knowlet").
+          2. `note.path` if already set (in-place rewrite preserves location).
+          3. `notes/` root (flat) — the original M0 behavior.
+
+        Filename is always `<id>.md` — moving across folders preserves the
+        ULID, so the index stays stable.
+        """
+        if folder is not None:
+            parent = self._resolve_subpath(folder)
+            parent.mkdir(parents=True, exist_ok=True)
+            target = parent / note.filename
+        elif note.path is not None:
+            target = note.path
+            target.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            self.notes_dir.mkdir(parents=True, exist_ok=True)
+            target = self.notes_dir / note.filename
         note.path = target
         note.updated_at = now_iso()
         tmp = target.with_suffix(target.suffix + ".tmp")
         tmp.write_text(note.to_markdown(), encoding="utf-8")
         tmp.replace(target)
         return target
+
+    # ----------------------------------------------------- folder ops (Phase 1 A)
+
+    def _resolve_subpath(self, rel: str) -> Path:
+        """Resolve a forward-slash relative path under `notes_dir`.
+
+        Rejects path traversal (`..`), absolute paths, dotdirs, and the
+        reserved `_attachments` top-level. Empty / "/" returns notes_dir.
+        Returned path is `.resolve()`d and re-checked to be inside notes_dir.
+        """
+        rel_clean = (rel or "").strip().strip("/")
+        if not rel_clean:
+            return self.notes_dir
+        parts = rel_clean.split("/")
+        for part in parts:
+            if not part or part in (".", ".."):
+                raise ValueError(f"invalid path segment: {part!r}")
+            if part.startswith("."):
+                raise ValueError(f"dotfiles/dotdirs are reserved: {part!r}")
+            if "\\" in part or "/" in part:
+                raise ValueError(f"path segment contains slash: {part!r}")
+        if parts[0] == "_attachments":
+            raise ValueError("_attachments/ is reserved for image-paste")
+        target = self.notes_dir.joinpath(*parts).resolve()
+        notes_root = self.notes_dir.resolve()
+        try:
+            target.relative_to(notes_root)
+        except ValueError as exc:
+            raise ValueError(f"path escapes notes_dir: {rel!r}") from exc
+        return target
+
+    def mkdir_folder(self, folder: str) -> Path:
+        """Create a folder under `notes/` (idempotent). Returns its path."""
+        target = self._resolve_subpath(folder)
+        if target == self.notes_dir:
+            return target
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def iter_folders(self) -> Iterator[Path]:
+        """Yield every folder under `notes/` (recursive). Skips dotdirs and
+        the `_attachments/` reserved tree."""
+        if not self.notes_dir.exists():
+            return iter(())
+
+        def _ok(p: Path) -> bool:
+            if not p.is_dir():
+                return False
+            rel = p.relative_to(self.notes_dir)
+            if any(part.startswith(".") for part in rel.parts):
+                return False
+            return rel.parts[0] != "_attachments"
+
+        return (p for p in self.notes_dir.rglob("*") if _ok(p))
+
+    def move_note(self, note_path: Path, target_folder: str) -> Path:
+        """Move a note file to `notes/<target_folder>/<filename>`.
+
+        Preserves filename (ULID-based) so the index id stays stable; caller
+        must call `Index.update_note_path` to keep the path column in sync.
+        Idempotent: moving to current folder is a no-op.
+        """
+        if not note_path.exists():
+            raise FileNotFoundError(str(note_path))
+        parent = self._resolve_subpath(target_folder)
+        parent.mkdir(parents=True, exist_ok=True)
+        new_path = parent / note_path.name
+        if new_path.resolve() == note_path.resolve():
+            return note_path
+        if new_path.exists():
+            raise FileExistsError(f"target exists: {new_path}")
+        note_path.rename(new_path)
+        return new_path
+
+    def rename_folder(self, folder: str, new_name: str) -> Path:
+        """Rename a folder in place. `new_name` is the new basename — `/` not
+        allowed. The index needs `update_note_path` for every note inside
+        afterwards (caller handles)."""
+        if "/" in new_name or new_name in ("", ".", "..") or new_name.startswith("."):
+            raise ValueError(f"invalid new folder name: {new_name!r}")
+        if "\\" in new_name:
+            raise ValueError(f"path segment contains slash: {new_name!r}")
+        src_path = self._resolve_subpath(folder)
+        if src_path == self.notes_dir:
+            raise ValueError("cannot rename notes/ root")
+        if not src_path.is_dir():
+            raise FileNotFoundError(f"folder not found: {folder}")
+        new_path = src_path.parent / new_name
+        if new_path.exists():
+            raise FileExistsError(f"target exists: {new_path}")
+        src_path.rename(new_path)
+        return new_path
+
+    def move_folder(self, folder: str, dst_parent: str) -> Path:
+        """Move folder under a different parent. The basename is preserved."""
+        src_path = self._resolve_subpath(folder)
+        if src_path == self.notes_dir:
+            raise ValueError("cannot move notes/ root")
+        if not src_path.is_dir():
+            raise FileNotFoundError(f"folder not found: {folder}")
+        parent = self._resolve_subpath(dst_parent)
+        parent.mkdir(parents=True, exist_ok=True)
+        new_path = parent / src_path.name
+        if new_path.resolve() == src_path.resolve():
+            return src_path
+        # Forbid moving into self or descendants — would orphan everything.
+        try:
+            new_path.resolve().relative_to(src_path.resolve())
+        except ValueError:
+            pass
+        else:
+            raise ValueError(f"cannot move folder into its own descendant: {dst_parent!r}")
+        if new_path.exists():
+            raise FileExistsError(f"target exists: {new_path}")
+        src_path.rename(new_path)
+        return new_path
+
+    def delete_folder(self, folder: str) -> list[Path]:
+        """Trash every note under `folder`, then remove the empty tree.
+
+        Returns the new locations of the trashed notes. Caller is
+        responsible for removing each note from the index by id.
+        """
+        src_path = self._resolve_subpath(folder)
+        if src_path == self.notes_dir:
+            raise ValueError("cannot delete notes/ root")
+        if not src_path.is_dir():
+            raise FileNotFoundError(f"folder not found: {folder}")
+        trashed: list[Path] = []
+        for note_md in src_path.rglob("*.md"):
+            if note_md.is_file():
+                trashed.append(self.trash_note(note_md))
+        # `trash_note` only moved files; remove the now-empty subtree.
+        shutil.rmtree(src_path, ignore_errors=False)
+        return trashed
 
     def backup_note(self, path: Path) -> Path:
         """Copy a Note into backups/ before overwriting/deleting it."""
@@ -178,6 +330,21 @@ class Vault:
         if not self.trash_dir.exists():
             return iter(())
         return (p for p in self.trash_dir.glob("*.md") if p.is_file())
+
+    def purge_trashed(self, name: str) -> Path:
+        """Permanently delete one file from `notes/.trash/`. `name` is the
+        basename only (no slashes — there are no subfolders in trash).
+
+        Returns the deleted path (already gone from disk on success).
+        Raises FileNotFoundError if the entry doesn't exist.
+        """
+        if "/" in name or "\\" in name or name in ("", ".", "..") or name.startswith("."):
+            raise ValueError(f"invalid trash entry name: {name!r}")
+        target = self.trash_dir / name
+        if not target.exists():
+            raise FileNotFoundError(str(target))
+        target.unlink()
+        return target
 
     # ----------------------------------------------------- attachments (M7.0.3)
 

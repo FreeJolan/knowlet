@@ -262,6 +262,16 @@ class Index:
             )
         conn.commit()
 
+    def update_note_path(self, note_id: str, new_path: str) -> None:
+        """Update only the `path` column for a note. Used by move_note /
+        rename_folder where the on-disk location changes but the body and
+        chunks don't, so we skip the (expensive) re-chunk + re-embed.
+        """
+        conn = self.connect()
+        cur = conn.cursor()
+        cur.execute("UPDATE notes SET path = ? WHERE id = ?", (new_path, note_id))
+        conn.commit()
+
     def delete_note(self, note_id: str) -> None:
         conn = self.connect()
         cur = conn.cursor()

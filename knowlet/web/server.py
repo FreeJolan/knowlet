@@ -44,11 +44,12 @@ from knowlet.core.drafts import Draft
 from knowlet.core.events import ErrorEvent, event_to_dict
 from knowlet.core.fsrs_wrap import initial_state, schedule_next
 from knowlet.core.i18n import SUPPORTED_LANGUAGES, all_keys, set_language
-from knowlet.core.index import IndexDimensionMismatchError
+from knowlet.core.index import Index, IndexDimensionMismatchError
 from knowlet.core.llm import ToolCall
 from knowlet.core.mining.runner import reset_task_state, run_task
 from knowlet.core.mining.scheduler import MiningScheduler
 from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
+from knowlet.core.note import Note
 from knowlet.core.quiz import (
     DEFAULT_N_QUESTIONS,
     QuizSession,
@@ -80,7 +81,11 @@ from knowlet.core.user_profile import (
 )
 from knowlet.core.vault import Vault
 
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+# Phase 1 A onwards: the React build under `frontend/dist/` is the served
+# UI. Path is resolved relative to the repo root (server.py → web/ → knowlet/
+# → repo). `knowlet web` mounts it if present; in dev we usually run
+# `bun/npm run dev` separately on :5173 instead and let Vite proxy /api/*.
+FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
 # ----------------------------------------------------------------- request/response models
@@ -160,6 +165,69 @@ class BacklinkRow(BaseModel):
     target: str  # the wikilink target as written
     line: int
     sentence: str
+
+
+# ---------------- Phase 1 A wire schemas (file ops) ----------------
+
+
+class TreeNote(BaseModel):
+    """A note leaf in the file-tree. We surface the minimum the sidebar
+    needs to render + click-through; full body comes via /api/notes/{id}."""
+
+    id: str
+    title: str
+    updated_at: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class TreeFolder(BaseModel):
+    """A folder node in the tree. `path` is forward-slash relative to
+    notes_dir (empty string = root). `folders` and `notes` are siblings —
+    UI sorts however it likes (we sort folders-first, alpha)."""
+
+    name: str
+    path: str
+    folders: list[TreeFolder] = Field(default_factory=list)
+    notes: list[TreeNote] = Field(default_factory=list)
+
+
+class FolderCreateRequest(BaseModel):
+    path: str = Field(..., description="forward-slash relative path under notes/")
+
+
+class FolderRenameRequest(BaseModel):
+    path: str
+    new_name: str
+
+
+class FolderMoveRequest(BaseModel):
+    src: str
+    dst_parent: str = ""
+
+
+class FolderDeleteRequest(BaseModel):
+    path: str
+
+
+class FolderResponse(BaseModel):
+    """Common-shape reply for mkdir / rename / move."""
+
+    path: str  # final relative path under notes/
+
+
+class NoteMoveRequest(BaseModel):
+    target_folder: str = ""
+
+
+class TrashEntry(BaseModel):
+    name: str  # basename inside notes/.trash/
+    title: str  # frontmatter title if parseable, else stem
+    note_id: str  # ULID parsed from filename, "" if unparseable
+    trashed_at: str  # mtime as ISO
+
+
+class TrashListResponse(BaseModel):
+    entries: list[TrashEntry]
 
 
 class UrlCaptureRequest(BaseModel):
@@ -526,6 +594,102 @@ def _runtime_dep(app: FastAPI) -> Callable[[], ChatRuntime]:
         return state.runtime_or_init()
 
     return _dep
+
+
+# ----------------------------------------------------------------- file-tree helpers
+
+
+def _iso(epoch: float) -> str:
+    from datetime import UTC, datetime
+
+    return datetime.fromtimestamp(epoch, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _rel_folder(vault: Vault, folder_path: Path) -> str:
+    """Forward-slash path of `folder_path` relative to `notes/`. Empty
+    string for the root."""
+    try:
+        rel = folder_path.relative_to(vault.notes_dir)
+    except ValueError:
+        return ""
+    if not rel.parts:
+        return ""
+    return "/".join(rel.parts)
+
+
+def _build_tree(vault: Vault, index: Index) -> TreeFolder:
+    """Walk the index for note metadata, fold into a TreeFolder hierarchy.
+
+    We use the index (not iter_note_paths) because it already has the
+    title + tags; the tree is a hot path on every UI mount and a thousand-
+    note vault would otherwise re-parse a thousand frontmatter blocks.
+    """
+    root = TreeFolder(name="", path="")
+    # Pre-create folder nodes so empty folders show up.
+    for folder_path in vault.iter_folders():
+        rel = _rel_folder(vault, folder_path)
+        _ensure_folder(root, rel)
+
+    # Place every indexed note under its folder.
+    for row in index.list_notes(limit=10_000, order="updated_at"):
+        path_str = row.get("path") or ""
+        if not path_str:
+            continue
+        path = Path(path_str)
+        rel_path: Path
+        try:
+            rel_path = path.relative_to(vault.notes_dir)
+        except ValueError:
+            # Path stored relative — re-anchor under notes_dir.
+            rel_path = Path(path.name)
+        folder_rel = "/".join(rel_path.parts[:-1]) if len(rel_path.parts) > 1 else ""
+        node = _ensure_folder(root, folder_rel)
+        node.notes.append(
+            TreeNote(
+                id=row["id"],
+                title=row.get("title") or "(无标题)",
+                updated_at=row.get("updated_at") or "",
+                tags=json.loads(row["tags"]) if isinstance(row.get("tags"), str) else [],
+            )
+        )
+    _sort_tree(root)
+    return root
+
+
+def _ensure_folder(root: TreeFolder, rel: str) -> TreeFolder:
+    """Walk into `root`, creating TreeFolder children as needed for each
+    segment of `rel`. Returns the leaf folder node."""
+    if not rel:
+        return root
+    cur = root
+    accum: list[str] = []
+    for part in rel.split("/"):
+        accum.append(part)
+        existing = next((f for f in cur.folders if f.name == part), None)
+        if existing is None:
+            existing = TreeFolder(name=part, path="/".join(accum))
+            cur.folders.append(existing)
+        cur = existing
+    return cur
+
+
+def _sort_tree(node: TreeFolder) -> None:
+    node.folders.sort(key=lambda f: f.name.lower())
+    node.notes.sort(key=lambda n: n.title.lower())
+    for child in node.folders:
+        _sort_tree(child)
+
+
+def _resync_paths_under(runtime: ChatRuntime, folder_path: Path) -> None:
+    """After a folder rename/move, every note inside has a new on-disk
+    path. Walk the new location and update the index `path` column for
+    each by ULID (parsed from the filename — `<id>.md`)."""
+    if not folder_path.is_dir():
+        return
+    for md in folder_path.rglob("*.md"):
+        if md.is_file() and not any(p.startswith(".") for p in md.relative_to(folder_path).parts):
+            note_id = md.stem
+            runtime.index.update_note_path(note_id, str(md))
 
 
 # ----------------------------------------------------------------- factory
@@ -1274,6 +1438,214 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             )
             for b in results
         ]
+
+    # ---------------- file tree + folder + trash (Phase 1 A) ----------------
+
+    @app.get("/api/tree", response_model=TreeFolder)
+    def get_tree(runtime: ChatRuntime = Depends(runtime_dep)) -> TreeFolder:
+        """Return the entire `notes/` hierarchy (folders + notes) for the
+        sidebar. Walks the index for note metadata so we don't re-parse
+        every Markdown file on each tree refresh.
+
+        Notes that exist on disk but aren't indexed (rare — usually a
+        partial-write or freshly-pasted file) get surfaced under the root
+        with `(unindexed)` in the title so the user sees them; reindex
+        picks them up.
+        """
+        return _build_tree(runtime.vault, runtime.index)
+
+    @app.post("/api/folders", response_model=FolderResponse)
+    def create_folder(
+        req: FolderCreateRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> FolderResponse:
+        try:
+            target = runtime.vault.mkdir_folder(req.path)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return FolderResponse(path=_rel_folder(runtime.vault, target))
+
+    @app.patch("/api/folders", response_model=FolderResponse)
+    def rename_folder_endpoint(
+        req: FolderRenameRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> FolderResponse:
+        """Rename a folder in place. Cascades into the index: every note
+        under the old path gets its `path` column updated to the new
+        location (no re-chunking — bodies are unchanged)."""
+        try:
+            new_path = runtime.vault.rename_folder(req.path, req.new_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except FileExistsError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        _resync_paths_under(runtime, new_path)
+        return FolderResponse(path=_rel_folder(runtime.vault, new_path))
+
+    @app.post("/api/folders/move", response_model=FolderResponse)
+    def move_folder_endpoint(
+        req: FolderMoveRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> FolderResponse:
+        try:
+            new_path = runtime.vault.move_folder(req.src, req.dst_parent)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except FileExistsError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        _resync_paths_under(runtime, new_path)
+        return FolderResponse(path=_rel_folder(runtime.vault, new_path))
+
+    @app.delete("/api/folders")
+    def delete_folder_endpoint(
+        req: FolderDeleteRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """Delete a folder. Every note under it gets soft-deleted to
+        `notes/.trash/` (recoverable) and removed from the index by id; the
+        empty subtree is then `rmtree`d."""
+        try:
+            trashed = runtime.vault.delete_folder(req.path)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        for trashed_path in trashed:
+            note_id = trashed_path.stem
+            runtime.index.delete_note(note_id)
+        return {"ok": True, "trashed_count": len(trashed)}
+
+    @app.post("/api/notes/{note_id}/move", response_model=NoteFull)
+    def move_note_endpoint(
+        note_id: str,
+        req: NoteMoveRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> NoteFull:
+        """Move a single note to a target folder. The note id (and ULID
+        filename) stay the same; the path column updates."""
+        meta = runtime.index.get_note_meta(note_id)
+        if meta is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note not found: {note_id}",
+            )
+        path = Path(meta["path"])
+        if not path.is_absolute():
+            path = runtime.vault.notes_dir / path.name
+        try:
+            new_path = runtime.vault.move_note(path, req.target_folder)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail=str(exc)) from exc
+        except FileExistsError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        runtime.index.update_note_path(note_id, str(new_path))
+        note = runtime.vault.read_note(new_path)
+        return NoteFull(
+            id=note.id,
+            title=note.title,
+            path=str(new_path),
+            folder=runtime.vault.folder_of(new_path),
+            tags=note.tags,
+            created_at=note.created_at,
+            updated_at=note.updated_at,
+            body=note.body,
+        )
+
+    @app.get("/api/trash", response_model=TrashListResponse)
+    def list_trash(runtime: ChatRuntime = Depends(runtime_dep)) -> TrashListResponse:
+        """List soft-deleted notes in `notes/.trash/`. We parse the
+        frontmatter title best-effort; if a file is corrupt, we still
+        surface it so the user can purge it."""
+        entries: list[TrashEntry] = []
+        for path in runtime.vault.iter_trashed_paths():
+            try:
+                note = Note.from_file(path)
+                title = note.title
+                note_id = note.id
+            except Exception:
+                title = path.stem
+                note_id = path.stem
+            entries.append(
+                TrashEntry(
+                    name=path.name,
+                    title=title,
+                    note_id=note_id,
+                    trashed_at=_iso(path.stat().st_mtime),
+                )
+            )
+        # Newest-first matches "what did I just delete" intuition.
+        entries.sort(key=lambda e: e.trashed_at, reverse=True)
+        return TrashListResponse(entries=entries)
+
+    @app.post("/api/trash/{name}/restore", response_model=NoteFull)
+    def restore_trashed(
+        name: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> NoteFull:
+        if "/" in name or name.startswith(".") or not name.endswith(".md"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"invalid trash entry: {name!r}",
+            )
+        trashed_path = runtime.vault.trash_dir / name
+        if not trashed_path.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"trash entry not found: {name}",
+            )
+        try:
+            restored_path = runtime.vault.restore_note(trashed_path)
+        except FileExistsError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        note = runtime.vault.read_note(restored_path)
+        runtime.index.upsert_note(
+            note,
+            chunk_size=runtime.config.retrieval.chunk_size,
+            chunk_overlap=runtime.config.retrieval.chunk_overlap,
+        )
+        return NoteFull(
+            id=note.id,
+            title=note.title,
+            path=str(restored_path),
+            folder=runtime.vault.folder_of(restored_path),
+            tags=note.tags,
+            created_at=note.created_at,
+            updated_at=note.updated_at,
+            body=note.body,
+        )
+
+    @app.delete("/api/trash/{name}")
+    def purge_trashed(
+        name: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """Permanently delete one entry from trash. Index entry is already
+        gone (`delete_note` runs at trash-time), so this is a pure file op."""
+        try:
+            runtime.vault.purge_trashed(name)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        return {"ok": True, "name": name}
+
+    @app.delete("/api/trash")
+    def empty_trash(runtime: ChatRuntime = Depends(runtime_dep)) -> dict[str, Any]:
+        """Permanent-delete every entry in trash. No body needed."""
+        purged = 0
+        for path in list(runtime.vault.iter_trashed_paths()):
+            try:
+                runtime.vault.purge_trashed(path.name)
+                purged += 1
+            except (ValueError, FileNotFoundError):
+                continue
+        return {"ok": True, "purged_count": purged}
 
     # ---------------- attachments (M7.0.3) ----------------
 
@@ -2072,12 +2444,37 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     # ---------------- static UI ----------------
 
-    if STATIC_DIR.exists():
-        app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    if FRONTEND_DIST.exists():
+        # Vite emits hashed bundles under `dist/assets/`. Mount that as a real
+        # static dir; everything else falls through to the SPA index so deep
+        # links + browser-refresh on a route work without a per-route handler.
+        assets_dir = FRONTEND_DIST / "assets"
+        if assets_dir.exists():
+            app.mount(
+                "/assets",
+                StaticFiles(directory=assets_dir),
+                name="assets",
+            )
 
         @app.get("/")
         def index() -> FileResponse:
-            return FileResponse(STATIC_DIR / "index.html")
+            return FileResponse(FRONTEND_DIST / "index.html")
+
+        # SPA fallback. Anything that isn't /api/* / /assets/* / /files/*
+        # gets index.html and lets React Router (Phase 1 B+) handle it.
+        @app.get("/{full_path:path}")
+        def spa_fallback(full_path: str) -> FileResponse:
+            if (
+                full_path.startswith("api/")
+                or full_path.startswith("assets/")
+                or full_path.startswith("files/")
+            ):
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+            # Phase 1 B may serve favicon/manifest from `dist/` root.
+            candidate = FRONTEND_DIST / full_path
+            if candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(FRONTEND_DIST / "index.html")
 
     return app
 
