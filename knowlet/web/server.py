@@ -222,11 +222,24 @@ class NoteMoveRequest(BaseModel):
 class NewNoteRequest(BaseModel):
     """Phase 1 A: create an empty note with a title and optional folder.
     Distinct from POST /api/notes which is the sediment-commit shape;
-    this one supports folder placement and accepts an empty body."""
+    this one supports folder placement and accepts an empty body.
+
+    Phase 1 B slice 8: optional `template_id` pre-fills the body from
+    a template note in `notes/templates/` with `{{title}}` / `{{date}}`
+    substituted.
+    """
 
     title: str
     folder: str = ""
     tags: list[str] = Field(default_factory=list)
+    template_id: str | None = None
+
+
+class TemplateSummary(BaseModel):
+    """Minimal shape the template-picker UI consumes."""
+
+    id: str
+    title: str
 
 
 class TrashEntry(BaseModel):
@@ -234,10 +247,22 @@ class TrashEntry(BaseModel):
     title: str  # frontmatter title if parseable, else stem
     note_id: str  # ULID parsed from filename, "" if unparseable
     trashed_at: str  # mtime as ISO
+    # Folder the note lived in before it was trashed. "" = root, None
+    # = legacy trash entry without metadata (will restore to root).
+    original_folder: str | None = None
 
 
 class TrashListResponse(BaseModel):
     entries: list[TrashEntry]
+
+
+class RestoreAllResponse(BaseModel):
+    """Outcome of `POST /api/trash/restore-all`. Per-entry success isn't
+    independent — a name collision on one entry shouldn't abort the
+    rest — so we report counts + the names that we couldn't restore."""
+
+    restored_count: int
+    skipped: list[str]
 
 
 class UrlCaptureRequest(BaseModel):
@@ -1529,28 +1554,60 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             runtime.index.delete_note(note_id)
         return {"ok": True, "trashed_count": len(trashed)}
 
+    @app.get("/api/templates", response_model=list[TemplateSummary])
+    def list_templates(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[TemplateSummary]:
+        """List notes that live under `notes/templates/`. Surfaces the
+        title only — full body is read at apply-time. Empty list when
+        the folder doesn't exist or has no .md files."""
+        out: list[TemplateSummary] = []
+        for p in runtime.vault.iter_templates():
+            try:
+                tpl = runtime.vault.read_note(p)
+            except FileNotFoundError:
+                continue
+            out.append(TemplateSummary(id=tpl.id, title=tpl.title))
+        return out
+
     @app.post("/api/notes/new", response_model=NoteFull)
     def create_blank_note(
         req: NewNoteRequest,
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> NoteFull:
-        """Create a new empty Note in the given folder. The folder must
-        already exist (UI mkdirs first if needed)."""
+        """Create a new note in the given folder. The folder must
+        already exist (UI mkdirs first if needed). When `template_id`
+        is supplied, the new note's body is pre-filled from the
+        template (which must live under `notes/templates/`), with
+        `{{title}}` / `{{date}}` substituted."""
         from knowlet.core.note import Note as _Note
         from knowlet.core.note import new_id
 
         title = req.title.strip()
         if not title:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="title is empty"
-            )
-        note = _Note(id=new_id(), title=title, body="", tags=list(req.tags))
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="title is empty")
+        body = ""
+        if req.template_id:
+            tpl_path: Path | None = None
+            for p in runtime.vault.iter_templates():
+                try:
+                    tpl = runtime.vault.read_note(p)
+                except FileNotFoundError:
+                    continue
+                if tpl.id == req.template_id:
+                    tpl_path = p
+                    body = runtime.vault.apply_template_placeholders(tpl.body, title=title)
+                    break
+            if tpl_path is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"template not found: {req.template_id}",
+                )
+        note = _Note(id=new_id(), title=title, body=body, tags=list(req.tags))
         try:
             path = runtime.vault.write_note(note, folder=req.folder or None)
         except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-            ) from exc
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         runtime.index.upsert_note(
             note,
             chunk_size=runtime.config.retrieval.chunk_size,
@@ -1609,13 +1666,18 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     def list_trash(runtime: ChatRuntime = Depends(runtime_dep)) -> TrashListResponse:
         """List soft-deleted notes in `notes/.trash/`. We parse the
         frontmatter title best-effort; if a file is corrupt, we still
-        surface it so the user can purge it."""
+        surface it so the user can purge it. The `original_folder`
+        field comes from the `trashed_from` frontmatter key written
+        at trash time — used by the UI to hint where the note will
+        land on restore."""
         entries: list[TrashEntry] = []
         for path in runtime.vault.iter_trashed_paths():
+            original_folder: str | None = None
             try:
                 note = Note.from_file(path)
                 title = note.title
                 note_id = note.id
+                original_folder = note.trashed_from
             except Exception:
                 title = path.stem
                 note_id = path.stem
@@ -1625,6 +1687,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     title=title,
                     note_id=note_id,
                     trashed_at=_iso(path.stat().st_mtime),
+                    original_folder=original_folder,
                 )
             )
         # Newest-first matches "what did I just delete" intuition.
@@ -1667,6 +1730,31 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             updated_at=note.updated_at,
             body=note.body,
         )
+
+    @app.post("/api/trash/restore-all", response_model=RestoreAllResponse)
+    def restore_all_trashed(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> RestoreAllResponse:
+        """Restore every entry from `notes/.trash/` to its original
+        folder (recreating ancestors as needed). A per-entry collision
+        is not fatal — that one is skipped and the rest continue."""
+        restored = 0
+        skipped: list[str] = []
+        for trashed_path in list(runtime.vault.iter_trashed_paths()):
+            try:
+                restored_path = runtime.vault.restore_note(trashed_path)
+                note = runtime.vault.read_note(restored_path)
+                runtime.index.upsert_note(
+                    note,
+                    chunk_size=runtime.config.retrieval.chunk_size,
+                    chunk_overlap=runtime.config.retrieval.chunk_overlap,
+                )
+                restored += 1
+            except FileExistsError:
+                skipped.append(trashed_path.name)
+            except FileNotFoundError:
+                skipped.append(trashed_path.name)
+        return RestoreAllResponse(restored_count=restored, skipped=skipped)
 
     @app.delete("/api/trash/{name}")
     def purge_trashed(

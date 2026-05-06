@@ -104,6 +104,58 @@ class Vault:
 
         return (p for p in self.notes_dir.rglob("*.md") if _ok(p))
 
+    # ---------- templates (Phase 1 B slice 8) ----------
+    #
+    # `_templates/` is the on-disk storage convention for templates,
+    # mirroring `_attachments/` — both are reserved top-level folders
+    # under `notes/` that the regular file-tree UI hides and that
+    # `_resolve_subpath` rejects (so users can't create / rename a
+    # collision via the "+" toolbar). Templates are still ordinary
+    # markdown files; a Finder user sees and edits them as such.
+    # The leading underscore matches the convention `_attachments/`
+    # established in M7.0.3 so power users can spot system folders
+    # at a glance.
+
+    TEMPLATE_DIR = "_templates"
+
+    def iter_templates(self) -> list[Path]:
+        """List the `.md` files under `notes/_templates/`. Returns paths
+        sorted alphabetically by filename for stable picker ordering.
+        Returns `[]` if the folder hasn't been created yet — callers
+        must NOT special-case absence (no NPEs in the API or UI)."""
+        root = self.notes_dir / self.TEMPLATE_DIR
+        if not root.exists() or not root.is_dir():
+            return []
+        return sorted(p for p in root.glob("*.md") if p.is_file())
+
+    @staticmethod
+    def apply_template_placeholders(
+        body: str,
+        *,
+        title: str,
+        date: str | None = None,
+    ) -> str:
+        """Substitute `{{title}}` and `{{date}}` in a template body.
+
+        `date` defaults to today in ISO 8601 (YYYY-MM-DD). Unknown
+        placeholders are left as-is (so a template author can write
+        e.g. `{{cursor}}` and rely on a future version handling it).
+        Substitution is whole-token: `{{ title }}` (with spaces) also
+        matches, mirroring Obsidian Templater behaviour.
+        """
+        from datetime import date as _date_cls
+
+        ctx = {"title": title, "date": date or _date_cls.today().isoformat()}
+        # Match `{{name}}` with optional surrounding whitespace inside
+        # the braces. Anything outside the known set falls through.
+        import re
+
+        def _sub(m: re.Match[str]) -> str:
+            key = m.group(1).strip().lower()
+            return ctx.get(key, m.group(0))
+
+        return re.sub(r"\{\{\s*([a-zA-Z_][\w-]*)\s*\}\}", _sub, body)
+
     def folder_of(self, note_path: Path) -> str:
         """Return the folder of `note_path` relative to `notes/`, with `/`
         as separator. Empty string means top-level. Used by the index +
@@ -178,7 +230,19 @@ class Vault:
         return target
 
     def mkdir_folder(self, folder: str) -> Path:
-        """Create a folder under `notes/` (idempotent). Returns its path."""
+        """Create a folder under `notes/` (idempotent). Returns its path.
+
+        Rejects user-explicit creation of the templates folder
+        (`_templates/`) — that one's a system folder, created
+        implicitly when the templates UI writes the first template.
+        Letting users mkdir it from the file tree by hand would
+        violate the abstraction (see slice 8 v2 dogfood note: the
+        on-disk convention is meant to be opaque)."""
+        rel_clean = (folder or "").strip().strip("/")
+        if rel_clean.split("/", 1)[0] == self.TEMPLATE_DIR:
+            raise ValueError(
+                f"{self.TEMPLATE_DIR}/ is a system folder; create templates via the Templates dialog",
+            )
         target = self._resolve_subpath(folder)
         if target == self.notes_dir:
             return target
@@ -305,9 +369,28 @@ class Vault:
         """Move a Note's on-disk file into `notes/.trash/`. Returns the
         new path. Idempotent on the file location (a same-name collision
         gets a timestamp suffix). Caller is responsible for removing the
-        Note from the index."""
+        Note from the index.
+
+        Before moving, annotate the note's frontmatter with
+        `trashed_from: <folder>` so a future restore knows which
+        subfolder to recreate. This is the only way restore can
+        preserve the note's pre-trash location — we have no sidecar
+        metadata, the file IS the source of truth.
+        """
         if not path.exists():
             raise FileNotFoundError(str(path))
+        # Snapshot the original folder BEFORE moving (folder_of needs
+        # the path to be inside notes_dir).
+        original_folder = self.folder_of(path)
+        try:
+            note = Note.from_file(path)
+            note.trashed_from = original_folder
+            path.write_text(note.to_markdown(), encoding="utf-8")
+        except Exception:  # noqa: S110
+            # If the note's frontmatter is malformed we still trash
+            # it — restore will fall back to root. Not great, but
+            # better than blocking the delete on a corrupt file.
+            pass
         self.trash_dir.mkdir(parents=True, exist_ok=True)
         target = self.trash_dir / path.name
         if target.exists():
@@ -316,15 +399,47 @@ class Vault:
         return target
 
     def restore_note(self, trashed_path: Path) -> Path:
-        """Move a trashed Note back to `notes/`. Returns the final path."""
+        """Move a trashed Note back to `notes/`. Returns the final path.
+
+        If the note's frontmatter carries `trashed_from`, restore into
+        that subfolder (creating it if missing — covers the "user
+        deleted ancestor folder, then restored a leaf" case). Strip
+        the field from the frontmatter on the way out so the live
+        note has clean metadata again.
+        """
         if not trashed_path.exists():
             raise FileNotFoundError(str(trashed_path))
-        self.notes_dir.mkdir(parents=True, exist_ok=True)
-        target = self.notes_dir / trashed_path.name
+        # Read + decide target folder.
+        target_dir = self.notes_dir
+        try:
+            note = Note.from_file(trashed_path)
+            folder = note.trashed_from or ""
+            if folder and self._safe_relative_path(folder):
+                target_dir = self.notes_dir / folder
+            note.trashed_from = None
+        except Exception:
+            note = None
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / trashed_path.name
         if target.exists():
             raise FileExistsError(f"cannot restore: {target} already exists in notes/")
-        trashed_path.rename(target)
+        # If we successfully parsed the note, write the cleaned-up
+        # frontmatter; otherwise just move the bytes.
+        if note is not None:
+            target.write_text(note.to_markdown(), encoding="utf-8")
+            trashed_path.unlink()
+        else:
+            trashed_path.rename(target)
         return target
+
+    def _safe_relative_path(self, rel: str) -> bool:
+        """Validate a folder path string against path traversal rules
+        without raising. Used by `restore_note` to fall back to root
+        on a corrupt `trashed_from` instead of crashing the restore."""
+        for part in rel.split("/"):
+            if not part or part in (".", "..") or "\\" in part or part.startswith("."):
+                return False
+        return True
 
     def iter_trashed_paths(self) -> Iterator[Path]:
         if not self.trash_dir.exists():

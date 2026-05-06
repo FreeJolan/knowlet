@@ -66,6 +66,13 @@ class Note:
     source: str | None = None
     path: Path | None = None
     schema_version: int = NOTE_SCHEMA_VERSION
+    # When the note is in `notes/.trash/`, this captures the folder
+    # (relative to `notes/`) it was sitting in before deletion. `None`
+    # when the note is live or when the trash entry pre-dates this
+    # field (legacy notes restore to root). Keeps the file portable —
+    # if the user opens it from Finder, they can still tell where it
+    # came from. Stripped from the frontmatter on restore.
+    trashed_from: str | None = None
 
     @property
     def slug(self) -> str:
@@ -87,7 +94,7 @@ class Note:
         return h.hexdigest()
 
     def to_markdown(self) -> str:
-        meta = {
+        meta: dict[str, object] = {
             "schema_version": self.schema_version,
             "id": self.id,
             "title": self.title,
@@ -97,6 +104,8 @@ class Note:
         }
         if self.source:
             meta["source"] = self.source
+        if self.trashed_from is not None:
+            meta["trashed_from"] = self.trashed_from
         post = frontmatter.Post(self.body, **meta)
         return str(frontmatter.dumps(post))
 
@@ -111,6 +120,8 @@ class Note:
             schema_version = int(meta.get("schema_version") or 1)
         except (TypeError, ValueError):
             schema_version = 1
+        trashed_from_raw = meta.get("trashed_from")
+        trashed_from = str(trashed_from_raw) if trashed_from_raw is not None else None
         return cls(
             id=str(meta.get("id") or new_id()),
             title=str(meta.get("title") or path.stem),
@@ -121,4 +132,5 @@ class Note:
             source=meta.get("source"),
             path=path,
             schema_version=schema_version,
+            trashed_from=trashed_from,
         )
