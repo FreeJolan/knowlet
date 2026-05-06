@@ -9,9 +9,9 @@
 
 [ADR-0003](./0003-wedge-pivot-ai-memory-layer.en.md) names the wedge as "AI long-term memory layer." [ADR-0012](./0012-notes-first-ai-optional.en.md) pins the identity to "personal knowledge base / notes app + AI as optional augmentation." Neither answers a question that will surface within six months:
 
-> Every chat sediment + every approved mining draft = +1 Note. M2-M6 dogfood already piled up 37+ Notes in `/tmp/knowlet-real`; six months of real use will reach 1000+. **Nothing in the system lets the user manage that pile without anxiety.**
+> Every chat sediment + every approved mining draft = +1 Note, with no back-pressure. A typical PKM user reaches 1000+ notes within six months of real use. **Nothing in the system lets them manage that pile without anxiety.**
 
-The user, in dogfood feedback, called this "fragmentation hell" and emphasized:
+Call that state "fragmentation hell." The underlying product principle:
 
 > LLMs do not have real judgment. If knowledge ultimately serves the human, the human is responsible for the accuracy of that knowledge.
 

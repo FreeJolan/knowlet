@@ -43,13 +43,13 @@ def test_read_profile_returns_none_when_missing(tmp_path: Path):
 def test_write_then_read_round_trip(tmp_path: Path):
     v = Vault(tmp_path)
     v.init_layout()
-    p = UserProfile(body="# hi\n\nI am a programmer.", name="Jolan")
+    p = UserProfile(body="# hi\n\nI am a tester.", name="Test User")
     path = write_profile(v.profile_path, p)
     assert path.exists()
     loaded = read_profile(v.profile_path)
     assert loaded is not None
-    assert loaded.name == "Jolan"
-    assert "I am a programmer" in loaded.body
+    assert loaded.name == "Test User"
+    assert "I am a tester" in loaded.body
 
 
 def test_write_profile_is_0600(tmp_path: Path):
@@ -101,7 +101,7 @@ def test_bootstrap_loads_profile_into_system_prompt(tmp_path: Path):
     v, cfg = _ready_vault(tmp_path)
     write_profile(
         v.profile_path,
-        UserProfile(body="My focus right now is RAG retrieval.", name="Jolan"),
+        UserProfile(body="My focus right now is unit testing.", name="Test User"),
     )
     runtime, report = bootstrap_chat(v, cfg)
     try:
@@ -109,7 +109,7 @@ def test_bootstrap_loads_profile_into_system_prompt(tmp_path: Path):
         assert runtime.user_profile is not None
         first = runtime.session.history[0]
         assert first["role"] == "system"
-        assert "RAG retrieval" in first["content"]
+        assert "unit testing" in first["content"]
     finally:
         runtime.close()
 
@@ -154,7 +154,7 @@ def test_get_user_profile_tool_when_missing(tmp_path: Path):
 
 def test_get_user_profile_tool_when_present(tmp_path: Path):
     v, cfg = _ready_vault(tmp_path)
-    write_profile(v.profile_path, UserProfile(body="I read AI papers.", name="Jolan"))
+    write_profile(v.profile_path, UserProfile(body="I read research papers.", name="Test User"))
     runtime, _ = bootstrap_chat(v, cfg)
     try:
         ctx = ToolContext(
@@ -167,8 +167,8 @@ def test_get_user_profile_tool_when_present(tmp_path: Path):
         )
         res = runtime.registry.dispatch("get_user_profile", {}, ctx)
         assert res["exists"] is True
-        assert res["name"] == "Jolan"
-        assert "AI papers" in res["body"]
+        assert res["name"] == "Test User"
+        assert "research papers" in res["body"]
     finally:
         runtime.close()
 

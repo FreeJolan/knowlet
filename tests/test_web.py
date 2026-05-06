@@ -244,11 +244,11 @@ def test_profile_get_when_missing(tmp_path: Path):
 def test_profile_round_trip(tmp_path: Path):
     v, cfg = _ready_vault(tmp_path)
     client = TestClient(create_app(v, cfg))
-    r = client.put("/api/profile", json={"name": "Jolan", "body": "I prefer concise replies."})
+    r = client.put("/api/profile", json={"name": "Test User", "body": "I prefer concise replies."})
     assert r.status_code == 200
     g = client.get("/api/profile").json()
     assert g["exists"] is True
-    assert g["name"] == "Jolan"
+    assert g["name"] == "Test User"
     assert "concise" in g["body"]
 
 

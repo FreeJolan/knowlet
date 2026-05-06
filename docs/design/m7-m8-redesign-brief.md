@@ -1,8 +1,8 @@
 # Design brief — M7 audit + M8 new surfaces
 
-> 2026-05-03 · Internal record of what we asked Claude Design for in the
-> second design pass (the first pass produced the paper-light + dusk-blue
-> mock at 2026-05-02 that became M6.1.5 visual backbone).
+> 2026-05-03 · The brief we sent to Claude Design for the second design
+> pass (the first pass produced the paper-light + dusk-blue mock that
+> became the M6 visual backbone).
 >
 > ⚠️ **2026-05-05 status note**:此 brief 中提及的所有 11 个 surface(8 audit + 3 new)
 > 设计意图保留,但**实施已不再用 Alpine 栈**(per ADR-0019 弃用决策)。所有 surface
@@ -23,8 +23,7 @@
 > #2a2823 / --accent #5b7a9c`; **Source Serif 4** for h1-h3 / card faces /
 > modal titles, **Inter** for UI chrome, **JetBrains Mono** for code /
 > paths / timestamps / shortcuts. Right-side dusk-blue accent. Three-pane
-> layout (notes tree / center editor / right rail with AI dock). Existing
-> mock at https://api.anthropic.com/v1/design/h/REDACTED
+> layout (notes tree / center editor / right rail with AI dock).
 >
 > Since that first pass shipped, **8 new surfaces have landed without a
 > design review**, plus 3 more are imminent. We need:
