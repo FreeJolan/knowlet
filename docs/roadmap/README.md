@@ -151,6 +151,10 @@ knowlet 阶段一的原子能力按 MCP 标准设计([ADR-0004](../decisions/000
 | **周报**(Sunday-newspaper 调性) | ADR-0013 §3 Layer C | Phase 3 或 Phase 4 |
 | **暗色 toggle** | 设计 brief §11 | Phase 1 起就有(token 已就位)/ toggle UI 在 Phase 1 |
 | **M7.4.3 cluster scope quiz** | ADR-0014 §8 | Phase 3(在 quiz 重做时一并)|
+| **`vault/.knowlet/wiki_schema.md`**(vault 写作约定 → 注入 chat / mining / ingest prompt) | ADR-0023 §2 | Phase 3(随 chat/mining prompt 重做) |
+| **Ingest source 一等动作**(URL/文件 → sources/ → mining draft → review queue) | ADR-0023 §4 | Phase 3(随 review queue UI) |
+| **Lint LLM 信号** —— 跨页 contradictions / dangling concept / 缺页 entity 推断 | ADR-0023 §5 | Phase 3(随知识地图侧栏)|
+| **Pin chat turn 到 wiki**(turn 级 📌 → mining draft 候选) | ADR-0023 §6 | Phase 3(随 chat UI 重做)|
 
 ### 🟢 等阶段切换(灰度 / 上线 / 阶段二 / 三)
 
@@ -173,6 +177,7 @@ knowlet 阶段一的原子能力按 MCP 标准设计([ADR-0004](../decisions/000
 - 半显式 versioning(讨论 `v0.1.0` 是否就是灰度入口版)
 - `.knowlet/backups/` 真正用起来(per ADR-0006 §3)
 - Card / Draft / MiningTask 也加 `schema_version`(目前只 Note 加了)
+- **`vault/.knowlet/log.md` + 底层 `vault.events` SQLite append-only 流**(per [ADR-0023 §3](../decisions/0023-llm-wiki-comparison-and-takeaways.md)):note/draft/sediment/ingest/lint/quiz 事件统一时间线,作为 schema migration / vault fixture 测试的天然 oracle
 
 ### 🔴 显式永不做
 
@@ -184,12 +189,15 @@ knowlet 阶段一的原子能力按 MCP 标准设计([ADR-0004](../decisions/000
 | AI Chat 产品功能复刻(模型选择 / 长上下文 / 图像生成) | ADR-0003 §"阶段一明确不做" |
 | Tag taxonomy(top-down 强制分类) | ADR-0013 §3 Layer B |
 | Auto-archive / auto-merge | ADR-0013 §1 契约 |
-| LLM 主动改 vault IA | ADR-0013 §1 契约 |
+| LLM 主动改 vault IA / "LLM 全权拥有 wiki" | ADR-0013 §1 / ADR-0023 §A |
 | Drafts 提取的 image / video / PDF 内容(只处理文字) | ADR-0016 §"Out of scope" |
 | 多 URL 一次粘贴抓取 | ADR-0016 §"Out of scope" |
 | LLM 抓取 PDF / video(trafilatura 不处理) | ADR-0017 §"Out of scope" |
 | 自动备 search 结果到 vault | ADR-0017 §"Out of scope" |
 | 多语言 search query 切换 | ADR-0017 §"Out of scope" |
+| 跨 vault wiki 联邦(把多个 vault 串起来) | ADR-0023 §"Out of scope" |
+| LLM-driven schema 自动演化(让 LLM 改 `wiki_schema.md`) | ADR-0023 §"Out of scope" |
+| 集成 [`qmd`](https://github.com/tobi/qmd) / Marp / Obsidian Dataview 等外部工具 | ADR-0023 §"Out of scope" |
 
 ## 已废弃(2026-05-05)
 

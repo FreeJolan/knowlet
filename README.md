@@ -81,6 +81,16 @@ knowlet reindex                               # 重建 FTS / 向量索引
 
 详见 [ADR-0002 — 三条核心原则](./docs/decisions/0002-core-principles.md) 与 [ADR-0004 — AI 编排 + 原子执行](./docs/decisions/0004-ai-compose-code-execute.md)。
 
+## 定位:用户拥有,LLM 提案
+
+> **任何进入 vault 的内容都过审批管线 —— LLM 永远不自动落库。**
+
+knowlet 的 chat 沉淀、mining draft、URL 捕获、source ingest 都走同一条 review queue:LLM 生产**候选**(草稿 / 摘要 / 链接建议),用户审批后才进 vault。LLM 不会自动合并同义概念、自动归档老笔记、或在你不知情时改写已有内容。
+
+这条根原则把 knowlet 和"让 LLM 替你管 wiki"的模式([Karpathy LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) 等)区分开 —— 后者假设 LLM 维护成本最低,代价是用户对每条笔记的可解释性逐渐流失。knowlet 的判断是**跨多年 / 多场景 / 多 LLM 后端**的长期使用下,可解释性 / 可控性比维护成本节省更重要。
+
+详见 [ADR-0013](./docs/decisions/0013-knowledge-management-contract.md)(契约)+ [ADR-0023](./docs/decisions/0023-llm-wiki-comparison-and-takeaways.md)(对比与吸纳)。
+
 ## 阶段一服务的真实场景
 
 详见 [ADR-0003](./docs/decisions/0003-wedge-pivot-ai-memory-layer.md):

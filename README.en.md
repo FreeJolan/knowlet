@@ -81,6 +81,16 @@ knowlet reindex                              # rebuild FTS / vector index
 
 See [ADR-0002 — Three Core Principles](./docs/decisions/0002-core-principles.en.md) and [ADR-0004 — AI Compose, Code Execute](./docs/decisions/0004-ai-compose-code-execute.en.md).
 
+## Positioning: user owns, LLM proposes
+
+> **Anything that lands in the vault goes through a review queue — the LLM never auto-commits.**
+
+Knowlet's chat sediment, mining drafts, URL captures, and source ingests all flow through the same review queue: the LLM produces **candidates** (drafts, summaries, link suggestions), and the user approves before anything enters the vault. The LLM never auto-merges synonyms, auto-archives old notes, or rewrites existing content behind your back.
+
+This root principle distinguishes knowlet from "let the LLM run your wiki" patterns (such as [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)). Those patterns assume LLM-maintenance is a net win; the cost is your gradual loss of explainability over individual notes. Knowlet bets the opposite: across multi-year, multi-domain, multi-LLM-backend usage, **explainability and control matter more than maintenance savings**.
+
+See [ADR-0013](./docs/decisions/0013-knowledge-management-contract.en.md) (the contract) and [ADR-0023](./docs/decisions/0023-llm-wiki-comparison-and-takeaways.en.md) (the comparison and what we adopted).
+
 ## Real Scenarios in Stage 1
 
 See [ADR-0003](./docs/decisions/0003-wedge-pivot-ai-memory-layer.en.md):

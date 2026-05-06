@@ -106,10 +106,10 @@ Three main capabilities (consume / mine / learn) reinforce each other in MCP for
 > Single-source-of-truth registry of every §"Out of scope" / §"Defer" / §"Future extension" across all ADRs. **For full content, see [Chinese version](./README.md#-跨-adr-延期事项总账2026-05-05-重整).** Summary by category:
 
 - 🟡 **Awaiting dogfood signal** (Phase 4+): citation back-refs / capsule cross-session draft tray / CLI `:quote` / `knowlet://` deep-link / per-session web search cap / Layer A on blank notes / drafts approve ambient
-- 🔵 **Will be implemented during React rewrite (Phase 1-3)**: list_mining_tasks Web panel / fetch_url UI / knowledge-map sidebar / **graph view (Phase 1 C now)** / weekly digest / dark toggle UI (Phase 1) / cluster-scope quiz (Phase 3)
+- 🔵 **Will be implemented during React rewrite (Phase 1-3)**: list_mining_tasks Web panel / fetch_url UI / knowledge-map sidebar / **graph view (Phase 1 C now)** / weekly digest / dark toggle UI (Phase 1) / cluster-scope quiz (Phase 3) / **`vault/.knowlet/wiki_schema.md` prompt injection (ADR-0023 §2, Phase 3)** / **ingest source as first-class verb (ADR-0023 §4, Phase 3)** / **Lint LLM signals — cross-page contradictions / dangling concept / inferred-missing entity (ADR-0023 §5, Phase 3)** / **Pin chat turn to wiki (ADR-0023 §6, Phase 3)**
 - 🟢 **Awaiting stage transition**: plugin system / native mobile / self-hosted sync / vault encryption / MCP server / Tauri / browser extension
-- 🟣 **Data durability** (Phase 2 E, ADR-0018 pending): operational safety net (snapshot / restore / doctor integrity / Note schema_version) shipped at commit `40cfcd0`; full contract pending
-- 🔴 **Forever**: team collab / discovery / Todo / AI-Chat-product feature copies / tag taxonomy / auto-merge / LLM auto-IA-modify / drafts image-video-PDF extraction / multi-URL paste / LLM PDF/video fetch / auto-save search results / multilingual search switch
+- 🟣 **Data durability** (Phase 2 E, ADR-0018 pending): operational safety net (snapshot / restore / doctor integrity / Note schema_version) shipped at commit `40cfcd0`; full contract pending. Includes **`vault/.knowlet/log.md` + `vault.events` SQLite append-only stream** (per [ADR-0023 §3](../decisions/0023-llm-wiki-comparison-and-takeaways.en.md))
+- 🔴 **Forever**: team collab / discovery / Todo / AI-Chat-product feature copies / tag taxonomy / auto-merge / **LLM auto-IA-modify / "LLM owns the wiki" (ADR-0013 §1 / ADR-0023 §A)** / drafts image-video-PDF extraction / multi-URL paste / LLM PDF/video fetch / auto-save search results / multilingual search switch / **cross-vault wiki federation (ADR-0023)** / **LLM-driven schema auto-evolution (ADR-0023)** / **integrating qmd / Marp / Obsidian Dataview (ADR-0023)**
 
 ### Maintenance rule
 
