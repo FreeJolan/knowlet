@@ -39,3 +39,8 @@ scratch/
 # Models cache (if accidentally created in repo)
 models/
 .cache/
+
+# Dogfood reports may include private impressions / frustrations the
+# user doesn't want in a public history. Kept on disk for the user's
+# reference; not tracked.
+docs/dogfood/
