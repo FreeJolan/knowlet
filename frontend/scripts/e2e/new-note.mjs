@@ -21,7 +21,9 @@ try {
     await input.press("Enter");
     await page.waitForTimeout(800);
     assert(await hasRow(page, "toolbar-note"), "row appears in tree");
-    const heading = (await page.locator("article header h1").textContent()) ?? "";
+    // Phase 1 B: right pane is the editor, no <article>. Title now lives
+    // in the kn-paper header > h1.
+    const heading = (await page.locator(".kn-paper header h1").textContent()) ?? "";
     assert(heading.includes("toolbar-note"), `right pane shows note — got "${heading}"`);
   });
 

@@ -28,9 +28,16 @@ interface FlatNote extends TreeNote {
   folderPath: string;
 }
 
+// Top-level folders the palette should NOT walk into. Mirrors the file
+// tree's HIDDEN_TOP_LEVEL_FOLDERS — templates are managed via the
+// dedicated Templates dialog, not surfaced as quick-switch targets,
+// so the palette doesn't leak the `_templates/` storage convention.
+const PALETTE_HIDDEN_FOLDERS = new Set(["_templates"]);
+
 function flatten(root: TreeFolder, prefix: string = ""): FlatNote[] {
   const here: FlatNote[] = root.notes.map((n) => ({ ...n, folderPath: prefix }));
   for (const sub of root.folders) {
+    if (!prefix && PALETTE_HIDDEN_FOLDERS.has(sub.name)) continue;
     here.push(...flatten(sub, prefix ? `${prefix}/${sub.name}` : sub.name));
   }
   return here;
@@ -71,7 +78,7 @@ export function CommandPalette({
         if (!o) onClose();
       }}
     >
-      <DialogContent className="max-w-xl gap-0 p-0">
+      <DialogContent className="gap-0 p-0 sm:max-w-3xl">
         <DialogHeader className="sr-only">
           <DialogTitle>{t("app.quickSwitch")}</DialogTitle>
         </DialogHeader>
@@ -81,23 +88,31 @@ export function CommandPalette({
             value={query}
             onValueChange={setQuery}
           />
-          <CommandList>
+          {/* Bump the list height so a dozen notes are visible without
+            * scrolling. shadcn's default `max-h-72` (288px) feels
+            * cramped on a wide dialog. */}
+          <CommandList className="max-h-[60vh]">
             <CommandEmpty>{t("palette.noMatches")}</CommandEmpty>
             <CommandGroup heading={t("palette.notesCount", { count: notes.length })}>
               {notes.map((n) => (
                 <CommandItem
                   key={n.id}
+                  // Compact row: tighter vertical padding overrides the
+                  // shadcn default `py-1.5` so a long list isn't a wall
+                  // of evenly-spaced "cards". Folder context renders
+                  // INLINE on the right (gray + small) so two notes
+                  // with the same title but different folders are
+                  // distinguishable at a glance.
+                  className="!py-1.5"
                   value={`${n.title} ${n.folderPath}`}
                   onSelect={() => onSelectNote(n.id)}
                 >
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate">{n.title}</span>
-                    {n.folderPath && (
-                      <span className="truncate font-mono text-[10px] text-muted-foreground">
-                        {n.folderPath}
-                      </span>
-                    )}
-                  </div>
+                  <span className="truncate">{n.title}</span>
+                  {n.folderPath && (
+                    <span className="ml-auto shrink-0 truncate pl-3 font-mono text-[11px] text-muted-foreground">
+                      {n.folderPath}
+                    </span>
+                  )}
                 </CommandItem>
               ))}
             </CommandGroup>

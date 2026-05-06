@@ -123,7 +123,13 @@ export async function setupTestEnv(opts = {}) {
   const port = await freePort();
   const baseURL = `http://127.0.0.1:${port}`;
 
-  // Spawn the backend. It serves both /api and /(SPA).
+  // Spawn the backend in its OWN process group (`detached: true`).
+  // `uv run knowlet web` is a 2-hop launch: uv spawns python, python
+  // runs the FastAPI app. SIGKILL on the immediate child kills `uv`
+  // but leaves the python grandchild reparented to launchd — which
+  // then accumulates dozens of orphan backends on a busy dev day.
+  // Putting the child in its own group lets us kill the whole group
+  // in teardown via `process.kill(-pid, "SIGKILL")`.
   const backend = spawn(
     "uv",
     [
@@ -140,6 +146,7 @@ export async function setupTestEnv(opts = {}) {
     {
       env: { ...process.env, KNOWLET_VAULT: vaultDir },
       stdio: "pipe",
+      detached: true,
     },
   );
   // Capture backend logs for debugging — only printed on failure.
@@ -186,6 +193,20 @@ export async function setupTestEnv(opts = {}) {
       backend.stderr.removeAllListeners();
       backend.stdout.destroy();
       backend.stderr.destroy();
+      // Kill the WHOLE process group, not just `uv`. The python
+      // grandchild that actually serves FastAPI shares the group
+      // (because we spawned with detached: true above). Negative PID
+      // = "send signal to every process in this group". Without this
+      // the python process gets reparented to launchd and lingers
+      // until next reboot.
+      try {
+        if (typeof backend.pid === "number") {
+          process.kill(-backend.pid, "SIGKILL");
+        }
+      } catch {
+        // group may already be gone — ignore
+      }
+      // Also tag the immediate child for good measure.
       backend.kill("SIGKILL");
       try {
         rmSync(vaultDir, { recursive: true, force: true });

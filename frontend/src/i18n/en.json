@@ -2,7 +2,8 @@
   "app": {
     "title": "knowlet",
     "quickSwitch": "Quick switch",
-    "trash": "Trash"
+    "trash": "Trash",
+    "templates": "Templates"
   },
   "tree": {
     "vault": "Vault",
@@ -13,6 +14,20 @@
     "retry": "Retry",
     "empty": "Empty vault. Use the buttons above to create a note or folder.",
     "untitled": "(untitled)"
+  },
+  "templates": {
+    "dialogTitle": "Templates",
+    "dialogDescription": "Manage and use note templates.",
+    "filterPlaceholder": "Filter templates…",
+    "empty": "No templates yet. Use the button below to create your first one.",
+    "fetchError": "Couldn't load templates. Restart the backend or check the network.",
+    "newAction": "New template",
+    "editAction": "Edit",
+    "deleteAction": "Delete",
+    "deleteConfirm": "Delete template \"{{name}}\"?",
+    "locationHint": "Templates are stored in _templates/.",
+    "slashLabel": "Insert template",
+    "slashEmpty": "No templates"
   },
   "menu": {
     "newNoteInside": "New note inside",
@@ -25,13 +40,22 @@
     "deleteFolderConfirm": "Delete \"{{name}}\"? All notes inside go to .trash/.",
     "deleteNoteConfirm": "Move \"{{name}}\" to .trash/?",
     "bulkDeleteConfirm_one": "Delete 1 item? It goes to trash.",
-    "bulkDeleteConfirm_other": "Delete {{count}} items? They go to trash."
+    "bulkDeleteConfirm_other": "Delete {{count}} items? They go to trash.",
+    "duplicateNote": "A note titled \"{{name}}\" already exists in this folder.",
+    "duplicateFolder": "A folder named \"{{name}}\" already exists here."
   },
   "note": {
     "selectPrompt": "Select a note from the tree.",
     "loadFailed": "Couldn't load note ({{error}}).",
     "rootLabel": "root",
-    "updatedPrefix": "updated"
+    "updatedPrefix": "updated",
+    "saving": "saving…",
+    "saved": "saved",
+    "viewEdit": "Edit",
+    "viewSplit": "Split",
+    "viewPreview": "Preview",
+    "titlePlaceholder": "Untitled",
+    "editTitleHint": "Click to rename"
   },
   "trash": {
     "title": "Trash",
@@ -39,6 +63,7 @@
     "loadFailed": "Failed to load ({{error}}).",
     "empty": "Trash is empty.",
     "restore": "Restore",
+    "restoreAll": "Restore all",
     "purge": "Purge",
     "purgeConfirm": "Permanently delete {{title}}?",
     "emptyAll": "Empty trash",

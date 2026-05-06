@@ -5,13 +5,17 @@
  * here so a future palette / Cmd+P can also drive it.
  */
 
-import { Trash2 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { LayoutTemplate, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { getTree } from "@/api/client";
+import type { TreeFolder, TreeNote } from "@/api/types";
 import { FileTree } from "@/components/FileTree/FileTree";
 import { NoteView } from "@/components/NoteView/NoteView";
 import { CommandPalette } from "@/components/Palette/CommandPalette";
+import { TemplatesDialog } from "@/components/Templates/TemplatesDialog";
 import { TrashPanel } from "@/components/Trash/TrashPanel";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +23,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import { QK } from "@/lib/queryClient";
 
 /**
  * react-resizable-panels v2 only accepts percent values for defaultSize /
@@ -36,11 +41,37 @@ function pxToPercent(px: number, windowWidth: number): number {
   return (px / windowWidth) * 100;
 }
 
+/**
+ * Walk the tree depth-first, picking the first note whose title matches
+ * `target` case-insensitively. Returns null if nothing matches — for a
+ * `[[Title]]` link to a missing note we silently swallow the click; the
+ * `kn-wikilink-broken` styling already cues the user.
+ */
+function findNoteByTitle(root: TreeFolder, target: string): TreeNote | null {
+  const lower = target.toLowerCase();
+  const stack: TreeFolder[] = [root];
+  while (stack.length) {
+    const folder = stack.pop();
+    if (!folder) continue;
+    for (const n of folder.notes) {
+      if (n.title.toLowerCase() === lower) return n;
+    }
+    for (const sub of folder.folders) stack.push(sub);
+  }
+  return null;
+}
+
 export function AppShell() {
   const { t } = useTranslation();
+  const qc = useQueryClient();
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [trashOpen, setTrashOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  // When a wikilink request includes a #heading anchor, NoteView remounts
+  // for the new note; we stash the hash here so the freshly-mounted
+  // preview can scroll to it once headings have ids assigned.
+  const [pendingHash, setPendingHash] = useState<string | null>(null);
   const [windowWidth, setWindowWidth] = useState(() =>
     typeof window === "undefined" ? 1400 : window.innerWidth,
   );
@@ -72,13 +103,35 @@ export function AppShell() {
   useEffect(() => {
     const openPalette = () => setPaletteOpen(true);
     const openTrash = () => setTrashOpen(true);
+    const openWikilink = (e: Event) => {
+      const detail = (e as CustomEvent<{ title: string; hash: string }>).detail;
+      if (!detail || !detail.title) return;
+      // Resolve title against the cached tree, fetching if absent.
+      void (async () => {
+        let tree = qc.getQueryData<TreeFolder>(QK.tree);
+        if (!tree) {
+          tree = await qc.fetchQuery({
+            queryKey: QK.tree,
+            queryFn: getTree,
+          });
+        }
+        const hit = tree ? findNoteByTitle(tree, detail.title) : null;
+        if (!hit) return;
+        // If we're already on this note, skip the swap so the preview's
+        // scroll position isn't reset; just navigate the hash.
+        if (hit.id !== selectedNoteId) setSelectedNoteId(hit.id);
+        setPendingHash(detail.hash || null);
+      })();
+    };
     window.addEventListener("knowlet:open-palette", openPalette);
     window.addEventListener("knowlet:open-trash", openTrash);
+    window.addEventListener("knowlet:open-wikilink", openWikilink);
     return () => {
       window.removeEventListener("knowlet:open-palette", openPalette);
       window.removeEventListener("knowlet:open-trash", openTrash);
+      window.removeEventListener("knowlet:open-wikilink", openWikilink);
     };
-  }, []);
+  }, [qc, selectedNoteId]);
 
   return (
     <>
@@ -109,6 +162,15 @@ export function AppShell() {
             <Button
               variant="ghost"
               size="icon"
+              aria-label={t("app.templates")}
+              onClick={() => setTemplatesOpen(true)}
+              data-testid="templates-button"
+            >
+              <LayoutTemplate className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
               aria-label={t("app.trash")}
               onClick={() => setTrashOpen(true)}
             >
@@ -125,13 +187,20 @@ export function AppShell() {
             >
               <FileTree
                 selectedNoteId={selectedNoteId}
-                onSelectNote={setSelectedNoteId}
+                onSelectNote={(id) => {
+                  setSelectedNoteId(id);
+                  setPendingHash(null);
+                }}
                 onMutating={setTreeBusy}
               />
             </ResizablePanel>
             <ResizableHandle />
             <ResizablePanel defaultSize={100 - sidebarSizes.defaultSize} minSize={30}>
-              <NoteView noteId={selectedNoteId} />
+              <NoteView
+                noteId={selectedNoteId}
+                pendingHash={pendingHash}
+                onPendingHashConsumed={() => setPendingHash(null)}
+              />
             </ResizablePanel>
           </ResizablePanelGroup>
         </div>
@@ -147,6 +216,25 @@ export function AppShell() {
         onSelectNote={(id) => {
           setSelectedNoteId(id);
           setPaletteOpen(false);
+        }}
+      />
+      <TemplatesDialog
+        open={templatesOpen}
+        onClose={() => setTemplatesOpen(false)}
+        onUseTemplate={(templateId) => {
+          // Close dialog first, then trigger the FileTree's
+          // inline-create flow so the user types a title for the new
+          // note exactly like they would for "+ note".
+          setTemplatesOpen(false);
+          window.dispatchEvent(
+            new CustomEvent("knowlet:start-create-from-template", {
+              detail: { templateId },
+            }),
+          );
+        }}
+        onEditTemplate={(noteId) => {
+          setTemplatesOpen(false);
+          setSelectedNoteId(noteId);
         }}
       />
     </>

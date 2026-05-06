@@ -8,7 +8,14 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, FilePlus, FileText, Folder, FolderPlus } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FilePlus,
+  FileText,
+  Folder,
+  FolderPlus,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -40,6 +47,11 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { InlineEditInput } from "@/components/InlineEdit/InlineEditInput";
+import {
+  folderNameClashesIn,
+  noteTitleClashesIn,
+} from "@/lib/findCollision";
+import { normalizeNoteTitle } from "@/lib/noteTitle";
 import { QK } from "@/lib/queryClient";
 
 import type { TreeFolder } from "@/api/types";
@@ -101,7 +113,12 @@ function renameFolderInTree(root: TreeFolder, path: string, newName: string): Tr
   return walk(root, 0);
 }
 
-type PendingCreate = { kind: "note" | "folder"; parentPath: string };
+type PendingCreate = {
+  kind: "note" | "folder";
+  parentPath: string;
+  /** When set, the eventual createBlankNote call uses this template. */
+  templateId?: string | null;
+};
 
 export interface FileTreeProps {
   selectedNoteId: string | null;
@@ -159,7 +176,16 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
     return () => window.removeEventListener("keydown", onKey);
   }, [lastClickedId]);
 
-  const refresh = () => qc.invalidateQueries({ queryKey: QK.tree });
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: QK.tree });
+    // Tree-shape mutations may have moved a note in or out of
+    // notes/_templates/, so refresh the picker source too.
+    void qc.invalidateQueries({ queryKey: QK.templates });
+    // Deletes also feed the trash. Without invalidating, the user
+    // has to close + reopen the dialog (or hard-refresh) to see
+    // the just-deleted note land there.
+    void qc.invalidateQueries({ queryKey: QK.trash });
+  };
   const startBusy = () => onMutating?.(true);
   const settled = () => {
     onMutating?.(false);
@@ -223,8 +249,20 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
     onSettled: () => onMutating?.(false),
   });
   const createNoteM = useMutation({
-    mutationFn: ({ title, folder }: { title: string; folder: string }) =>
-      createBlankNote({ title, folder }),
+    mutationFn: ({
+      title,
+      folder,
+      templateId,
+    }: {
+      title: string;
+      folder: string;
+      templateId?: string | null;
+    }) =>
+      createBlankNote({
+        title,
+        folder,
+        templateId: templateId ?? undefined,
+      }),
     onMutate: startBusy,
     onSuccess: async (note) => {
       // Force-open every ancestor folder so the new row is visible.
@@ -279,14 +317,62 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
   });
 
   const onRename = ({ name, node }: { id: string; name: string; node: NodeApi<TreeNodeData> }) => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
+    const root = qc.getQueryData<TreeFolder>(QK.tree);
     if (node.data.kind === "note") {
-      renameNoteM.mutate({ id: node.data.noteId, title: trimmed });
+      // Strip a trailing `.md` so renaming "foo" to "foo.md" doesn't
+      // leak a storage detail into the title — see lib/noteTitle.ts.
+      const cleaned = normalizeNoteTitle(name);
+      if (!cleaned) {
+        // arborist already exited edit mode; nothing else to do.
+        return;
+      }
+      const currentFolder = findNoteFolder(root, node.data.noteId);
+      if (
+        currentFolder !== null &&
+        noteTitleClashesIn(root, currentFolder, cleaned, node.data.noteId)
+      ) {
+        // Same UX as the title-edit + create paths: alert the user,
+        // exit edit mode, leave the row showing its old name. They
+        // can F2 again to retry. arborist's onRename fires AFTER
+        // submit() — so editingId is already cleared by the time we
+        // get here. No reset needed.
+        window.alert(t("menu.duplicateNote", { name: cleaned }));
+        return;
+      }
+      renameNoteM.mutate({ id: node.data.noteId, title: cleaned });
     } else {
-      renameFolderM.mutate({ path: node.data.folderPath, newName: trimmed });
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const fullPath = node.data.folderPath;
+      const lastSlash = fullPath.lastIndexOf("/");
+      const parentPath = lastSlash === -1 ? "" : fullPath.slice(0, lastSlash);
+      if (folderNameClashesIn(root, parentPath, trimmed, fullPath)) {
+        window.alert(t("menu.duplicateFolder", { name: trimmed }));
+        return;
+      }
+      renameFolderM.mutate({ path: fullPath, newName: trimmed });
     }
   };
+
+  /**
+   * Find the path-of-folder a note currently lives in. Returns "" for
+   * root-level notes, null if the note isn't in the cached tree.
+   */
+  function findNoteFolder(
+    root: TreeFolder | undefined,
+    noteId: string,
+  ): string | null {
+    if (!root) return null;
+    function walk(folder: TreeFolder, path: string): string | null {
+      if (folder.notes.some((n) => n.id === noteId)) return path;
+      for (const sub of folder.folders) {
+        const found = walk(sub, sub.path);
+        if (found !== null) return found;
+      }
+      return null;
+    }
+    return walk(root, "");
+  }
 
   const onMove = ({
     dragIds,
@@ -349,15 +435,50 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
   const onNewRootFolder = () => startCreate("folder", "");
   const onNewRootNote = () => startCreate("note", "");
   const cancelPending = () => setPendingCreate(null);
+
+  const [duplicateError, setDuplicateError] = useState<string | null>(null);
+
   const commitPending = (rawName: string) => {
     if (!pendingCreate) return;
-    const trimmed = rawName.trim().replace(/\.md$/i, "");
+    // For notes: strip trailing `.md` (storage convention, not title).
+    // For folders: just trim — folder names CAN end in `.md` if the
+    // user really wants. Same helper is reused in onRename.
+    const trimmed =
+      pendingCreate.kind === "note"
+        ? normalizeNoteTitle(rawName)
+        : rawName.trim();
     if (!trimmed) {
       cancelPending();
       return;
     }
+    const root = qc.getQueryData<TreeFolder>(QK.tree);
+    const clash =
+      pendingCreate.kind === "note"
+        ? noteTitleClashesIn(root, pendingCreate.parentPath, trimmed)
+        : folderNameClashesIn(root, pendingCreate.parentPath, trimmed);
+    if (clash) {
+      // Same UX as title-edit + tree-rename: alert the user, then
+      // exit the inline-create state so the placeholder vanishes.
+      // Re-clicking "+ note" / "+ folder" re-opens fresh. Keeping
+      // the input open after a blocked submit was confusing —
+      // dogfood feedback was the user couldn't tell whether to
+      // retry, hit Esc, or click away.
+      const key =
+        pendingCreate.kind === "note"
+          ? "menu.duplicateNote"
+          : "menu.duplicateFolder";
+      setDuplicateError(t(key, { name: trimmed }));
+      window.alert(t(key, { name: trimmed }));
+      cancelPending();
+      return;
+    }
+    setDuplicateError(null);
     if (pendingCreate.kind === "note") {
-      createNoteM.mutate({ title: trimmed, folder: pendingCreate.parentPath });
+      createNoteM.mutate({
+        title: trimmed,
+        folder: pendingCreate.parentPath,
+        templateId: pendingCreate.templateId ?? null,
+      });
     } else {
       const path = pendingCreate.parentPath
         ? `${pendingCreate.parentPath}/${trimmed}`
@@ -368,6 +489,34 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
     // the tree until the mutation lands so the user doesn't see a gap.
     // createNoteM / createFolderM clear it in onSuccess.
   };
+  // Surface duplicateError as a guard against TypeScript dead-code
+  // pruning; consumed for accessibility and (future) toast wiring.
+  void duplicateError;
+
+  // Cross-component bridge: AppShell's Templates dialog dispatches a
+  // `knowlet:start-create-from-template` event when the user clicks
+  // "Use" on a template row. We pick it up here and run the same
+  // inline-title flow we use for plain "+ note", just with templateId
+  // attached. Keeps the dialog ignorant of FileTree internals.
+  useEffect(() => {
+    const onStart = (e: Event) => {
+      const detail = (
+        e as CustomEvent<{ templateId: string | null }>
+      ).detail;
+      treeRef.current?.reset();
+      setPendingCreate({
+        kind: "note",
+        parentPath: "",
+        templateId: detail?.templateId ?? null,
+      });
+    };
+    window.addEventListener("knowlet:start-create-from-template", onStart);
+    return () =>
+      window.removeEventListener(
+        "knowlet:start-create-from-template",
+        onStart,
+      );
+  }, []);
 
   // Memoize the conversion so arborist's internal open/closed state isn't
   // reset every render. Without this, every click rebuilds the array and
@@ -443,6 +592,14 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
             onMove={onMove}
             onDelete={onDelete}
             selection={selectedNoteId ? `note:${selectedNoteId}` : undefined}
+            // Row's handleClick calls node.activate() on note rows; this is
+            // the upstream callback that gets fired. Strip the `note:`
+            // prefix that toArborist injected so the AppShell's selectedNoteId
+            // matches the bare note id used everywhere else.
+            onActivate={(node) => {
+              const raw = node.id;
+              if (raw.startsWith("note:")) onSelectNote(raw.slice("note:".length));
+            }}
             onToggle={(id) => {
               setOpenMap((m) => ({ ...m, [id]: !isNodeOpen(id) }));
             }}

@@ -61,9 +61,21 @@ export function injectPending(
   return insert(data, 0);
 }
 
+/**
+ * Top-level folders the regular file tree should NOT show. Templates
+ * are stored in `notes/templates/` as a convention (so power users
+ * managing files in Finder still see them as ordinary markdown), but
+ * the in-app concept is "Templates" — surfaced via the global header
+ * dialog, not as a tree node. Hiding here means the file tree stays
+ * focused on knowledge content.
+ */
+const HIDDEN_TOP_LEVEL_FOLDERS = new Set(["_templates"]);
+
 export function toArborist(root: TreeFolder): TreeNodeData[] {
   return [
-    ...root.folders.map(folderToNode),
+    ...root.folders
+      .filter((f) => !HIDDEN_TOP_LEVEL_FOLDERS.has(f.name))
+      .map(folderToNode),
     ...root.notes.map((n) => ({
       id: `note:${n.id}`,
       name: n.title || "(无标题)",

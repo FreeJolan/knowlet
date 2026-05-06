@@ -22,4 +22,5 @@ export const QK = {
   tree: ["tree"] as const,
   note: (id: string) => ["note", id] as const,
   trash: ["trash"] as const,
+  templates: ["templates"] as const,
 };

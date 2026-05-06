@@ -1,20 +1,79 @@
 /**
- * Phase 1 A read-only note view. Phase 1 B replaces this with the
- * CodeMirror 6 editor + live preview; this is the placeholder so the
- * file tree click-through actually shows something.
+ * Phase 1 B note view — uncontrolled CodeMirror editor + debounced auto-save.
+ *
+ * The editor is uncontrolled: we seed it with `initialValue` once per
+ * note (forced via `key={note.id}`) and then read changes into a ref
+ * inside `onChange`. We do NOT keep the body in React state — that would
+ * re-render on every keystroke and race react-codemirror's value-sync
+ * back into the editor.
+ *
+ * Save flow:
+ *   - onChange  → bodyRef.current = next; mark dirty; scheduleSave (800 ms)
+ *   - onBlur    → flushSave (cancel debounce, save now)
+ *   - noteId change → flushSave for the previous note before remount
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import GithubSlugger from "github-slugger";
+import { Columns2, Eye, Pen } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { getNote } from "@/api/client";
+import { getNote, listTemplates, updateNote } from "@/api/client";
+import type { TemplateSummary } from "@/api/client";
+import type { NoteFull, TreeFolder } from "@/api/types";
+import type { EditorView } from "@codemirror/view";
+
+import { MarkdownEditor } from "@/components/Editor/MarkdownEditor";
+import { MarkdownPreview } from "@/components/Editor/MarkdownPreview";
+import { InlineEditInput } from "@/components/InlineEdit/InlineEditInput";
+import { noteTitleClashesIn } from "@/lib/findCollision";
+import { normalizeNoteTitle } from "@/lib/noteTitle";
 import { QK } from "@/lib/queryClient";
 
-export function NoteView({ noteId }: { noteId: string | null }) {
+import { attachScrollSync } from "./scrollSync";
+
+/**
+ * Update one note inside a TreeFolder snapshot. Used for optimistic
+ * title rename from the editor — mirrors the helper FileTree owns.
+ */
+function updateNoteTitleInTree(
+  root: TreeFolder,
+  noteId: string,
+  title: string,
+): TreeFolder {
+  return {
+    ...root,
+    notes: root.notes.map((n) => (n.id === noteId ? { ...n, title } : n)),
+    folders: root.folders.map((f) => updateNoteTitleInTree(f, noteId, title)),
+  };
+}
+
+const AUTOSAVE_DEBOUNCE_MS = 800;
+const VIEW_MODE_STORAGE_KEY = "knowlet:view-mode";
+
+type SaveState = "idle" | "saving" | "saved";
+type ViewMode = "edit" | "split" | "preview";
+
+function loadInitialViewMode(): ViewMode {
+  if (typeof window === "undefined") return "edit";
+  const v = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+  if (v === "edit" || v === "split" || v === "preview") return v;
+  return "edit";
+}
+
+export function NoteView({
+  noteId,
+  pendingHash,
+  onPendingHashConsumed,
+}: {
+  noteId: string | null;
+  pendingHash?: string | null;
+  onPendingHashConsumed?: () => void;
+}) {
   const { t } = useTranslation();
-  // Always provide a queryFn — TanStack Query v5 throws synchronously when
-  // queryFn is undefined, even with enabled:false. The fn just never runs
-  // when noteId is null because `enabled` gates execution.
+  const qc = useQueryClient();
+
   const note = useQuery({
     queryKey: noteId ? QK.note(noteId) : ["note", "_empty"],
     queryFn: () => {
@@ -23,6 +82,391 @@ export function NoteView({ noteId }: { noteId: string | null }) {
     },
     enabled: !!noteId,
   });
+
+  // ---- Per-note save state, all kept in refs so the editor doesn't
+  // re-mount on every keystroke. ----
+  // The editor's current text. Updated by onChange.
+  const bodyRef = useRef("");
+  // The id this body belongs to. When noteId switches, we use this to know
+  // which id to save to during the transition flush.
+  const loadedIdRef = useRef<string | null>(null);
+  // The note metadata (title/tags) we send back unchanged in the PUT.
+  // Kept as a ref so flushSave doesn't depend on a re-rendering value.
+  const noteMetaRef = useRef<NoteFull | null>(null);
+  // Last value that successfully reached the backend. Used to skip no-op
+  // saves and to short-circuit dirty checks.
+  const lastSavedRef = useRef("");
+  const dirtyRef = useRef(false);
+  const debounceRef = useRef<number | null>(null);
+  const [savingState, setSavingState] = useState<SaveState>("idle");
+  const [viewMode, setViewMode] = useState<ViewMode>(loadInitialViewMode);
+  // Title click-to-edit state. Notion / Bear / Typora all let you edit
+  // the note title inline at the top of the doc; Obsidian doesn't but
+  // the dogfood feedback was that it feels missing. The flow goes
+  // through `updateNote(id, {title, body, tags})` so the file tree
+  // sees the rename via tree-cache invalidation, same path the F2
+  // shortcut already uses.
+  const [editingTitle, setEditingTitle] = useState(false);
+  // CM6 view + preview-scroll-container refs for split-mode sync.
+  // viewRef is set once per note (key remount in MarkdownEditor) via
+  // onViewMount. previewWrapperRef hooks the [data-testid] wrapper.
+  const editorViewRef = useRef<EditorView | null>(null);
+  const previewWrapperRef = useRef<HTMLDivElement | null>(null);
+  // The preview pane shows the editor's body — mirror it into state when
+  // we change modes / when the user clicks back into the editor pane after
+  // editing in split. In split-mode it tracks the editor live.
+  const [previewBody, setPreviewBody] = useState("");
+
+  const saveMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: NoteFull }) =>
+      updateNote(id, {
+        title: payload.title,
+        tags: payload.tags,
+        body: payload.body,
+      }),
+    onSuccess: (data, vars) => {
+      qc.setQueryData(QK.note(vars.id), data);
+      // Only update the badge / dirty flag for the CURRENTLY-loaded note.
+      // A late-arriving response from the previous note (after a switch)
+      // shouldn't flip the new note's UI back to "saved".
+      if (loadedIdRef.current === vars.id) {
+        lastSavedRef.current = data.body;
+        dirtyRef.current = false;
+        setSavingState("saved");
+        window.setTimeout(() => {
+          if (loadedIdRef.current === vars.id) setSavingState("idle");
+        }, 1200);
+      }
+    },
+  });
+
+  // Title rename — fired when the user finishes editing the inline
+  // title input. Optimistic against both the per-note query AND the
+  // tree query, so the right-pane h1 + the file tree row both update
+  // on the same frame the user pressed Enter (no flash of old name).
+  const renameTitleMutation = useMutation({
+    mutationFn: ({
+      id,
+      title,
+      payload,
+    }: {
+      id: string;
+      title: string;
+      payload: NoteFull;
+    }) =>
+      updateNote(id, {
+        title,
+        tags: payload.tags,
+        body: payload.body,
+      }),
+    onMutate: ({ id, title }) => {
+      const prevTree = qc.getQueryData<TreeFolder>(QK.tree);
+      const prevNote = qc.getQueryData<NoteFull>(QK.note(id));
+      if (prevTree) {
+        qc.setQueryData<TreeFolder>(
+          QK.tree,
+          updateNoteTitleInTree(prevTree, id, title),
+        );
+      }
+      if (prevNote) {
+        qc.setQueryData<NoteFull>(QK.note(id), { ...prevNote, title });
+      }
+      return { prevTree, prevNote };
+    },
+    onError: (_err, vars, ctx) => {
+      if (ctx?.prevTree) qc.setQueryData(QK.tree, ctx.prevTree);
+      if (ctx?.prevNote) qc.setQueryData(QK.note(vars.id), ctx.prevNote);
+    },
+    onSuccess: (data, vars) => {
+      qc.setQueryData(QK.note(vars.id), data);
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: QK.tree });
+    },
+  });
+
+  const flushSave = useCallback(() => {
+    if (debounceRef.current !== null) {
+      window.clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    if (!dirtyRef.current) return;
+    const id = loadedIdRef.current;
+    const meta = noteMetaRef.current;
+    const body = bodyRef.current;
+    if (!id || !meta) return;
+    if (body === lastSavedRef.current) {
+      dirtyRef.current = false;
+      return;
+    }
+    if (loadedIdRef.current === id) setSavingState("saving");
+    saveMutation.mutate({ id, payload: { ...meta, body } });
+  }, [saveMutation]);
+
+  const scheduleSave = useCallback(() => {
+    if (debounceRef.current !== null) {
+      window.clearTimeout(debounceRef.current);
+    }
+    debounceRef.current = window.setTimeout(() => {
+      debounceRef.current = null;
+      flushSave();
+    }, AUTOSAVE_DEBOUNCE_MS);
+  }, [flushSave]);
+
+  // When server data lands for a new note, prime the refs. This runs once
+  // per note (the equality check guards against re-runs from refetch).
+  useEffect(() => {
+    if (!note.data) return;
+    if (loadedIdRef.current === note.data.id) {
+      // Same note — keep the user's in-progress edits intact, but
+      // refresh the metadata snapshot in case title/tags were updated
+      // by a tree-side rename mutation.
+      noteMetaRef.current = note.data;
+      return;
+    }
+    bodyRef.current = note.data.body;
+    lastSavedRef.current = note.data.body;
+    loadedIdRef.current = note.data.id;
+    noteMetaRef.current = note.data;
+    setPreviewBody(note.data.body);
+    dirtyRef.current = false;
+    setSavingState("idle");
+  }, [note.data]);
+
+  // Persist the user's view-mode choice across reloads.
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+    }
+  }, [viewMode]);
+
+  // Split-mode scroll sync: bind only when both panes are mounted +
+  // visible. Re-runs on view-mode toggle and on note swap (the
+  // editor view-ref changes via the `key={note.data.id}` remount).
+  // The detail of which pane is "active" + how lines map to elements
+  // lives in `scrollSync.ts`; this effect just owns the lifetime.
+  useEffect(() => {
+    if (viewMode !== "split") return;
+    if (!noteId) return;
+    let teardown: (() => void) | null = null;
+    // The CM view sets editorViewRef inside onViewMount, which fires
+    // *after* this effect's first run. Poll briefly until both refs
+    // populate. requestAnimationFrame is enough — CM mounts within
+    // a frame of the parent's commit.
+    let cancelled = false;
+    const tryAttach = () => {
+      if (cancelled) return;
+      const view = editorViewRef.current;
+      const previewEl = previewWrapperRef.current;
+      if (view && previewEl) {
+        teardown = attachScrollSync({ view, previewEl });
+        return;
+      }
+      requestAnimationFrame(tryAttach);
+    };
+    tryAttach();
+    return () => {
+      cancelled = true;
+      teardown?.();
+    };
+  }, [viewMode, noteId]);
+
+  // When entering preview/split mode, snapshot the latest editor body.
+  // (In edit-only mode the preview isn't rendered, so we don't need to.)
+  useEffect(() => {
+    if (viewMode !== "edit") {
+      setPreviewBody(bodyRef.current);
+    }
+  }, [viewMode]);
+
+  // Wikilink hash navigation: when AppShell asks us to scroll to a
+  // `#heading` after a wiki-link click, force preview mode (so there's
+  // something to scroll to) and find the matching heading id from
+  // rehype-slug. Critical: rehype-slug uses `github-slugger` to derive
+  // ids (lowercase + hyphenated), so we MUST run the same slugger on
+  // pendingHash before querying — otherwise `[[Note#Conclusion]]` looks
+  // for `#Conclusion` and finds nothing (the actual id is `#conclusion`).
+  useEffect(() => {
+    if (!pendingHash || !note.data) return;
+    if (viewMode === "edit") setViewMode("split");
+    setPreviewBody(note.data.body);
+    const slugger = new GithubSlugger();
+    const slug = slugger.slug(pendingHash);
+    let cancelled = false;
+    const t0 = Date.now();
+    const tick = () => {
+      if (cancelled) return;
+      const root = document.querySelector('[data-testid="markdown-preview"]');
+      // Try slugged form first (canonical), then literal as a fallback
+      // for any future renderer that doesn't slug.
+      const target =
+        root?.querySelector(`#${CSS.escape(slug)}`) ??
+        root?.querySelector(`#${CSS.escape(pendingHash)}`);
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+        onPendingHashConsumed?.();
+        return;
+      }
+      // Try for up to 1.5 s — KaTeX / Mermaid lazy-render can delay the
+      // heading layout briefly.
+      if (Date.now() - t0 < 1500) requestAnimationFrame(tick);
+      else onPendingHashConsumed?.();
+    };
+    requestAnimationFrame(tick);
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingHash, note.data, viewMode, onPendingHashConsumed]);
+
+  // Flush pending edits for the previous note BEFORE remount.
+  useEffect(() => {
+    return () => {
+      flushSave();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteId]);
+
+  const handleChange = useCallback(
+    (next: string) => {
+      bodyRef.current = next;
+      if (next !== lastSavedRef.current) {
+        dirtyRef.current = true;
+        scheduleSave();
+      }
+      // Live-mirror to preview only in split mode — keeps the right
+      // pane in sync as the user types. In edit-only and preview-only
+      // modes there's no live render, so skip the re-render cost.
+      if (viewMode === "split") setPreviewBody(next);
+    },
+    [scheduleSave, viewMode],
+  );
+
+  // Lazy reader the wikilink autocomplete extension calls on each
+  // keystroke — pulls the latest tree out of the QueryClient cache so
+  // suggestions track folder / note creation without re-mounting CM.
+  const getTreeForAutocomplete = useMemo(
+    () => () => qc.getQueryData<TreeFolder>(QK.tree),
+    [qc],
+  );
+  // Async cache-aware body fetcher for `[[Title#` heading completions.
+  // Hits the cache first (no network if the target note was already
+  // visited), then falls back to fetchQuery which de-dupes concurrent
+  // requests for the same noteId. Returning null on error keeps the
+  // popup quiet rather than blowing up the editor.
+  const getNoteBodyForAutocomplete = useMemo(
+    () => async (id: string) => {
+      const cached = qc.getQueryData<NoteFull>(QK.note(id));
+      if (cached) return cached.body;
+      try {
+        const fetched = await qc.fetchQuery({
+          queryKey: QK.note(id),
+          queryFn: () => getNote(id),
+        });
+        return fetched.body;
+      } catch {
+        return null;
+      }
+    },
+    [qc],
+  );
+
+  // Slash-command (`/`) inline template insertion. The list comes from
+  // the cached templates query (kept fresh by the rest of the app's
+  // mutations); the body fetch hits the same per-note cache the
+  // wikilink heading completion uses, then runs `{{title}}` /
+  // `{{date}}` substitution against the *current* note's title.
+  const getTemplatesForSlash = useMemo(
+    () => () => qc.getQueryData<TemplateSummary[]>(QK.templates) ?? [],
+    [qc],
+  );
+  const fetchTemplateBodyForSlash = useMemo(
+    () => async (id: string) => {
+      const cached = qc.getQueryData<NoteFull>(QK.note(id));
+      if (cached) return cached.body;
+      try {
+        const fetched = await qc.fetchQuery({
+          queryKey: QK.note(id),
+          queryFn: () => getNote(id),
+        });
+        return fetched.body;
+      } catch {
+        return null;
+      }
+    },
+    [qc],
+  );
+  const substituteForSlash = useMemo(
+    () => (body: string) => {
+      const title = note.data?.title ?? "";
+      const today = new Date().toISOString().slice(0, 10);
+      // Match the backend's regex shape so behaviour is consistent.
+      return body.replace(
+        /\{\{\s*([a-zA-Z_][\w-]*)\s*\}\}/g,
+        (full, key: string) => {
+          const k = key.toLowerCase();
+          if (k === "title") return title;
+          if (k === "date") return today;
+          return full;
+        },
+      );
+    },
+    [note.data?.title],
+  );
+  // Keep the templates query primed so the slash menu has something
+  // to show on the first `/` keystroke without a network round-trip.
+  useQuery({ queryKey: QK.templates, queryFn: listTemplates });
+  const templateSlashLabels = useMemo(
+    () => ({ insert: t("templates.slashLabel"), empty: t("templates.slashEmpty") }),
+    [t],
+  );
+
+  // Title click-to-edit handlers. We:
+  //   - flush any pending body save first (so its payload reflects the
+  //     pre-rename body before the title-rename payload overwrites it)
+  //   - send the rename via PUT /api/notes/{id} with the latest body
+  //     to avoid a race where two in-flight PUTs trample each other
+  const submitTitle = useCallback(
+    (raw: string) => {
+      // Same normalization as create + tree-rename — trailing `.md` is
+      // a storage detail, never part of the title.
+      const next = normalizeNoteTitle(raw);
+      if (!next || !note.data) {
+        setEditingTitle(false);
+        return;
+      }
+      if (next === note.data.title) {
+        setEditingTitle(false);
+        return;
+      }
+      // Pre-flight against the cached tree for a sibling collision —
+      // matches the FileTree create + rename paths. Pass the current
+      // note's id as `excludeId` so renaming to your own current
+      // title isn't (incorrectly) treated as a clash.
+      const tree = qc.getQueryData<TreeFolder>(QK.tree);
+      const folder = note.data.folder ?? "";
+      if (noteTitleClashesIn(tree, folder, next, note.data.id)) {
+        // Dogfood feedback: keeping the input open after a blocked
+        // rename strands the user — they have to manually click /
+        // Esc to recover. Closing the editor (revert to the
+        // current title implicitly) is the natural "operation
+        // failed, undo" state. The alert tells them WHY; the
+        // closed h1 tells them WHERE we are. They re-click the h1
+        // if they want to retry.
+        window.alert(t("menu.duplicateNote", { name: next }));
+        setEditingTitle(false);
+        return;
+      }
+      flushSave();
+      renameTitleMutation.mutate({
+        id: note.data.id,
+        title: next,
+        payload: { ...note.data, body: bodyRef.current },
+      });
+      setEditingTitle(false);
+    },
+    [flushSave, note.data, qc, renameTitleMutation, t],
+  );
+  const cancelTitle = useCallback(() => setEditingTitle(false), []);
 
   if (!noteId) {
     return (
@@ -44,11 +488,57 @@ export function NoteView({ noteId }: { noteId: string | null }) {
   if (!note.data) return null;
 
   return (
-    <article className="kn-paper h-full overflow-y-auto px-10 py-8">
-      <header className="mb-6">
-        <h1 className="font-serif text-3xl" style={{ color: "var(--ink)" }}>
-          {note.data.title}
-        </h1>
+    <div className="kn-paper flex h-full flex-col">
+      <header className="shrink-0 px-10 pt-8 pb-3">
+        <div className="flex items-baseline justify-between gap-4">
+          {editingTitle ? (
+            <div className="flex-1">
+              <InlineEditInput
+                initial={note.data.title}
+                placeholder={t("note.titlePlaceholder")}
+                onSubmit={submitTitle}
+                onCancel={cancelTitle}
+                dataTestId="title-edit-input"
+              />
+            </div>
+          ) : (
+            <h1
+              className="font-serif text-3xl cursor-text rounded-sm transition-colors hover:bg-accent/40"
+              style={{ color: "var(--ink)" }}
+              role="button"
+              tabIndex={0}
+              data-testid="note-title"
+              title={t("note.editTitleHint")}
+              onClick={() => setEditingTitle(true)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === "F2") {
+                  e.preventDefault();
+                  setEditingTitle(true);
+                }
+              }}
+            >
+              {note.data.title}
+            </h1>
+          )}
+          <div className="flex items-center gap-3">
+            {/* Reserve a fixed slot so the toolbar / title baseline doesn't
+             * jump when the badge text appears + disappears. The visible
+             * text is wrapped in a span we toggle with `visibility`, which
+             * preserves layout during the idle / saved transition. */}
+            <span
+              className="inline-flex w-16 justify-end font-mono text-[11px] uppercase tracking-wider"
+              style={{ color: "var(--ink-mute)" }}
+              data-testid="autosave-state"
+            >
+              <span style={{ visibility: savingState === "idle" ? "hidden" : "visible" }}>
+                {savingState === "saving" && t("note.saving")}
+                {savingState === "saved" && t("note.saved")}
+                {savingState === "idle" && t("note.saved")}
+              </span>
+            </span>
+            <ViewModeToggle value={viewMode} onChange={setViewMode} t={t} />
+          </div>
+        </div>
         <div
           className="mt-2 font-mono text-xs uppercase tracking-wider"
           style={{ color: "var(--ink-mute)" }}
@@ -58,27 +548,123 @@ export function NoteView({ noteId }: { noteId: string | null }) {
         </div>
         {note.data.tags.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1">
-            {note.data.tags.map((t) => (
+            {note.data.tags.map((tag) => (
               <span
-                key={t}
+                key={tag}
                 className="rounded-full px-2 py-0.5 text-xs"
                 style={{
                   background: "var(--accent-tint)",
                   color: "var(--ink)",
                 }}
               >
-                {t}
+                {tag}
               </span>
             ))}
           </div>
         )}
       </header>
-      <pre
-        className="whitespace-pre-wrap font-serif text-base leading-relaxed"
-        style={{ color: "var(--ink)" }}
-      >
-        {note.data.body}
-      </pre>
-    </article>
+      {/* Both panes are ALWAYS mounted — we toggle visibility via the
+        * `hidden` class instead of conditionally rendering. Two wins:
+        *   - scroll position survives mode toggles (split → preview-
+        *     only → split lands you back where you were);
+        *   - the EditorView + ref stay alive across modes, so the
+        *     scroll-sync effect can re-attach without polling for a
+        *     freshly-mounted view.
+        * `min-w-0` keeps a long line / wide diagram from pushing one
+        * pane past 50% and crushing the other.
+        */}
+      <div className="flex min-h-0 flex-1 px-10 pb-8 gap-6">
+        <div
+          className={`min-h-0 min-w-0 flex-1 ${
+            viewMode === "preview" ? "hidden" : ""
+          }`}
+          data-testid="markdown-editor"
+          data-view-mode={viewMode}
+        >
+          <MarkdownEditor
+            // key forces a fresh mount per note — the editor is uncontrolled
+            // after that, so we never push value back in mid-edit.
+            key={note.data.id}
+            initialValue={note.data.body}
+            onChange={handleChange}
+            onBlur={flushSave}
+            getTree={getTreeForAutocomplete}
+            getNoteBody={getNoteBodyForAutocomplete}
+            getTemplates={getTemplatesForSlash}
+            fetchTemplateBody={fetchTemplateBodyForSlash}
+            substituteTemplate={substituteForSlash}
+            templateSlashLabels={templateSlashLabels}
+            onViewMount={(view) => {
+              editorViewRef.current = view;
+            }}
+          />
+        </div>
+        {viewMode === "split" && (
+          <div
+            className="min-h-0 w-px shrink-0 self-stretch"
+            style={{ background: "var(--accent-soft)" }}
+          />
+        )}
+        <div
+          ref={previewWrapperRef}
+          className={`min-h-0 min-w-0 flex-1 overflow-y-auto ${
+            viewMode === "edit" ? "hidden" : ""
+          }`}
+          data-testid="markdown-preview"
+        >
+          <MarkdownPreview value={previewBody} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type ToggleProps = {
+  value: ViewMode;
+  onChange: (next: ViewMode) => void;
+  t: (key: string) => string;
+};
+
+function ViewModeToggle({ value, onChange, t }: ToggleProps) {
+  // Segmented control. We don't pull in shadcn's ToggleGroup here because
+  // (a) only used in this one place, (b) it would add Radix Toggle code
+  // we don't otherwise need, (c) three buttons and a `data-active` is a
+  // shorter implementation than configuring ToggleGroup primitives.
+  const items: { mode: ViewMode; label: string; Icon: typeof Pen }[] = [
+    { mode: "edit", label: t("note.viewEdit"), Icon: Pen },
+    { mode: "split", label: t("note.viewSplit"), Icon: Columns2 },
+    { mode: "preview", label: t("note.viewPreview"), Icon: Eye },
+  ];
+  return (
+    <div
+      className="flex items-center rounded-md border p-0.5"
+      style={{ borderColor: "var(--accent-soft)", background: "var(--bg-1)" }}
+      role="tablist"
+      data-testid="view-mode-toggle"
+    >
+      {items.map(({ mode, label, Icon }) => {
+        const active = value === mode;
+        return (
+          <button
+            key={mode}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            aria-label={label}
+            title={label}
+            data-mode={mode}
+            data-active={active}
+            onClick={() => onChange(mode)}
+            className="flex size-7 items-center justify-center rounded-sm transition-colors"
+            style={{
+              background: active ? "var(--accent-tint-2)" : "transparent",
+              color: active ? "var(--ink)" : "var(--ink-mute)",
+            }}
+          >
+            <Icon className="size-3.5" />
+          </button>
+        );
+      })}
+    </div>
   );
 }

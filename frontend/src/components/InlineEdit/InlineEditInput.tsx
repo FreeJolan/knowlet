@@ -61,17 +61,25 @@ export function InlineEditInput({
     el.select();
   });
 
-  // Outside-click cancels. Listen on capture-phase pointerdown to beat
-  // Radix's own portal-close chain that fires after pointerup.
+  // Outside-click commits the current value (Finder / VS Code / Notion
+  // convention — blur saves, Esc cancels). Empty value is the one
+  // exception: blurring with no input becomes a cancel so we don't
+  // commit empty titles / folder names. Listen on capture-phase
+  // pointerdown to beat Radix's portal-close chain that fires after
+  // pointerup.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const onOutside = (e: PointerEvent) => {
-      if (e.target instanceof Node && !el.contains(e.target)) onCancel();
+      if (e.target instanceof Node && !el.contains(e.target)) {
+        const value = el.value.trim();
+        if (value) onSubmit(value);
+        else onCancel();
+      }
     };
     document.addEventListener("pointerdown", onOutside, true);
     return () => document.removeEventListener("pointerdown", onOutside, true);
-  }, [onCancel]);
+  }, [onSubmit, onCancel]);
 
   return (
     <input

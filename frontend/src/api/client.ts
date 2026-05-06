@@ -94,12 +94,21 @@ export const createBlankNote = (payload: {
   title: string;
   folder?: string;
   tags?: string[];
+  templateId?: string;
 }): Promise<NoteFull> =>
   request("POST", "/api/notes/new", {
     title: payload.title,
     folder: payload.folder ?? "",
     tags: payload.tags ?? [],
+    template_id: payload.templateId ?? null,
   });
+
+// ---------- templates (Phase 1 B slice 8) ----------
+
+export type TemplateSummary = { id: string; title: string };
+
+export const listTemplates = (): Promise<TemplateSummary[]> =>
+  request("GET", "/api/templates");
 
 // ---------- trash ----------
 
@@ -109,8 +118,41 @@ export const listTrash = (): Promise<TrashListResponse> =>
 export const restoreTrashed = (name: string): Promise<NoteFull> =>
   request("POST", `/api/trash/${encodeURIComponent(name)}/restore`);
 
+export const restoreAllTrashed = (): Promise<{
+  restored_count: number;
+  skipped: string[];
+}> => request("POST", "/api/trash/restore-all");
+
 export const purgeTrashed = (name: string): Promise<{ name: string }> =>
   request("DELETE", `/api/trash/${encodeURIComponent(name)}`);
 
 export const emptyTrash = (): Promise<{ purged_count: number }> =>
   request("DELETE", "/api/trash");
+
+// ---------- attachments (Phase 1 B slice 4) ----------
+
+/**
+ * Upload an image to the vault's `_attachments/` folder. Returns the
+ * vault-relative path (e.g. `_attachments/01HXxxxx.png`) that the editor
+ * inserts into the note as `![](path)`. Backend serves the file at
+ * `/files/<path>` for the preview pane.
+ */
+export async function uploadAttachment(
+  file: File | Blob,
+  filename: string,
+): Promise<{ path: string; bytes: number }> {
+  const form = new FormData();
+  form.append("file", file, filename);
+  const r = await fetch("/api/attachments", { method: "POST", body: form });
+  if (!r.ok) {
+    let detail = r.statusText;
+    try {
+      const j = (await r.json()) as { detail?: string };
+      if (j.detail) detail = j.detail;
+    } catch {
+      // not json
+    }
+    throw { status: r.status, detail };
+  }
+  return (await r.json()) as { path: string; bytes: number };
+}

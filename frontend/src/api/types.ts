@@ -40,6 +40,9 @@ export interface TrashEntry {
   title: string;
   note_id: string;
   trashed_at: string;
+  /** Folder the note lived in before it was trashed. Empty string =
+   *  root. null = legacy entry without metadata (will restore to root). */
+  original_folder?: string | null;
 }
 
 export interface TrashListResponse {

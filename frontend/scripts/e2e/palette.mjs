@@ -39,10 +39,14 @@ try {
     // Press Enter to jump
     await page.keyboard.press("Enter");
     await page.waitForTimeout(500);
-    const body = (await page.locator("article pre").textContent()) ?? "";
+    // Right pane is now the CodeMirror editor — locate by the wrapping
+    // testid added in Phase 1 B and read the editor content via .cm-content.
+    const editor = page.locator('[data-testid="markdown-editor"] .cm-content');
+    await editor.waitFor({ state: "visible", timeout: 3000 });
+    const body = (await editor.textContent()) ?? "";
     assert(
-      body.includes("body of knowlet design") || body.length > 0,
-      `right pane shows note body — got "${body.slice(0, 60)}"`,
+      body.length > 0,
+      `right pane shows editor with note content — got "${body.slice(0, 60)}"`,
     );
   });
 
