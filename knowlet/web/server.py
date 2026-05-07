@@ -167,6 +167,13 @@ class BacklinkRow(BaseModel):
     sentence: str
 
 
+class TagSummary(BaseModel):
+    """Phase 1 C slice 2 — one tag with its note count for the tag browser."""
+
+    tag: str
+    count: int
+
+
 # ---------------- Phase 1 A wire schemas (file ops) ----------------
 
 
@@ -1287,6 +1294,46 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         rows = runtime.index.list_notes(limit=limit, order="updated_at" if recent else "created_at")
         # M7.0.2: derive folder (relative to notes_dir) for each row so
         # the sidebar can build a tree without extra round-trips.
+        out: list[NoteSummary] = []
+        for r in rows:
+            folder = ""
+            p = r.get("path")
+            if p:
+                try:
+                    folder = runtime.vault.folder_of(Path(p))
+                except (TypeError, ValueError):
+                    folder = ""
+            out.append(NoteSummary(**r, folder=folder))
+        return out
+
+    # ---------------- tags (Phase 1 C slice 2) ----------------
+
+    @app.get("/api/tags", response_model=list[TagSummary])
+    def list_all_tags(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[TagSummary]:
+        """All tags in the vault with note counts, sorted by count desc.
+
+        Phase 1 C slice 2 — backend for the left-rail Tag browser. Tags
+        are user-typed labels stored in Note frontmatter `tags:` and
+        indexed as a JSON column. ADR-0013 §3 Layer B: NO auto-grouping
+        / NO taxonomy enforcement — we just surface what the user wrote.
+        """
+        return [
+            TagSummary(tag=t, count=c) for t, c in runtime.index.aggregate_tags()
+        ]
+
+    @app.get("/api/tags/{tag}/notes", response_model=list[NoteSummary])
+    def list_notes_with_tag(
+        tag: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[NoteSummary]:
+        """Return all notes that include `tag` in their frontmatter tags.
+
+        Linear scan via `index.list_notes_by_tag`; fine up to ~5k notes
+        per ADR-0021. Case-sensitive match (tags are user identity, not
+        approximate)."""
+        rows = runtime.index.list_notes_by_tag(tag)
         out: list[NoteSummary] = []
         for r in rows:
             folder = ""

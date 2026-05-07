@@ -7,8 +7,11 @@
 
 import type {
   ApiError,
+  BacklinkRow,
   FolderResponse,
   NoteFull,
+  NoteSummary,
+  TagSummary,
   TrashListResponse,
   TreeFolder,
 } from "./types";
@@ -102,6 +105,19 @@ export const createBlankNote = (payload: {
     tags: payload.tags ?? [],
     template_id: payload.templateId ?? null,
   });
+
+// ---------- backlinks (Phase 1 C slice 1) ----------
+
+export const getBacklinks = (noteId: string): Promise<BacklinkRow[]> =>
+  request("GET", `/api/notes/${encodeURIComponent(noteId)}/backlinks`);
+
+// ---------- tags (Phase 1 C slice 2) ----------
+
+export const listTags = (): Promise<TagSummary[]> =>
+  request("GET", "/api/tags");
+
+export const listNotesByTag = (tag: string): Promise<NoteSummary[]> =>
+  request("GET", `/api/tags/${encodeURIComponent(tag)}/notes`);
 
 // ---------- templates (Phase 1 B slice 8) ----------
 

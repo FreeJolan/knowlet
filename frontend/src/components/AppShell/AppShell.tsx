@@ -6,7 +6,7 @@
  */
 
 import { useQueryClient } from "@tanstack/react-query";
-import { LayoutTemplate, Trash2 } from "lucide-react";
+import { LayoutTemplate, PanelRight, PanelRightOpen, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -15,6 +15,8 @@ import type { TreeFolder, TreeNote } from "@/api/types";
 import { FileTree } from "@/components/FileTree/FileTree";
 import { NoteView } from "@/components/NoteView/NoteView";
 import { CommandPalette } from "@/components/Palette/CommandPalette";
+import { RightRail } from "@/components/RightRail/RightRail";
+import { TagBrowser } from "@/components/TagBrowser/TagBrowser";
 import { TemplatesDialog } from "@/components/Templates/TemplatesDialog";
 import { TrashPanel } from "@/components/Trash/TrashPanel";
 import { Button } from "@/components/ui/button";
@@ -35,6 +37,10 @@ import { QK } from "@/lib/queryClient";
 const DEFAULT_SIDEBAR_PX = 280;
 const MIN_SIDEBAR_PX = 160;
 const MAX_SIDEBAR_PERCENT = 40;
+const DEFAULT_RAIL_PX = 340;
+const MIN_RAIL_PX = 240;
+const MAX_RAIL_PERCENT = 35;
+const RAIL_COLLAPSE_KEY = "knowlet.rail.collapsed.v1";
 
 function pxToPercent(px: number, windowWidth: number): number {
   if (windowWidth <= 0) return 18;
@@ -72,9 +78,47 @@ export function AppShell() {
   // for the new note; we stash the hash here so the freshly-mounted
   // preview can scroll to it once headings have ids assigned.
   const [pendingHash, setPendingHash] = useState<string | null>(null);
+  // Phase 1 C slice 1: clicking a backlink row asks NoteView to scroll
+  // its CodeMirror view to a specific 1-based line.
+  const [pendingLine, setPendingLine] = useState<number | null>(null);
+  // Phase 1 C: right rail collapse toggle. Persisted across reloads so
+  // the user's preference sticks.
+  const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(RAIL_COLLAPSE_KEY) === "1";
+  });
+  // Phase 1 C slice 2: left-rail tab — files (file tree) vs tags (tag browser).
+  const [leftTab, setLeftTab] = useState<"files" | "tags">("files");
   const [windowWidth, setWindowWidth] = useState(() =>
     typeof window === "undefined" ? 1400 : window.innerWidth,
   );
+
+  // Look up the currently-selected note's title from the tree cache so
+  // the Backlinks empty-state can render `[[Title]]` correctly. Tree is
+  // already cached for the FileTree, so this is free.
+  const selectedNoteTitle = useMemo(() => {
+    if (!selectedNoteId) return "";
+    const tree = qc.getQueryData<TreeFolder>(QK.tree);
+    if (!tree) return "";
+    const stack: TreeFolder[] = [tree];
+    while (stack.length) {
+      const f = stack.pop();
+      if (!f) continue;
+      for (const n of f.notes) if (n.id === selectedNoteId) return n.title;
+      for (const sub of f.folders) stack.push(sub);
+    }
+    return "";
+  }, [selectedNoteId, qc]);
+
+  const toggleRail = () => {
+    setRailCollapsed((v) => {
+      const next = !v;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(RAIL_COLLAPSE_KEY, next ? "1" : "0");
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     const onResize = () => setWindowWidth(window.innerWidth);
@@ -92,6 +136,18 @@ export function AppShell() {
     const minSize = Math.min(
       MAX_SIDEBAR_PERCENT,
       pxToPercent(MIN_SIDEBAR_PX, windowWidth),
+    );
+    return { defaultSize, minSize };
+  }, [windowWidth]);
+
+  const railSizes = useMemo(() => {
+    const defaultSize = Math.max(
+      pxToPercent(MIN_RAIL_PX, windowWidth),
+      Math.min(MAX_RAIL_PERCENT, pxToPercent(DEFAULT_RAIL_PX, windowWidth)),
+    );
+    const minSize = Math.min(
+      MAX_RAIL_PERCENT,
+      pxToPercent(MIN_RAIL_PX, windowWidth),
     );
     return { defaultSize, minSize };
   }, [windowWidth]);
@@ -176,6 +232,21 @@ export function AppShell() {
             >
               <Trash2 className="size-4" />
             </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={
+                railCollapsed ? t("rail.expand") : t("rail.collapse")
+              }
+              onClick={toggleRail}
+              data-testid="rail-toggle"
+            >
+              {railCollapsed ? (
+                <PanelRightOpen className="size-4" />
+              ) : (
+                <PanelRight className="size-4" />
+              )}
+            </Button>
           </div>
         </header>
         <div className="min-h-0 flex-1">
@@ -185,23 +256,117 @@ export function AppShell() {
               minSize={sidebarSizes.minSize}
               maxSize={MAX_SIDEBAR_PERCENT}
             >
-              <FileTree
-                selectedNoteId={selectedNoteId}
-                onSelectNote={(id) => {
-                  setSelectedNoteId(id);
-                  setPendingHash(null);
-                }}
-                onMutating={setTreeBusy}
-              />
+              <div className="flex h-full min-h-0 flex-col">
+                <div
+                  className="flex shrink-0 border-b"
+                  style={{
+                    borderColor: "var(--line)",
+                    background: "var(--panel)",
+                  }}
+                  data-testid="left-tabs"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setLeftTab("files")}
+                    aria-pressed={leftTab === "files"}
+                    data-testid="left-tab-files"
+                    className="flex-1 px-3 py-1.5 text-xs transition-colors"
+                    style={{
+                      color:
+                        leftTab === "files"
+                          ? "var(--ink)"
+                          : "var(--ink-mute)",
+                      fontWeight: leftTab === "files" ? 500 : 400,
+                      borderBottom:
+                        leftTab === "files"
+                          ? "2px solid var(--accent, #5b7a9c)"
+                          : "2px solid transparent",
+                    }}
+                  >
+                    {t("tree.tabFiles")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLeftTab("tags")}
+                    aria-pressed={leftTab === "tags"}
+                    data-testid="left-tab-tags"
+                    className="flex-1 px-3 py-1.5 text-xs transition-colors"
+                    style={{
+                      color:
+                        leftTab === "tags"
+                          ? "var(--ink)"
+                          : "var(--ink-mute)",
+                      fontWeight: leftTab === "tags" ? 500 : 400,
+                      borderBottom:
+                        leftTab === "tags"
+                          ? "2px solid var(--accent, #5b7a9c)"
+                          : "2px solid transparent",
+                    }}
+                  >
+                    {t("tree.tabTags")}
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1">
+                  {leftTab === "files" ? (
+                    <FileTree
+                      selectedNoteId={selectedNoteId}
+                      onSelectNote={(id) => {
+                        setSelectedNoteId(id);
+                        setPendingHash(null);
+                        setPendingLine(null);
+                      }}
+                      onMutating={setTreeBusy}
+                    />
+                  ) : (
+                    <TagBrowser
+                      onSelectNote={(id) => {
+                        setSelectedNoteId(id);
+                        setPendingHash(null);
+                        setPendingLine(null);
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
             </ResizablePanel>
             <ResizableHandle />
-            <ResizablePanel defaultSize={100 - sidebarSizes.defaultSize} minSize={30}>
+            <ResizablePanel
+              defaultSize={
+                railCollapsed
+                  ? 100 - sidebarSizes.defaultSize
+                  : 100 - sidebarSizes.defaultSize - railSizes.defaultSize
+              }
+              minSize={30}
+            >
               <NoteView
                 noteId={selectedNoteId}
                 pendingHash={pendingHash}
                 onPendingHashConsumed={() => setPendingHash(null)}
+                pendingLine={pendingLine}
+                onPendingLineConsumed={() => setPendingLine(null)}
               />
             </ResizablePanel>
+            {!railCollapsed && (
+              <>
+                <ResizableHandle />
+                <ResizablePanel
+                  defaultSize={railSizes.defaultSize}
+                  minSize={railSizes.minSize}
+                  maxSize={MAX_RAIL_PERCENT}
+                >
+                  <RightRail
+                    noteId={selectedNoteId}
+                    noteTitle={selectedNoteTitle}
+                    onOpenSource={(sourceId, line) => {
+                      if (sourceId !== selectedNoteId)
+                        setSelectedNoteId(sourceId);
+                      setPendingHash(null);
+                      setPendingLine(line);
+                    }}
+                  />
+                </ResizablePanel>
+              </>
+            )}
           </ResizablePanelGroup>
         </div>
       </div>

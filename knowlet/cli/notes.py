@@ -22,6 +22,7 @@ from knowlet.cli._common import (
     make_index,
     resolve_vault_or_die,
 )
+from knowlet.core.backlinks import find_backlinks
 
 app = typer.Typer(help="Note operations (delete / restore).", no_args_is_help=True)
 
@@ -259,6 +260,62 @@ def notes_rnfolder(
             if md.is_file() and not any(p.startswith(".") for p in md.relative_to(new_path).parts):
                 idx.update_note_path(md.stem, str(md))
         console.print(f"[green]renamed[/green] → {new_path}")
+    finally:
+        idx.close()
+
+
+@app.command("backlinks")
+def notes_backlinks(
+    note_id: Annotated[str, typer.Argument(help="Note id (or 8-char prefix).")],
+) -> None:
+    """List notes that reference this one via `[[Title]]`.
+
+    Phase 1 C slice 1 — CLI peer of `GET /api/notes/{id}/backlinks` per
+    [ADR-0008](docs/decisions/0008-cli-parity-discipline.md). Output:
+    grouped by source title, with line + sentence preview."""
+    vault = resolve_vault_or_die()
+    cfg = load_config_or_default(vault)
+    idx = make_index(vault, cfg)
+    try:
+        meta = idx.get_note_meta(note_id)
+        if meta is None:
+            for row in idx.list_notes(limit=10000):
+                if row["id"].startswith(note_id):
+                    meta = idx.get_note_meta(row["id"])
+                    break
+        if meta is None:
+            err_console.print(f"[red]note not found:[/red] {note_id}")
+            raise typer.Exit(code=1)
+
+        title = (meta.get("title") or "").strip()
+        if not title:
+            console.print("[dim](note has no title; cannot resolve backlinks)[/dim]")
+            return
+
+        results = find_backlinks(
+            title,
+            vault.iter_note_paths(),
+            exclude_id=meta["id"],
+        )
+        if not results:
+            console.print(
+                f"[dim]no other note links to {title!r} via [[Title]] yet.[/dim]"
+            )
+            return
+
+        # Group by source for the same shape as the right rail.
+        current_source: str | None = None
+        for b in results:
+            if b.source_title != current_source:
+                console.print(f"\n[bold cyan]{b.source_title}[/bold cyan]")
+                current_source = b.source_title
+            console.print(
+                f"  [dim]L{b.line}[/dim]  {b.sentence}",
+            )
+        console.print(
+            f"\n[dim]{len(results)} mention(s) across "
+            f"{len({b.source_id for b in results})} note(s).[/dim]"
+        )
     finally:
         idx.close()
 

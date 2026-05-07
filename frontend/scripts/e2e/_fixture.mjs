@@ -78,8 +78,11 @@ function seedVault(vaultDir, { notes = [], folders = [], language = "en" } = {})
   for (const n of notes) {
     const folder = n.folder ? `, folder=${JSON.stringify(n.folder)}` : "";
     const body = JSON.stringify(n.body ?? "body of " + n.title);
+    const tags = Array.isArray(n.tags)
+      ? `[${n.tags.map((t) => JSON.stringify(t)).join(", ")}]`
+      : "[]";
     lines.push(
-      `v.write_note(Note(id=new_id(), title=${JSON.stringify(n.title)}, body=${body}, tags=[])${folder})`,
+      `v.write_note(Note(id=new_id(), title=${JSON.stringify(n.title)}, body=${body}, tags=${tags})${folder})`,
     );
   }
   const script = lines.join("\n");

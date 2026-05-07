@@ -22,7 +22,7 @@ import { useTranslation } from "react-i18next";
 import { getNote, listTemplates, updateNote } from "@/api/client";
 import type { TemplateSummary } from "@/api/client";
 import type { NoteFull, TreeFolder } from "@/api/types";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 
 import { MarkdownEditor } from "@/components/Editor/MarkdownEditor";
 import { MarkdownPreview } from "@/components/Editor/MarkdownPreview";
@@ -66,10 +66,16 @@ export function NoteView({
   noteId,
   pendingHash,
   onPendingHashConsumed,
+  pendingLine,
+  onPendingLineConsumed,
 }: {
   noteId: string | null;
   pendingHash?: string | null;
   onPendingHashConsumed?: () => void;
+  /** Phase 1 C slice 1: when set, scroll the editor to this 1-based
+   *  line and place the cursor there. Used by Backlinks panel clicks. */
+  pendingLine?: number | null;
+  onPendingLineConsumed?: () => void;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -288,6 +294,12 @@ export function NoteView({
   // for `#Conclusion` and finds nothing (the actual id is `#conclusion`).
   useEffect(() => {
     if (!pendingHash || !note.data) return;
+    // Switching from edit to split is the whole point of a wikilink-with-
+    // anchor click — there's nothing to scroll to in edit mode. The
+    // set-state-in-effect rule is OK to bend here for the same reason
+    // the pendingLine effect does (this is genuinely a "user requested
+    // a side-effect that requires a mode switch" situation).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (viewMode === "edit") setViewMode("split");
     setPreviewBody(note.data.body);
     const slugger = new GithubSlugger();
@@ -317,6 +329,44 @@ export function NoteView({
       cancelled = true;
     };
   }, [pendingHash, note.data, viewMode, onPendingHashConsumed]);
+
+  // Phase 1 C slice 1 — Backlinks-driven line jump. When AppShell asks us
+  // to scroll to line N (1-based), force a mode that shows the editor
+  // (split or edit), then dispatch a CodeMirror selection + scrollIntoView
+  // at the line's start offset. Retry up to 1.5s because the editor view
+  // may not be mounted yet right after a note swap.
+  useEffect(() => {
+    if (!pendingLine || !note.data) return;
+    // See pendingHash effect above for why this is a deliberate
+    // exception to the no-setState-in-effect rule.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (viewMode === "preview") setViewMode("split");
+    let cancelled = false;
+    const t0 = Date.now();
+    const tick = () => {
+      if (cancelled) return;
+      const view = editorViewRef.current;
+      if (view) {
+        const doc = view.state.doc;
+        const lineNo = Math.max(1, Math.min(pendingLine, doc.lines));
+        const line = doc.line(lineNo);
+        view.dispatch({
+          selection: { anchor: line.from, head: line.from },
+          effects: EditorView.scrollIntoView(line.from, { y: "center" }),
+        });
+        // Don't pull focus — user might still be hovering the rail. The
+        // scroll happens; cursor moves; that's enough.
+        onPendingLineConsumed?.();
+        return;
+      }
+      if (Date.now() - t0 < 1500) requestAnimationFrame(tick);
+      else onPendingLineConsumed?.();
+    };
+    requestAnimationFrame(tick);
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingLine, note.data, viewMode, onPendingLineConsumed]);
 
   // Flush pending edits for the previous note BEFORE remount.
   useEffect(() => {

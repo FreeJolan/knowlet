@@ -23,4 +23,7 @@ export const QK = {
   note: (id: string) => ["note", id] as const,
   trash: ["trash"] as const,
   templates: ["templates"] as const,
+  backlinks: (id: string) => ["backlinks", id] as const,
+  tags: ["tags"] as const,
+  tagNotes: (tag: string) => ["tag-notes", tag] as const,
 };

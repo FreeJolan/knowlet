@@ -1481,3 +1481,75 @@ def test_structure_signals_clamps_cosine(tmp_path: Path):
     r2 = client.get("/api/structure/signals?near_dup_cosine=-1")
     assert r1.status_code == 200
     assert r2.status_code == 200
+
+
+# ------------------------------------------------------------- Phase 1 C tags
+
+
+def test_tags_list_aggregates_by_count(tmp_path: Path):
+    """GET /api/tags returns [{tag, count}] aggregated across all notes,
+    sorted by count desc then tag asc."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n1 = Note(id=new_id(), title="A", body="x", tags=["alpha", "beta"])
+    n2 = Note(id=new_id(), title="B", body="y", tags=["alpha"])
+    n3 = Note(id=new_id(), title="C", body="z", tags=["beta", "gamma"])
+    for n in (n1, n2, n3):
+        v.write_note(n)
+        runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    r = client.get("/api/tags")
+    assert r.status_code == 200
+    body = r.json()
+    # alpha: 2, beta: 2, gamma: 1 → alpha + beta tied at 2 (alpha first by name asc)
+    assert [t["tag"] for t in body] == ["alpha", "beta", "gamma"]
+    assert [t["count"] for t in body] == [2, 2, 1]
+
+
+def test_tags_list_empty_vault(tmp_path: Path):
+    """GET /api/tags on a vault with no tagged notes returns []."""
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.get("/api/tags")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_tags_list_skips_blank_and_invalid(tmp_path: Path):
+    """Whitespace-only tags are dropped; non-string entries are dropped."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n = Note(id=new_id(), title="A", body="x", tags=["clean", "  ", ""])
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    r = client.get("/api/tags")
+    assert r.status_code == 200
+    assert [t["tag"] for t in r.json()] == ["clean"]
+
+
+def test_tag_notes_filters_correctly(tmp_path: Path):
+    """GET /api/tags/{tag}/notes returns NoteSummary list for tagged notes."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n1 = Note(id=new_id(), title="A", body="x", tags=["topic-x"])
+    n2 = Note(id=new_id(), title="B", body="y", tags=["topic-x", "extra"])
+    n3 = Note(id=new_id(), title="C", body="z", tags=["other"])
+    for n in (n1, n2, n3):
+        v.write_note(n)
+        runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    r = client.get("/api/tags/topic-x/notes")
+    assert r.status_code == 200
+    rows = r.json()
+    assert {row["id"] for row in rows} == {n1.id, n2.id}
+    # NoteSummary contract: id, title, path, folder, tags, created_at, updated_at
+    assert all("id" in row and "title" in row and "tags" in row for row in rows)
+
+
+def test_tag_notes_unknown_tag_returns_empty(tmp_path: Path):
+    """No 404 for unknown tag — just an empty list. Tags are user-typed,
+    "doesn't exist yet" is normal during composition."""
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.get("/api/tags/nonexistent/notes")
+    assert r.status_code == 200
+    assert r.json() == []

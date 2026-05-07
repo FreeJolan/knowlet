@@ -57,3 +57,23 @@ export interface ApiError {
   status: number;
   detail: string;
 }
+
+// ---------- backlinks (M7.0.4 backend, Phase 1 C frontend) ----------
+
+export interface BacklinkRow {
+  source_id: string;
+  source_title: string;
+  /** Wikilink target as written (case + spacing may differ from canonical title). */
+  target: string;
+  /** 1-based line number in the source note. */
+  line: number;
+  /** Trimmed sentence preview, max 240 chars; contains the literal `[[…]]` syntax. */
+  sentence: string;
+}
+
+// ---------- tags (Phase 1 C slice 2) ----------
+
+export interface TagSummary {
+  tag: string;
+  count: number;
+}

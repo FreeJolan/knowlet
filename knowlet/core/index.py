@@ -328,6 +328,45 @@ class Index:
             for r in rows
         ]
 
+    # ------------------------------------------------------------------ tags
+
+    def aggregate_tags(self) -> list[tuple[str, int]]:
+        """Return ``[(tag, count)]`` across the whole vault, sorted by
+        count desc then by name asc. Empty / whitespace-only tags are
+        dropped. Tags are stored as JSON arrays in a TEXT column, so we
+        decode in Python rather than try a SQL JSON1 path (sqlite-vec
+        compiled extension may not have JSON1; the loop is fast at any
+        vault size we support per ADR-0021)."""
+        from collections import Counter
+
+        conn = self.connect()
+        counter: Counter[str] = Counter()
+        for row in conn.execute("SELECT tags FROM notes").fetchall():
+            try:
+                arr = json.loads(row["tags"])
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(arr, list):
+                continue
+            for t in arr:
+                if isinstance(t, str) and t.strip():
+                    counter[t.strip()] += 1
+        # Counter.most_common() ties are insertion-ordered; we want
+        # alpha-sorted tie-break for a stable UI.
+        return sorted(counter.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+
+    def list_notes_by_tag(self, tag: str) -> list[dict[str, Any]]:
+        """Return note rows whose `tags` JSON array contains `tag`
+        (case-sensitive — tags are user-typed labels, identity matters).
+        Linear scan via `list_notes`; fine up to ~5k notes."""
+        if not tag.strip():
+            return []
+        out: list[dict[str, Any]] = []
+        for n in self.list_notes(limit=None):
+            if tag in n["tags"]:
+                out.append(n)
+        return out
+
     # ------------------------------------------------------------------ search
 
     def search(self, query: str, top_k: int = 5, rrf_k: int = 60) -> list[SearchHit]:

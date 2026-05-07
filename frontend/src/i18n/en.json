@@ -13,7 +13,19 @@
     "loadFailed": "Failed to load tree.",
     "retry": "Retry",
     "empty": "Empty vault. Use the buttons above to create a note or folder.",
-    "untitled": "(untitled)"
+    "untitled": "(untitled)",
+    "tabFiles": "Files",
+    "tabTags": "Tags"
+  },
+  "tags": {
+    "loading": "Loading tags…",
+    "loadFailed": "Failed to load tags ({{error}}).",
+    "empty": "No tags yet. Add `tags:` to a note's frontmatter and they appear here.",
+    "noteCount_one": "{{count}} note",
+    "noteCount_other": "{{count}} notes",
+    "back": "Back to all tags",
+    "selectTagPrompt": "Pick a tag on the left.",
+    "noNotesForTag": "No notes carry this tag anymore."
   },
   "templates": {
     "dialogTitle": "Templates",
@@ -79,5 +91,24 @@
   "errorBoundary": {
     "title": "Something broke.",
     "reload": "Reload"
+  },
+  "rail": {
+    "tab": {
+      "backlinks": "Linked notes"
+    },
+    "backlinks": {
+      "noNote": "Open a note to see backlinks.",
+      "loading": "Loading…",
+      "empty": "No other note links to this one yet via [[Title]].",
+      "emptyHint": "Reference this note from another with [[{{title}}]] and it appears here.",
+      "summary_one": "{{count}} mention in {{noteCount}} note",
+      "summary_other": "{{count}} mentions in {{noteCount}} notes",
+      "groupCount_one": "{{count}} mention",
+      "groupCount_other": "{{count}} mentions",
+      "lineLabel": "L{{line}}",
+      "loadFailed": "Failed to load backlinks ({{error}})."
+    },
+    "collapse": "Collapse panel",
+    "expand": "Show backlinks"
   }
 }

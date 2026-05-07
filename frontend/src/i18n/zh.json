@@ -5,6 +5,16 @@
     "trash": "垃圾桶",
     "templates": "模板"
   },
+  "tags": {
+    "loading": "标签载入中…",
+    "loadFailed": "标签加载失败({{error}})。",
+    "empty": "还没有标签。给笔记 frontmatter 加 `tags:` 字段后会出现在这里。",
+    "noteCount_one": "{{count}} 篇",
+    "noteCount_other": "{{count}} 篇",
+    "back": "返回所有标签",
+    "selectTagPrompt": "在左边选一个标签。",
+    "noNotesForTag": "已经没有笔记带这个标签了。"
+  },
   "tree": {
     "vault": "笔记库",
     "newFolder": "新建文件夹",
@@ -13,7 +23,9 @@
     "loadFailed": "树加载失败。",
     "retry": "重试",
     "empty": "笔记库为空。点上方按钮新建笔记或文件夹。",
-    "untitled": "(无标题)"
+    "untitled": "(无标题)",
+    "tabFiles": "文件",
+    "tabTags": "标签"
   },
   "templates": {
     "dialogTitle": "模板",
@@ -79,5 +91,24 @@
   "errorBoundary": {
     "title": "出错了。",
     "reload": "重新加载"
+  },
+  "rail": {
+    "tab": {
+      "backlinks": "反链"
+    },
+    "backlinks": {
+      "noNote": "选一条笔记后查看反链。",
+      "loading": "载入中…",
+      "empty": "还没有其他笔记用 [[标题]] 引用这一条。",
+      "emptyHint": "在其他笔记里写 [[{{title}}]] 即会出现在这里。",
+      "summary_one": "{{count}} 处 / {{noteCount}} 个 note",
+      "summary_other": "{{count}} 处 / {{noteCount}} 个 note",
+      "groupCount_one": "{{count}} 处",
+      "groupCount_other": "{{count}} 处",
+      "lineLabel": "L{{line}}",
+      "loadFailed": "反链加载失败({{error}})。"
+    },
+    "collapse": "收起面板",
+    "expand": "展开反链"
   }
 }
