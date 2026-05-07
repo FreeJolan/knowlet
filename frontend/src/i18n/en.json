@@ -128,17 +128,17 @@
       "brokenLabel": "broken"
     },
     "graph": {
-      "noNote": "Open a note to see its graph neighborhood.",
-      "loading": "Loading graph…",
+      "noNote": "Open a note to see what it's connected to.",
+      "loading": "Loading…",
       "loadFailed": "Failed to load graph ({{error}}).",
-      "empty": "This note has no [[Title]] links yet.",
-      "emptyHint": "Reference other notes with [[Title]] and they appear in the graph.",
-      "subtitle": "Current note ± 1 hop",
-      "outbound": "outbound",
-      "inbound": "inbound",
-      "fullScreen": "Focus mode",
-      "fullVaultLabel": "Full vault",
-      "fullVaultHint": "Open the full-vault graph (⌘⇧G)",
+      "empty": "This note isn't connected to any other notes yet.",
+      "emptyHint": "Reference other notes with [[Title]] and they show up here.",
+      "subtitle": "Notes connected to this one",
+      "outbound": "links to",
+      "inbound": "linked from",
+      "fullScreen": "See all",
+      "fullVaultLabel": "All notes",
+      "fullVaultHint": "Open the all-notes graph (⌘⇧G)",
       "hintScroll": "scroll = zoom",
       "hintDrag": "drag = pan"
     },
@@ -147,19 +147,25 @@
   },
   "graph": {
     "focus": {
-      "titleFull": "Graph · full vault",
-      "titleEgo": "Graph · ego of current note",
-      "summary": "{{notes}} notes · {{edges}} user-authored bilinks",
+      "titleFull": "Connections · all notes",
+      "titleEgo": "Connections · around current note",
+      "summary": "{{notes}} notes · {{edges}} references",
       "searchPlaceholder": "Filter by title…",
-      "loading": "Loading graph…",
-      "byDegree": "BY IN+OUT DEGREE",
-      "orphansTitle": "{{count}} orphan",
-      "orphansHint": "Notes with no inbound or outbound links don't enter the force layout.",
-      "expandToFull": "Expand to full vault",
-      "collapseToEgo": "Collapse to ego",
+      "loading": "Loading…",
+      "byDegree": "Sorted by # of connections",
+      "orphansTitle_one": "{{count}} note has no connections",
+      "orphansTitle_other": "{{count}} notes have no connections",
+      "orphansHint": "Notes without any references don't go into the graph; they're listed here separately.",
+      "expandToFull": "See all notes",
+      "collapseToEgo": "Back to current note's area",
       "close": "Close (Esc)",
-      "emptyTitle": "No connected notes yet",
-      "emptyBody": "This view shows the [[Title]] links you wrote. Reference notes from each other and they appear here."
+      "emptyTitle": "No connections yet",
+      "emptyBody": "This view shows the [[Title]] references you wrote. Reference other notes from each other and they appear here."
+    },
+    "tooltip": {
+      "connections_one": "{{count}} connection",
+      "connections_other": "{{count}} connections",
+      "current": "current note"
     }
   }
 }

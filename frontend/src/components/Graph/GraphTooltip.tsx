@@ -6,6 +6,9 @@
  * would overflow the container's right or bottom edge.
  */
 
+import { Link as LinkIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
+
 import type { GraphNodeRow } from "@/api/types";
 
 const TOOLTIP_W = 240;
@@ -24,6 +27,7 @@ interface Props {
 }
 
 export function GraphTooltip({ node, cursor, paneW, paneH, currentId }: Props) {
+  const { t } = useTranslation();
   let left = cursor.x + 16;
   let top = cursor.y + 12;
   if (left + TOOLTIP_W > paneW - EDGE_PAD) left = cursor.x - TOOLTIP_W - 16;
@@ -33,21 +37,21 @@ export function GraphTooltip({ node, cursor, paneW, paneH, currentId }: Props) {
   const isCurrent = node.id === currentId;
   return (
     <div
-      className="pointer-events-none absolute rounded border px-3 py-2 shadow-md"
+      className="pointer-events-none absolute rounded border px-3 py-2"
       style={{
         left,
         top,
         width: TOOLTIP_W,
-        // Heavily transparent + strong backdrop blur. Density of the
-        // graph behind the tooltip should remain readable; tooltip
-        // text stays legible thanks to blur (it sets up its own
-        // backdrop for the foreground type without painting a solid
-        // box on top of neighbor nodes).
-        background: "rgba(251, 248, 241, 0.55)",
-        backdropFilter: "blur(8px) saturate(120%)",
-        WebkitBackdropFilter: "blur(8px) saturate(120%)",
-        borderColor: "var(--line)",
+        // Very transparent: the user explicitly wants to see nodes /
+        // edges through the tooltip. Drop blur entirely — blur defeats
+        // the see-through goal. Keep a subtle text-shadow on the text
+        // so it stays readable over busy backgrounds.
+        background: "rgba(251, 248, 241, 0.30)",
+        borderColor: "rgba(120, 110, 95, 0.35)",
         color: "var(--ink)",
+        textShadow:
+          "0 0 2px rgba(244, 240, 232, 0.95), 0 0 6px rgba(244, 240, 232, 0.75)",
+        boxShadow: "0 1px 3px rgba(0, 0, 0, 0.06)",
         zIndex: 10,
       }}
       data-testid="graph-tooltip"
@@ -64,11 +68,18 @@ export function GraphTooltip({ node, cursor, paneW, paneH, currentId }: Props) {
       >
         {node.folder ? <span>{node.folder}</span> : <span>(root)</span>}
         <span style={{ color: "var(--ink-faint, #8e857a)" }}>·</span>
-        <span>↘ {node.in_degree + node.out_degree}</span>
+        <span className="inline-flex items-center gap-1">
+          <LinkIcon size={9} />
+          {t("graph.tooltip.connections", {
+            count: node.in_degree + node.out_degree,
+          })}
+        </span>
         {isCurrent && (
           <>
             <span style={{ color: "var(--ink-faint, #8e857a)" }}>·</span>
-            <span style={{ color: "var(--accent-2, #34495e)" }}>current</span>
+            <span style={{ color: "var(--accent-2, #34495e)" }}>
+              {t("graph.tooltip.current")}
+            </span>
           </>
         )}
       </div>

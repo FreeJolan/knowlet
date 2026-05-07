@@ -70,11 +70,11 @@ try {
     await page.locator('[data-testid="rail-tab-graph"]').click();
     await page.waitForTimeout(600);
     // Alpha has 2 outbound (Beta, Gamma) and 1 inbound (from Beta).
-    // The footer text contains "outbound" and "inbound" labels.
-    const out = await page.locator("text=outbound").first().isVisible();
-    const inb = await page.locator("text=inbound").first().isVisible();
-    assert(out, "outbound label should be visible");
-    assert(inb, "inbound label should be visible");
+    // The footer text contains the i18n labels (en: "links to" / "linked from").
+    const out = await page.locator("text=links to").first().isVisible();
+    const inb = await page.locator("text=linked from").first().isVisible();
+    assert(out, "out-link label should be visible");
+    assert(inb, "in-link label should be visible");
   });
 
   /** Ensure focus mode is closed before a test starts. */

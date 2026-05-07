@@ -128,17 +128,17 @@
       "brokenLabel": "空链"
     },
     "graph": {
-      "noNote": "选一条笔记后查看它的图谱邻域。",
-      "loading": "图谱载入中…",
-      "loadFailed": "图谱加载失败({{error}})。",
-      "empty": "这条笔记还没有 [[标题]] 链接。",
-      "emptyHint": "用 [[标题]] 引用其他笔记,它们会出现在图谱里。",
-      "subtitle": "当前 Note ± 1 跳",
-      "outbound": "出链",
-      "inbound": "入链",
-      "fullScreen": "全屏",
-      "fullVaultLabel": "全 vault",
-      "fullVaultHint": "打开全 vault 图谱(⌘⇧G)",
+      "noNote": "打开一条笔记,看看它和哪些笔记相连。",
+      "loading": "图载入中…",
+      "loadFailed": "图加载失败({{error}})。",
+      "empty": "这条笔记还没有连接其他笔记。",
+      "emptyHint": "在笔记里用 [[标题]] 引用别的笔记,它们就会连进来。",
+      "subtitle": "和当前笔记直接相连的",
+      "outbound": "引用",
+      "inbound": "被引用",
+      "fullScreen": "看全部",
+      "fullVaultLabel": "全部笔记",
+      "fullVaultHint": "查看所有笔记的关联图(⌘⇧G)",
       "hintScroll": "滚轮 = 缩放",
       "hintDrag": "拖动 = 平移"
     },
@@ -147,19 +147,24 @@
   },
   "graph": {
     "focus": {
-      "titleFull": "Graph · 全 vault",
-      "titleEgo": "Graph · 当前笔记的 ego",
-      "summary": "{{notes}} 篇 · {{edges}} 条用户连接",
+      "titleFull": "关联图 · 全部笔记",
+      "titleEgo": "关联图 · 围绕当前笔记",
+      "summary": "{{notes}} 篇笔记 · {{edges}} 条引用",
       "searchPlaceholder": "按标题过滤…",
-      "loading": "图谱载入中…",
-      "byDegree": "按 IN+OUT DEGREE 排序",
-      "orphansTitle": "{{count}} 个孤立",
-      "orphansHint": "没有入链或出链的笔记不会进入 force 布局。",
-      "expandToFull": "展开全 vault",
-      "collapseToEgo": "收回 ego",
+      "loading": "图载入中…",
+      "byDegree": "按关联数排序",
+      "orphansTitle": "{{count}} 篇没有关联",
+      "orphansHint": "没有任何引用关系的笔记不会画进图里,单独列在这。",
+      "expandToFull": "看全部笔记",
+      "collapseToEgo": "回到当前笔记区",
       "close": "关闭 (Esc)",
-      "emptyTitle": "还没有连起来的 note",
-      "emptyBody": "这个视图只画用户自己写的 [[标题]] 链接。链好后再来。"
+      "emptyTitle": "还没有连起来的笔记",
+      "emptyBody": "这个视图只画你自己写的 [[标题]] 引用。在笔记里引用其他笔记后再回来。"
+    },
+    "tooltip": {
+      "connections_one": "{{count}} 条关联",
+      "connections_other": "{{count}} 条关联",
+      "current": "当前笔记"
     }
   }
 }
