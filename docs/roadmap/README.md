@@ -139,6 +139,7 @@ knowlet 阶段一的原子能力按 MCP 标准设计([ADR-0004](../decisions/000
 | **Per-session web search 累计上限 + UI 用量 monitor** | ADR-0017 §"Out of scope" | dogfood 数据显示需要 |
 | **Sediment 模态 Layer A 在 "+ 新建空 Note" 时也触发** | ADR-0016 §"Mitigations" | 用户写到一定篇幅后是否需要 |
 | **Drafts approve 时显示 Layer A ambient** | ADR-0016 §"Out of scope" | 后续 |
+| **Retrieval quality v2**(RRF 融合 / LLM 重排 / Query 扩展 / 智能分块,~3-4 天)| ADR-0024 §"Out of scope"(借鉴 [qmd](https://github.com/tobi/qmd) 4 个设计点,Python 栈重做)| dogfood 期发现 chat 召回准确率是瓶颈 |
 
 ### 🔵 在新 React 重写时一并实施(Phase 1-3)
 
@@ -151,10 +152,14 @@ knowlet 阶段一的原子能力按 MCP 标准设计([ADR-0004](../decisions/000
 | **周报**(Sunday-newspaper 调性) | ADR-0013 §3 Layer C | Phase 3 或 Phase 4 |
 | **暗色 toggle** | 设计 brief §11 | Phase 1 起就有(token 已就位)/ toggle UI 在 Phase 1 |
 | **M7.4.3 cluster scope quiz** | ADR-0014 §8 | Phase 3(在 quiz 重做时一并)|
-| **`vault/.knowlet/wiki_schema.md`**(vault 写作约定 → 注入 chat / mining / ingest prompt) | ADR-0023 §2 | Phase 3(随 chat/mining prompt 重做) |
+| **`vault/.knowlet/wiki_schema.md`**(vault 写作约定 → 注入 chat / mining / ingest prompt;含 co-evolution 主动机制 + 多层级合并)| ADR-0023 §2 | Phase 3(随 chat/mining prompt 重做) |
 | **Ingest source 一等动作**(URL/文件 → sources/ → mining draft → review queue) | ADR-0023 §4 | Phase 3(随 review queue UI) |
 | **Lint LLM 信号** —— 跨页 contradictions / dangling concept / 缺页 entity 推断 | ADR-0023 §5 | Phase 3(随知识地图侧栏)|
 | **Pin chat turn 到 wiki**(turn 级 📌 → mining draft 候选) | ADR-0023 §6 | Phase 3(随 chat UI 重做)|
+| **Editor advisor**(新建 note / 通过 draft / ingest 落 draft 时推荐文件夹位置)| ADR-0023 §8.1 / ADR-0024 §4 | Phase 3 |
+| **Tidy advisor**(M8.1 信号扩展:散落语义簇 / 超大文件夹 / 孤儿 note / dangling concept;ambient 提案)| ADR-0023 §8.2 / ADR-0024 §4 | Phase 3(随知识地图)|
+| **Reorg planner**(用户主动触发的整子树重排;5 条硬约束:plan-then-apply / auto-snapshot / 逆向 manifest / 必读 wiki_schema / scope 默认子文件夹)| ADR-0023 §8.3 / ADR-0024 §4 | Phase 3 之后 |
+| **AI-assist envelope 7 层架构**(per-action prompt 模板 + 静态/派生/任务三类层 + lazy loading + 7 个 AI role 边界)| ADR-0024 §3-4 | Phase 3(随所有 AI 入口重做)|
 
 ### 🟢 等阶段切换(灰度 / 上线 / 阶段二 / 三)
 
@@ -178,6 +183,7 @@ knowlet 阶段一的原子能力按 MCP 标准设计([ADR-0004](../decisions/000
 - `.knowlet/backups/` 真正用起来(per ADR-0006 §3)
 - Card / Draft / MiningTask 也加 `schema_version`(目前只 Note 加了)
 - **`vault/.knowlet/log.md` + 底层 `vault.events` SQLite append-only 流**(per [ADR-0023 §3](../decisions/0023-llm-wiki-comparison-and-takeaways.md)):note/draft/sediment/ingest/lint/quiz 事件统一时间线,作为 schema migration / vault fixture 测试的天然 oracle
+- **Note frontmatter `status` 字段**(`active | stub | needs-update | deprecated`)(per [ADR-0023 §7](../decisions/0023-llm-wiki-comparison-and-takeaways.md)):schema v2 增量,旧 Note 默认 active 自动迁移。Linter 标 `needs-update`,**绝不修改正文**
 
 ### 🔴 显式永不做
 
@@ -188,16 +194,23 @@ knowlet 阶段一的原子能力按 MCP 标准设计([ADR-0004](../decisions/000
 | 任务 / 日历 / Todo 管理 | ADR-0003 §"阶段一明确不做" |
 | AI Chat 产品功能复刻(模型选择 / 长上下文 / 图像生成) | ADR-0003 §"阶段一明确不做" |
 | Tag taxonomy(top-down 强制分类) | ADR-0013 §3 Layer B |
-| Auto-archive / auto-merge | ADR-0013 §1 契约 |
+| Auto-archive / auto-merge / auto-move 文件 | ADR-0013 §1 / ADR-0024 §5 C |
 | LLM 主动改 vault IA / "LLM 全权拥有 wiki" | ADR-0013 §1 / ADR-0023 §A |
+| **AI 自动改 Note 正文(Note rewriter)** | ADR-0024 §5 B |
+| **AI 替用户写 Note 正文 toggle**(即便 settings 开启也不允许)| ADR-0024 §5 A |
+| **AI 自动写 frontmatter tag / alias** | ADR-0024 §5 D(只能 suggest 候选,需用户接受)|
+| **frontmatter `confidence` / `source_count`(LLM-attributed)** | ADR-0023 §D / §7 / ADR-0024 §5 E |
+| **预设 IA(`entities/` / `concepts/` / `comparisons/` / `maps/`)** | ADR-0023 §E / ADR-0024 §5 F |
 | Drafts 提取的 image / video / PDF 内容(只处理文字) | ADR-0016 §"Out of scope" |
 | 多 URL 一次粘贴抓取 | ADR-0016 §"Out of scope" |
 | LLM 抓取 PDF / video(trafilatura 不处理) | ADR-0017 §"Out of scope" |
 | 自动备 search 结果到 vault | ADR-0017 §"Out of scope" |
 | 多语言 search query 切换 | ADR-0017 §"Out of scope" |
 | 跨 vault wiki 联邦(把多个 vault 串起来) | ADR-0023 §"Out of scope" |
-| LLM-driven schema 自动演化(让 LLM 改 `wiki_schema.md`) | ADR-0023 §"Out of scope" |
-| 集成 [`qmd`](https://github.com/tobi/qmd) / Marp / Obsidian Dataview 等外部工具 | ADR-0023 §"Out of scope" |
+| LLM-driven schema 自动演化(让 LLM 直接改 `wiki_schema.md`) | ADR-0023 §"Out of scope"(只允许"提议 → 用户审批"的 co-evolution)|
+| **直接集成 [`qmd`](https://github.com/tobi/qmd)**(跨语言 / 强制 ~2GB 模型 / 架构方向反向)| ADR-0023 §G;但学其 4 个设计点(retrieval quality v2,见下)|
+| 集成 Marp / Obsidian Dataview 等外部工具 | ADR-0023 §"Out of scope" |
+| **第 8 个 AI role**(超出 ADR-0024 §4 锁定的 7 个)| ADR-0024 §"Out of scope"(高门槛 ADR 决策才能加)|
 
 ## 已废弃(2026-05-05)
 

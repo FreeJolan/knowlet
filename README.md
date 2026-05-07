@@ -85,11 +85,20 @@ knowlet reindex                               # 重建 FTS / 向量索引
 
 > **任何进入 vault 的内容都过审批管线 —— LLM 永远不自动落库。**
 
-knowlet 的 chat 沉淀、mining draft、URL 捕获、source ingest 都走同一条 review queue:LLM 生产**候选**(草稿 / 摘要 / 链接建议),用户审批后才进 vault。LLM 不会自动合并同义概念、自动归档老笔记、或在你不知情时改写已有内容。
+knowlet 的 chat 沉淀、mining draft、URL 捕获、source ingest 都走同一条 review queue:LLM 生产**候选**(草稿 / 摘要 / 链接建议 / IA 提案),用户审批后才进 vault。LLM 不会自动合并同义概念、自动归档老笔记、或在你不知情时改写已有内容。
 
-这条根原则把 knowlet 和"让 LLM 替你管 wiki"的模式([Karpathy LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) 等)区分开 —— 后者假设 LLM 维护成本最低,代价是用户对每条笔记的可解释性逐渐流失。knowlet 的判断是**跨多年 / 多场景 / 多 LLM 后端**的长期使用下,可解释性 / 可控性比维护成本节省更重要。
+**用 Tiago Forte 的 CODE 框架对比 "让 LLM 替你管 wiki" 的模式**(如 [Karpathy LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)):
 
-详见 [ADR-0013](./docs/decisions/0013-knowledge-management-contract.md)(契约)+ [ADR-0023](./docs/decisions/0023-llm-wiki-comparison-and-takeaways.md)(对比与吸纳)。
+| 阶段 | "LLM 替你管 wiki" 模式 | knowlet |
+|---|---|---|
+| Capture(收集)| 用户 + AI 抓取 | 用户 + AI 抓取 |
+| **Organize**(组织)| **LLM 自动决定 IA** | **用户拥有**;AI 仅在用户主动触发时给候选 |
+| **Distill**(提炼)| **LLM 自动写笔记主体** | **AI 只产候选 → review queue → 用户审批** |
+| Express(表达)| 用户(查询 / 生成 slides)| 用户(写 / 用 Quiz / Sediment)|
+
+knowlet 的差异本质是 **不自动化 Organize、Distill 永远走审批**。在跨多年 / 多场景 / 多 LLM 后端的长期使用下,可解释性 / 可控性比维护成本节省更重要。
+
+详见 [ADR-0013](./docs/decisions/0013-knowledge-management-contract.md)(契约)+ [ADR-0023](./docs/decisions/0023-llm-wiki-comparison-and-takeaways.md)(对比与吸纳)+ [ADR-0024](./docs/decisions/0024-ai-assist-envelope.md)(AI 协助边界)。
 
 ## 阶段一服务的真实场景
 

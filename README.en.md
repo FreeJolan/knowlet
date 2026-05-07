@@ -85,11 +85,20 @@ See [ADR-0002 — Three Core Principles](./docs/decisions/0002-core-principles.e
 
 > **Anything that lands in the vault goes through a review queue — the LLM never auto-commits.**
 
-Knowlet's chat sediment, mining drafts, URL captures, and source ingests all flow through the same review queue: the LLM produces **candidates** (drafts, summaries, link suggestions), and the user approves before anything enters the vault. The LLM never auto-merges synonyms, auto-archives old notes, or rewrites existing content behind your back.
+Knowlet's chat sediment, mining drafts, URL captures, and source ingests all flow through the same review queue: the LLM produces **candidates** (drafts, summaries, link suggestions, IA proposals), and the user approves before anything enters the vault. The LLM never auto-merges synonyms, auto-archives old notes, or rewrites existing content behind your back.
 
-This root principle distinguishes knowlet from "let the LLM run your wiki" patterns (such as [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)). Those patterns assume LLM-maintenance is a net win; the cost is your gradual loss of explainability over individual notes. Knowlet bets the opposite: across multi-year, multi-domain, multi-LLM-backend usage, **explainability and control matter more than maintenance savings**.
+**Compared to "let the LLM run your wiki" patterns** (such as [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)), framed via Tiago Forte's CODE framework:
 
-See [ADR-0013](./docs/decisions/0013-knowledge-management-contract.en.md) (the contract) and [ADR-0023](./docs/decisions/0023-llm-wiki-comparison-and-takeaways.en.md) (the comparison and what we adopted).
+| Stage | "LLM runs your wiki" pattern | knowlet |
+|---|---|---|
+| Capture | user + AI scraping | user + AI scraping |
+| **Organize** | **LLM auto-decides IA** | **User-owned**; AI proposes only on user-initiated trigger |
+| **Distill** | **LLM auto-writes note bodies** | **AI produces candidates only → review queue → user approves** |
+| Express | user (queries / generates slides) | user (writes notes / runs Quiz / sediments) |
+
+Knowlet's essential differentiator is **no auto-Organize; Distill always flows through approval**. Across multi-year, multi-domain, multi-LLM-backend usage, **explainability and control matter more than maintenance savings**.
+
+See [ADR-0013](./docs/decisions/0013-knowledge-management-contract.en.md) (the contract), [ADR-0023](./docs/decisions/0023-llm-wiki-comparison-and-takeaways.en.md) (the comparison and what we adopted), and [ADR-0024](./docs/decisions/0024-ai-assist-envelope.en.md) (the AI-assist envelope).
 
 ## Real Scenarios in Stage 1
 
