@@ -23,6 +23,7 @@ import { MermaidBlock } from "./MermaidBlock";
 import { rehypeSourceLine } from "./rehypeSourceLine";
 import { remarkInlineTag } from "./remarkInlineTag";
 import { remarkWikilink } from "./remarkWikilink";
+import { WikilinkHoverPreview } from "./WikilinkHoverPreview";
 
 /**
  * Marker scheme for wiki-link href values produced by `remarkWikilink`.
@@ -143,10 +144,17 @@ function PreviewAnchor({ href, children, ...rest }: ComponentProps<"a">) {
     );
   }
   // Internal Obsidian-style [[Title]] / [[Title#Heading]] — dispatch to
-  // AppShell which handles resolution + cross-note navigation.
+  // AppShell which handles resolution + cross-note navigation. The
+  // anchor is wrapped in `WikilinkHoverPreview` so hovering shows the
+  // target note's title + first paragraph (Phase 1 D slice 1, D6).
   if (typeof href === "string" && href.startsWith(WIKILINK_SCHEME)) {
     const parsed = parseWikilinkHref(href);
-    return (
+    const rawTarget = parsed
+      ? parsed.hash
+        ? `${parsed.title}#${parsed.hash}`
+        : parsed.title
+      : "";
+    const anchor = (
       <a
         {...rest}
         href={href}
@@ -161,6 +169,12 @@ function PreviewAnchor({ href, children, ...rest }: ComponentProps<"a">) {
       >
         {children}
       </a>
+    );
+    if (!rawTarget) return anchor;
+    return (
+      <WikilinkHoverPreview rawTarget={rawTarget}>
+        {anchor}
+      </WikilinkHoverPreview>
     );
   }
   const isExternal =

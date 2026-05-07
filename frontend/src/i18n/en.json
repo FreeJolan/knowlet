@@ -4,7 +4,19 @@
     "quickSwitch": "Quick switch",
     "trash": "Trash",
     "templates": "Templates",
-    "graph": "Graph"
+    "graph": "Graph",
+    "settings": "Settings"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Preferences for this knowlet vault.",
+    "appearance": {
+      "title": "Appearance",
+      "light": "Light",
+      "dark": "Dark",
+      "system": "Follow system",
+      "systemHint": "System preference is currently {{resolved}}."
+    }
   },
   "tree": {
     "vault": "Vault",
@@ -101,7 +113,8 @@
   "rail": {
     "tab": {
       "backlinks": "Linked notes",
-      "graph": "Graph"
+      "graph": "Graph",
+      "outline": "Outline"
     },
     "section": {
       "inbound": "Inbound",
@@ -142,8 +155,18 @@
       "hintScroll": "scroll = zoom",
       "hintDrag": "drag = pan"
     },
+    "outline": {
+      "noNote": "Open a note to see its outline.",
+      "loading": "Reading headings…",
+      "empty": "This note has no headings (#, ##, ### lines)."
+    },
     "collapse": "Collapse panel",
     "expand": "Show linked notes"
+  },
+  "hover": {
+    "loading": "Loading preview…",
+    "empty": "(empty note)",
+    "broken": "no note with this title yet"
   },
   "graph": {
     "focus": {

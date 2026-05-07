@@ -57,8 +57,12 @@ function findNoteByTitle(
 /** Parse a markdown body for ATX headings (`# Heading` … `###### x`).
  *  Returns level + raw text, in document order. We skip headings inside
  *  fenced code blocks because ``` ```\n# inside ``` `` looks like a
- *  heading otherwise. */
-function parseHeadings(body: string): { level: number; text: string }[] {
+ *  heading otherwise.
+ *
+ *  Exported so the Outline panel (Phase 1 D slice 1) can reuse the same
+ *  parser. The slugged anchor (rehype-slug) is the consumer's job; this
+ *  just gives raw level + text. */
+export function parseHeadings(body: string): { level: number; text: string }[] {
   const out: { level: number; text: string }[] = [];
   let inFence = false;
   for (const line of body.split("\n")) {

@@ -6,7 +6,14 @@
  */
 
 import { useQueryClient } from "@tanstack/react-query";
-import { LayoutTemplate, Network, PanelRight, PanelRightOpen, Trash2 } from "lucide-react";
+import {
+  LayoutTemplate,
+  Network,
+  PanelRight,
+  PanelRightOpen,
+  Settings as SettingsIcon,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -17,6 +24,7 @@ import { GraphFocusMode } from "@/components/Graph/GraphFocusMode";
 import { NoteView } from "@/components/NoteView/NoteView";
 import { CommandPalette } from "@/components/Palette/CommandPalette";
 import { RightRail } from "@/components/RightRail/RightRail";
+import { SettingsDialog } from "@/components/Settings/SettingsDialog";
 import { TagBrowser } from "@/components/TagBrowser/TagBrowser";
 import { TemplatesDialog } from "@/components/Templates/TemplatesDialog";
 import { TrashPanel } from "@/components/Trash/TrashPanel";
@@ -96,6 +104,8 @@ export function AppShell() {
   const [pendingTag, setPendingTag] = useState<string | null>(null);
   // Phase 1 C slice 3 — graph focus mode (Cmd+Shift+G).
   const [graphFocusOpen, setGraphFocusOpen] = useState(false);
+  // Phase 1 D slice 1 — Settings dialog (currently only Appearance).
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [windowWidth, setWindowWidth] = useState(() =>
     typeof window === "undefined" ? 1400 : window.innerWidth,
   );
@@ -273,6 +283,15 @@ export function AppShell() {
             <Button
               variant="ghost"
               size="icon"
+              aria-label={t("app.settings")}
+              onClick={() => setSettingsOpen(true)}
+              data-testid="header-settings-button"
+            >
+              <SettingsIcon className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
               aria-label={
                 railCollapsed ? t("rail.expand") : t("rail.collapse")
               }
@@ -410,6 +429,13 @@ export function AppShell() {
                       setPendingLine(null);
                     }}
                     onEnterGraphFocus={() => setGraphFocusOpen(true)}
+                    onJumpToHeading={(slug) => {
+                      // Outline click → scroll preview to the matching
+                      // heading anchor. Same path wikilink heading
+                      // anchors (`[[Note#Heading]]`) already use.
+                      setPendingHash(slug);
+                      setPendingLine(null);
+                    }}
                   />
                 </ResizablePanel>
               </>
@@ -458,6 +484,10 @@ export function AppShell() {
           setPendingHash(null);
           setPendingLine(null);
         }}
+      />
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
       />
     </>
   );

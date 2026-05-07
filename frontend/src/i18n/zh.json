@@ -4,7 +4,19 @@
     "quickSwitch": "快速切换",
     "trash": "垃圾桶",
     "templates": "模板",
-    "graph": "图谱"
+    "graph": "图谱",
+    "settings": "设置"
+  },
+  "settings": {
+    "title": "设置",
+    "subtitle": "当前 vault 的偏好设置。",
+    "appearance": {
+      "title": "外观",
+      "light": "浅色",
+      "dark": "深色",
+      "system": "跟随系统",
+      "systemHint": "当前系统偏好:{{resolved}}。"
+    }
   },
   "noteTags": {
     "add": "加 tag",
@@ -101,7 +113,8 @@
   "rail": {
     "tab": {
       "backlinks": "关联笔记",
-      "graph": "Graph"
+      "graph": "Graph",
+      "outline": "大纲"
     },
     "section": {
       "inbound": "被引用",
@@ -142,8 +155,18 @@
       "hintScroll": "滚轮 = 缩放",
       "hintDrag": "拖动 = 平移"
     },
+    "outline": {
+      "noNote": "选一条笔记后查看大纲。",
+      "loading": "解析标题中…",
+      "empty": "这条笔记没有标题(#、##、### 这种)。"
+    },
     "collapse": "收起面板",
     "expand": "展开关联笔记"
+  },
+  "hover": {
+    "loading": "预览载入中…",
+    "empty": "(空笔记)",
+    "broken": "暂时没有这个标题的笔记"
   },
   "graph": {
     "focus": {

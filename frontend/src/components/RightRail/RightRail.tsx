@@ -9,14 +9,15 @@
  * paper background, accent top-border on the active tab.
  */
 
-import { Link as LinkIcon, Network } from "lucide-react";
+import { List, Link as LinkIcon, Network } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { BacklinksPanel } from "./BacklinksPanel";
 import { GraphPanel } from "@/components/Graph/GraphPanel";
+import { OutlinePanel } from "./OutlinePanel";
 
-type Tab = "backlinks" | "graph";
+type Tab = "backlinks" | "graph" | "outline";
 
 interface Props {
   noteId: string | null;
@@ -24,6 +25,7 @@ interface Props {
   onOpenSource: (sourceId: string, line: number) => void;
   onOpenTarget: (targetNoteId: string) => void;
   onEnterGraphFocus: () => void;
+  onJumpToHeading: (slug: string) => void;
 }
 
 export function RightRail({
@@ -32,6 +34,7 @@ export function RightRail({
   onOpenSource,
   onOpenTarget,
   onEnterGraphFocus,
+  onJumpToHeading,
 }: Props) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("backlinks");
@@ -66,6 +69,13 @@ export function RightRail({
           onClick={() => setTab("graph")}
           testid="rail-tab-graph"
         />
+        <TabButton
+          label={t("rail.tab.outline")}
+          icon={<List size={11} />}
+          active={tab === "outline"}
+          onClick={() => setTab("outline")}
+          testid="rail-tab-outline"
+        />
       </div>
       <div className="min-h-0 flex-1">
         {tab === "backlinks" && (
@@ -82,6 +92,9 @@ export function RightRail({
             onOpenNote={onOpenTarget}
             onEnterFocus={onEnterGraphFocus}
           />
+        )}
+        {tab === "outline" && (
+          <OutlinePanel noteId={noteId} onJumpToHeading={onJumpToHeading} />
         )}
       </div>
     </div>
