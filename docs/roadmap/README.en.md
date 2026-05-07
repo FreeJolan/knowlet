@@ -4,16 +4,16 @@
 
 Knowlet evolves in stages per the Wedge strategy. Capabilities share a common foundation; narrative tightens by stage. See [ADR-0003](../decisions/0003-wedge-pivot-ai-memory-layer.en.md) (and its 2026-05-04 amendment).
 
-## ⚡ Current state (2026-05-05)
+## ⚡ Current state (2026-05-08)
 
 **Product phase** = development (per [ADR-0022](../decisions/0022-product-lifecycle-phases.en.md)). No external users; aggressive iteration allowed.
 
-**Project status** = **rewrite in progress**. The 2026-05-04 dogfood verified the frontend was basically unusable, triggering these decisions (see ADR-0019 / 0020 / 0021):
+**Project status** = **Phase 1 ABC complete + tag m1c** (2026-05-08). Next is **Phase 1 D** (added 2026-05-08 after dogfood, closes 6 Obsidian-baseline UX gaps). See ADR-0019 / 0020 / 0021.
 
 - **Frontend**: Alpine deprecated; switching to React 19 + Vite + TypeScript + shadcn/ui + Vercel AI SDK + CodeMirror 6 + react-arborist + Tanstack Query
 - **Backend**: not rewritten; adding mypy strict + ruff + pre-commit + CI (per ADR-0020)
-- **Order**: Phase 0 (scaffold + backend hardening) → Phase 1 (knowledge-base baseline) → Phase 2 (should-have, deferrable) → Phase 3 (AI features re-done) → Phase 4 (gray-release prep)
-- **Estimated**: 8-12 weeks to Phase 4 (gray entrance)
+- **Order**: Phase 0 (scaffold + backend hardening) ✅ → Phase 1 ABC (knowledge-base baseline) ✅ → Phase 1 D (Obsidian-baseline UX) → Phase 2 (should-have, deferrable) → Phase 3 (AI features re-done) → Phase 4 (gray-release prep)
+- **Estimated**: **10-14 weeks** to Phase 4 (gray entrance) — revised from 8-12 after adding Phase 1 D
 
 ```
 🟢 Already shipped backend, **kept** (zero change, reused as-is)
@@ -38,17 +38,26 @@ Knowlet evolves in stages per the Wedge strategy. Capabilities share a common fo
 See [ADR-0021](../decisions/0021-knowledge-base-first-roadmap.en.md). Summary:
 
 ```
-Phase 0  Decision lock + scaffold + backend hardening (parallel)  2-3 days
-Phase 1  Knowledge-base baseline A + B + C (mandatory)            4-5 weeks
+Phase 0   Decision lock + scaffold + backend hardening (parallel)  2-3 days  ✅ done
+Phase 1   Knowledge-base baseline A + B + C (mandatory)            4-5 weeks ✅ done (m1c)
    A. File ops to Obsidian baseline: right-click menu / drag / rename / move / multi-select / Trash UI / folder-create UI / full-text search
    B. Editor to Bear baseline: CodeMirror 6 + Math (KaTeX) + Mermaid + templates + block references
    C. Knowledge connection: Wikilinks autocomplete + Backlinks + Graph view + Tag browser
-Phase 2  D + E (should-have, deferrable)                          1-2 weeks (deferable to Phase 4)
+Phase 1 D Obsidian-baseline UX gaps (added 2026-05-08 after dogfood)  2 weeks
+          dogfood after Phase 1 ABC found 6 baseline UX gaps users hit daily
+   D1. Multi-tab / multi-pane (largest item): tab strip above NoteView, h/v split, pin / close / reorder, state persistence
+   D2. Full-text search panel: consume the existing FTS5 + vector backend; new "Search" rail tab or ⌘⇧F focus mode; query + results + snippet + click-jump + highlight
+   D3. Properties UI: frontmatter form below title (aliases as chip strip / created-updated readonly / custom fields); user never has to touch YAML
+   D4. Dark mode toggle: tokens already in place (Phase 0); add header sun/moon button + localStorage + system-preference fallback
+   D5. Outline panel: 3rd right-rail tab (Backlinks / Graph / Outline); parse h1-h6 + click-jump
+   D6. Hover preview for [[Title]]: hover popup with target's title + first paragraph
+Phase 2   D + E (should-have, deferrable)                          1-2 weeks (deferable to Phase 4)
    D. Entry: Daily notes / Quick switcher / pinned
    E. Data durability: ADR-0018 / Note version / Import-Export
-Phase 3  AI features re-done                                      3-4 weeks
+Phase 3   AI features re-done                                      3-4 weeks
    Chat (Vercel AI SDK) / capsule / Sediment / Quiz / Mining UI / Web search trace / Cards
-Phase 4  Full dogfood + gray-release prep                         1-2 weeks
+   per ADR-0024 envelope: 7 AI roles / 7-layer prompt envelope / mech-hybrid-creative gate
+Phase 4   Full dogfood + gray-release prep                         1-2 weeks
    Playwright e2e tests / docs / gray entry preparation
 ```
 

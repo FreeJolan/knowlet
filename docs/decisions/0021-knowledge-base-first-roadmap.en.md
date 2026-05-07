@@ -2,8 +2,10 @@
 
 > **English** | [中文](./0021-knowledge-base-first-roadmap.md)
 
-- Status: Accepted
+- Status: Accepted (amended 2026-05-08)
 - Date: 2026-05-05
+
+> **2026-05-08 amendment**: Phase 1 D added (6 Obsidian-baseline UX gaps), original 8-12 weeks → 10-14 weeks. See [`docs/roadmap/README.en.md` §"Phase plan after rewrite"](../roadmap/README.en.md#phase-plan-after-rewrite). Trigger: after Phase 1 ABC + GATE 2 dogfood, side-by-side with Obsidian still showed 6 baseline UX gaps users hit daily (multi-tab / full-text search panel / Properties UI / dark toggle / Outline panel / hover preview).
 
 ## Context
 

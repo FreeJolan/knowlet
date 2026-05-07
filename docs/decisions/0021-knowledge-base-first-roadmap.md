@@ -2,8 +2,10 @@
 
 > [English](./0021-knowledge-base-first-roadmap.en.md) | **中文**
 
-- Status: Accepted
+- Status: Accepted (amended 2026-05-08)
 - Date: 2026-05-05
+
+> **2026-05-08 amendment**:Phase 1 D 追加(Obsidian-baseline UX 6 项缺口),原 8-12 周 → 10-14 周。详见 [`docs/roadmap/README.md` §"重写后的 Phase 计划"](../roadmap/README.md#重写后的-phase-计划)。触发原因:Phase 1 ABC 完成 + GATE 2 dogfood 通过后实测对比 Obsidian 仍有 6 个用户每天会撞到的 baseline 缺口(多 tab / 全文搜索面板 / Properties UI / 暗色 toggle / Outline 面板 / hover preview)。
 
 ## Context
 

@@ -4,16 +4,16 @@
 
 Knowlet 按 Wedge 战略分阶段演进。能力同源、相互增强;叙事按阶段聚焦。详见 [ADR-0003](../decisions/0003-wedge-pivot-ai-memory-layer.md)(及其 2026-05-04 amendment)。
 
-## ⚡ 当前状态(2026-05-05)
+## ⚡ 当前状态(2026-05-08)
 
 **产品阶段** = 开发期(per [ADR-0022](../decisions/0022-product-lifecycle-phases.md))。无外部用户,允许激进迭代。
 
-**项目状态** = **重写中**。2026-05-04 dogfood 验证前端基本不可用,触发以下决策(详见 ADR-0019 / 0020 / 0021):
+**项目状态** = **Phase 1 ABC 完成 + tag m1c**(2026-05-08)。下一步是 **Phase 1 D**(2026-05-08 dogfood 后追加,补 6 个 Obsidian-baseline UX 缺口)。详见 ADR-0019 / 0020 / 0021。
 
 - **前端**:Alpine 弃用,改 React 19 + Vite + TypeScript + shadcn/ui + AI SDK + CodeMirror 6 + react-arborist + Tanstack Query
 - **后端**:不重写,加 mypy strict + ruff + pre-commit + CI(per ADR-0020)
-- **顺序**:Phase 0 (脚手架 + 后端硬化) → Phase 1 (知识库基线) → Phase 2 (该有但可推) → Phase 3 (AI 能力重做) → Phase 4 (灰度准备)
-- **预估时间**:8-12 周到 Phase 4(灰度入口前)
+- **顺序**:Phase 0 (脚手架 + 后端硬化) ✅ → Phase 1 ABC (知识库基线) ✅ → Phase 1 D (Obsidian-baseline UX 补齐) → Phase 2 (该有但可推) → Phase 3 (AI 能力重做) → Phase 4 (灰度准备)
+- **预估时间**:**10-14 周**到 Phase 4(灰度入口前)— 原 8-12 周加 Phase 1 D 后修正
 
 ```
 🟢 已 ship 但**待重做** 的后端能力(0 改动,直接复用)
@@ -38,21 +38,32 @@ Knowlet 按 Wedge 战略分阶段演进。能力同源、相互增强;叙事按�
 详见 [ADR-0021](../decisions/0021-knowledge-base-first-roadmap.md)。摘要:
 
 ```
-Phase 0  决策锁定 + 脚手架 + 后端硬化(并行)            2-3 天
-Phase 1  知识库基线 A + B + C(必备)                   4-5 周
+Phase 0   决策锁定 + 脚手架 + 后端硬化(并行)           2-3 天     ✅ 完成
+Phase 1   知识库基线 A + B + C(必备)                  4-5 周     ✅ 完成 (m1c)
    A. File ops 跟齐 Obsidian:右键菜单 / 拖拽 / 重命名 / 移动 / 多选 / Trash UI / 文件夹创建 UI / 全文搜索
    B. 编辑器跟齐 Bear:CodeMirror 6 + Math (KaTeX) + Mermaid + 模板 + 块引用
    C. 知识连接:Wikilinks autocomplete + Backlinks + Graph view + Tag 浏览器
-Phase 2  D + E(该有可推)                              1-2 周(可推到 Phase 4)
+Phase 1 D Obsidian-baseline UX 补齐(2026-05-08 dogfood 后追加)  2 周
+          dogfood 实测 Phase 1 ABC 完成后,对比 Obsidian 仍有 6 个用户每天会撞到的 baseline 缺口
+   D1. 多 tab / 多窗格(最大项):tab strip 在 NoteView 之上,水平/垂直 split,pin / close / reorder, 状态持久化
+   D2. 全文搜索面板:消费已有 FTS5 + 向量后端,新 rail tab "Search" 或 ⌘⇧F focus mode,query + 结果列表 + snippet + 点击跳转 + 高亮
+   D3. Properties UI:标题下 frontmatter 表单(aliases chip strip / created/updated readonly / 自定义字段),用户感知不到 YAML
+   D4. 暗色模式 toggle:token 在 Phase 0 已就位,补 header sun/moon 按钮 + localStorage + 系统偏好 fallback
+   D5. Outline 大纲面板:right rail 第三个 tab(Backlinks / Graph / Outline),解析 h1-h6 + 点击跳行
+   D6. Hover preview 链接:[[Title]] 鼠标悬停 → 浮出 note 标题 + 首段
+Phase 2   D + E(该有可推)                             1-2 周(可推到 Phase 4)
    D. 入口:Daily notes / Quick switcher 强化 / 收藏
    E. 数据耐久:ADR-0018 落地 / Note version / Import-Export
-Phase 3  AI 能力重做                                   3-4 周
+Phase 3   AI 能力重做                                  3-4 周
    Chat (Vercel AI SDK) / 胶囊 / Sediment / Quiz / Mining UI / Web search trace / Cards
-Phase 4  整体 dogfood + 灰度准备                        1-2 周
+   per ADR-0024 envelope:7 个 AI role / 7 层 prompt 分层 / mech-hybrid-creative 入闸
+Phase 4   整体 dogfood + 灰度准备                       1-2 周
    Playwright e2e 测试 / 文档 / 灰度入口准备
 ```
 
 **Phase 4 之后** = 进入灰度期(per [ADR-0022](../decisions/0022-product-lifecycle-phases.md))。
+
+**预估时间(2026-05-08 修订)**: 加入 Phase 1 D 后 Phase 4 入口前合计 10-14 周(原 8-12)。
 
 ## 阶段一(MVP / V1)— 战略层
 
