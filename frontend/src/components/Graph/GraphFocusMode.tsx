@@ -281,18 +281,63 @@ export function GraphFocusMode({ open, noteId, onClose, onOpenNote }: Props) {
             </div>
             {visible.orphans.length > 0 && (
               <div
-                className="border-t px-3 py-2 text-[11px]"
+                className="flex shrink-0 flex-col border-t"
                 style={{
                   borderColor: "var(--line)",
                   background: "var(--panel-2, #e7e0d0)",
-                  color: "var(--ink-soft)",
+                  maxHeight: "40%",
                 }}
+                data-testid="graph-orphans-pile"
               >
-                <div className="font-mono text-[10px] uppercase tracking-wider" style={{ color: "var(--ink-mute)" }}>
-                  {t("graph.focus.orphansTitle", { count: visible.orphans.length })}
+                <div
+                  className="px-3 py-2"
+                  style={{
+                    color: "var(--ink-mute)",
+                    borderBottom: "1px solid var(--line-soft, #e2dac9)",
+                  }}
+                >
+                  <div className="font-mono text-[10px] uppercase tracking-wider">
+                    {t("graph.focus.orphansTitle", {
+                      count: visible.orphans.length,
+                    })}
+                  </div>
+                  <div
+                    className="mt-1 text-[10.5px] leading-snug"
+                    style={{ color: "var(--ink-mute)" }}
+                  >
+                    {t("graph.focus.orphansHint")}
+                  </div>
                 </div>
-                <div className="mt-1 line-clamp-3 text-[10.5px]" style={{ color: "var(--ink-mute)" }}>
-                  {t("graph.focus.orphansHint")}
+                <div className="flex-1 overflow-y-auto">
+                  {visible.orphans.map((n) => (
+                    <button
+                      key={n.id}
+                      type="button"
+                      onClick={() => {
+                        onOpenNote(n.id);
+                        onClose();
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-1 text-left transition-colors hover:bg-accent/20"
+                      style={{ color: "var(--ink-soft)" }}
+                      data-testid="graph-orphan-row"
+                    >
+                      <span
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: 3,
+                          background: "var(--ink-faint, #8e857a)",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span
+                        className="flex-1 truncate text-[11px]"
+                        style={{ minWidth: 0 }}
+                      >
+                        {n.title}
+                      </span>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}

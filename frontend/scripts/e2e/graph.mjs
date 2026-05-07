@@ -135,6 +135,23 @@ try {
     await page.locator('[data-testid="graph-focus-close"]').click();
   });
 
+  await runTest("focus mode lists orphan notes when there are any", async () => {
+    await ensureFocusClosed();
+    await page.keyboard.press("Meta+Shift+G");
+    await page.waitForTimeout(500);
+    // Seeded notes include "Orphan" with no inbound or outbound links.
+    const pile = page.locator('[data-testid="graph-orphans-pile"]');
+    await pile.waitFor({ state: "visible", timeout: 3000 });
+    const rows = pile.locator('[data-testid="graph-orphan-row"]');
+    const count = await rows.count();
+    assert(count >= 1, `expected ≥1 orphan row — got ${count}`);
+    // Click an orphan → opens the note.
+    await rows.first().click();
+    await page.waitForTimeout(500);
+    const titleH1 = page.locator('[data-testid="note-title"]').first();
+    await titleH1.waitFor({ state: "visible", timeout: 3000 });
+  });
+
   await runTest("clicking a degree-row in focus mode opens that note", async () => {
     await ensureFocusClosed();
     await page.keyboard.press("Meta+Shift+G");
