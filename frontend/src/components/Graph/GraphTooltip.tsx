@@ -38,12 +38,14 @@ export function GraphTooltip({ node, cursor, paneW, paneH, currentId }: Props) {
         left,
         top,
         width: TOOLTIP_W,
-        // Semi-transparent + backdrop blur so neighbor nodes/edges
-        // behind the tooltip stay legible. Solid card bg blocked too
-        // much of the surrounding graph, especially in dense clusters.
-        background: "rgba(251, 248, 241, 0.86)",
-        backdropFilter: "blur(3px)",
-        WebkitBackdropFilter: "blur(3px)",
+        // Heavily transparent + strong backdrop blur. Density of the
+        // graph behind the tooltip should remain readable; tooltip
+        // text stays legible thanks to blur (it sets up its own
+        // backdrop for the foreground type without painting a solid
+        // box on top of neighbor nodes).
+        background: "rgba(251, 248, 241, 0.55)",
+        backdropFilter: "blur(8px) saturate(120%)",
+        WebkitBackdropFilter: "blur(8px) saturate(120%)",
         borderColor: "var(--line)",
         color: "var(--ink)",
         zIndex: 10,
