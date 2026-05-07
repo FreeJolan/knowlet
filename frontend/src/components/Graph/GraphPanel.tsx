@@ -8,7 +8,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Compass, Maximize2, Globe } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { getGraph } from "@/api/client";
@@ -16,6 +16,7 @@ import type { GraphNodeRow, GraphPayload } from "@/api/types";
 import { QK } from "@/lib/queryClient";
 
 import { GraphCanvas } from "./GraphCanvas";
+import { GraphTooltip } from "./GraphTooltip";
 import { egoSubgraph } from "./graphData";
 
 interface Props {
@@ -40,6 +41,8 @@ export function GraphPanel({ noteId, onOpenNote, onEnterFocus }: Props) {
   }, [graphQuery.data, noteId]);
 
   const [hovered, setHovered] = useState<GraphNodeRow | null>(null);
+  const [cursor, setCursor] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const canvasContainerRef = useRef<HTMLDivElement | null>(null);
 
   // -------------------------------------------------- empty / loading
 
@@ -126,7 +129,16 @@ export function GraphPanel({ noteId, onOpenNote, onEnterFocus }: Props) {
       </div>
 
       {/* Canvas */}
-      <div className="relative min-h-0 flex-1" style={{ background: "var(--bg)" }}>
+      <div
+        ref={canvasContainerRef}
+        className="relative min-h-0 flex-1"
+        style={{ background: "var(--bg)" }}
+        onMouseMove={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setCursor({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+        }}
+        onMouseLeave={() => setHovered(null)}
+      >
         <CanvasFiller>
           {(w, h) => (
             <GraphCanvas
@@ -140,9 +152,12 @@ export function GraphPanel({ noteId, onOpenNote, onEnterFocus }: Props) {
             />
           )}
         </CanvasFiller>
-        {hovered && (
-          <NodeTooltip
+        {hovered && canvasContainerRef.current && (
+          <GraphTooltip
             node={hovered}
+            cursor={cursor}
+            paneW={canvasContainerRef.current.clientWidth}
+            paneH={canvasContainerRef.current.clientHeight}
             currentId={noteId}
           />
         )}
@@ -219,42 +234,3 @@ function CanvasFiller({ children }: FillerProps) {
   );
 }
 
-interface TooltipProps {
-  node: GraphNodeRow;
-  currentId: string;
-}
-
-function NodeTooltip({ node, currentId }: TooltipProps) {
-  const isCurrent = node.id === currentId;
-  return (
-    <div
-      className="pointer-events-none absolute right-3 top-3 max-w-[260px] rounded border px-3 py-2 shadow-md"
-      style={{
-        background: "var(--card, #fbf8f1)",
-        borderColor: "var(--line)",
-        color: "var(--ink)",
-      }}
-    >
-      <div
-        className="text-[12px] font-medium"
-        style={{ fontFamily: "var(--font-serif, Source Serif 4, Georgia, serif)" }}
-      >
-        {node.title}
-      </div>
-      <div
-        className="mt-1 flex items-center gap-1.5 font-mono text-[10px]"
-        style={{ color: "var(--ink-mute)" }}
-      >
-        {node.folder ? <span>{node.folder}</span> : <span>(root)</span>}
-        <span style={{ color: "var(--ink-faint, #8e857a)" }}>·</span>
-        <span>↘ {node.in_degree + node.out_degree}</span>
-        {isCurrent && (
-          <>
-            <span style={{ color: "var(--ink-faint, #8e857a)" }}>·</span>
-            <span style={{ color: "var(--accent-2, #34495e)" }}>current</span>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
