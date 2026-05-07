@@ -115,6 +115,7 @@
       "groupCount_one": "{{count}} 处",
       "groupCount_other": "{{count}} 处",
       "lineLabel": "L{{line}}",
+      "linkOnly": "(此行只有链接)",
       "loadFailed": "关联加载失败({{error}})。"
     },
     "outbound": {
