@@ -56,22 +56,6 @@ function groupBySource(rows: BacklinkRow[]): InboundGroup[] {
   );
 }
 
-/**
- * True when the trimmed sentence is essentially just the wikilink itself
- * — i.e. the source note's line was `[[Title]]` with at most surrounding
- * whitespace or terminal punctuation. In that case showing the styled
- * link in the row is purely redundant with the section header (which
- * already reads "Inbound"; the source title group header already names
- * the source) AND the current note's title (which the user is viewing).
- * Replace with a muted placeholder.
- */
-function isLinkOnlySentence(sentence: string): boolean {
-  const stripped = sentence.replace(WIKILINK_RE, "").trim();
-  if (stripped.length === 0) return true;
-  // Common terminal / list punctuation that adds no real context.
-  return /^[\s.,;:!?。、！？·•\-—()（）"'""]+$/u.test(stripped);
-}
-
 function renderSentence(sentence: string): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
   let last = 0;
@@ -233,40 +217,27 @@ export function BacklinksPanel({
                   title={g.source_title}
                   count={t("rail.backlinks.groupCount", { count: g.rows.length })}
                 />
-                {g.rows.map((r) => {
-                  const linkOnly = isLinkOnlySentence(r.sentence);
-                  return (
-                    <button
-                      key={`${r.source_id}-${r.line}`}
-                      type="button"
-                      className="block w-full cursor-pointer text-left"
-                      onClick={() => onOpenSource(r.source_id, r.line)}
-                      data-testid="backlink-row"
-                      data-link-only={linkOnly ? "1" : "0"}
-                      style={rowStyle}
+                {g.rows.map((r) => (
+                  <button
+                    key={`${r.source_id}-${r.line}`}
+                    type="button"
+                    className="block w-full cursor-pointer text-left"
+                    onClick={() => onOpenSource(r.source_id, r.line)}
+                    data-testid="backlink-row"
+                    style={rowStyle}
+                  >
+                    <div className="text-[13px] leading-relaxed" style={sentenceStyle}>
+                      {renderSentence(r.sentence)}
+                    </div>
+                    <div
+                      className="mt-1 flex items-center gap-1.5 font-mono text-[10.5px]"
+                      style={{ color: "var(--ink-mute)" }}
                     >
-                      {linkOnly ? (
-                        <div
-                          className="text-[12px] italic"
-                          style={{ color: "var(--ink-mute)" }}
-                        >
-                          {t("rail.backlinks.linkOnly")}
-                        </div>
-                      ) : (
-                        <div className="text-[13px] leading-relaxed" style={sentenceStyle}>
-                          {renderSentence(r.sentence)}
-                        </div>
-                      )}
-                      <div
-                        className="mt-1 flex items-center gap-1.5 font-mono text-[10.5px]"
-                        style={{ color: "var(--ink-mute)" }}
-                      >
-                        <LinkIcon size={9} />
-                        <span>{t("rail.backlinks.lineLabel", { line: r.line })}</span>
-                      </div>
-                    </button>
-                  );
-                })}
+                      <LinkIcon size={9} />
+                      <span>{t("rail.backlinks.lineLabel", { line: r.line })}</span>
+                    </div>
+                  </button>
+                ))}
               </div>
             ))}
           </div>
@@ -356,11 +327,9 @@ export function BacklinksPanel({
                     </span>
                   )}
                 </div>
-                {!isLinkOnlySentence(o.sentence) && (
-                  <div className="mt-1 text-[12px]" style={sentenceStyle}>
-                    {renderSentence(o.sentence)}
-                  </div>
-                )}
+                <div className="mt-1 text-[12px]" style={sentenceStyle}>
+                  {renderSentence(o.sentence)}
+                </div>
                 <div
                   className="mt-1 flex items-center gap-1.5 font-mono text-[10.5px]"
                   style={{ color: "var(--ink-mute)" }}

@@ -115,7 +115,6 @@
       "groupCount_one": "{{count}} mention",
       "groupCount_other": "{{count}} mentions",
       "lineLabel": "L{{line}}",
-      "linkOnly": "(line is just the reference)",
       "loadFailed": "Failed to load backlinks ({{error}})."
     },
     "outbound": {

@@ -42,12 +42,6 @@ const env = await setupTestEnv({
       title: "With dangling",
       body: "Some pre-context here.\nThis note refers to [[Nonexistent Target]].",
     },
-    {
-      // Source whose body is JUST a wikilink — the row should show
-      // the link-only placeholder, not duplicate the target title.
-      title: "Bare link source",
-      body: "[[RAG retrieval]]",
-    },
   ],
   language: "en",
 });
@@ -83,7 +77,7 @@ try {
       .waitFor({ state: "visible", timeout: 1500 });
   });
 
-  await runTest("RAG retrieval shows three backlink groups", async () => {
+  await runTest("RAG retrieval shows two backlink groups (FTS5 + Personal)", async () => {
     await clickRow("RAG retrieval");
     // Wait for fetch to complete + DOM to render
     await page.waitForTimeout(400);
@@ -91,14 +85,12 @@ try {
     await list.waitFor({ state: "visible", timeout: 3000 });
     const rows = list.locator('[data-testid="backlink-row"]');
     const rowCount = await rows.count();
-    assert(rowCount === 3, `three backlink rows expected — got ${rowCount}`);
-    // Source notes (FTS5 trigram, Personal energy, Bare link source) should appear.
+    assert(rowCount === 2, `two backlink rows expected — got ${rowCount}`);
+    // Both source notes should appear in the panel.
     const fts = await list.locator("text=FTS5 trigram").count();
     const energy = await list.locator("text=Personal energy").count();
-    const bare = await list.locator("text=Bare link source").count();
     assert(fts >= 1, `FTS5 trigram source group should appear (got ${fts})`);
     assert(energy >= 1, `Personal energy source group should appear (got ${energy})`);
-    assert(bare >= 1, `Bare link source group should appear (got ${bare})`);
   });
 
   await runTest("clicking a backlink row opens the source note", async () => {
@@ -109,14 +101,14 @@ try {
       .first();
     await firstRow.waitFor({ state: "visible" });
     await firstRow.click();
-    // After click, NoteView should switch to the source note. Order is
-    // alpha asc by source title, so first is Bare link source.
+    // After click, NoteView should switch to the source note (FTS5 trigram
+    // alphabetically — group sort is by source title).
     await page.waitForTimeout(500);
     const titleH1 = page.locator('[data-testid="note-title"]').first();
     await titleH1.waitFor({ state: "visible", timeout: 3000 });
     const titleText = (await titleH1.textContent()) ?? "";
     assert(
-      /Bare link source|FTS5|Personal/.test(titleText),
+      /FTS5|Personal/.test(titleText),
       `clicked backlink should open one of the source notes (title="${titleText}")`,
     );
   });
@@ -155,26 +147,6 @@ try {
       `outbound click should open the target note (title="${titleText}")`,
     );
   });
-
-  await runTest(
-    "row whose source line is just [[Title]] uses the link-only placeholder",
-    async () => {
-      await clickRow("RAG retrieval");
-      await page.waitForTimeout(400);
-      // Among the inbound rows, "Bare link source" group has data-link-only="1".
-      const list = page.locator('[data-testid="backlinks-list"]');
-      const linkOnly = list.locator('[data-testid="backlink-row"][data-link-only="1"]');
-      const count = await linkOnly.count();
-      assert(count >= 1, `expected ≥1 link-only row — got ${count}`);
-      // The placeholder text shouldn't contain the target title (no
-      // redundant "RAG retrieval" inside the row body).
-      const text = (await linkOnly.first().textContent()) ?? "";
-      assert(
-        !text.includes("RAG retrieval"),
-        `link-only row should NOT echo current note title — got "${text}"`,
-      );
-    },
-  );
 
   await runTest("dangling [[Missing]] target renders broken state", async () => {
     // "With dangling" note links to [[Nonexistent Target]] which isn't
