@@ -1553,3 +1553,29 @@ def test_tag_notes_unknown_tag_returns_empty(tmp_path: Path):
     r = client.get("/api/tags/nonexistent/notes")
     assert r.status_code == 200
     assert r.json() == []
+
+
+def test_tags_persist_after_tag_only_update(tmp_path: Path):
+    """Regression — Phase 1 C dogfood (2026-05-08): updating ONLY a note's
+    tags via PUT /api/notes/{id} (no body change) was previously a no-op
+    on the index because `upsert_note` short-circuited on content_hash
+    match (which only covers title + body, not tags). The chip-strip UI
+    relies on tag-only updates landing in the index so /api/tags reflects
+    them immediately."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n = Note(id=new_id(), title="A", body="x", tags=["initial"])
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    # PUT with body unchanged but a new tag → backend should still
+    # reflect the new tag.
+    r = client.put(
+        f"/api/notes/{n.id}",
+        json={"title": "A", "tags": ["initial", "fresh"], "body": "x"},
+    )
+    assert r.status_code == 200, r.text
+
+    tags = client.get("/api/tags").json()
+    names = {row["tag"] for row in tags}
+    assert names == {"initial", "fresh"}, f"index didn't pick up tag-only change: {tags}"

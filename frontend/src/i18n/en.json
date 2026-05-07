@@ -17,6 +17,11 @@
     "tabFiles": "Files",
     "tabTags": "Tags"
   },
+  "noteTags": {
+    "add": "Add tag",
+    "remove": "Remove tag {{tag}}",
+    "placeholder": "tag…"
+  },
   "tags": {
     "loading": "Loading tags…",
     "loadFailed": "Failed to load tags ({{error}}).",
@@ -96,8 +101,12 @@
     "tab": {
       "backlinks": "Linked notes"
     },
+    "section": {
+      "inbound": "Inbound",
+      "outbound": "Outbound"
+    },
     "backlinks": {
-      "noNote": "Open a note to see backlinks.",
+      "noNote": "Open a note to see linked notes.",
       "loading": "Loading…",
       "empty": "No other note links to this one yet via [[Title]].",
       "emptyHint": "Reference this note from another with [[{{title}}]] and it appears here.",
@@ -108,7 +117,15 @@
       "lineLabel": "L{{line}}",
       "loadFailed": "Failed to load backlinks ({{error}})."
     },
+    "outbound": {
+      "empty": "This note doesn't link to any other notes yet.",
+      "summary_one": "{{count}} link",
+      "summary_other": "{{count}} links",
+      "summaryWithBroken_one": "{{count}} link · {{broken}} broken",
+      "summaryWithBroken_other": "{{count}} links · {{broken}} broken",
+      "brokenLabel": "broken"
+    },
     "collapse": "Collapse panel",
-    "expand": "Show backlinks"
+    "expand": "Show linked notes"
   }
 }

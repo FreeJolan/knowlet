@@ -89,6 +89,10 @@ export function AppShell() {
   });
   // Phase 1 C slice 2: left-rail tab — files (file tree) vs tags (tag browser).
   const [leftTab, setLeftTab] = useState<"files" | "tags">("files");
+  // When a `#tag` chip in preview is clicked, AppShell hops to the Tags
+  // tab and TagBrowser drills into that tag. We pass the requested tag
+  // through `pendingTag` so TagBrowser (which just remounted) sees it.
+  const [pendingTag, setPendingTag] = useState<string | null>(null);
   const [windowWidth, setWindowWidth] = useState(() =>
     typeof window === "undefined" ? 1400 : window.innerWidth,
   );
@@ -179,13 +183,21 @@ export function AppShell() {
         setPendingHash(detail.hash || null);
       })();
     };
+    const openTag = (e: Event) => {
+      const detail = (e as CustomEvent<{ tag: string }>).detail;
+      if (!detail || !detail.tag) return;
+      setLeftTab("tags");
+      setPendingTag(detail.tag);
+    };
     window.addEventListener("knowlet:open-palette", openPalette);
     window.addEventListener("knowlet:open-trash", openTrash);
     window.addEventListener("knowlet:open-wikilink", openWikilink);
+    window.addEventListener("knowlet:open-tag", openTag);
     return () => {
       window.removeEventListener("knowlet:open-palette", openPalette);
       window.removeEventListener("knowlet:open-trash", openTrash);
       window.removeEventListener("knowlet:open-wikilink", openWikilink);
+      window.removeEventListener("knowlet:open-tag", openTag);
     };
   }, [qc, selectedNoteId]);
 
@@ -324,6 +336,8 @@ export function AppShell() {
                         setPendingHash(null);
                         setPendingLine(null);
                       }}
+                      pendingTag={pendingTag}
+                      onPendingTagConsumed={() => setPendingTag(null)}
                     />
                   )}
                 </div>
@@ -362,6 +376,12 @@ export function AppShell() {
                         setSelectedNoteId(sourceId);
                       setPendingHash(null);
                       setPendingLine(line);
+                    }}
+                    onOpenTarget={(targetId) => {
+                      if (targetId !== selectedNoteId)
+                        setSelectedNoteId(targetId);
+                      setPendingHash(null);
+                      setPendingLine(null);
                     }}
                   />
                 </ResizablePanel>

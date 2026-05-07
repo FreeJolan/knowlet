@@ -5,6 +5,11 @@
     "trash": "垃圾桶",
     "templates": "模板"
   },
+  "noteTags": {
+    "add": "加 tag",
+    "remove": "移除 tag {{tag}}",
+    "placeholder": "tag…"
+  },
   "tags": {
     "loading": "标签载入中…",
     "loadFailed": "标签加载失败({{error}})。",
@@ -94,21 +99,33 @@
   },
   "rail": {
     "tab": {
-      "backlinks": "反链"
+      "backlinks": "关联笔记"
+    },
+    "section": {
+      "inbound": "被引用",
+      "outbound": "引用了"
     },
     "backlinks": {
-      "noNote": "选一条笔记后查看反链。",
+      "noNote": "选一条笔记后查看关联。",
       "loading": "载入中…",
       "empty": "还没有其他笔记用 [[标题]] 引用这一条。",
       "emptyHint": "在其他笔记里写 [[{{title}}]] 即会出现在这里。",
-      "summary_one": "{{count}} 处 / {{noteCount}} 个 note",
-      "summary_other": "{{count}} 处 / {{noteCount}} 个 note",
+      "summary_one": "{{count}} 处 / {{noteCount}} 个",
+      "summary_other": "{{count}} 处 / {{noteCount}} 个",
       "groupCount_one": "{{count}} 处",
       "groupCount_other": "{{count}} 处",
       "lineLabel": "L{{line}}",
-      "loadFailed": "反链加载失败({{error}})。"
+      "loadFailed": "关联加载失败({{error}})。"
+    },
+    "outbound": {
+      "empty": "这条笔记还没有引用其他笔记。",
+      "summary_one": "{{count}} 处",
+      "summary_other": "{{count}} 处",
+      "summaryWithBroken_one": "{{count}} 处 · {{broken}} 个空链",
+      "summaryWithBroken_other": "{{count}} 处 · {{broken}} 个空链",
+      "brokenLabel": "空链"
     },
     "collapse": "收起面板",
-    "expand": "展开反链"
+    "expand": "展开关联笔记"
   }
 }

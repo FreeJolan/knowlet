@@ -32,6 +32,7 @@ import { normalizeNoteTitle } from "@/lib/noteTitle";
 import { QK } from "@/lib/queryClient";
 
 import { attachScrollSync } from "./scrollSync";
+import { TagChipStrip } from "./TagChipStrip";
 
 /**
  * Update one note inside a TreeFolder snapshot. Used for optimistic
@@ -187,6 +188,43 @@ export function NoteView({
       qc.setQueryData(QK.note(vars.id), data);
     },
     onSettled: () => {
+      void qc.invalidateQueries({ queryKey: QK.tree });
+    },
+  });
+
+  // Phase 1 C polish — tag-only update (chip strip add/remove). Mirrors
+  // the rename pattern: optimistic update on the cached note + tree, with
+  // QK.tags invalidation on success so the left-rail Tag browser refreshes.
+  const updateTagsMutation = useMutation({
+    mutationFn: ({
+      id,
+      tags,
+      payload,
+    }: {
+      id: string;
+      tags: string[];
+      payload: NoteFull;
+    }) =>
+      updateNote(id, {
+        title: payload.title,
+        tags,
+        body: payload.body,
+      }),
+    onMutate: ({ id, tags }) => {
+      const prevNote = qc.getQueryData<NoteFull>(QK.note(id));
+      if (prevNote) {
+        qc.setQueryData<NoteFull>(QK.note(id), { ...prevNote, tags });
+      }
+      return { prevNote };
+    },
+    onError: (_err, vars, ctx) => {
+      if (ctx?.prevNote) qc.setQueryData(QK.note(vars.id), ctx.prevNote);
+    },
+    onSuccess: (data, vars) => {
+      qc.setQueryData(QK.note(vars.id), data);
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: QK.tags });
       void qc.invalidateQueries({ queryKey: QK.tree });
     },
   });
@@ -596,22 +634,26 @@ export function NoteView({
           {note.data.folder || t("note.rootLabel")} · {note.data.id.slice(0, 8)} ·{" "}
           {t("note.updatedPrefix")} {note.data.updated_at.slice(0, 10)}
         </div>
-        {note.data.tags.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {note.data.tags.map((tag) => (
-              <span
-                key={tag}
-                className="rounded-full px-2 py-0.5 text-xs"
-                style={{
-                  background: "var(--accent-tint)",
-                  color: "var(--ink)",
-                }}
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-        )}
+        <TagChipStrip
+          tags={note.data.tags}
+          noteId={note.data.id}
+          onAdd={(tag) => {
+            const next = [...note.data!.tags, tag];
+            updateTagsMutation.mutate({
+              id: note.data!.id,
+              tags: next,
+              payload: note.data!,
+            });
+          }}
+          onRemove={(tag) => {
+            const next = note.data!.tags.filter((t) => t !== tag);
+            updateTagsMutation.mutate({
+              id: note.data!.id,
+              tags: next,
+              payload: note.data!,
+            });
+          }}
+        />
       </header>
       {/* Both panes are ALWAYS mounted — we toggle visibility via the
         * `hidden` class instead of conditionally rendering. Two wins:

@@ -21,6 +21,7 @@ import remarkMath from "remark-math";
 
 import { MermaidBlock } from "./MermaidBlock";
 import { rehypeSourceLine } from "./rehypeSourceLine";
+import { remarkInlineTag } from "./remarkInlineTag";
 import { remarkWikilink } from "./remarkWikilink";
 
 /**
@@ -30,6 +31,7 @@ import { remarkWikilink } from "./remarkWikilink";
  * via a custom event so AppShell can resolve title→noteId and switch.
  */
 const WIKILINK_SCHEME = "wikilink:";
+const TAG_SCHEME = "tag:";
 
 type Props = { value: string };
 
@@ -114,6 +116,32 @@ function parseWikilinkHref(href: string): { title: string; hash: string } | null
 }
 
 function PreviewAnchor({ href, children, ...rest }: ComponentProps<"a">) {
+  // Inline `#tag` chip — dispatches `knowlet:open-tag` so AppShell can
+  // switch the left rail to Tags and drill into the tag.
+  if (typeof href === "string" && href.startsWith(TAG_SCHEME)) {
+    let tag = href.slice(TAG_SCHEME.length);
+    try {
+      tag = decodeURIComponent(tag);
+    } catch {
+      // leave raw if undecodable
+    }
+    return (
+      <a
+        {...rest}
+        href={href}
+        data-inline-tag="true"
+        data-tag={tag}
+        onClick={(e) => {
+          e.preventDefault();
+          window.dispatchEvent(
+            new CustomEvent("knowlet:open-tag", { detail: { tag } }),
+          );
+        }}
+      >
+        {children}
+      </a>
+    );
+  }
   // Internal Obsidian-style [[Title]] / [[Title#Heading]] — dispatch to
   // AppShell which handles resolution + cross-note navigation.
   if (typeof href === "string" && href.startsWith(WIKILINK_SCHEME)) {
@@ -167,7 +195,7 @@ export function MarkdownPreview({ value }: Props) {
       style={{ color: "var(--ink)" }}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkWikilink]}
+        remarkPlugins={[remarkGfm, remarkMath, remarkWikilink, remarkInlineTag]}
         rehypePlugins={[
           // rehype-slug: auto-id every heading so [[Title#Heading]] can
           // scroll to that heading after the note switches.
@@ -189,6 +217,7 @@ export function MarkdownPreview({ value }: Props) {
         // delegate everything else to the default sanitizer.
         urlTransform={(url, key) => {
           if (url.startsWith("wikilink:")) return url;
+          if (url.startsWith("tag:")) return url;
           if (key === "src" && url.startsWith("_attachments/")) return url;
           return defaultUrlTransform(url);
         }}

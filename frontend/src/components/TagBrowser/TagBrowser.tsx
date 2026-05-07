@@ -12,7 +12,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, FileText, Hash } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { listNotesByTag, listTags } from "@/api/client";
@@ -21,11 +21,27 @@ import { QK } from "@/lib/queryClient";
 
 interface Props {
   onSelectNote: (id: string) => void;
+  /** When AppShell is asked to open a specific tag (e.g. via a #tag
+   *  click in preview), the host sets this and TagBrowser drills in. */
+  pendingTag?: string | null;
+  onPendingTagConsumed?: () => void;
 }
 
-export function TagBrowser({ onSelectNote }: Props) {
+export function TagBrowser({
+  onSelectNote,
+  pendingTag,
+  onPendingTagConsumed,
+}: Props) {
   const { t } = useTranslation();
   const [activeTag, setActiveTag] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (pendingTag && pendingTag !== activeTag) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setActiveTag(pendingTag);
+      onPendingTagConsumed?.();
+    }
+  }, [pendingTag, activeTag, onPendingTagConsumed]);
 
   const tagsQuery = useQuery<TagSummary[]>({
     queryKey: QK.tags,

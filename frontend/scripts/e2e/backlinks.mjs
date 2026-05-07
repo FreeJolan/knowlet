@@ -38,6 +38,10 @@ const env = await setupTestEnv({
       ].join("\n"),
     },
     { title: "Loose note", body: "no inbound links yet" },
+    {
+      title: "With dangling",
+      body: "Some pre-context here.\nThis note refers to [[Nonexistent Target]].",
+    },
   ],
   language: "en",
 });
@@ -57,10 +61,20 @@ try {
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await page.waitForTimeout(500);
 
-  await runTest("rail mounts; backlinks panel visible by default", async () => {
+  await runTest("rail mounts; both sections appear when note is open", async () => {
     // Title in panel header — i18n key rail.tab.backlinks → "Linked notes"
     const header = page.locator("text=Linked notes").first();
     await header.waitFor({ state: "visible", timeout: 3000 });
+    // Section headers only render when a note is selected (no-note state
+    // is a single placeholder).
+    await clickRow("RAG retrieval");
+    await page.waitForTimeout(300);
+    await page
+      .locator('[data-testid="rail-inbound-header"]')
+      .waitFor({ state: "visible", timeout: 1500 });
+    await page
+      .locator('[data-testid="rail-outbound-header"]')
+      .waitFor({ state: "visible", timeout: 1500 });
   });
 
   await runTest("RAG retrieval shows two backlink groups (FTS5 + Personal)", async () => {
@@ -99,16 +113,56 @@ try {
     );
   });
 
-  await runTest("empty state hint renders for note with no inbounds", async () => {
+  await runTest("empty inbound message renders for note with no inbounds", async () => {
     await clickRow("Loose note");
     await page.waitForTimeout(400);
-    // Shouldn't see the list; should see the empty hint.
-    const list = page.locator('[data-testid="backlinks-list"]');
-    const visible = await list.isVisible().catch(() => false);
-    assert(!visible, "backlinks list shouldn't render for an isolated note");
     // The empty-state copy contains the literal `[[Title]]` instruction.
     const empty = page.locator("text=No other note links to this one");
     await empty.waitFor({ state: "visible", timeout: 2000 });
+  });
+
+  await runTest("Outbound section lists each [[Target]] in current note body", async () => {
+    // FTS5 trigram references RAG retrieval once.
+    await clickRow("FTS5 trigram");
+    await page.waitForTimeout(400);
+    const outList = page.locator('[data-testid="outbound-list"]');
+    await outList.waitFor({ state: "visible", timeout: 3000 });
+    const rows = outList.locator('[data-testid="outbound-row"]');
+    const count = await rows.count();
+    assert(count === 1, `expected 1 outbound row from FTS5 trigram — got ${count}`);
+    const dangling = await rows.first().getAttribute("data-dangling");
+    assert(dangling === "0", `RAG retrieval is a real note — should NOT be dangling (got ${dangling})`);
+  });
+
+  await runTest("clicking an outbound row opens the target note", async () => {
+    await clickRow("FTS5 trigram");
+    await page.waitForTimeout(400);
+    const firstRow = page.locator('[data-testid="outbound-row"]').first();
+    await firstRow.click();
+    await page.waitForTimeout(500);
+    const titleH1 = page.locator('[data-testid="note-title"]').first();
+    const titleText = (await titleH1.textContent()) ?? "";
+    assert(
+      /RAG retrieval/.test(titleText),
+      `outbound click should open the target note (title="${titleText}")`,
+    );
+  });
+
+  await runTest("dangling [[Missing]] target renders broken state", async () => {
+    // "With dangling" note links to [[Nonexistent Target]] which isn't
+    // in the seed — we add a note inline below; for now, navigate to
+    // the test note and check.
+    await clickRow("With dangling");
+    await page.waitForTimeout(400);
+    const danglingRow = page
+      .locator('[data-testid="outbound-row"][data-dangling="1"]')
+      .first();
+    await danglingRow.waitFor({ state: "visible", timeout: 3000 });
+    // Click should be a no-op (button disabled).
+    const tag = await danglingRow.evaluate((el) => el.tagName.toLowerCase());
+    assert(tag === "button", "dangling row should be a <button>");
+    const disabled = await danglingRow.isDisabled();
+    assert(disabled, "dangling row should be disabled");
   });
 
   await runTest("rail toggle collapses and restores the panel", async () => {

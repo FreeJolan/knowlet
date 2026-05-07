@@ -216,10 +216,29 @@ class Index:
         conn = self.connect()
         cur = conn.cursor()
         existing = cur.execute("SELECT content_hash FROM notes WHERE id = ?", (note.id,)).fetchone()
-        if existing and existing["content_hash"] == note.content_hash:
-            return  # unchanged, skip reindex
 
         rel_path = str(note.path) if note.path else note.filename
+
+        if existing and existing["content_hash"] == note.content_hash:
+            # Body + title unchanged → no need to re-chunk / re-embed.
+            # But tags / updated_at can still differ (e.g. user added a
+            # tag via the chip strip without touching the body). Refresh
+            # the metadata row so tag-only edits land in the index.
+            cur.execute(
+                """
+                UPDATE notes
+                   SET tags = ?, updated_at = ?, path = ?
+                 WHERE id = ?
+                """,
+                (
+                    json.dumps(note.tags, ensure_ascii=False),
+                    note.updated_at,
+                    rel_path,
+                    note.id,
+                ),
+            )
+            conn.commit()
+            return
 
         cur.execute("DELETE FROM notes WHERE id = ?", (note.id,))
         cur.execute(

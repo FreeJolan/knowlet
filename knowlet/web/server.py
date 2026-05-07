@@ -39,6 +39,7 @@ from knowlet.chat.sediment import (
 )
 from knowlet.config import KnowletConfig, find_vault, load_config
 from knowlet.core.backlinks import find_backlinks
+from knowlet.core.inline_tags import merge_with_inline_tags
 from knowlet.core.card import Card, parse_due
 from knowlet.core.drafts import Draft
 from knowlet.core.events import ErrorEvent, event_to_dict
@@ -1467,7 +1468,11 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # no unlink, no sync-conflict (B3 / 2026-05-02 critique #5).
         note.title = payload.title.strip() or note.title
         note.body = payload.body
-        note.tags = list(payload.tags)
+        # Phase 1 C polish — merge inline `#tag` from body into frontmatter
+        # additively. User-typed body tags become first-class without
+        # extra UI gymnastics. ADR-0013 §1 still holds: this is user-
+        # initiated (the user wrote `#tag` themselves), not LLM-inferred.
+        note.tags = merge_with_inline_tags(list(payload.tags), payload.body)
         new_path = runtime.vault.write_note(note)
         runtime.index.upsert_note(
             note,
@@ -1650,7 +1655,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"template not found: {req.template_id}",
                 )
-        note = _Note(id=new_id(), title=title, body=body, tags=list(req.tags))
+        # Phase 1 C polish — pick up `#tag` from a template body too.
+        merged_tags = merge_with_inline_tags(list(req.tags), body)
+        note = _Note(id=new_id(), title=title, body=body, tags=merged_tags)
         try:
             path = runtime.vault.write_note(note, folder=req.folder or None)
         except ValueError as exc:
