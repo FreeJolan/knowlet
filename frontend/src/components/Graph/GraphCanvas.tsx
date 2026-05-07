@@ -142,7 +142,31 @@ export function GraphCanvas({
       }}
       linkWidth={1.4}
       linkDirectionalArrowLength={5}
-      linkDirectionalArrowRelPos={0.7}
+      // Per design spec Q2 — arrow head sits just outside the target
+      // node's circle, never inside it. The static-SVG reference does
+      // this by clipping the line endpoint at `targetRadius + 6`; the
+      // dynamic equivalent here is computing relPos from the actual
+      // edge length so the arrow lands at the boundary regardless of
+      // whether the edge is short (zoomed-in clusters) or long.
+      linkDirectionalArrowRelPos={(l: object) => {
+        const link = l as CanvasLink;
+        const src =
+          typeof link.source === "string" ? null : (link.source as CanvasNode);
+        const tgt =
+          typeof link.target === "string" ? null : (link.target as CanvasNode);
+        if (!src || !tgt) return 0.95;
+        const sx = src.x ?? 0;
+        const sy = src.y ?? 0;
+        const tx = tgt.x ?? 0;
+        const ty = tgt.y ?? 0;
+        const dist = Math.hypot(tx - sx, ty - sy);
+        if (dist <= 0) return 0.95;
+        const targetR = nodeRadius(tgt);
+        // Arrow tip sits ~3px past the target's edge → visually
+        // adjacent without overlap.
+        const offset = targetR + 3;
+        return Math.max(0.55, Math.min(0.97, 1 - offset / dist));
+      }}
       linkDirectionalArrowColor={() => "rgba(120, 110, 95, 0.9)"}
       // Node renderer per Q2 (radius from degree, fill --card,
       // stroke --ink-mute or --accent for center). Custom canvas paint
