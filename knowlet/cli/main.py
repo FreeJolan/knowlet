@@ -21,6 +21,7 @@ from knowlet import __version__
 from knowlet.cli import cards as cards_cli
 from knowlet.cli import config as config_cli
 from knowlet.cli import drafts as drafts_cli
+from knowlet.cli import graph as graph_cli
 from knowlet.cli import mining as mining_cli
 from knowlet.cli import notes as notes_cli
 from knowlet.cli import quiz as quiz_cli
@@ -64,6 +65,7 @@ app.add_typer(drafts_cli.app, name="drafts")
 app.add_typer(notes_cli.app, name="notes")
 app.add_typer(quiz_cli.app, name="quiz")
 app.add_typer(tags_cli.app, name="tags")
+app.add_typer(graph_cli.app, name="graph")
 
 
 # ------------------------------------------------------------------ root

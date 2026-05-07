@@ -39,6 +39,7 @@ from knowlet.chat.sediment import (
 )
 from knowlet.config import KnowletConfig, find_vault, load_config
 from knowlet.core.backlinks import find_backlinks
+from knowlet.core.graph import build_graph, read_body_via_note
 from knowlet.core.inline_tags import merge_with_inline_tags
 from knowlet.core.card import Card, parse_due
 from knowlet.core.drafts import Draft
@@ -183,6 +184,30 @@ class TagWithNotes(BaseModel):
     tag: str
     count: int
     notes: list[NoteSummary]
+
+
+class GraphNodeRow(BaseModel):
+    """Phase 1 C slice 3 — one node in the user-authored bilink graph."""
+
+    id: str
+    title: str
+    folder: str = ""
+    in_degree: int = 0
+    out_degree: int = 0
+
+
+class GraphEdgeRow(BaseModel):
+    """Phase 1 C slice 3 — one resolved `[[Title]]` edge in the graph."""
+
+    source: str
+    target: str
+
+
+class GraphPayload(BaseModel):
+    """Full graph snapshot. One pull, full vault. <5k notes per ADR-0021."""
+
+    nodes: list[GraphNodeRow]
+    edges: list[GraphEdgeRow]
 
 
 # ---------------- Phase 1 A wire schemas (file ops) ----------------
@@ -1394,6 +1419,49 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             )
             for tag, count in ordered
         ]
+
+    @app.get("/api/graph", response_model=GraphPayload)
+    def get_graph(runtime: ChatRuntime = Depends(runtime_dep)) -> GraphPayload:
+        """Phase 1 C slice 3 — user-authored bilink graph snapshot.
+
+        Per [ADR-0023 §1](docs/decisions/0023-llm-wiki-comparison-and-takeaways.md)
+        this view shows ground-truth user-validated structure (the
+        `[[Title]]` references the user wrote themselves), distinct
+        from M8.2 knowledge-map sidebar which surfaces LLM-inferred
+        signals. Dangling links are excluded — the Linter (ADR-0023
+        §5) handles those separately.
+
+        Cheap at <5k notes (one pass + per-note read for wikilink
+        extraction; same approach as `/api/notes/{id}/backlinks`).
+        """
+        metas = runtime.index.list_notes(limit=None)
+
+        def _read_body(path_str: str) -> str:
+            p = Path(path_str)
+            if not p.is_absolute():
+                p = runtime.vault.notes_dir / p.name
+            return read_body_via_note(p)
+
+        graph = build_graph(
+            metas,
+            folder_for=runtime.vault.folder_of,
+            read_body=_read_body,
+        )
+        return GraphPayload(
+            nodes=[
+                GraphNodeRow(
+                    id=n.id,
+                    title=n.title,
+                    folder=n.folder,
+                    in_degree=n.in_degree,
+                    out_degree=n.out_degree,
+                )
+                for n in graph.nodes
+            ],
+            edges=[
+                GraphEdgeRow(source=e.source, target=e.target) for e in graph.edges
+            ],
+        )
 
     @app.get("/api/notes/similar", response_model=list[SimilarNoteRow])
     def list_similar_notes(

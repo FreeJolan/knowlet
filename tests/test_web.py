@@ -1590,6 +1590,42 @@ def test_tags_all_with_notes_empty_vault(tmp_path: Path):
     assert r.json() == []
 
 
+def test_graph_endpoint_basic(tmp_path: Path):
+    """Phase 1 C slice 3 — `/api/graph` returns the user-authored bilink
+    graph with degree counts, dangling links excluded."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n1 = Note(id=new_id(), title="Alpha", body="See [[Beta]].")
+    n2 = Note(id=new_id(), title="Beta", body="See [[Alpha]] and [[NoSuch]].")
+    n3 = Note(id=new_id(), title="Orphan", body="x")
+    for n in (n1, n2, n3):
+        v.write_note(n)
+        runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    r = client.get("/api/graph")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    titles = {n["id"]: n["title"] for n in body["nodes"]}
+    assert set(titles.values()) == {"Alpha", "Beta", "Orphan"}
+    edge_pairs = {(e["source"], e["target"]) for e in body["edges"]}
+    assert (n1.id, n2.id) in edge_pairs
+    assert (n2.id, n1.id) in edge_pairs
+    # Dangling [[NoSuch]] does NOT appear as an edge.
+    assert len(edge_pairs) == 2
+    by_id = {n["id"]: n for n in body["nodes"]}
+    assert by_id[n1.id]["in_degree"] == 1
+    assert by_id[n1.id]["out_degree"] == 1
+    assert by_id[n3.id]["in_degree"] == 0
+    assert by_id[n3.id]["out_degree"] == 0
+
+
+def test_graph_endpoint_empty_vault(tmp_path: Path):
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.get("/api/graph")
+    assert r.status_code == 200
+    assert r.json() == {"nodes": [], "edges": []}
+
+
 def test_tags_persist_after_tag_only_update(tmp_path: Path):
     """Regression — Phase 1 C dogfood (2026-05-08): updating ONLY a note's
     tags via PUT /api/notes/{id} (no body change) was previously a no-op
