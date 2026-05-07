@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>Knowlet — Graph view</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Serif+SC:wght@400;500;600&family=Noto+Sans+SC:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+<style>
+  body { margin: 0; background: #e8e2d2; }
+  .kn-paper { background: var(--bg); color: var(--ink); font-family: var(--font-sans); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="graph.jsx"></script>
+
+<script type="text/babel">
+const { DesignCanvas, DCSection, DCArtboard } = window;
+
+function App() {
+  return (
+    <DesignCanvas title="Knowlet — Graph view of user-authored bilinks" subtitle="2026-05-07 · 5 frames + Q1/Q2/Q3 spec · paper-light · dusk-blue · 锁定视觉系统">
+      <DCSection id="spec" title="Spec · 三个硬问题的判断">
+        <DCArtboard id="spec-card" label="Q1 / Q2 / Q3 — 默认 landing · 视觉差异 · force tuning" width={1280} height={1100}>
+          <GraphSpecCard />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="entries" title="两个入口 · 同数据不同 scoping">
+        <DCArtboard id="rail" label="01 · 右栏 Graph tab — ego 1-hop · ~380px" width={1280} height={780}>
+          <GraphRailTabFrame />
+        </DCArtboard>
+        <DCArtboard id="focus" label="02 · Focus mode (⌘⇧G) — 全图 · 24 nodes / 32 bilinks" width={1440} height={900}>
+          <GraphFocusFrame />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="states" title="交互态">
+        <DCArtboard id="search" label="03 · 搜索过滤 — / 唤起,匹配 brighten,其他 dim 20%" width={1440} height={900}>
+          <GraphFocusFrame withSearch />
+        </DCArtboard>
+        <DCArtboard id="select" label="04 · Lasso 多选 (focus only) — 4 节点已选 + 浮动 action bar" width={1440} height={900}>
+          <GraphFocusFrame withSelection />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="edge" title="空 + 边缘态">
+        <DCArtboard id="empty" label="05 · 0 bilinks — 友善空状态,不画空 force graph" width={1280} height={700}>
+          <GraphEmptyFrame />
+        </DCArtboard>
+        <DCArtboard id="hub" label="06 · 大 hub (50+ 邻居) — cap 显示 24,外圈 fade,顶栏一键展开" width={1280} height={720}>
+          <GraphHubFrame />
+        </DCArtboard>
+        <DCArtboard id="orphans" label="07 · Orphans pile — 孤立 note 不进 force,单独网格列出" width={1280} height={720}>
+          <GraphOrphanFrame />
+        </DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

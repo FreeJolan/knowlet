@@ -99,7 +99,8 @@
   },
   "rail": {
     "tab": {
-      "backlinks": "关联笔记"
+      "backlinks": "关联笔记",
+      "graph": "Graph"
     },
     "section": {
       "inbound": "被引用",
@@ -125,7 +126,37 @@
       "summaryWithBroken_other": "{{count}} 处 · {{broken}} 个空链",
       "brokenLabel": "空链"
     },
+    "graph": {
+      "noNote": "选一条笔记后查看它的图谱邻域。",
+      "loading": "图谱载入中…",
+      "loadFailed": "图谱加载失败({{error}})。",
+      "empty": "这条笔记还没有 [[标题]] 链接。",
+      "emptyHint": "用 [[标题]] 引用其他笔记,它们会出现在图谱里。",
+      "subtitle": "当前 Note ± 1 跳",
+      "outbound": "出链",
+      "inbound": "入链",
+      "fullScreen": "全屏",
+      "hintScroll": "滚轮 = 缩放",
+      "hintDrag": "拖动 = 平移"
+    },
     "collapse": "收起面板",
     "expand": "展开关联笔记"
+  },
+  "graph": {
+    "focus": {
+      "titleFull": "Graph · 全 vault",
+      "titleEgo": "Graph · 当前笔记的 ego",
+      "summary": "{{notes}} 篇 · {{edges}} 条用户连接",
+      "searchPlaceholder": "按标题过滤…",
+      "loading": "图谱载入中…",
+      "byDegree": "按 IN+OUT DEGREE 排序",
+      "orphansTitle": "{{count}} 个孤立",
+      "orphansHint": "没有入链或出链的笔记不会进入 force 布局。",
+      "expandToFull": "展开全 vault",
+      "collapseToEgo": "收回 ego",
+      "close": "关闭 (Esc)",
+      "emptyTitle": "还没有连起来的 note",
+      "emptyBody": "这个视图只画用户自己写的 [[标题]] 链接。链好后再来。"
+    }
   }
 }

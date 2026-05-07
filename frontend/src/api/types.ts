@@ -83,3 +83,23 @@ export interface TagWithNotes {
   count: number;
   notes: NoteSummary[];
 }
+
+// ---------- graph (Phase 1 C slice 3) ----------
+
+export interface GraphNodeRow {
+  id: string;
+  title: string;
+  folder: string;
+  in_degree: number;
+  out_degree: number;
+}
+
+export interface GraphEdgeRow {
+  source: string;
+  target: string;
+}
+
+export interface GraphPayload {
+  nodes: GraphNodeRow[];
+  edges: GraphEdgeRow[];
+}

@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 import { getTree } from "@/api/client";
 import type { TreeFolder, TreeNote } from "@/api/types";
 import { FileTree } from "@/components/FileTree/FileTree";
+import { GraphFocusMode } from "@/components/Graph/GraphFocusMode";
 import { NoteView } from "@/components/NoteView/NoteView";
 import { CommandPalette } from "@/components/Palette/CommandPalette";
 import { RightRail } from "@/components/RightRail/RightRail";
@@ -93,6 +94,8 @@ export function AppShell() {
   // tab and TagBrowser drills into that tag. We pass the requested tag
   // through `pendingTag` so TagBrowser (which just remounted) sees it.
   const [pendingTag, setPendingTag] = useState<string | null>(null);
+  // Phase 1 C slice 3 — graph focus mode (Cmd+Shift+G).
+  const [graphFocusOpen, setGraphFocusOpen] = useState(false);
   const [windowWidth, setWindowWidth] = useState(() =>
     typeof window === "undefined" ? 1400 : window.innerWidth,
   );
@@ -189,15 +192,28 @@ export function AppShell() {
       setLeftTab("tags");
       setPendingTag(detail.tag);
     };
+    // Cmd+Shift+G (or Ctrl+Shift+G) → toggle graph focus mode.
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        (e.key === "g" || e.key === "G")
+      ) {
+        e.preventDefault();
+        setGraphFocusOpen((v) => !v);
+      }
+    };
     window.addEventListener("knowlet:open-palette", openPalette);
     window.addEventListener("knowlet:open-trash", openTrash);
     window.addEventListener("knowlet:open-wikilink", openWikilink);
     window.addEventListener("knowlet:open-tag", openTag);
+    window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("knowlet:open-palette", openPalette);
       window.removeEventListener("knowlet:open-trash", openTrash);
       window.removeEventListener("knowlet:open-wikilink", openWikilink);
       window.removeEventListener("knowlet:open-tag", openTag);
+      window.removeEventListener("keydown", onKey);
     };
   }, [qc, selectedNoteId]);
 
@@ -383,6 +399,7 @@ export function AppShell() {
                       setPendingHash(null);
                       setPendingLine(null);
                     }}
+                    onEnterGraphFocus={() => setGraphFocusOpen(true)}
                   />
                 </ResizablePanel>
               </>
@@ -420,6 +437,16 @@ export function AppShell() {
         onEditTemplate={(noteId) => {
           setTemplatesOpen(false);
           setSelectedNoteId(noteId);
+        }}
+      />
+      <GraphFocusMode
+        open={graphFocusOpen}
+        noteId={selectedNoteId}
+        onClose={() => setGraphFocusOpen(false)}
+        onOpenNote={(id) => {
+          setSelectedNoteId(id);
+          setPendingHash(null);
+          setPendingLine(null);
         }}
       />
     </>

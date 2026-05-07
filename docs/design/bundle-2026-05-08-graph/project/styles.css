@@ -1,0 +1,235 @@
+/* Knowlet — paper light (default), dusk-blue accent */
+:root {
+  --bg: #f4f0e8;            /* warm paper */
+  --bg-1: #efe9dd;          /* slightly recessed */
+  --bg-2: #e8e1d2;
+  --panel: #ede7d9;         /* sidebars */
+  --panel-2: #e3dcca;       /* hover / inset */
+  --card: #fbf8f1;          /* lifted card */
+  --line: #d6cfbd;
+  --line-soft: #e0d9c8;
+
+  --ink: #2a2823;           /* warm near-black */
+  --ink-soft: #5e5b53;
+  --ink-mute: #8a8678;
+  --ink-faint: #b3ad9c;
+
+  --accent: #5b7a9c;        /* dusk blue, darker for light bg */
+  --accent-2: #4d6a8a;
+  --accent-soft: rgba(91, 122, 156, 0.14);
+  --accent-tint: rgba(91, 122, 156, 0.08);
+  --accent-tint-2: rgba(91, 122, 156, 0.16);
+
+  --warn: #a47a3a;
+  --good: #5e8757;
+  --user: #a87a3a;
+  --danger: #b8554d;
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md: 0 8px 24px rgba(0,0,0,0.35), 0 2px 6px rgba(0,0,0,0.25);
+  --shadow-lg: 0 24px 60px rgba(0,0,0,0.55), 0 8px 20px rgba(0,0,0,0.35);
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
+  --font-serif: "Source Serif 4", "Iowan Old Style", Georgia,
+    "Noto Serif SC", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+.kn {
+  font-family: var(--font-sans);
+  color: var(--ink);
+  background: var(--bg);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.003em;
+}
+
+.kn .serif { font-family: var(--font-serif); letter-spacing: -0.008em; }
+.kn .mono  { font-family: var(--font-mono); letter-spacing: 0; }
+
+.kn-paper {
+  background:
+    radial-gradient(1100px 600px at 75% -10%, rgba(91,122,156,0.04), transparent 60%),
+    radial-gradient(900px 500px at -5% 110%, rgba(164,122,58,0.03), transparent 60%),
+    var(--bg);
+}
+
+/* kbd */
+.kn-kbd {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-mute);
+  padding: 1.5px 5px;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.025);
+  border: 1px solid var(--line-soft);
+  letter-spacing: 0;
+}
+
+/* Icon button */
+.kn-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 6px;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all .12s ease;
+}
+.kn-icon-btn:hover { background: var(--panel-2); color: var(--ink); }
+
+/* Buttons */
+.kn-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 32px; padding: 0 14px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  background: transparent;
+  cursor: pointer;
+  transition: all .12s ease;
+}
+.kn-btn:hover { color: var(--ink); border-color: var(--ink-mute); }
+.kn-btn.lg { height: 38px; padding: 0 18px; font-size: 13.5px; }
+.kn-btn.primary {
+  background: var(--accent);
+  color: #faf7f0;
+  border-color: var(--accent);
+  font-weight: 550;
+}
+.kn-btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+.kn-btn.ghost { border-color: transparent; }
+.kn-btn.ghost:hover { background: var(--panel-2); }
+
+/* chip */
+.kn-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 20px; padding: 0 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+
+/* tree */
+.kn-tree-item {
+  display: flex; align-items: center; gap: 7px;
+  height: 26px; padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.kn-tree-item:hover { background: var(--panel-2); }
+.kn-tree-item.active { background: var(--accent-soft); color: var(--accent-2); }
+.kn-tree-item .ico { color: var(--ink-mute); flex-shrink: 0; }
+.kn-tree-item.active .ico { color: var(--accent-2); }
+
+/* Markdown — sans body, serif headings */
+.kn-md { color: var(--ink); font-size: 15px; line-height: 1.75; }
+.kn-md h1 { font-family: var(--font-serif); font-size: 22px; font-weight: 600; margin: 0 0 14px; letter-spacing: -0.012em; }
+.kn-md h2 { font-family: var(--font-serif); font-size: 17px; font-weight: 600; margin: 28px 0 10px; letter-spacing: -0.008em; }
+.kn-md h3 { font-family: var(--font-serif); font-size: 14.5px; font-weight: 600; margin: 22px 0 8px; }
+.kn-md p { margin: 0 0 12px; }
+.kn-md ul { margin: 0 0 12px; padding-left: 20px; }
+.kn-md li { margin: 4px 0; }
+.kn-md li::marker { color: var(--ink-faint); }
+.kn-md code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  background: var(--panel-2);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--accent-2);
+}
+.kn-md pre {
+  background: var(--panel-2);
+  border-radius: 4px;
+  padding: 12px 14px;
+  margin: 12px 0;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.kn-md pre code { background: transparent; padding: 0; color: var(--ink); }
+.kn-md a { color: var(--accent-2); text-decoration: none; border-bottom: 1px solid transparent; }
+.kn-md a:hover { border-bottom-color: var(--accent-2); }
+.kn-md blockquote {
+  margin: 12px 0; padding: 0 0 0 12px;
+  border-left: 3px solid var(--line);
+  color: var(--ink-soft);
+}
+
+/* status bar bits */
+.kn-status-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.kn-status-btn:hover { background: var(--panel-2); }
+.kn-status-btn .lbl { color: var(--ink-soft); }
+.kn-status-btn .num {
+  font-family: var(--font-mono); font-size: 11px;
+  padding: 0 5px; border-radius: 3px;
+}
+
+/* tab strip (center) */
+.kn-tab {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 30px; padding: 0 12px;
+  font-size: 12.5px; color: var(--ink-soft);
+  border-right: 1px solid var(--line-soft);
+  cursor: pointer;
+}
+.kn-tab:hover { color: var(--ink); }
+.kn-tab.active {
+  color: var(--ink);
+  background: var(--card);
+  border-top: 2px solid var(--accent);
+  margin-top: -2px;
+  padding-top: 2px;
+}
+.kn-tab .x { color: var(--ink-faint); padding: 1px; border-radius: 2px; }
+.kn-tab .x:hover { color: var(--ink); background: var(--panel-2); }
+
+/* outline / right rail */
+.kn-outline-item {
+  display: block;
+  font-size: 12px;
+  color: var(--ink-soft);
+  padding: 3px 0 3px 10px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  margin-left: -2px;
+}
+.kn-outline-item:hover { color: var(--ink); }
+.kn-outline-item.active { color: var(--accent-2); border-left-color: var(--accent); }
+.kn-outline-item.h3 { padding-left: 22px; font-size: 11.5px; color: var(--ink-mute); }
+
+.kn-input {
+  display: flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 8px;
+  background: var(--bg);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  color: var(--ink);
+  font-size: 12px;
+  width: 100%;
+}
+.kn-input input {
+  flex: 1; background: transparent; border: 0; outline: 0; color: inherit;
+  font-family: inherit; font-size: inherit;
+}
+.kn-input input::placeholder { color: var(--ink-mute); }
+.kn-input:focus-within { border-color: var(--accent); }

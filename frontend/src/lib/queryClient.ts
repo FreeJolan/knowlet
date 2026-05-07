@@ -27,4 +27,5 @@ export const QK = {
   tags: ["tags"] as const,
   tagNotes: (tag: string) => ["tag-notes", tag] as const,
   tagsWithNotes: ["tags-with-notes"] as const,
+  graph: ["graph"] as const,
 };

@@ -9,6 +9,7 @@ import type {
   ApiError,
   BacklinkRow,
   FolderResponse,
+  GraphPayload,
   NoteFull,
   NoteSummary,
   TagSummary,
@@ -122,6 +123,11 @@ export const listNotesByTag = (tag: string): Promise<NoteSummary[]> =>
 
 export const listTagsWithNotes = (): Promise<TagWithNotes[]> =>
   request("GET", "/api/tags/all-with-notes");
+
+// ---------- graph (Phase 1 C slice 3) ----------
+
+export const getGraph = (): Promise<GraphPayload> =>
+  request("GET", "/api/graph");
 
 // ---------- templates (Phase 1 B slice 8) ----------
 
