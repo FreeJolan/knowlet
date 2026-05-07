@@ -26,4 +26,5 @@ export const QK = {
   backlinks: (id: string) => ["backlinks", id] as const,
   tags: ["tags"] as const,
   tagNotes: (tag: string) => ["tag-notes", tag] as const,
+  tagsWithNotes: ["tags-with-notes"] as const,
 };

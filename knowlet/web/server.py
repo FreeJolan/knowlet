@@ -175,6 +175,16 @@ class TagSummary(BaseModel):
     count: int
 
 
+class TagWithNotes(BaseModel):
+    """Phase 1 C slice 2 polish D — one tag + the notes carrying it. Used
+    by the file-tree-style Tag browser to render notes as children of
+    tag nodes without N+1 round-trips."""
+
+    tag: str
+    count: int
+    notes: list[NoteSummary]
+
+
 # ---------------- Phase 1 A wire schemas (file ops) ----------------
 
 
@@ -1346,6 +1356,44 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     folder = ""
             out.append(NoteSummary(**r, folder=folder))
         return out
+
+    @app.get("/api/tags/all-with-notes", response_model=list[TagWithNotes])
+    def list_tags_with_notes(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[TagWithNotes]:
+        """Phase 1 C slice 2 polish D — every tag + its notes in one round-
+        trip. The file-tree Tag browser needs this to render notes as
+        children of tag nodes without firing an N+1 wave per tag.
+
+        Implementation: single scan of `list_notes` (no embedding work),
+        group by tag in Python. Cheap at ADR-0021 vault sizes (<5k)."""
+        notes_by_tag: dict[str, list[NoteSummary]] = {}
+        counts: dict[str, int] = {}
+        for r in runtime.index.list_notes(limit=None):
+            folder = ""
+            p = r.get("path")
+            if p:
+                try:
+                    folder = runtime.vault.folder_of(Path(p))
+                except (TypeError, ValueError):
+                    folder = ""
+            note_summary = NoteSummary(**r, folder=folder)
+            for t in r.get("tags") or []:
+                if not isinstance(t, str) or not t.strip():
+                    continue
+                key = t.strip()
+                notes_by_tag.setdefault(key, []).append(note_summary)
+                counts[key] = counts.get(key, 0) + 1
+        # Match /api/tags ordering: count desc, then tag asc.
+        ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+        return [
+            TagWithNotes(
+                tag=tag,
+                count=count,
+                notes=notes_by_tag.get(tag, []),
+            )
+            for tag, count in ordered
+        ]
 
     @app.get("/api/notes/similar", response_model=list[SimilarNoteRow])
     def list_similar_notes(

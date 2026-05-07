@@ -77,3 +77,9 @@ export interface TagSummary {
   tag: string;
   count: number;
 }
+
+export interface TagWithNotes {
+  tag: string;
+  count: number;
+  notes: NoteSummary[];
+}

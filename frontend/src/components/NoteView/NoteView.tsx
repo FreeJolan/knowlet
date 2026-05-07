@@ -133,6 +133,11 @@ export function NoteView({
       }),
     onSuccess: (data, vars) => {
       qc.setQueryData(QK.note(vars.id), data);
+      // Body saves can include inline `#tag` syntax that the backend
+      // merges into frontmatter. Invalidate tag caches so the Tag
+      // browser reflects new tags without a manual reload.
+      void qc.invalidateQueries({ queryKey: QK.tags });
+      void qc.invalidateQueries({ queryKey: QK.tagsWithNotes });
       // Only update the badge / dirty flag for the CURRENTLY-loaded note.
       // A late-arriving response from the previous note (after a switch)
       // shouldn't flip the new note's UI back to "saved".
@@ -225,6 +230,7 @@ export function NoteView({
     },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: QK.tags });
+      void qc.invalidateQueries({ queryKey: QK.tagsWithNotes });
       void qc.invalidateQueries({ queryKey: QK.tree });
     },
   });

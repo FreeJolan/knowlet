@@ -12,6 +12,7 @@ import type {
   NoteFull,
   NoteSummary,
   TagSummary,
+  TagWithNotes,
   TrashListResponse,
   TreeFolder,
 } from "./types";
@@ -118,6 +119,9 @@ export const listTags = (): Promise<TagSummary[]> =>
 
 export const listNotesByTag = (tag: string): Promise<NoteSummary[]> =>
   request("GET", `/api/tags/${encodeURIComponent(tag)}/notes`);
+
+export const listTagsWithNotes = (): Promise<TagWithNotes[]> =>
+  request("GET", "/api/tags/all-with-notes");
 
 // ---------- templates (Phase 1 B slice 8) ----------
 

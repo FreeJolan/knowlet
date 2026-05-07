@@ -1555,6 +1555,41 @@ def test_tag_notes_unknown_tag_returns_empty(tmp_path: Path):
     assert r.json() == []
 
 
+def test_tags_all_with_notes_groups_correctly(tmp_path: Path):
+    """Polish D — `/api/tags/all-with-notes` returns every tag with its
+    note list in one shot, sorted by count desc / tag asc."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n1 = Note(id=new_id(), title="A", body="x", tags=["design", "design/ui"])
+    n2 = Note(id=new_id(), title="B", body="y", tags=["design/ui"])
+    n3 = Note(id=new_id(), title="C", body="z", tags=["design"])
+    for n in (n1, n2, n3):
+        v.write_note(n)
+        runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    r = client.get("/api/tags/all-with-notes")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    by_tag = {row["tag"]: row for row in body}
+    assert set(by_tag.keys()) == {"design", "design/ui"}
+    # design: n1 + n3 (n2 has only design/ui)
+    design_ids = {n["id"] for n in by_tag["design"]["notes"]}
+    assert design_ids == {n1.id, n3.id}
+    # design/ui: n1 + n2
+    ui_ids = {n["id"] for n in by_tag["design/ui"]["notes"]}
+    assert ui_ids == {n1.id, n2.id}
+    # counts mirror the notes lists
+    assert by_tag["design"]["count"] == 2
+    assert by_tag["design/ui"]["count"] == 2
+
+
+def test_tags_all_with_notes_empty_vault(tmp_path: Path):
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.get("/api/tags/all-with-notes")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
 def test_tags_persist_after_tag_only_update(tmp_path: Path):
     """Regression — Phase 1 C dogfood (2026-05-08): updating ONLY a note's
     tags via PUT /api/notes/{id} (no body change) was previously a no-op

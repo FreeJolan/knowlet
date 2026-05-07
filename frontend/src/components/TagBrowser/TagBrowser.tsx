@@ -1,23 +1,79 @@
 /**
- * Phase 1 C slice 2 — Tag browser, peer of FileTree on the left rail.
+ * Phase 1 C slice 2 (+ polish D) — Tag browser, peer of FileTree on the
+ * left rail.
  *
- * Two-pane layout (single column at the left rail width budget):
- *   - top: vertical list of all tags + counts (scrollable)
- *   - bottom: when a tag is selected, the notes carrying that tag
+ * File-tree style:
+ *   - `/` in tag names is treated as path separator (Bear / Obsidian
+ *     convention). `#design/ui` becomes node `design > ui`.
+ *   - Tag nodes are expandable; children are sub-tag nodes (more `/`
+ *     levels) followed by the notes carrying that exact tag.
+ *   - Click a note → opens it in the editor.
+ *   - Click a tag → toggles expand/collapse (same as folder in
+ *     FileTree).
  *
- * Per ADR-0013 §3 Layer B — no taxonomy enforcement. We surface what
- * the user typed, nothing more. Click a tag → see notes; click a note
- * → opens it in the editor (host wires the callback).
+ * Per ADR-0013 §3 Layer B — no taxonomy enforcement. The hierarchy is
+ * derived from what the user wrote; it isn't a separate registry.
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, FileText, Hash } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronDown, ChevronRight, FileText, Folder, Hash } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  Tree,
+  type NodeRendererProps,
+  type TreeApi,
+} from "react-arborist";
 
-import { listNotesByTag, listTags } from "@/api/client";
-import type { NoteSummary, TagSummary } from "@/api/types";
+import { listTagsWithNotes } from "@/api/client";
+import type { TagWithNotes } from "@/api/types";
 import { QK } from "@/lib/queryClient";
+
+import { buildTagTree, type TagTreeNode } from "./tagTree";
+
+type Kind = "tag" | "note";
+
+interface RowData {
+  id: string;
+  /** Tag node label (last segment) or note title. */
+  name: string;
+  kind: Kind;
+  /** Tag-only: own count for the chip. */
+  ownCount?: number;
+  /** Tag-only: subtree count for the chip. */
+  subtreeCount?: number;
+  /** Tag-only: synthetic parents have no notes of their own. */
+  synthetic?: boolean;
+  /** Tag-only: full path used for filter/expand-state stability. */
+  fullTag?: string;
+  /** Note-only: backend note id for `onSelectNote`. */
+  noteId?: string;
+  children?: RowData[];
+}
+
+function toArborist(nodes: TagTreeNode[]): RowData[] {
+  return nodes.map((n) => {
+    const tagRow: RowData = {
+      id: `tag:${n.fullTag}`,
+      name: n.name,
+      kind: "tag",
+      ownCount: n.ownCount,
+      subtreeCount: n.subtreeCount,
+      synthetic: n.synthetic,
+      fullTag: n.fullTag,
+      children: [
+        ...toArborist(n.children),
+        ...n.ownNotes.map((note) => ({
+          id: `tag:${n.fullTag}|note:${note.id}`,
+          name: note.title || "(untitled)",
+          kind: "note" as const,
+          noteId: note.id,
+        })),
+      ],
+    };
+    return tagRow;
+  });
+}
 
 interface Props {
   onSelectNote: (id: string) => void;
@@ -33,169 +89,186 @@ export function TagBrowser({
   onPendingTagConsumed,
 }: Props) {
   const { t } = useTranslation();
-  const [activeTag, setActiveTag] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (pendingTag && pendingTag !== activeTag) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setActiveTag(pendingTag);
-      onPendingTagConsumed?.();
-    }
-  }, [pendingTag, activeTag, onPendingTagConsumed]);
-
-  const tagsQuery = useQuery<TagSummary[]>({
-    queryKey: QK.tags,
-    queryFn: listTags,
+  const tagsQuery = useQuery<TagWithNotes[]>({
+    queryKey: QK.tagsWithNotes,
+    queryFn: listTagsWithNotes,
     staleTime: 10_000,
   });
 
-  if (activeTag) {
+  const data = useMemo<RowData[]>(() => {
+    if (!tagsQuery.data) return [];
+    return toArborist(buildTagTree(tagsQuery.data));
+  }, [tagsQuery.data]);
+
+  const treeRef = useRef<TreeApi<RowData> | null>(null);
+  // Track container size so react-arborist (which is virtualized) gets
+  // explicit width / height. The browser-default `100%` doesn't satisfy
+  // its sizing API.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState({ width: 240, height: 600 });
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      setSize({ width: el.clientWidth, height: el.clientHeight });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Honor pendingTag: open the tag (and its parents on the path), select
+  // it, scroll into view. We need to expand each path segment first
+  // because arborist won't auto-open ancestors.
+  useEffect(() => {
+    if (!pendingTag || !treeRef.current) return;
+    const segments = pendingTag.split("/").filter(Boolean);
+    if (segments.length === 0) return;
+    const tree = treeRef.current;
+    let runningPath = "";
+    for (const seg of segments) {
+      runningPath = runningPath ? `${runningPath}/${seg}` : seg;
+      const id = `tag:${runningPath}`;
+      tree.open(id);
+    }
+    const finalId = `tag:${segments.join("/")}`;
+    tree.select(finalId);
+    onPendingTagConsumed?.();
+  }, [pendingTag, data, onPendingTagConsumed]);
+
+  // ----------------------------------------------------------- empty / errors
+
+  if (tagsQuery.isLoading) {
     return (
-      <TagDetail
-        tag={activeTag}
-        onBack={() => setActiveTag(null)}
-        onSelectNote={onSelectNote}
-      />
+      <div
+        className="px-3 py-3 text-xs"
+        style={{ color: "var(--ink-mute)" }}
+      >
+        {t("tags.loading")}
+      </div>
+    );
+  }
+  if (tagsQuery.isError) {
+    return (
+      <div
+        className="px-3 py-3 text-xs"
+        style={{ color: "var(--ink-mute)" }}
+      >
+        {t("tags.loadFailed", {
+          error: (tagsQuery.error as { detail?: string })?.detail ?? "unknown",
+        })}
+      </div>
+    );
+  }
+  if (data.length === 0) {
+    return (
+      <div
+        className="px-3 py-4 text-xs"
+        style={{ color: "var(--ink-mute)" }}
+      >
+        {t("tags.empty")}
+      </div>
     );
   }
 
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      {tagsQuery.isLoading && (
-        <div
-          className="px-3 py-3 text-xs"
-          style={{ color: "var(--ink-mute)" }}
-        >
-          {t("tags.loading")}
-        </div>
-      )}
-      {tagsQuery.isError && (
-        <div
-          className="px-3 py-3 text-xs"
-          style={{ color: "var(--ink-mute)" }}
-        >
-          {t("tags.loadFailed", {
-            error:
-              (tagsQuery.error as { detail?: string })?.detail ?? "unknown",
-          })}
-        </div>
-      )}
-      {tagsQuery.data && tagsQuery.data.length === 0 && (
-        <div
-          className="px-3 py-4 text-xs"
-          style={{ color: "var(--ink-mute)" }}
-        >
-          {t("tags.empty")}
-        </div>
-      )}
-      <ul className="flex-1 overflow-y-auto" data-testid="tags-list">
-        {tagsQuery.data?.map((row) => (
-          <li key={row.tag}>
-            <button
-              type="button"
-              onClick={() => setActiveTag(row.tag)}
-              data-testid="tag-row"
-              data-tag={row.tag}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent/30"
-              style={{
-                color: "var(--ink, #2a2823)",
-                borderBottom: "1px solid var(--line-soft, #e2dac9)",
-              }}
-            >
-              <Hash size={12} style={{ color: "var(--ink-soft)" }} />
-              <span className="flex-1 truncate">{row.tag}</span>
-              <span
-                className="font-mono text-[10.5px]"
-                style={{ color: "var(--ink-mute)" }}
-              >
-                {row.count}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-interface DetailProps {
-  tag: string;
-  onBack: () => void;
-  onSelectNote: (id: string) => void;
-}
-
-function TagDetail({ tag, onBack, onSelectNote }: DetailProps) {
-  const { t } = useTranslation();
-  const notesQuery = useQuery<NoteSummary[]>({
-    queryKey: QK.tagNotes(tag),
-    queryFn: () => listNotesByTag(tag),
-    staleTime: 10_000,
-  });
+  // ------------------------------------------------------------------- render
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div
-        className="flex shrink-0 items-center gap-2 px-3 py-2"
-        style={{ borderBottom: "1px solid var(--line, #d8cfb9)" }}
+    <div ref={containerRef} className="flex h-full min-h-0 flex-col">
+      <Tree<RowData>
+        ref={treeRef}
+        data={data}
+        openByDefault={false}
+        rowHeight={28}
+        width={size.width}
+        height={size.height}
+        // arborist's drag-drop is irrelevant for this view; disable.
+        disableDrag
+        disableDrop
+        onActivate={(node) => {
+          if (node.data.kind === "note" && node.data.noteId) {
+            onSelectNote(node.data.noteId);
+          }
+        }}
       >
-        <button
-          type="button"
-          onClick={onBack}
-          aria-label={t("tags.back")}
-          data-testid="tag-detail-back"
-          className="flex size-6 items-center justify-center rounded transition-colors hover:bg-accent/40"
-          style={{ color: "var(--ink-soft)" }}
-        >
-          <ChevronLeft size={14} />
-        </button>
-        <Hash size={12} style={{ color: "var(--ink-soft)" }} />
-        <span className="text-xs font-medium">{tag}</span>
-        {notesQuery.data && (
-          <span
-            className="font-mono text-[10.5px]"
-            style={{ color: "var(--ink-mute)" }}
-          >
-            ·{" "}
-            {t("tags.noteCount", { count: notesQuery.data.length })}
-          </span>
-        )}
-      </div>
-      {notesQuery.isLoading && (
-        <div
-          className="px-3 py-3 text-xs"
-          style={{ color: "var(--ink-mute)" }}
-        >
-          {t("tags.loading")}
-        </div>
-      )}
-      {notesQuery.data && notesQuery.data.length === 0 && (
-        <div
-          className="px-3 py-4 text-xs"
-          style={{ color: "var(--ink-mute)" }}
-        >
-          {t("tags.noNotesForTag")}
-        </div>
-      )}
-      <ul className="flex-1 overflow-y-auto" data-testid="tag-notes-list">
-        {notesQuery.data?.map((n) => (
-          <li key={n.id}>
-            <button
-              type="button"
-              onClick={() => onSelectNote(n.id)}
-              data-testid="tag-note-row"
-              data-note-id={n.id}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent/30"
-              style={{
-                color: "var(--ink, #2a2823)",
-                borderBottom: "1px solid var(--line-soft, #e2dac9)",
-              }}
-            >
-              <FileText size={12} style={{ color: "var(--ink-soft)" }} />
-              <span className="flex-1 truncate">{n.title}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
+        {Row}
+      </Tree>
     </div>
   );
 }
+
+function Row({ node, style, dragHandle }: NodeRendererProps<RowData>) {
+  const isTag = node.data.kind === "tag";
+  const handleClick = (e: React.MouseEvent) => {
+    if (isTag) {
+      // Expand/collapse on click anywhere on the tag row.
+      e.preventDefault();
+      node.toggle();
+    } else {
+      // Note rows: arborist's onActivate path runs on Enter / dblclick;
+      // single-click should also open. Activate explicitly.
+      node.activate();
+    }
+  };
+  return (
+    <div
+      ref={dragHandle}
+      style={style}
+      onClick={handleClick}
+      data-testid={isTag ? "tag-row" : "tag-note-row"}
+      data-tag={isTag ? node.data.fullTag : undefined}
+      data-note-id={isTag ? undefined : node.data.noteId}
+      data-synthetic={node.data.synthetic ? "1" : undefined}
+      className={[
+        "group flex items-center gap-1.5 px-2 text-sm cursor-pointer transition-colors hover:bg-accent/30",
+        node.isSelected ? "bg-accent/40" : "",
+      ].join(" ")}
+    >
+      {/* Indent caret only when there are children. Otherwise reserve
+       *  the same width so labels align across rows. */}
+      {isTag && node.children && node.children.length > 0 ? (
+        node.isOpen ? (
+          <ChevronDown size={11} style={{ color: "var(--ink-mute)" }} />
+        ) : (
+          <ChevronRight size={11} style={{ color: "var(--ink-mute)" }} />
+        )
+      ) : (
+        <span style={{ display: "inline-block", width: 11 }} />
+      )}
+      {isTag ? (
+        node.children && node.children.some((c) => c.data.kind === "tag") ? (
+          <Folder size={12} style={{ color: "var(--ink-soft)" }} />
+        ) : (
+          <Hash size={12} style={{ color: "var(--ink-soft)" }} />
+        )
+      ) : (
+        <FileText size={12} style={{ color: "var(--ink-soft)" }} />
+      )}
+      <span
+        className="flex-1 truncate"
+        style={{
+          color: "var(--ink, #2a2823)",
+          fontStyle: node.data.synthetic ? "italic" : undefined,
+          opacity: node.data.synthetic ? 0.85 : 1,
+        }}
+      >
+        {node.data.name}
+      </span>
+      {isTag && (
+        <span
+          className="font-mono text-[10.5px]"
+          style={{ color: "var(--ink-mute)" }}
+        >
+          {/* Show the subtree total for nodes with children, own count
+           *  otherwise. Visually consistent with how Obsidian's tag pane
+           *  reads. */}
+          {node.children && node.children.length > 0 && node.data.subtreeCount
+            ? node.data.subtreeCount
+            : node.data.ownCount}
+        </span>
+      )}
+    </div>
+  );
+}
+

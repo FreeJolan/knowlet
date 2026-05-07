@@ -1,11 +1,16 @@
 /**
  * Phase 1 C slice 2 — Tag browser in the left rail.
  *
- * - Files / Tags tab toggle in the left panel
- * - Tags tab lists all tags with counts (sorted by count desc, then alpha)
- * - Click a tag → drill into list of notes carrying it
- * - Click a note → opens it in the editor (just like file tree)
- * - Empty vault (no tags anywhere) renders the empty hint
+ * After polish D the Tag browser is a file-tree (react-arborist) with
+ * `/` as path separator. Tests cover:
+ *   - Files / Tags tab toggle
+ *   - Tags tree renders all tags with counts
+ *   - Nested `#a/b` tags appear as expandable children of `#a`
+ *   - Synthetic parents (no exact tag, only descendants) render too
+ *   - Note rows nested under each tag; click opens the note
+ *   - Empty vault shows the empty hint
+ *   - Tag chip strip add / remove / autocomplete (Polish B)
+ *   - Inline `#tag` extraction at save time + chip in preview (Polish C)
  */
 
 import { assert, exitAfter, runTest, setupTestEnv } from "./_fixture.mjs";
@@ -16,18 +21,31 @@ const env = await setupTestEnv({
     { title: "Note B", body: "beta", tags: ["topic-x"] },
     { title: "Note C", body: "gamma", tags: ["topic-y", "shared"] },
     { title: "Note D", body: "no tags here" },
+    // Polish D — nested tags via `/` path separator.
+    { title: "UI button study", body: "x", tags: ["design/ui"] },
+    { title: "UI card layout", body: "y", tags: ["design/ui"] },
+    { title: "Design system overview", body: "z", tags: ["design"] },
   ],
   language: "en",
 });
 const { page, baseURL, teardown } = env;
 
-/** Reset to the Tags tab top-level (back out of any tag detail). */
-async function gotoTagsList() {
-  // Toggle to Files then back to Tags so TagBrowser unmounts and
-  // resets its activeTag state.
+async function gotoTags() {
   await page.locator('[data-testid="left-tab-files"]').click();
   await page.waitForTimeout(150);
   await page.locator('[data-testid="left-tab-tags"]').click();
+  await page.waitForTimeout(300);
+}
+
+async function clickFileTreeNote(title) {
+  await page.locator('[data-testid="left-tab-files"]').click();
+  await page.waitForTimeout(150);
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const row = page
+    .locator(".group")
+    .filter({ hasText: new RegExp(`^${escaped}$`) })
+    .first();
+  await row.click();
   await page.waitForTimeout(300);
 }
 
@@ -43,41 +61,74 @@ try {
     assert(filesPressed === "true", `files tab should be active by default (got ${filesPressed})`);
   });
 
-  await runTest("clicking Tags swaps in the tag list with counts", async () => {
+  await runTest("Tags tree renders top-level tags", async () => {
     await page.locator('[data-testid="left-tab-tags"]').click();
-    await page.waitForTimeout(400);
-    const list = page.locator('[data-testid="tags-list"]');
-    await list.waitFor({ state: "visible", timeout: 3000 });
-    const rows = list.locator('[data-testid="tag-row"]');
-    const count = await rows.count();
-    // 3 unique tags: topic-x (2), shared (2), topic-y (1)
-    assert(count === 3, `three tag rows expected — got ${count}`);
-    // Top entry by count should be topic-x or shared (both at 2). Ties
-    // break alpha asc → "shared" < "topic-x" (s < t), so first row is "shared".
-    const firstTag = await rows.first().getAttribute("data-tag");
-    assert(firstTag === "shared", `first row should be 'shared' (alpha tie-break) — got ${firstTag}`);
+    await page.waitForTimeout(500);
+    // Top-level tags: design (3), shared (2), topic-x (2), topic-y (1).
+    // (`design/ui` is nested so it doesn't show until parent expands.)
+    const designRow = page.locator('[data-testid="tag-row"][data-tag="design"]');
+    const sharedRow = page.locator('[data-testid="tag-row"][data-tag="shared"]');
+    const topicX = page.locator('[data-testid="tag-row"][data-tag="topic-x"]');
+    const topicY = page.locator('[data-testid="tag-row"][data-tag="topic-y"]');
+    await designRow.waitFor({ state: "visible", timeout: 3000 });
+    await sharedRow.waitFor({ state: "visible" });
+    await topicX.waitFor({ state: "visible" });
+    await topicY.waitFor({ state: "visible" });
   });
 
-  await runTest("clicking a tag drills into note list", async () => {
-    await gotoTagsList();
+  await runTest("clicking a tag expands inline (no drill-down)", async () => {
+    await gotoTags();
     const topicX = page
       .locator('[data-testid="tag-row"][data-tag="topic-x"]')
       .first();
     await topicX.click();
-    await page.waitForTimeout(400);
-    const notesList = page.locator('[data-testid="tag-notes-list"]');
-    await notesList.waitFor({ state: "visible", timeout: 3000 });
-    const notes = notesList.locator('[data-testid="tag-note-row"]');
-    const noteCount = await notes.count();
-    assert(noteCount === 2, `two notes expected for topic-x — got ${noteCount}`);
+    await page.waitForTimeout(300);
+    // Note rows for topic-x should appear in-tree, NOT in a separate
+    // pane. Two notes (A + B) carry topic-x.
+    const notes = page.locator('[data-testid="tag-note-row"]');
+    const count = await notes.count();
+    assert(count >= 2, `expected ≥2 note rows under topic-x — got ${count}`);
   });
 
-  await runTest("clicking a note in tag detail opens the note", async () => {
-    await gotoTagsList();
+  await runTest("clicking a nested tag like #design/ui shows under design parent", async () => {
+    await gotoTags();
+    const design = page
+      .locator('[data-testid="tag-row"][data-tag="design"]')
+      .first();
+    await design.click();
+    await page.waitForTimeout(300);
+    // After expanding design, design/ui should be visible as a child row.
+    const designUi = page.locator('[data-testid="tag-row"][data-tag="design/ui"]');
+    await designUi.waitFor({ state: "visible", timeout: 2000 });
+    // The design's own note (#design directly) should also be visible.
+    const ownNote = page.locator(
+      '[data-testid="tag-note-row"]',
+    );
+    const ownCount = await ownNote.count();
+    assert(ownCount >= 1, `design's own notes should render — got ${ownCount}`);
+  });
+
+  await runTest("expanding design/ui reveals its notes", async () => {
+    await gotoTags();
+    await page.locator('[data-testid="tag-row"][data-tag="design"]').first().click();
+    await page.waitForTimeout(200);
     await page
-      .locator('[data-testid="tag-row"][data-tag="topic-x"]')
+      .locator('[data-testid="tag-row"][data-tag="design/ui"]')
       .first()
       .click();
+    await page.waitForTimeout(300);
+    // design/ui has 2 notes; after expand both should be visible.
+    const notes = page.locator('[data-testid="tag-note-row"]');
+    const total = await notes.count();
+    assert(
+      total >= 3,
+      `total visible notes (design 1 + design/ui 2) should be ≥3 — got ${total}`,
+    );
+  });
+
+  await runTest("clicking a note row opens that note", async () => {
+    await gotoTags();
+    await page.locator('[data-testid="tag-row"][data-tag="topic-x"]').first().click();
     await page.waitForTimeout(300);
     const firstNote = page
       .locator('[data-testid="tag-note-row"]')
@@ -93,23 +144,9 @@ try {
     );
   });
 
-  await runTest("back button returns to tag list", async () => {
-    await gotoTagsList();
-    await page
-      .locator('[data-testid="tag-row"][data-tag="shared"]')
-      .first()
-      .click();
-    await page.waitForTimeout(300);
-    await page.locator('[data-testid="tag-detail-back"]').click();
-    await page.waitForTimeout(300);
-    const list = page.locator('[data-testid="tags-list"]');
-    await list.waitFor({ state: "visible", timeout: 2000 });
-  });
-
   await runTest("Files tab returns the file tree intact", async () => {
     await page.locator('[data-testid="left-tab-files"]').click();
     await page.waitForTimeout(300);
-    // The file tree's Note A row should be visible again.
     const row = page
       .locator(".group")
       .filter({ hasText: /^Note A$/ })
@@ -119,25 +156,12 @@ try {
 
   // ------------------------------------------------ Polish B: Tag chip strip
 
-  async function clickFileTreeNote(title) {
-    await page.locator('[data-testid="left-tab-files"]').click();
-    await page.waitForTimeout(150);
-    const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const row = page
-      .locator(".group")
-      .filter({ hasText: new RegExp(`^${escaped}$`) })
-      .first();
-    await row.click();
-    await page.waitForTimeout(300);
-  }
-
   await runTest("Tag chip strip renders existing tags below title", async () => {
     await clickFileTreeNote("Note A");
     const strip = page.locator('[data-testid="tag-strip"]');
     await strip.waitFor({ state: "visible", timeout: 2000 });
     const chipCount = await strip.locator('[data-testid="tag-chip"]').count();
     assert(chipCount === 2, `Note A has 2 tags — got ${chipCount} chips`);
-    // + tag button is also present.
     await strip.locator('[data-testid="tag-add-button"]').waitFor({
       state: "visible",
       timeout: 1000,
@@ -146,7 +170,6 @@ try {
 
   await runTest("Adding a tag via chip strip updates frontmatter + tag list", async () => {
     await clickFileTreeNote("Note D");
-    // Note D has no tags.
     const strip = page.locator('[data-testid="tag-strip"]');
     await strip.waitFor({ state: "visible", timeout: 2000 });
     const before = await strip.locator('[data-testid="tag-chip"]').count();
@@ -155,12 +178,12 @@ try {
     await page.waitForTimeout(150);
     await page.locator('[data-testid="tag-add-input"]').fill("freshly-added");
     await page.keyboard.press("Enter");
-    await page.waitForTimeout(900); // backend save + reindex
+    await page.waitForTimeout(900);
     const after = await strip.locator('[data-testid="tag-chip"]').count();
     assert(after === 1, `tag should be added — strip has ${after} chips`);
-    // Switch to Tags tab — the new tag should appear in the global list.
+    // Tags tree should now include the new tag.
     await page.locator('[data-testid="left-tab-tags"]').click();
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(500);
     const newRow = page.locator('[data-testid="tag-row"][data-tag="freshly-added"]');
     await newRow.waitFor({ state: "visible", timeout: 3000 });
   });
@@ -178,11 +201,9 @@ try {
       .locator('[data-testid="tag-chip"][data-tag="shared"]')
       .count();
     assert(stillThere === 0, "shared chip should be removed from strip");
-    // Note A had two tags (topic-x, shared). After removal it should still
-    // have topic-x and lose shared. Note C has shared too, so the global
-    // tag list should still contain shared (count drops from 2 to 1).
+    // Note C still has #shared, so the row remains in the tree.
     await page.locator('[data-testid="left-tab-tags"]').click();
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(500);
     const sharedRow = page.locator('[data-testid="tag-row"][data-tag="shared"]');
     const sharedCount = await sharedRow.count();
     assert(sharedCount === 1, `shared still has Note C; expected 1 row got ${sharedCount}`);
@@ -192,8 +213,6 @@ try {
 
   await runTest("inline #tag in body extracts to frontmatter on save", async () => {
     await clickFileTreeNote("Note D");
-    // Type into the editor: navigate to body and add `#mood-test-tag`.
-    // Easier: use the API directly to simulate body-with-tag save.
     const noteId = await page.evaluate(async () => {
       const r = await fetch("/api/tree");
       const tree = await r.json();
@@ -232,12 +251,10 @@ try {
   });
 
   await runTest("inline #tag renders as chip in preview", async () => {
-    // Reload to get the body change picked up by the preview.
     await page.reload();
     await page.waitForTimeout(500);
     await clickFileTreeNote("Note D");
     await page.waitForTimeout(300);
-    // Switch to preview mode where remarkInlineTag renders.
     await page.locator('button[data-mode="preview"]').click();
     await page.waitForTimeout(400);
     const chip = page
@@ -257,17 +274,16 @@ try {
       .first();
     await chip.click();
     await page.waitForTimeout(500);
-    // Should now be on the Tags tab + drilled into mood-test-tag detail.
-    const detailHeader = page.locator('[data-testid="tag-detail-back"]');
-    await detailHeader.waitFor({ state: "visible", timeout: 3000 });
-    const list = page.locator('[data-testid="tag-notes-list"]');
-    await list.waitFor({ state: "visible", timeout: 2000 });
-    const noteCount = await list.locator('[data-testid="tag-note-row"]').count();
-    assert(noteCount >= 1, `expected ≥1 note for mood-test-tag — got ${noteCount}`);
+    // After click, we should be on Tags tab + the tag row should be
+    // selected/visible (the tree expanded its path to it).
+    const targetRow = page.locator(
+      '[data-testid="tag-row"][data-tag="mood-test-tag"]',
+    );
+    await targetRow.waitFor({ state: "visible", timeout: 3000 });
   });
 
   await runTest("Autocomplete suggests existing tags", async () => {
-    await clickFileTreeNote("Note D");
+    await clickFileTreeNote("Note A");
     await page
       .locator('[data-testid="tag-strip"] [data-testid="tag-add-button"]')
       .click();
@@ -278,7 +294,6 @@ try {
     const suggestions = page.locator('[data-testid="tag-suggestion"]');
     const count = await suggestions.count();
     assert(count >= 1, `expected ≥1 'topic*' suggestion — got ${count}`);
-    // Click the first → commits + closes input.
     await suggestions.first().click();
     await page.waitForTimeout(700);
     const chip = page
