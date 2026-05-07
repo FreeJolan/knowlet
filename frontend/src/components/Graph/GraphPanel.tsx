@@ -7,7 +7,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { Compass, Maximize2 } from "lucide-react";
+import { Compass, Maximize2, Globe } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -90,7 +90,7 @@ export function GraphPanel({ noteId, onOpenNote, onEnterFocus }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Header */}
+      {/* Header — scope label on left, "open full vault" toggle on right */}
       <div
         className="flex shrink-0 items-center gap-2 px-3 py-1.5"
         style={{
@@ -104,10 +104,25 @@ export function GraphPanel({ noteId, onOpenNote, onEnterFocus }: Props) {
         </span>
         <span
           className="font-mono text-[10.5px]"
-          style={{ color: "var(--ink-mute)", marginLeft: "auto" }}
+          style={{ color: "var(--ink-mute)" }}
         >
           {ego.nodes.length} / {total}
         </span>
+        <span style={{ flex: 1 }} />
+        <button
+          type="button"
+          onClick={onEnterFocus}
+          data-testid="graph-enter-focus-header"
+          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] transition-colors hover:bg-accent/30"
+          style={{
+            color: "var(--accent-2, #34495e)",
+            border: "1px solid var(--line)",
+          }}
+          title={t("rail.graph.fullVaultHint") as string}
+        >
+          <Globe size={10} />
+          <span>{t("rail.graph.fullVaultLabel")}</span>
+        </button>
       </div>
 
       {/* Canvas */}

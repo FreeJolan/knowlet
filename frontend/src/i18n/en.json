@@ -136,6 +136,8 @@
       "outbound": "outbound",
       "inbound": "inbound",
       "fullScreen": "Focus mode",
+      "fullVaultLabel": "Full vault",
+      "fullVaultHint": "Open the full-vault graph (⌘⇧G)",
       "hintScroll": "scroll = zoom",
       "hintDrag": "drag = pan"
     },

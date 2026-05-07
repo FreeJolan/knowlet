@@ -136,6 +136,8 @@
       "outbound": "出链",
       "inbound": "入链",
       "fullScreen": "全屏",
+      "fullVaultLabel": "全 vault",
+      "fullVaultHint": "打开全 vault 图谱(⌘⇧G)",
       "hintScroll": "滚轮 = 缩放",
       "hintDrag": "拖动 = 平移"
     },
