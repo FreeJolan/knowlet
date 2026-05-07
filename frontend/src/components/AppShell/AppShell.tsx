@@ -6,7 +6,7 @@
  */
 
 import { useQueryClient } from "@tanstack/react-query";
-import { LayoutTemplate, PanelRight, PanelRightOpen, Trash2 } from "lucide-react";
+import { LayoutTemplate, Network, PanelRight, PanelRightOpen, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -251,6 +251,16 @@ export function AppShell() {
               data-testid="templates-button"
             >
               <LayoutTemplate className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={t("app.graph")}
+              title={t("app.graph") + " (⌘⇧G)"}
+              onClick={() => setGraphFocusOpen(true)}
+              data-testid="header-graph-button"
+            >
+              <Network className="size-4" />
             </Button>
             <Button
               variant="ghost"

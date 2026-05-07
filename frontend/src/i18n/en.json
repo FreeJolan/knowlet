@@ -3,7 +3,8 @@
     "title": "knowlet",
     "quickSwitch": "Quick switch",
     "trash": "Trash",
-    "templates": "Templates"
+    "templates": "Templates",
+    "graph": "Graph"
   },
   "tree": {
     "vault": "Vault",

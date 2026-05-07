@@ -43,6 +43,18 @@ try {
       .waitFor({ state: "visible", timeout: 1500 });
   });
 
+  await runTest("header Graph button opens focus mode without a selected note", async () => {
+    // No note selected yet — global graph entry must work via the
+    // header button so the user isn't forced to pick a note first.
+    await page.locator('[data-testid="header-graph-button"]').click();
+    await page.waitForTimeout(400);
+    await page
+      .locator('[data-testid="graph-focus-mode"]')
+      .waitFor({ state: "visible", timeout: 2000 });
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+  });
+
   await runTest("clicking Graph tab loads /api/graph + renders canvas", async () => {
     await clickRow("Alpha");
     await page.locator('[data-testid="rail-tab-graph"]').click();
