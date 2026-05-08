@@ -65,10 +65,12 @@ export function AliasChipStrip({ aliases, onAdd, onRemove, noteId }: Props) {
           key={alias}
           data-testid="alias-chip"
           data-alias={alias}
-          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
+          className="inline-flex items-center gap-1 rounded-full px-2 text-[11.5px] italic"
           style={{
-            background: "var(--bg, #f5f1e8)",
-            color: "var(--ink, #2a2823)",
+            height: 22,
+            fontFamily: "var(--font-serif)",
+            background: "transparent",
+            color: "var(--ink-soft)",
             border: "1px solid var(--line)",
           }}
         >
@@ -79,8 +81,11 @@ export function AliasChipStrip({ aliases, onAdd, onRemove, noteId }: Props) {
             aria-label={t("noteProps.aliasesRemove", { alias })}
             data-testid="alias-chip-remove"
             data-alias={alias}
-            className="flex size-3.5 items-center justify-center rounded-full transition-colors hover:bg-accent/40"
-            style={{ color: "var(--ink-mute)" }}
+            className="flex size-3.5 items-center justify-center rounded-full transition-colors hover:bg-accent/40 not-italic"
+            style={{
+              color: "var(--ink-faint)",
+              fontFamily: "var(--font-sans, ui-sans-serif)",
+            }}
           >
             <X size={9} />
           </button>
@@ -113,8 +118,10 @@ export function AliasChipStrip({ aliases, onAdd, onRemove, noteId }: Props) {
               else setEditing(false);
             }, 150);
           }}
-          className="rounded-full border px-2 py-0.5 text-xs outline-none focus:border-accent"
+          className="rounded-full border px-2 text-[11.5px] italic outline-none focus:border-accent"
           style={{
+            height: 22,
+            fontFamily: "var(--font-serif)",
             borderColor: "var(--line)",
             background: "var(--card, #fbf8f1)",
             color: "var(--ink)",
@@ -127,14 +134,15 @@ export function AliasChipStrip({ aliases, onAdd, onRemove, noteId }: Props) {
           onClick={() => setEditing(true)}
           aria-label={t("noteProps.aliasesAdd")}
           data-testid="alias-add-button"
-          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors hover:bg-accent/30"
+          className="inline-flex items-center gap-0.5 rounded-full px-2 text-[11px] transition-colors hover:text-[color:var(--ink)]"
           style={{
+            height: 22,
             color: "var(--ink-mute)",
             border: "1px dashed var(--line)",
           }}
         >
-          <Plus size={11} />
-          <span>{t("noteProps.aliasesAdd")}</span>
+          <Plus size={10} />
+          <span>{t("noteProps.aliasesAddShort")}</span>
         </button>
       )}
     </div>

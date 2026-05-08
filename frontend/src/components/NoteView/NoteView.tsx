@@ -31,9 +31,11 @@ import { noteTitleClashesIn } from "@/lib/findCollision";
 import { normalizeNoteTitle } from "@/lib/noteTitle";
 import { QK } from "@/lib/queryClient";
 
+import { AliasChipStrip } from "./AliasChipStrip";
 import {
   PropertiesContent,
   PropertiesToggle,
+  SourceKickerPill,
   usePropertiesCollapsed,
 } from "./PropertiesPanel";
 import { attachScrollSync } from "./scrollSync";
@@ -639,7 +641,7 @@ export function NoteView({
 
   return (
     <div className="kn-paper flex h-full flex-col">
-      <header className="shrink-0 px-10 pt-6 pb-2">
+      <header className="shrink-0 px-10 pt-6 pb-3">
         <div className="flex items-baseline justify-between gap-4">
           {editingTitle ? (
             <div className="flex-1">
@@ -653,8 +655,14 @@ export function NoteView({
             </div>
           ) : (
             <h1
-              className="font-serif text-3xl cursor-text rounded-sm transition-colors hover:bg-accent/40"
-              style={{ color: "var(--ink)" }}
+              className="cursor-text rounded-sm font-serif font-semibold transition-colors hover:bg-accent/40"
+              style={{
+                color: "var(--ink)",
+                fontSize: 28,
+                lineHeight: 1.18,
+                letterSpacing: "-0.014em",
+                wordBreak: "break-word",
+              }}
               role="button"
               tabIndex={0}
               data-testid="note-title"
@@ -689,58 +697,144 @@ export function NoteView({
             <ViewModeToggle value={viewMode} onChange={setViewMode} t={t} />
           </div>
         </div>
+        {/* Row B — kicker: folder · ULID · UPDATED · source pill · ▸ Properties */}
         <div
-          className="mt-1.5 flex flex-wrap items-center gap-x-2 font-mono text-xs uppercase tracking-wider"
+          className="mt-1.5 flex flex-wrap items-center font-mono text-[11px] uppercase tracking-wider"
           style={{ color: "var(--ink-mute)" }}
         >
           <span>{note.data.folder || t("note.rootLabel")}</span>
-          <span aria-hidden="true">·</span>
+          <KickerSep />
           <span>{note.data.id.slice(0, 8)}</span>
-          <span aria-hidden="true">·</span>
+          <KickerSep />
           <span>
             {t("note.updatedPrefix")} {note.data.updated_at.slice(0, 10)}
           </span>
-          <span aria-hidden="true">·</span>
+          {note.data.source ? (
+            <>
+              <KickerSep />
+              <SourceKickerPill url={note.data.source} />
+            </>
+          ) : null}
+          <span style={{ flex: 1 }} />
           <PropertiesToggle
             collapsed={propsCollapse.collapsed}
             onToggle={propsCollapse.toggle}
           />
         </div>
-        <TagChipStrip
-          tags={note.data.tags}
-          noteId={note.data.id}
-          onAdd={(tag) => {
-            const next = [...note.data!.tags, tag];
-            updateTagsMutation.mutate({
-              id: note.data!.id,
-              tags: next,
-              payload: note.data!,
-            });
-          }}
-          onRemove={(tag) => {
-            const next = note.data!.tags.filter((t) => t !== tag);
-            updateTagsMutation.mutate({
-              id: note.data!.id,
-              tags: next,
-              payload: note.data!,
-            });
-          }}
-        />
+        {/* Row C — chips: tags │ aliases (only when ≥1 of either) */}
+        {(note.data.tags.length > 0 || (note.data.aliases ?? []).length > 0) && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <TagChipStrip
+              tags={note.data.tags}
+              noteId={note.data.id}
+              onAdd={(tag) => {
+                const next = [...note.data!.tags, tag];
+                updateTagsMutation.mutate({
+                  id: note.data!.id,
+                  tags: next,
+                  payload: note.data!,
+                });
+              }}
+              onRemove={(tag) => {
+                const next = note.data!.tags.filter((t) => t !== tag);
+                updateTagsMutation.mutate({
+                  id: note.data!.id,
+                  tags: next,
+                  payload: note.data!,
+                });
+              }}
+            />
+            {note.data.tags.length > 0 && (note.data.aliases ?? []).length > 0 && (
+              <span
+                aria-hidden="true"
+                style={{
+                  display: "inline-block",
+                  width: 1,
+                  height: 14,
+                  background: "var(--line)",
+                  margin: "0 4px",
+                }}
+              />
+            )}
+            <AliasChipStrip
+              aliases={note.data.aliases ?? []}
+              noteId={note.data.id}
+              onAdd={(alias) => {
+                const next = [...(note.data!.aliases ?? []), alias];
+                updateAliasesMutation.mutate({
+                  id: note.data!.id,
+                  aliases: next,
+                  payload: note.data!,
+                });
+              }}
+              onRemove={(alias) => {
+                const next = (note.data!.aliases ?? []).filter(
+                  (a) => a !== alias,
+                );
+                updateAliasesMutation.mutate({
+                  id: note.data!.id,
+                  aliases: next,
+                  payload: note.data!,
+                });
+              }}
+            />
+          </div>
+        )}
+        {/* Row D — Properties expanded: only created + full source URL */}
         <PropertiesContent
-          noteId={note.data.id}
           collapsed={propsCollapse.collapsed}
-          aliases={note.data.aliases ?? []}
           source={note.data.source ?? null}
           createdAt={note.data.created_at}
-          updatedAt={note.data.updated_at}
-          onAliasesChange={(next) =>
-            updateAliasesMutation.mutate({
-              id: note.data!.id,
-              aliases: next,
-              payload: note.data!,
-            })
-          }
         />
+        {/* Empty-state affordance: when both tags + aliases are empty,
+         *  give the user discoverable add buttons. Per design these
+         *  could be ghosts in the kicker; for v1 we render them as a
+         *  separate compact row right after kicker so the chip-strip
+         *  state machinery (input edit / IME) can be reused without
+         *  splitting the components. */}
+        {note.data.tags.length === 0 &&
+          (note.data.aliases ?? []).length === 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <TagChipStrip
+                tags={note.data.tags}
+                noteId={note.data.id}
+                onAdd={(tag) =>
+                  updateTagsMutation.mutate({
+                    id: note.data!.id,
+                    tags: [tag],
+                    payload: note.data!,
+                  })
+                }
+                onRemove={() => {
+                  /* no-op — empty */
+                }}
+              />
+              <span
+                aria-hidden="true"
+                style={{
+                  display: "inline-block",
+                  width: 1,
+                  height: 14,
+                  background: "var(--line)",
+                  margin: "0 4px",
+                }}
+              />
+              <AliasChipStrip
+                aliases={note.data.aliases ?? []}
+                noteId={note.data.id}
+                onAdd={(alias) =>
+                  updateAliasesMutation.mutate({
+                    id: note.data!.id,
+                    aliases: [alias],
+                    payload: note.data!,
+                  })
+                }
+                onRemove={() => {
+                  /* no-op — empty */
+                }}
+              />
+            </div>
+          )}
       </header>
       {/* Both panes are ALWAYS mounted — we toggle visibility via the
         * `hidden` class instead of conditionally rendering. Two wins:
@@ -803,6 +897,20 @@ type ToggleProps = {
   onChange: (next: ViewMode) => void;
   t: (key: string) => string;
 };
+
+/** Tiny `·` separator inside the kicker row. Same color register as
+ *  the surrounding mono text but `--ink-faint` so the dots recede
+ *  visually below the words they separate. */
+function KickerSep() {
+  return (
+    <span
+      aria-hidden="true"
+      style={{ color: "var(--ink-faint)", padding: "0 8px", userSelect: "none" }}
+    >
+      ·
+    </span>
+  );
+}
 
 function ViewModeToggle({ value, onChange, t }: ToggleProps) {
   // Segmented control. We don't pull in shadcn's ToggleGroup here because

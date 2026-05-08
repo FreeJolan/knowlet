@@ -44,6 +44,7 @@
   },
   "noteTags": {
     "add": "Add tag",
+    "addShort": "tag",
     "remove": "Remove tag {{tag}}",
     "placeholder": "tag…"
   },
@@ -53,6 +54,7 @@
     "collapse": "Hide properties",
     "aliasesLabel": "Aliases",
     "aliasesAdd": "Add alias",
+    "aliasesAddShort": "alias",
     "aliasesRemove": "Remove alias {{alias}}",
     "aliasesPlaceholder": "alias…",
     "aliasesHint": "Other names this note answers to (Phase 1 D / coming soon: [[Alias]] resolves here).",

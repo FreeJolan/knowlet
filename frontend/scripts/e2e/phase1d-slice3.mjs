@@ -62,8 +62,8 @@ try {
     );
   });
 
-  await runTest("Default collapsed — toggle reveals created / updated rows", async () => {
-    // Collapsed: no [data-testid="properties-panel"] in the DOM at all.
+  await runTest("Default collapsed — toggle reveals only created (+ source if any)", async () => {
+    // Collapsed: no [data-testid="properties-panel"] in the DOM.
     const beforeCount = await page
       .locator('[data-testid="properties-panel"]')
       .count();
@@ -72,21 +72,23 @@ try {
     await page.waitForTimeout(150);
     const panel = page.locator('[data-testid="properties-panel"]');
     await panel.waitFor({ state: "visible", timeout: 1000 });
-    // After expand, panel renders BELOW tags (so aliases sit at the
-    // bottom of the metadata zone, right above the body).
-    const order = await page.evaluate(() => {
-      const tag = document.querySelector('[data-testid="tag-strip"]');
-      const props = document.querySelector('[data-testid="properties-panel"]');
-      if (!tag || !props) return "missing";
-      return tag.compareDocumentPosition(props) & Node.DOCUMENT_POSITION_FOLLOWING
-        ? "props-after-tags"
-        : "props-before-tags";
-    });
-    assert(order === "props-after-tags", `panel should follow tags, got: ${order}`);
+    // Per Claude-Design 2026-05-09 redesign: panel only carries
+    // `created` and (optionally) `source` full URL. `updated` lives
+    // in the kicker; `aliases` lives in row C; both must NOT
+    // duplicate into the panel.
+    const updatedExists = await page
+      .locator('[data-testid="property-updated"]')
+      .count();
+    assert(updatedExists === 0, "updated MUST not be in panel (it's in kicker)");
+    const aliasesInPanel = await page
+      .locator('[data-testid="property-aliases"]')
+      .count();
+    assert(
+      aliasesInPanel === 0,
+      "aliases MUST not be in panel (they live in row C)",
+    );
     const created = page.locator('[data-testid="property-created"]');
-    const updated = page.locator('[data-testid="property-updated"]');
     await created.waitFor({ state: "visible", timeout: 1000 });
-    await updated.waitFor({ state: "visible", timeout: 1000 });
     const txt = (await created.textContent()) ?? "";
     assert(/UTC/.test(txt), `created should be UTC long form, got "${txt}"`);
   });

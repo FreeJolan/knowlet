@@ -88,16 +88,20 @@ export function TagChipStrip({ tags, onAdd, onRemove, noteId }: Props) {
   };
 
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-1.5" data-testid="tag-strip">
+    <div
+      className="flex flex-wrap items-center gap-1.5"
+      data-testid="tag-strip"
+    >
       {tags.map((tag) => (
         <span
           key={tag}
           data-testid="tag-chip"
           data-tag={tag}
-          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
+          className="inline-flex items-center gap-1 rounded-full px-2 text-[11.5px] font-medium"
           style={{
+            height: 22,
             background: "var(--accent-tint, rgba(91, 122, 156, 0.18))",
-            color: "var(--ink, #2a2823)",
+            color: "var(--accent-2, #4d6a8a)",
           }}
         >
           <span>{tag}</span>
@@ -108,7 +112,7 @@ export function TagChipStrip({ tags, onAdd, onRemove, noteId }: Props) {
             data-testid="tag-chip-remove"
             data-tag={tag}
             className="flex size-3.5 items-center justify-center rounded-full transition-colors hover:bg-accent/40"
-            style={{ color: "var(--ink-mute)" }}
+            style={{ color: "var(--accent)", opacity: 0.6 }}
           >
             <X size={9} />
           </button>
@@ -148,8 +152,9 @@ export function TagChipStrip({ tags, onAdd, onRemove, noteId }: Props) {
                 else setEditing(false);
               }, 150);
             }}
-            className="rounded-full border px-2 py-0.5 text-xs outline-none focus:border-accent"
+            className="rounded-full border px-2 text-[11.5px] outline-none focus:border-accent"
             style={{
+              height: 22,
               borderColor: "var(--line)",
               background: "var(--card, #fbf8f1)",
               color: "var(--ink)",
@@ -199,14 +204,15 @@ export function TagChipStrip({ tags, onAdd, onRemove, noteId }: Props) {
           onClick={() => setEditing(true)}
           aria-label={t("noteTags.add")}
           data-testid="tag-add-button"
-          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors hover:bg-accent/30"
+          className="inline-flex items-center gap-0.5 rounded-full px-2 text-[11px] transition-colors hover:text-[color:var(--ink)]"
           style={{
+            height: 22,
             color: "var(--ink-mute)",
             border: "1px dashed var(--line)",
           }}
         >
-          <Plus size={11} />
-          <span>{t("noteTags.add")}</span>
+          <Plus size={10} />
+          <span>{t("noteTags.addShort")}</span>
         </button>
       )}
     </div>
