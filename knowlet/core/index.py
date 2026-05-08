@@ -393,7 +393,19 @@ class Index:
             return []
         conn = self.connect()
 
-        fts_rows = self._search_fts(conn, query, limit=top_k * 4)
+        # SQLite FTS5 with the trigram tokenizer indexes 3-char
+        # substrings — queries with any token < 3 chars cannot produce
+        # a trigram, so they always return 0 hits. That's wrong for
+        # users searching short prefixes / numbers (e.g. "88" should
+        # match "888999910"). Detect that case + fall back to a
+        # direct LIKE scan over chunks.text.
+        needs_substring_fallback = any(
+            len(t) < 3 for t in query.split() if t
+        )
+        if needs_substring_fallback:
+            fts_rows = self._search_substring(conn, query, limit=top_k * 4)
+        else:
+            fts_rows = self._search_fts(conn, query, limit=top_k * 4)
         # When the embedding backend is the deterministic-hash DummyBackend
         # (test harness + first-run vaults without an API key / model),
         # vector search returns near-uniform cosine across the entire vault
@@ -466,6 +478,28 @@ class Index:
         except sqlite3.OperationalError:
             return []
         return [(int(r["chunk_id"]), float(r["score"])) for r in rows]
+
+    def _search_substring(
+        self, conn: sqlite3.Connection, query: str, limit: int
+    ) -> list[tuple[int, float]]:
+        """Direct case-insensitive LIKE scan over chunk text. Used when
+        FTS5 trigram can't handle the query (any token < 3 chars).
+        Linear scan; fine at <5k notes per ADR-0021. Multiple tokens
+        are OR-combined so `88 99` matches notes containing either."""
+        tokens = [t for t in query.split() if t]
+        if not tokens:
+            return []
+        where = " OR ".join(["text LIKE ? COLLATE NOCASE"] * len(tokens))
+        # Constant uniform score (1.0) — RRF only cares about rank, and
+        # we don't have a meaningful "relevance" measure for a LIKE
+        # match. Substring match is binary: in / out.
+        sql = (
+            f"SELECT id AS chunk_id FROM chunks WHERE {where} LIMIT ?"  # noqa: S608
+        )
+        args: list[object] = [f"%{t}%" for t in tokens]
+        args.append(int(limit))
+        rows = conn.execute(sql, args).fetchall()
+        return [(int(r["chunk_id"]), 1.0) for r in rows]
 
     def _search_vec(
         self, conn: sqlite3.Connection, query: str, limit: int

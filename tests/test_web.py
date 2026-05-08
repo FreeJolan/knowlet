@@ -1631,6 +1631,34 @@ def test_search_endpoint_clamps_top_k(tmp_path: Path):
         assert r.status_code == 200
 
 
+def test_search_short_query_substring_fallback(tmp_path: Path):
+    """Phase 1 D dogfood regression: SQLite FTS5 trigram tokenizer
+    needs ≥3-char tokens. Queries like "88" returned 0 hits even
+    though "888999910" is in the vault. Short queries now fall back
+    to a LIKE substring scan."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n = Note(id=new_id(), title="Big number", body="888999910 was the score")
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    # Single-token short query — was failing pre-fix.
+    r1 = client.get("/api/search", params={"q": "88"})
+    assert r1.status_code == 200
+    assert any(h["title"] == "Big number" for h in r1.json()["hits"]), (
+        f"short query '88' must match '888999910' via LIKE fallback; "
+        f"got {r1.json()['hits']}"
+    )
+    # Multi-token short query (OR semantics).
+    r2 = client.get("/api/search", params={"q": "88 zz"})
+    assert r2.status_code == 200
+    assert any(h["title"] == "Big number" for h in r2.json()["hits"])
+    # Sanity: long query still goes through trigram FTS.
+    r3 = client.get("/api/search", params={"q": "888999910"})
+    assert r3.status_code == 200
+    assert any(h["title"] == "Big number" for h in r3.json()["hits"])
+
+
 def test_search_dummy_backend_is_fts_only_no_noise(tmp_path: Path):
     """Phase 1 D dogfood regression: with the dummy embedding backend,
     vector search returned near-uniform cosine across the whole vault
