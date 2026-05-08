@@ -7,6 +7,18 @@
     "graph": "图谱",
     "settings": "设置"
   },
+  "search": {
+    "placeholder": "搜索所有笔记…",
+    "summary_one": "{{count}} 条匹配",
+    "summary_other": "{{count}} 条匹配",
+    "loading": "搜索中…",
+    "error": "搜索失败({{error}})。",
+    "idleTitle": "搜索整个笔记库",
+    "idleHint": "输入关键词搜索笔记标题和正文。↑↓ 切换,Enter 打开,Esc 关闭。",
+    "noMatchesTitle": "没有匹配",
+    "noMatchesHint": "「{{query}}」没匹配到任何笔记。换个词或减少限定试试。",
+    "close": "关闭 (Esc)"
+  },
   "settings": {
     "title": "设置",
     "subtitle": "当前 vault 的偏好设置。",

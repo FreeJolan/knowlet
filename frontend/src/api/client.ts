@@ -12,6 +12,7 @@ import type {
   GraphPayload,
   NoteFull,
   NoteSummary,
+  SearchPayload,
   TagSummary,
   TagWithNotes,
   TrashListResponse,
@@ -128,6 +129,16 @@ export const listTagsWithNotes = (): Promise<TagWithNotes[]> =>
 
 export const getGraph = (): Promise<GraphPayload> =>
   request("GET", "/api/graph");
+
+// ---------- search (Phase 1 D slice 2) ----------
+
+export const searchVault = (
+  q: string,
+  topK: number = 30,
+): Promise<SearchPayload> => {
+  const params = new URLSearchParams({ q, top_k: String(topK) });
+  return request("GET", `/api/search?${params.toString()}`);
+};
 
 // ---------- templates (Phase 1 B slice 8) ----------
 

@@ -1590,6 +1590,47 @@ def test_tags_all_with_notes_empty_vault(tmp_path: Path):
     assert r.json() == []
 
 
+def test_search_endpoint_basic(tmp_path: Path):
+    """Phase 1 D slice 2 — `/api/search` returns FTS+vec RRF hits."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n1 = Note(id=new_id(), title="Quantum mechanics", body="superposition and entanglement")
+    n2 = Note(id=new_id(), title="Cooking pasta", body="boil water and add salt")
+    n3 = Note(id=new_id(), title="Quantum computing", body="qubits, gates, and entanglement")
+    for n in (n1, n2, n3):
+        v.write_note(n)
+        runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    r = client.get("/api/search", params={"q": "entanglement"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["query"] == "entanglement"
+    # FTS+vec RRF is fuzzy; with dummy embeddings, irrelevant notes can
+    # still appear at lower ranks. Just verify the relevant pair is
+    # at the top of the result list.
+    top_titles = [h["title"] for h in body["hits"][:2]]
+    assert "Quantum mechanics" in top_titles
+    assert "Quantum computing" in top_titles
+
+
+def test_search_endpoint_empty_query(tmp_path: Path):
+    """Empty / whitespace query → empty hits, not an error."""
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    for q in ("", "   ", "\t\n"):
+        r = client.get("/api/search", params={"q": q})
+        assert r.status_code == 200
+        assert r.json()["hits"] == []
+
+
+def test_search_endpoint_clamps_top_k(tmp_path: Path):
+    """top_k is clamped [1, 50] server-side."""
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    # 0 → clamped to 1, 1000 → clamped to 50, no crash.
+    for k in (0, -5, 1000):
+        r = client.get("/api/search", params={"q": "anything", "top_k": k})
+        assert r.status_code == 200
+
+
 def test_graph_endpoint_basic(tmp_path: Path):
     """Phase 1 C slice 3 — `/api/graph` returns the user-authored bilink
     graph with degree counts, dangling links excluded."""

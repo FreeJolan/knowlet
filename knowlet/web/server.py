@@ -210,6 +210,24 @@ class GraphPayload(BaseModel):
     edges: list[GraphEdgeRow]
 
 
+class SearchHitRow(BaseModel):
+    """Phase 1 D slice 2 — one result row in the global search panel."""
+
+    note_id: str
+    title: str
+    folder: str = ""
+    snippet: str
+    score: float
+
+
+class SearchPayload(BaseModel):
+    """Search response wrapper. `query` echoed back for cache key /
+    stale-result detection on the client side."""
+
+    query: str
+    hits: list[SearchHitRow]
+
+
 # ---------------- Phase 1 A wire schemas (file ops) ----------------
 
 
@@ -1462,6 +1480,48 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 GraphEdgeRow(source=e.source, target=e.target) for e in graph.edges
             ],
         )
+
+    @app.get("/api/search", response_model=SearchPayload)
+    def search_vault(
+        q: str = "",
+        top_k: int = 30,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> SearchPayload:
+        """Phase 1 D slice 2 — global full-text + vector search.
+
+        Reuses `index.search()` (RRF hybrid: BM25 over chunks_fts +
+        cosine over chunks_vec, fused with k=60). Returns up to
+        `top_k` hits (clamped [1, 50]). Caller is the focus-mode
+        Search panel; chunk_position from the underlying SearchHit
+        is intentionally NOT exposed because chunk → line conversion
+        is non-trivial and the v1 panel only needs note-level open.
+
+        For empty / whitespace-only `q`, returns `{query, hits: []}`.
+        Folder is derived from the on-disk path, same shape as the
+        rest of the API."""
+        q_stripped = (q or "").strip()
+        k = max(1, min(50, int(top_k)))
+        if not q_stripped:
+            return SearchPayload(query=q, hits=[])
+        hits = runtime.index.search(query=q_stripped[:4000], top_k=k)
+        out: list[SearchHitRow] = []
+        for h in hits:
+            folder = ""
+            if h.path:
+                try:
+                    folder = runtime.vault.folder_of(Path(h.path))
+                except (TypeError, ValueError):
+                    folder = ""
+            out.append(
+                SearchHitRow(
+                    note_id=h.note_id,
+                    title=(h.title or "(untitled)").strip(),
+                    folder=folder,
+                    snippet=(h.snippet or "").strip(),
+                    score=float(h.score),
+                )
+            )
+        return SearchPayload(query=q, hits=out)
 
     @app.get("/api/notes/similar", response_model=list[SimilarNoteRow])
     def list_similar_notes(

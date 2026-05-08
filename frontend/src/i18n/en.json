@@ -7,6 +7,18 @@
     "graph": "Graph",
     "settings": "Settings"
   },
+  "search": {
+    "placeholder": "Search across all notes…",
+    "summary_one": "{{count}} match",
+    "summary_other": "{{count}} matches",
+    "loading": "Searching…",
+    "error": "Search failed ({{error}}).",
+    "idleTitle": "Search the whole vault",
+    "idleHint": "Type a phrase to search note titles + bodies. Use ↑↓ to move, Enter to open, Esc to close.",
+    "noMatchesTitle": "No matches",
+    "noMatchesHint": "Nothing matched “{{query}}”. Try different terms or fewer words.",
+    "close": "Close (Esc)"
+  },
   "settings": {
     "title": "Settings",
     "subtitle": "Preferences for this knowlet vault.",

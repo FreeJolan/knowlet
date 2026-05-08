@@ -103,3 +103,20 @@ export interface GraphPayload {
   nodes: GraphNodeRow[];
   edges: GraphEdgeRow[];
 }
+
+// ---------- search (Phase 1 D slice 2) ----------
+
+export interface SearchHitRow {
+  note_id: string;
+  title: string;
+  folder: string;
+  /** Plain-text snippet around the match; client highlights by query. */
+  snippet: string;
+  /** RRF score from server; informational, not displayed. */
+  score: number;
+}
+
+export interface SearchPayload {
+  query: string;
+  hits: SearchHitRow[];
+}

@@ -24,6 +24,7 @@ import { GraphFocusMode } from "@/components/Graph/GraphFocusMode";
 import { NoteView } from "@/components/NoteView/NoteView";
 import { CommandPalette } from "@/components/Palette/CommandPalette";
 import { RightRail } from "@/components/RightRail/RightRail";
+import { SearchFocusMode } from "@/components/Search/SearchFocusMode";
 import { SettingsDialog } from "@/components/Settings/SettingsDialog";
 import { TagBrowser } from "@/components/TagBrowser/TagBrowser";
 import { TemplatesDialog } from "@/components/Templates/TemplatesDialog";
@@ -111,6 +112,8 @@ export function AppShell() {
   const [graphFocusOpen, setGraphFocusOpen] = useState(false);
   // Phase 1 D slice 1 — Settings dialog (currently only Appearance).
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Phase 1 D slice 2 — global search focus mode (Cmd+Shift+F).
+  const [searchFocusOpen, setSearchFocusOpen] = useState(false);
   const [windowWidth, setWindowWidth] = useState(() =>
     typeof window === "undefined" ? 1400 : window.innerWidth,
   );
@@ -208,7 +211,8 @@ export function AppShell() {
       setLeftTab("tags");
       setPendingTag(detail.tag);
     };
-    // Cmd+Shift+G (or Ctrl+Shift+G) → toggle graph focus mode.
+    // Cmd+Shift+G → toggle graph focus mode.
+    // Cmd+Shift+F → toggle global search focus mode.
     const onKey = (e: KeyboardEvent) => {
       if (
         (e.metaKey || e.ctrlKey) &&
@@ -217,6 +221,14 @@ export function AppShell() {
       ) {
         e.preventDefault();
         setGraphFocusOpen((v) => !v);
+      }
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        (e.key === "f" || e.key === "F")
+      ) {
+        e.preventDefault();
+        setSearchFocusOpen((v) => !v);
       }
     };
     window.addEventListener("knowlet:open-palette", openPalette);
@@ -503,6 +515,16 @@ export function AppShell() {
       <SettingsDialog
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+      />
+      <SearchFocusMode
+        open={searchFocusOpen}
+        onClose={() => setSearchFocusOpen(false)}
+        onOpenNote={(id) => {
+          setSelectedNoteId(id);
+          setPendingHash(null);
+          setPendingLine(null);
+          setPendingPreserveMode(false);
+        }}
       />
     </>
   );
