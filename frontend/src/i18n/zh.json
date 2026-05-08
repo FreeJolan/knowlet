@@ -5,7 +5,8 @@
     "trash": "垃圾桶",
     "templates": "模板",
     "graph": "图谱",
-    "settings": "设置"
+    "settings": "设置",
+    "daily": "今日笔记"
   },
   "search": {
     "placeholder": "搜索所有笔记…",

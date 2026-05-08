@@ -7,6 +7,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  CalendarDays,
   LayoutTemplate,
   Network,
   PanelRight,
@@ -36,6 +37,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import { openOrCreateTodayDailyNote } from "@/lib/daily";
 import { QK } from "@/lib/queryClient";
 import { useTabs } from "@/hooks/useTabs";
 
@@ -212,6 +214,20 @@ export function AppShell() {
   // note that's about to be moved out from under them.
   const [, setTreeBusy] = useState(false);
 
+  // Phase 2 D Slice 1 — daily note open/create handler. Defined
+  // inside the component (not inside the effect) so the header
+  // button + keyboard shortcut can both call it; effect deps stay
+  // honest. tabsApi.openNote is stable across renders.
+  const openTodayDaily = async () => {
+    try {
+      const id = await openOrCreateTodayDailyNote(qc);
+      tabsApi.openNote(id);
+    } catch (err) {
+      // Surface to console for now; toast UI is Phase 3 polish.
+      console.error("daily-note open/create failed", err);
+    }
+  };
+
   useEffect(() => {
     const openPalette = () => setPaletteOpen(true);
     const openTrash = () => setTrashOpen(true);
@@ -261,6 +277,17 @@ export function AppShell() {
         e.preventDefault();
         setSearchFocusOpen((v) => !v);
       }
+      // Phase 2 D Slice 1 — Cmd+Shift+D opens (or creates) today's
+      // daily note in a new tab. Idempotent: pressing again on the
+      // same day re-activates the existing tab.
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        (e.key === "d" || e.key === "D")
+      ) {
+        e.preventDefault();
+        void openTodayDaily();
+      }
     };
     window.addEventListener("knowlet:open-palette", openPalette);
     window.addEventListener("knowlet:open-trash", openTrash);
@@ -301,6 +328,16 @@ export function AppShell() {
             >
               <span style={{ color: "var(--ink-mute)" }}>⌘P</span>
               <span className="ml-2">{t("app.quickSwitch")}</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={t("app.daily")}
+              title={t("app.daily") + " (⌘⇧D)"}
+              onClick={() => void openTodayDaily()}
+              data-testid="header-daily-button"
+            >
+              <CalendarDays className="size-4" />
             </Button>
             <Button
               variant="ghost"

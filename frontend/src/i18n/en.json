@@ -5,7 +5,8 @@
     "trash": "Trash",
     "templates": "Templates",
     "graph": "Graph",
-    "settings": "Settings"
+    "settings": "Settings",
+    "daily": "Today's note"
   },
   "search": {
     "placeholder": "Search across all notes…",
