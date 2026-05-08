@@ -31,7 +31,11 @@ import { noteTitleClashesIn } from "@/lib/findCollision";
 import { normalizeNoteTitle } from "@/lib/noteTitle";
 import { QK } from "@/lib/queryClient";
 
-import { PropertiesPanel } from "./PropertiesPanel";
+import {
+  PropertiesContent,
+  PropertiesToggle,
+  usePropertiesCollapsed,
+} from "./PropertiesPanel";
 import { attachScrollSync } from "./scrollSync";
 import { TagChipStrip } from "./TagChipStrip";
 
@@ -123,6 +127,9 @@ export function NoteView({
   // sees the rename via tree-cache invalidation, same path the F2
   // shortcut already uses.
   const [editingTitle, setEditingTitle] = useState(false);
+  // D3 Properties UI: shared collapse state between the inline crumb
+  // toggle and the rows below TagChipStrip. localStorage-backed.
+  const propsCollapse = usePropertiesCollapsed();
   // CM6 view + preview-scroll-container refs for split-mode sync.
   // viewRef is set once per note (key remount in MarkdownEditor) via
   // onViewMount. previewWrapperRef hooks the [data-testid] wrapper.
@@ -632,7 +639,7 @@ export function NoteView({
 
   return (
     <div className="kn-paper flex h-full flex-col">
-      <header className="shrink-0 px-10 pt-8 pb-3">
+      <header className="shrink-0 px-10 pt-6 pb-2">
         <div className="flex items-baseline justify-between gap-4">
           {editingTitle ? (
             <div className="flex-1">
@@ -683,11 +690,21 @@ export function NoteView({
           </div>
         </div>
         <div
-          className="mt-2 font-mono text-xs uppercase tracking-wider"
+          className="mt-1.5 flex flex-wrap items-center gap-x-2 font-mono text-xs uppercase tracking-wider"
           style={{ color: "var(--ink-mute)" }}
         >
-          {note.data.folder || t("note.rootLabel")} · {note.data.id.slice(0, 8)} ·{" "}
-          {t("note.updatedPrefix")} {note.data.updated_at.slice(0, 10)}
+          <span>{note.data.folder || t("note.rootLabel")}</span>
+          <span aria-hidden="true">·</span>
+          <span>{note.data.id.slice(0, 8)}</span>
+          <span aria-hidden="true">·</span>
+          <span>
+            {t("note.updatedPrefix")} {note.data.updated_at.slice(0, 10)}
+          </span>
+          <span aria-hidden="true">·</span>
+          <PropertiesToggle
+            collapsed={propsCollapse.collapsed}
+            onToggle={propsCollapse.toggle}
+          />
         </div>
         <TagChipStrip
           tags={note.data.tags}
@@ -709,8 +726,9 @@ export function NoteView({
             });
           }}
         />
-        <PropertiesPanel
+        <PropertiesContent
           noteId={note.data.id}
+          collapsed={propsCollapse.collapsed}
           aliases={note.data.aliases ?? []}
           source={note.data.source ?? null}
           createdAt={note.data.created_at}

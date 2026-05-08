@@ -41,28 +41,48 @@ try {
     .click();
   await page.waitForTimeout(400);
 
-  await runTest("Properties panel renders below the tag strip", async () => {
-    await page
+  await runTest("Properties toggle lives inline in the crumb row", async () => {
+    // Post-2026-05-08 dogfood: the panel was its own card-shaped block
+    // that read as too prominent. The toggle now sits as one segment
+    // of the metadata crumb, peer to folder · id · updated.
+    const toggle = page.locator('[data-testid="properties-toggle"]');
+    await toggle.waitFor({ state: "visible", timeout: 3000 });
+    // Toggle should be ABOVE the tag strip in DOM order (crumb is above tags).
+    const order = await page.evaluate(() => {
+      const tag = document.querySelector('[data-testid="tag-strip"]');
+      const toggle = document.querySelector('[data-testid="properties-toggle"]');
+      if (!tag || !toggle) return "missing";
+      return tag.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_PRECEDING
+        ? "toggle-above-tags"
+        : "toggle-below-tags";
+    });
+    assert(
+      order === "toggle-above-tags",
+      `toggle should sit above tags (in the crumb), got: ${order}`,
+    );
+  });
+
+  await runTest("Default collapsed — toggle reveals created / updated rows", async () => {
+    // Collapsed: no [data-testid="properties-panel"] in the DOM at all.
+    const beforeCount = await page
       .locator('[data-testid="properties-panel"]')
-      .waitFor({ state: "visible", timeout: 3000 });
-    // Tag strip should render before the panel in DOM order.
+      .count();
+    assert(beforeCount === 0, `collapsed should hide content node, got ${beforeCount}`);
+    await page.locator('[data-testid="properties-toggle"]').click();
+    await page.waitForTimeout(150);
+    const panel = page.locator('[data-testid="properties-panel"]');
+    await panel.waitFor({ state: "visible", timeout: 1000 });
+    // After expand, panel renders BELOW tags (so aliases sit at the
+    // bottom of the metadata zone, right above the body).
     const order = await page.evaluate(() => {
       const tag = document.querySelector('[data-testid="tag-strip"]');
       const props = document.querySelector('[data-testid="properties-panel"]');
       if (!tag || !props) return "missing";
       return tag.compareDocumentPosition(props) & Node.DOCUMENT_POSITION_FOLLOWING
-        ? "props-after"
-        : "props-before";
+        ? "props-after-tags"
+        : "props-before-tags";
     });
-    assert(order === "props-after", `tags must precede properties, got: ${order}`);
-  });
-
-  await runTest("Default collapsed — toggle reveals created / updated rows", async () => {
-    const panel = page.locator('[data-testid="properties-panel"]');
-    const collapsed = await panel.getAttribute("data-collapsed");
-    assert(collapsed === "1", `panel should default-collapse, got ${collapsed}`);
-    await page.locator('[data-testid="properties-toggle"]').click();
-    await page.waitForTimeout(150);
+    assert(order === "props-after-tags", `panel should follow tags, got: ${order}`);
     const created = page.locator('[data-testid="property-created"]');
     const updated = page.locator('[data-testid="property-updated"]');
     await created.waitFor({ state: "visible", timeout: 1000 });
@@ -168,14 +188,11 @@ try {
   await runTest("Toggle collapse hides rows; persists across reload", async () => {
     await page.locator('[data-testid="properties-toggle"]').click();
     await page.waitForTimeout(200);
-    const panel = page.locator('[data-testid="properties-panel"]');
-    const collapsed = await panel.getAttribute("data-collapsed");
-    assert(collapsed === "1", `panel should be collapsed, got ${collapsed}`);
-    const stillVisible = await page
-      .locator('[data-testid="property-created"]')
-      .isVisible()
-      .catch(() => false);
-    assert(!stillVisible, "created row must hide when collapsed");
+    // Collapsed: content node is unmounted (returns null), not just hidden.
+    const collapsedCount = await page
+      .locator('[data-testid="properties-panel"]')
+      .count();
+    assert(collapsedCount === 0, `panel should be unmounted, got ${collapsedCount}`);
     // Reload and confirm collapse state survives.
     await page.reload({ waitUntil: "networkidle" });
     await page.waitForTimeout(500);
@@ -184,13 +201,16 @@ try {
       .first()
       .click();
     await page.waitForTimeout(400);
-    const panel2 = page.locator('[data-testid="properties-panel"]');
-    await panel2.waitFor({ state: "visible", timeout: 2000 });
-    const collapsed2 = await panel2.getAttribute("data-collapsed");
-    assert(collapsed2 === "1", `collapse state must persist, got ${collapsed2}`);
+    const afterReload = await page
+      .locator('[data-testid="properties-panel"]')
+      .count();
+    assert(afterReload === 0, `collapse state must persist post-reload, got ${afterReload}`);
     // Re-expand for next tests.
     await page.locator('[data-testid="properties-toggle"]').click();
     await page.waitForTimeout(200);
+    await page
+      .locator('[data-testid="properties-panel"]')
+      .waitFor({ state: "visible", timeout: 1000 });
   });
 
   await runTest("IME compose Enter does NOT commit half-typed alias", async () => {

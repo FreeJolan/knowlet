@@ -1,5 +1,5 @@
 /**
- * Phase 1 D / D3 — collapsible "Properties" panel under the note title.
+ * Phase 1 D / D3 — Properties UI for the note header.
  *
  * Surfaces the structured frontmatter fields that aren't tags or
  * title, in a typed-form layout (Obsidian-style) so users never have
@@ -16,22 +16,21 @@
  *     Phase 2 E
  *   - custom user-defined fields — needs typed-field schema first
  *
- * Collapse state is per-vault, not per-note: persisted in
- * localStorage `knowlet.properties.collapsed.v1`. Default = collapsed
- * — the chevron + "Properties" label still announces the surface,
- * and the most-frequent fields (title, tags) are already prominent
- * elsewhere in the header. Expanding it eats ~50 px of vertical
- * space; we'd rather the user opt in than lose body real estate by
- * default.
+ * Layout: after 2026-05-08 dogfood we split the panel into two
+ * independently-rendered pieces, both wired to the same collapse
+ * state:
+ *   - `<PropertiesToggle>`  — one segment in the crumb row, looks
+ *     like the other crumb dot-separated items. Saves a whole row of
+ *     vertical space when collapsed (the original block-card design
+ *     stacked under the crumb and felt disproportionate to the rest
+ *     of the header).
+ *   - `<PropertiesContent>` — the rows themselves; rendered below
+ *     TagChipStrip when expanded so aliases sit at the bottom of the
+ *     metadata zone, right above the body.
  *
- * Visual weight: deliberately recessive. No card / border / fill — the
- * whole component reads as a peer of the existing crumb row above the
- * title (folder · id · updated), in the same `font-mono uppercase
- * tracking-wider --ink-mute` register. Aliases chips are the only
- * thing in the panel with first-class chrome, since they're the one
- * field a user actively edits here. 2026-05-08 dogfood: an earlier
- * card-shaped version "felt too much like a first-class section";
- * stripping the wrapper to muted text matches what metadata is.
+ * Collapse state is per-vault, not per-note. localStorage key
+ * `knowlet.properties.collapsed.v1`. Default = collapsed: title +
+ * tags are the prominent signal; properties is opt-in detail.
  */
 
 import { ChevronRight, ExternalLink } from "lucide-react";
@@ -46,7 +45,6 @@ function readCollapsed(): boolean {
   if (typeof window === "undefined") return true;
   try {
     const raw = window.localStorage.getItem(COLLAPSED_KEY);
-    // Tri-valued: "1" → collapsed, "0" → expanded, null → default (collapsed).
     if (raw === "0") return false;
     return true;
   } catch {
@@ -62,8 +60,70 @@ function writeCollapsed(v: boolean): void {
   }
 }
 
-interface Props {
+/** Shared collapse state. Two siblings both call this and stay in
+ *  sync via a `storage` event re-read on every mutation. */
+export function usePropertiesCollapsed(): {
+  collapsed: boolean;
+  toggle: () => void;
+} {
+  const [collapsed, setCollapsed] = useState<boolean>(readCollapsed);
+
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === COLLAPSED_KEY) setCollapsed(readCollapsed());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  const toggle = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      writeCollapsed(next);
+      // Same-tab notify so a sibling toggle/content stays in sync
+      // without piggybacking on the cross-tab `storage` event (which
+      // doesn't fire on the originating tab).
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: COLLAPSED_KEY }),
+      );
+      return next;
+    });
+  }, []);
+
+  return { collapsed, toggle };
+}
+
+export function PropertiesToggle({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      aria-label={collapsed ? t("noteProps.expand") : t("noteProps.collapse")}
+      data-testid="properties-toggle"
+      className="inline-flex items-center gap-0.5 rounded-sm transition-colors hover:text-[color:var(--ink)]"
+      style={{ color: "inherit" }}
+    >
+      <ChevronRight
+        size={11}
+        className="transition-transform"
+        style={{ transform: collapsed ? "rotate(0deg)" : "rotate(90deg)" }}
+      />
+      <span>{t("noteProps.title")}</span>
+    </button>
+  );
+}
+
+interface ContentProps {
   noteId: string;
+  collapsed: boolean;
   aliases: string[];
   source: string | null | undefined;
   createdAt: string;
@@ -71,117 +131,82 @@ interface Props {
   onAliasesChange: (next: string[]) => void;
 }
 
-export function PropertiesPanel({
+export function PropertiesContent({
   noteId,
+  collapsed,
   aliases,
   source,
   createdAt,
   updatedAt,
   onAliasesChange,
-}: Props) {
+}: ContentProps) {
   const { t } = useTranslation();
-  const [collapsed, setCollapsedState] = useState<boolean>(readCollapsed);
-
-  const setCollapsed = useCallback((v: boolean) => {
-    setCollapsedState(v);
-    writeCollapsed(v);
-  }, []);
-
-  // Cross-tab sync: another tab toggles the panel → reflect here.
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === COLLAPSED_KEY) setCollapsedState(readCollapsed());
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  if (collapsed) return null;
 
   const handleAdd = (alias: string) => onAliasesChange([...aliases, alias]);
   const handleRemove = (alias: string) =>
     onAliasesChange(aliases.filter((a) => a !== alias));
 
   return (
-    <section
+    <div
       data-testid="properties-panel"
-      data-collapsed={collapsed ? "1" : "0"}
-      className="mt-1"
+      data-collapsed="0"
+      className="mt-1.5 grid gap-y-1.5 pl-3"
+      style={{
+        gridTemplateColumns: "minmax(56px, max-content) 1fr",
+        columnGap: "10px",
+      }}
     >
-      <button
-        type="button"
-        onClick={() => setCollapsed(!collapsed)}
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? t("noteProps.expand") : t("noteProps.collapse")}
-        data-testid="properties-toggle"
-        className="-ml-0.5 inline-flex items-center gap-1 rounded-sm px-0.5 py-0.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[color:var(--ink)]"
+      <PropertyLabel>{t("noteProps.aliasesLabel")}</PropertyLabel>
+      <div data-testid="property-aliases">
+        <AliasChipStrip
+          aliases={aliases}
+          noteId={noteId}
+          onAdd={handleAdd}
+          onRemove={handleRemove}
+        />
+      </div>
+
+      {source ? (
+        <>
+          <PropertyLabel>{t("noteProps.sourceLabel")}</PropertyLabel>
+          <div
+            data-testid="property-source"
+            className="flex min-w-0 items-center text-xs"
+          >
+            <a
+              href={source}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-w-0 items-center gap-1 truncate underline decoration-dotted underline-offset-2 hover:decoration-solid"
+              title={t("noteProps.sourceOpen")}
+              style={{ color: "var(--ink-mute)" }}
+            >
+              <span className="truncate">{source}</span>
+              <ExternalLink size={10} className="flex-shrink-0 opacity-60" />
+            </a>
+          </div>
+        </>
+      ) : null}
+
+      <PropertyLabel>{t("noteProps.createdLabel")}</PropertyLabel>
+      <div
+        data-testid="property-created"
+        className="font-mono text-[11px]"
         style={{ color: "var(--ink-mute)" }}
       >
-        <ChevronRight
-          size={11}
-          className="transition-transform"
-          style={{ transform: collapsed ? "rotate(0deg)" : "rotate(90deg)" }}
-        />
-        <span>{t("noteProps.title")}</span>
-      </button>
-      {!collapsed && (
-        <div
-          className="mt-1 grid gap-y-1.5 pl-3"
-          style={{
-            gridTemplateColumns: "minmax(64px, max-content) 1fr",
-            columnGap: "12px",
-          }}
-        >
-          <PropertyLabel>{t("noteProps.aliasesLabel")}</PropertyLabel>
-          <div data-testid="property-aliases">
-            <AliasChipStrip
-              aliases={aliases}
-              noteId={noteId}
-              onAdd={handleAdd}
-              onRemove={handleRemove}
-            />
-          </div>
+        {formatTs(createdAt)}
+      </div>
 
-          {source ? (
-            <>
-              <PropertyLabel>{t("noteProps.sourceLabel")}</PropertyLabel>
-              <div
-                data-testid="property-source"
-                className="flex min-w-0 items-center text-xs"
-              >
-                <a
-                  href={source}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex min-w-0 items-center gap-1 truncate underline decoration-dotted underline-offset-2 hover:decoration-solid"
-                  title={t("noteProps.sourceOpen")}
-                  style={{ color: "var(--ink-mute)" }}
-                >
-                  <span className="truncate">{source}</span>
-                  <ExternalLink size={10} className="flex-shrink-0 opacity-60" />
-                </a>
-              </div>
-            </>
-          ) : null}
-
-          <PropertyLabel>{t("noteProps.createdLabel")}</PropertyLabel>
-          <div
-            data-testid="property-created"
-            className="font-mono text-[11px]"
-            style={{ color: "var(--ink-mute)" }}
-          >
-            {formatTs(createdAt)}
-          </div>
-
-          <PropertyLabel>{t("noteProps.updatedLabel")}</PropertyLabel>
-          <div
-            data-testid="property-updated"
-            className="font-mono text-[11px]"
-            style={{ color: "var(--ink-mute)" }}
-          >
-            {formatTs(updatedAt)}
-          </div>
-        </div>
-      )}
-    </section>
+      <PropertyLabel>{t("noteProps.updatedLabel")}</PropertyLabel>
+      <div
+        data-testid="property-updated"
+        className="font-mono text-[11px]"
+        style={{ color: "var(--ink-mute)" }}
+      >
+        {formatTs(updatedAt)}
+      </div>
+    </div>
   );
 }
 
