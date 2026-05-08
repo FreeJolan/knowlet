@@ -23,6 +23,15 @@
  * elsewhere in the header. Expanding it eats ~50 px of vertical
  * space; we'd rather the user opt in than lose body real estate by
  * default.
+ *
+ * Visual weight: deliberately recessive. No card / border / fill — the
+ * whole component reads as a peer of the existing crumb row above the
+ * title (folder · id · updated), in the same `font-mono uppercase
+ * tracking-wider --ink-mute` register. Aliases chips are the only
+ * thing in the panel with first-class chrome, since they're the one
+ * field a user actively edits here. 2026-05-08 dogfood: an earlier
+ * card-shaped version "felt too much like a first-class section";
+ * stripping the wrapper to muted text matches what metadata is.
  */
 
 import { ChevronRight, ExternalLink } from "lucide-react";
@@ -95,11 +104,7 @@ export function PropertiesPanel({
     <section
       data-testid="properties-panel"
       data-collapsed={collapsed ? "1" : "0"}
-      className="mt-3 rounded border"
-      style={{
-        borderColor: "var(--line)",
-        background: "var(--card, transparent)",
-      }}
+      className="mt-1"
     >
       <button
         type="button"
@@ -107,11 +112,11 @@ export function PropertiesPanel({
         aria-expanded={!collapsed}
         aria-label={collapsed ? t("noteProps.expand") : t("noteProps.collapse")}
         data-testid="properties-toggle"
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs font-mono uppercase tracking-wider transition-colors hover:bg-accent/20"
+        className="-ml-0.5 inline-flex items-center gap-1 rounded-sm px-0.5 py-0.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[color:var(--ink)]"
         style={{ color: "var(--ink-mute)" }}
       >
         <ChevronRight
-          size={12}
+          size={11}
           className="transition-transform"
           style={{ transform: collapsed ? "rotate(0deg)" : "rotate(90deg)" }}
         />
@@ -119,9 +124,9 @@ export function PropertiesPanel({
       </button>
       {!collapsed && (
         <div
-          className="grid gap-y-2 px-3 pb-3 pt-1"
+          className="mt-1 grid gap-y-1.5 pl-3"
           style={{
-            gridTemplateColumns: "minmax(80px, max-content) 1fr",
+            gridTemplateColumns: "minmax(64px, max-content) 1fr",
             columnGap: "12px",
           }}
         >
@@ -140,8 +145,7 @@ export function PropertiesPanel({
               <PropertyLabel>{t("noteProps.sourceLabel")}</PropertyLabel>
               <div
                 data-testid="property-source"
-                className="flex min-w-0 items-center gap-1 text-xs"
-                style={{ color: "var(--ink)" }}
+                className="flex min-w-0 items-center text-xs"
               >
                 <a
                   href={source}
@@ -149,10 +153,10 @@ export function PropertiesPanel({
                   rel="noopener noreferrer"
                   className="inline-flex min-w-0 items-center gap-1 truncate underline decoration-dotted underline-offset-2 hover:decoration-solid"
                   title={t("noteProps.sourceOpen")}
-                  style={{ color: "var(--accent, #5b7a9c)" }}
+                  style={{ color: "var(--ink-mute)" }}
                 >
                   <span className="truncate">{source}</span>
-                  <ExternalLink size={11} className="flex-shrink-0" />
+                  <ExternalLink size={10} className="flex-shrink-0 opacity-60" />
                 </a>
               </div>
             </>
@@ -161,7 +165,7 @@ export function PropertiesPanel({
           <PropertyLabel>{t("noteProps.createdLabel")}</PropertyLabel>
           <div
             data-testid="property-created"
-            className="font-mono text-xs"
+            className="font-mono text-[11px]"
             style={{ color: "var(--ink-mute)" }}
           >
             {formatTs(createdAt)}
@@ -170,7 +174,7 @@ export function PropertiesPanel({
           <PropertyLabel>{t("noteProps.updatedLabel")}</PropertyLabel>
           <div
             data-testid="property-updated"
-            className="font-mono text-xs"
+            className="font-mono text-[11px]"
             style={{ color: "var(--ink-mute)" }}
           >
             {formatTs(updatedAt)}
@@ -184,8 +188,8 @@ export function PropertiesPanel({
 function PropertyLabel({ children }: { children: React.ReactNode }) {
   return (
     <div
-      className="flex items-center font-mono text-[11px] uppercase tracking-wider"
-      style={{ color: "var(--ink-mute)" }}
+      className="flex items-center font-mono text-[10px] uppercase tracking-wider"
+      style={{ color: "var(--ink-mute)", opacity: 0.7 }}
     >
       {children}
     </div>
