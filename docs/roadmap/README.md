@@ -45,7 +45,7 @@ Phase 1   知识库基线 A + B + C(必备)                  4-5 周     ✅ 完
    C. 知识连接:Wikilinks autocomplete + Backlinks + Graph view + Tag 浏览器
 Phase 1 D Obsidian-baseline UX 补齐(2026-05-08 dogfood 后追加)  2 周
           dogfood 实测 Phase 1 ABC 完成后,对比 Obsidian 仍有 6 个用户每天会撞到的 baseline 缺口
-   D1. 多 tab / 多窗格(最大项):tab strip 在 NoteView 之上,水平/垂直 split,pin / close / reorder, 状态持久化
+   D1. 多 tab / 多窗格(最大项):tab strip 在 NoteView 之上,水平/垂直 split,pin / close / reorder, 状态持久化  ✅ Slice 4 基础版完成 (2026-05-09, 树点击/wikilink/搜索/backlinks 自动入 tab、✕ 关、localStorage、删除自动清;pin / 拖拽 / split panes 留 v2)
    D2. 全文搜索面板:消费已有 FTS5 + 向量后端,新 rail tab "Search" 或 ⌘⇧F focus mode,query + 结果列表 + snippet + 点击跳转 + 高亮  ✅ Slice 2 完成 (2026-05-08, focus mode + dummy/templates 噪音过滤 + 短查询 LIKE 兜底)
    D3. Properties UI:标题下 frontmatter 表单(aliases chip strip / created/updated readonly / source 只读 / 折叠),用户感知不到 YAML  ✅ Slice 3 保守版完成 (2026-05-08, status / 自定义字段 延后)
    D4. 暗色模式 toggle:token 在 Phase 0 已就位,补 header sun/moon 按钮 + localStorage + 系统偏好 fallback  ✅ Slice 1 完成 (2026-05-08)

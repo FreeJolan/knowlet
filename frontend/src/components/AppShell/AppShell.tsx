@@ -5,7 +5,7 @@
  * here so a future palette / Cmd+P can also drive it.
  */
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LayoutTemplate,
   Network,
@@ -26,6 +26,7 @@ import { CommandPalette } from "@/components/Palette/CommandPalette";
 import { RightRail } from "@/components/RightRail/RightRail";
 import { SearchFocusMode } from "@/components/Search/SearchFocusMode";
 import { SettingsDialog } from "@/components/Settings/SettingsDialog";
+import { TabStrip } from "@/components/TabStrip/TabStrip";
 import { TagBrowser } from "@/components/TagBrowser/TagBrowser";
 import { TemplatesDialog } from "@/components/Templates/TemplatesDialog";
 import { TrashPanel } from "@/components/Trash/TrashPanel";
@@ -36,6 +37,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { QK } from "@/lib/queryClient";
+import { useTabs } from "@/hooks/useTabs";
 
 /**
  * react-resizable-panels v2 only accepts percent values for defaultSize /
@@ -80,7 +82,13 @@ function findNoteByTitle(root: TreeFolder, target: string): TreeNote | null {
 export function AppShell() {
   const { t } = useTranslation();
   const qc = useQueryClient();
-  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  // Phase 1 D / D1 — multi-tab basic. The single `selectedNoteId` is
+  // now derived from the active tab in `tabsApi`. `setSelectedNoteId`
+  // is wrapped in `openNoteInTab` below so every existing call site
+  // creates / activates a tab transparently.
+  const tabsApi = useTabs();
+  const selectedNoteId = tabsApi.activeId;
+  const setSelectedNoteId = tabsApi.openNote;
   const [trashOpen, setTrashOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -117,6 +125,29 @@ export function AppShell() {
   const [windowWidth, setWindowWidth] = useState(() =>
     typeof window === "undefined" ? 1400 : window.innerWidth,
   );
+
+  // Phase 1 D / D1 — prune tabs whose note no longer exists in the
+  // tree (typical: user deleted the note, or the file was removed
+  // out-of-band in Finder). FileTree's useQuery already feeds the
+  // QK.tree cache; this useQuery just subscribes so the prune effect
+  // re-runs on every tree refetch (delete / restore / new note).
+  const treeQuery = useQuery<TreeFolder>({
+    queryKey: QK.tree,
+    queryFn: getTree,
+  });
+  useEffect(() => {
+    if (!treeQuery.data) return;
+    const valid = new Set<string>();
+    const stack: TreeFolder[] = [treeQuery.data];
+    while (stack.length) {
+      const f = stack.pop();
+      if (!f) continue;
+      for (const n of f.notes) valid.add(n.id);
+      for (const sub of f.folders) stack.push(sub);
+    }
+    const stale = tabsApi.tabs.filter((id) => !valid.has(id));
+    for (const id of stale) tabsApi.closeTab(id);
+  }, [treeQuery.data, tabsApi]);
 
   // Look up the currently-selected note's title from the tree cache so
   // the Backlinks empty-state can render `[[Title]]` correctly. Tree is
@@ -417,14 +448,24 @@ export function AppShell() {
               }
               minSize={30}
             >
-              <NoteView
-                noteId={selectedNoteId}
-                pendingHash={pendingHash}
-                onPendingHashConsumed={() => setPendingHash(null)}
-                pendingLine={pendingLine}
-                onPendingLineConsumed={() => setPendingLine(null)}
-                preserveViewMode={pendingPreserveMode}
-              />
+              <div className="flex h-full min-h-0 flex-col">
+                <TabStrip
+                  tabs={tabsApi.tabs}
+                  activeId={tabsApi.activeId}
+                  onActivate={tabsApi.setActive}
+                  onClose={tabsApi.closeTab}
+                />
+                <div className="min-h-0 flex-1">
+                  <NoteView
+                    noteId={selectedNoteId}
+                    pendingHash={pendingHash}
+                    onPendingHashConsumed={() => setPendingHash(null)}
+                    pendingLine={pendingLine}
+                    onPendingLineConsumed={() => setPendingLine(null)}
+                    preserveViewMode={pendingPreserveMode}
+                  />
+                </div>
+              </div>
             </ResizablePanel>
             {!railCollapsed && (
               <>
