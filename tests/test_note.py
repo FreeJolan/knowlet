@@ -30,6 +30,50 @@ def test_note_round_trip(tmp_path: Path):
     assert loaded.tags == note.tags
 
 
+def test_note_aliases_round_trip(tmp_path: Path):
+    """Phase 1 D / D3 Properties UI: aliases land in frontmatter and
+    survive a write/read cycle."""
+    note = Note(
+        id=new_id(),
+        title="Attention",
+        body="b",
+        aliases=["Self-Attention", "注意力"],
+    )
+    path = tmp_path / note.filename
+    path.write_text(note.to_markdown(), encoding="utf-8")
+    assert "aliases:" in path.read_text(encoding="utf-8")
+    loaded = Note.from_file(path)
+    assert loaded.aliases == ["Self-Attention", "注意力"]
+
+
+def test_note_no_aliases_key_when_empty(tmp_path: Path):
+    """Empty aliases list MUST NOT pollute the YAML — keeps existing
+    notes' frontmatter byte-identical for git diff hygiene."""
+    note = Note(id=new_id(), title="Plain", body="b")
+    path = tmp_path / note.filename
+    path.write_text(note.to_markdown(), encoding="utf-8")
+    assert "aliases" not in path.read_text(encoding="utf-8")
+
+
+def test_note_legacy_files_load_with_empty_aliases(tmp_path: Path):
+    """Pre-D3 notes (no `aliases:` key) load with aliases=[] — no
+    schema_version bump needed."""
+    legacy = (
+        "---\n"
+        "schema_version: 1\n"
+        "id: 01TESTLEGACY00000000000000\n"
+        "title: Legacy\n"
+        "tags: []\n"
+        "created_at: '2026-01-01T00:00:00Z'\n"
+        "updated_at: '2026-01-01T00:00:00Z'\n"
+        "---\nbody\n"
+    )
+    p = tmp_path / "01TESTLEGACY00000000000000.md"
+    p.write_text(legacy, encoding="utf-8")
+    loaded = Note.from_file(p)
+    assert loaded.aliases == []
+
+
 def test_content_hash_stable():
     a = Note(id="x", title="T", body="B")
     b = Note(id="y", title="T", body="B")  # different id, same content

@@ -15,6 +15,13 @@ export interface NoteSummary {
   tags: string[];
   created_at: string;
   updated_at: string;
+  /** Phase 1 D / D3 Properties UI — alternate names for this note.
+   *  Default `[]` for back-compat with summary builders that don't
+   *  carry the column. */
+  aliases?: string[];
+  /** URL the note was captured from (e.g. quick-capture from a web
+   *  page). Read-only display in Properties UI. */
+  source?: string | null;
 }
 
 export interface NoteFull extends NoteSummary {

@@ -35,6 +35,21 @@
     "remove": "移除 tag {{tag}}",
     "placeholder": "tag…"
   },
+  "noteProps": {
+    "title": "属性",
+    "expand": "展开属性",
+    "collapse": "收起属性",
+    "aliasesLabel": "别名",
+    "aliasesAdd": "加别名",
+    "aliasesRemove": "移除别名 {{alias}}",
+    "aliasesPlaceholder": "别名…",
+    "aliasesHint": "这篇笔记的其他叫法(Phase 1 D / 后续 [[别名]] 也会解析到这里)。",
+    "sourceLabel": "来源",
+    "sourceOpen": "打开原文",
+    "createdLabel": "创建",
+    "updatedLabel": "更新",
+    "noProperties": "还没有额外属性。"
+  },
   "tags": {
     "loading": "标签载入中…",
     "loadFailed": "标签加载失败({{error}})。",

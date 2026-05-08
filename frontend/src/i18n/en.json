@@ -47,6 +47,21 @@
     "remove": "Remove tag {{tag}}",
     "placeholder": "tag…"
   },
+  "noteProps": {
+    "title": "Properties",
+    "expand": "Show properties",
+    "collapse": "Hide properties",
+    "aliasesLabel": "Aliases",
+    "aliasesAdd": "Add alias",
+    "aliasesRemove": "Remove alias {{alias}}",
+    "aliasesPlaceholder": "alias…",
+    "aliasesHint": "Other names this note answers to (Phase 1 D / coming soon: [[Alias]] resolves here).",
+    "sourceLabel": "Source",
+    "sourceOpen": "Open original",
+    "createdLabel": "Created",
+    "updatedLabel": "Updated",
+    "noProperties": "No extra properties yet."
+  },
   "tags": {
     "loading": "Loading tags…",
     "loadFailed": "Failed to load tags ({{error}}).",

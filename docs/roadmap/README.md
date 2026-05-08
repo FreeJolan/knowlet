@@ -46,11 +46,11 @@ Phase 1   知识库基线 A + B + C(必备)                  4-5 周     ✅ 完
 Phase 1 D Obsidian-baseline UX 补齐(2026-05-08 dogfood 后追加)  2 周
           dogfood 实测 Phase 1 ABC 完成后,对比 Obsidian 仍有 6 个用户每天会撞到的 baseline 缺口
    D1. 多 tab / 多窗格(最大项):tab strip 在 NoteView 之上,水平/垂直 split,pin / close / reorder, 状态持久化
-   D2. 全文搜索面板:消费已有 FTS5 + 向量后端,新 rail tab "Search" 或 ⌘⇧F focus mode,query + 结果列表 + snippet + 点击跳转 + 高亮
-   D3. Properties UI:标题下 frontmatter 表单(aliases chip strip / created/updated readonly / 自定义字段),用户感知不到 YAML
-   D4. 暗色模式 toggle:token 在 Phase 0 已就位,补 header sun/moon 按钮 + localStorage + 系统偏好 fallback
-   D5. Outline 大纲面板:right rail 第三个 tab(Backlinks / Graph / Outline),解析 h1-h6 + 点击跳行
-   D6. Hover preview 链接:[[Title]] 鼠标悬停 → 浮出 note 标题 + 首段
+   D2. 全文搜索面板:消费已有 FTS5 + 向量后端,新 rail tab "Search" 或 ⌘⇧F focus mode,query + 结果列表 + snippet + 点击跳转 + 高亮  ✅ Slice 2 完成 (2026-05-08, focus mode + dummy/templates 噪音过滤 + 短查询 LIKE 兜底)
+   D3. Properties UI:标题下 frontmatter 表单(aliases chip strip / created/updated readonly / source 只读 / 折叠),用户感知不到 YAML  ✅ Slice 3 保守版完成 (2026-05-08, status / 自定义字段 延后)
+   D4. 暗色模式 toggle:token 在 Phase 0 已就位,补 header sun/moon 按钮 + localStorage + 系统偏好 fallback  ✅ Slice 1 完成 (2026-05-08)
+   D5. Outline 大纲面板:right rail 第三个 tab(Backlinks / Graph / Outline),解析 h1-h6 + 点击跳行  ✅ Slice 1 完成 (2026-05-08)
+   D6. Hover preview 链接:[[Title]] 鼠标悬停 → 浮出 note 标题 + 首段  ✅ Slice 1 完成 (2026-05-08)
 Phase 2   D + E(该有可推)                             1-2 周(可推到 Phase 4)
    D. 入口:Daily notes / Quick switcher 强化 / 收藏
    E. 数据耐久:ADR-0018 落地 / Note version / Import-Export

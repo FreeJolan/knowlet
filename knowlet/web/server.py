@@ -134,6 +134,17 @@ class DraftPayload(BaseModel):
     title: str
     tags: list[str]
     body: str
+    # Phase 1 D / D3 Properties UI: alternate names for this note.
+    # Tri-state semantics:
+    #   - `None` (or absent) → leave existing aliases untouched. This
+    #     keeps pre-D3 API clients from accidentally wiping the field
+    #     just by issuing a normal title/body update.
+    #   - `[]` → explicit "clear all aliases".
+    #   - `[..]` → replace with the given list.
+    # The knowlet web UI always sends an explicit list (current value
+    # echoed back, or the new chip-strip value), so user-driven
+    # changes are unambiguous.
+    aliases: list[str] | None = None
 
 
 class CommitDraftRequest(DraftPayload):
@@ -153,6 +164,11 @@ class NoteSummary(BaseModel):
     tags: list[str]
     created_at: str
     updated_at: str
+    # Phase 1 D / D3 Properties UI fields. Default-empty / null keeps
+    # NoteSummary back-compat with index-row builders that don't carry
+    # these columns yet — NoteFull constructors fill them explicitly.
+    aliases: list[str] = []
+    source: str | None = None
 
 
 class NoteFull(NoteSummary):
@@ -1583,6 +1599,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             title=note.title,
             path=str(path),
             tags=note.tags,
+            aliases=list(note.aliases),
+            source=note.source,
             created_at=note.created_at,
             updated_at=note.updated_at,
             body=note.body,
@@ -1656,6 +1674,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # extra UI gymnastics. ADR-0013 §1 still holds: this is user-
         # initiated (the user wrote `#tag` themselves), not LLM-inferred.
         note.tags = merge_with_inline_tags(list(payload.tags), payload.body)
+        # D3 Properties UI: aliases is None == "leave alone"; an empty
+        # list clears; a list replaces. Tri-state lets pre-D3 clients
+        # do title/body PUTs without wiping aliases someone added in
+        # the UI or via Finder.
+        if payload.aliases is not None:
+            note.aliases = [a.strip() for a in payload.aliases if a and a.strip()]
         new_path = runtime.vault.write_note(note)
         runtime.index.upsert_note(
             note,
@@ -1667,6 +1691,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             title=note.title,
             path=str(new_path),
             tags=note.tags,
+            aliases=list(note.aliases),
+            source=note.source,
             created_at=note.created_at,
             updated_at=note.updated_at,
             body=note.body,
@@ -1856,6 +1882,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             path=str(path),
             folder=runtime.vault.folder_of(path),
             tags=note.tags,
+            aliases=list(note.aliases),
+            source=note.source,
             created_at=note.created_at,
             updated_at=note.updated_at,
             body=note.body,
@@ -1894,6 +1922,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             path=str(new_path),
             folder=runtime.vault.folder_of(new_path),
             tags=note.tags,
+            aliases=list(note.aliases),
+            source=note.source,
             created_at=note.created_at,
             updated_at=note.updated_at,
             body=note.body,
@@ -1963,6 +1993,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             path=str(restored_path),
             folder=runtime.vault.folder_of(restored_path),
             tags=note.tags,
+            aliases=list(note.aliases),
+            source=note.source,
             created_at=note.created_at,
             updated_at=note.updated_at,
             body=note.body,

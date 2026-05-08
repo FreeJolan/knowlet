@@ -61,6 +61,12 @@ class Note:
     title: str
     body: str
     tags: list[str] = field(default_factory=list)
+    # Alternate names this note can be referenced by (Phase 1 D / D3
+    # Properties UI). Stored in frontmatter as `aliases: [list]`. Future
+    # wiki schema (ADR-0023 §2) will let `[[Alias]]` resolve to the
+    # canonical note via this field; today they're metadata-only and
+    # the resolver still matches on title.
+    aliases: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
     source: str | None = None
@@ -102,6 +108,8 @@ class Note:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if self.aliases:
+            meta["aliases"] = list(self.aliases)
         if self.source:
             meta["source"] = self.source
         if self.trashed_from is not None:
@@ -127,6 +135,7 @@ class Note:
             title=str(meta.get("title") or path.stem),
             body=post.content,
             tags=list(meta.get("tags") or []),
+            aliases=[str(a) for a in (meta.get("aliases") or [])],
             created_at=str(meta.get("created_at") or now_iso()),
             updated_at=str(meta.get("updated_at") or now_iso()),
             source=meta.get("source"),

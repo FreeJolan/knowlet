@@ -1763,3 +1763,93 @@ def test_tags_persist_after_tag_only_update(tmp_path: Path):
     tags = client.get("/api/tags").json()
     names = {row["tag"] for row in tags}
     assert names == {"initial", "fresh"}, f"index didn't pick up tag-only change: {tags}"
+
+
+def test_note_aliases_round_trip_via_api(tmp_path: Path):
+    """Phase 1 D / D3 Properties UI: PUT carries aliases into the
+    frontmatter; subsequent GET returns them; an empty list clears
+    them on a follow-up PUT."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n = Note(id=new_id(), title="Attention", body="paper", tags=[])
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    # Set aliases
+    r = client.put(
+        f"/api/notes/{n.id}",
+        json={
+            "title": "Attention",
+            "tags": [],
+            "body": "paper",
+            "aliases": ["Self-Attention", "注意力"],
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["aliases"] == ["Self-Attention", "注意力"]
+
+    # Persisted to disk.
+    on_disk = (v.notes_dir / f"{n.id}.md").read_text(encoding="utf-8")
+    assert "Self-Attention" in on_disk
+    assert "注意力" in on_disk
+
+    # Survives a fresh GET.
+    g = client.get(f"/api/notes/{n.id}").json()
+    assert g["aliases"] == ["Self-Attention", "注意力"]
+
+    # Clearing — empty list persists as "no aliases".
+    r2 = client.put(
+        f"/api/notes/{n.id}",
+        json={"title": "Attention", "tags": [], "body": "paper", "aliases": []},
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["aliases"] == []
+    g2 = client.get(f"/api/notes/{n.id}").json()
+    assert g2["aliases"] == []
+
+
+def test_note_aliases_strip_blank_entries(tmp_path: Path):
+    """Whitespace / empty strings get filtered server-side so the
+    frontend's chip strip doesn't have to."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n = Note(id=new_id(), title="A", body="b", tags=[])
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    r = client.put(
+        f"/api/notes/{n.id}",
+        json={"title": "A", "tags": [], "body": "b", "aliases": ["  spaced  ", "", "  ", "ok"]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["aliases"] == ["spaced", "ok"]
+
+
+def test_note_aliases_omitted_preserves_existing(tmp_path: Path):
+    """Tri-state aliases: omitting the field in PUT MUST preserve the
+    existing value (= "leave alone"). Pre-D3 clients sending PUT for
+    title/body changes can't accidentally wipe a field they don't know
+    about. Empty list (`[]`) is the explicit "clear" signal."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n = Note(id=new_id(), title="A", body="b", tags=[], aliases=["x", "y"])
+    v.write_note(n)
+    runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    # Payload without `aliases` — preserves.
+    r = client.put(
+        f"/api/notes/{n.id}",
+        json={"title": "A", "tags": [], "body": "b"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["aliases"] == ["x", "y"], (
+        "missing aliases must preserve, not clear"
+    )
+
+    # Empty list — explicit clear.
+    r2 = client.put(
+        f"/api/notes/{n.id}",
+        json={"title": "A", "tags": [], "body": "b", "aliases": []},
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["aliases"] == []

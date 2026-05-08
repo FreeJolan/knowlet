@@ -82,7 +82,7 @@ export const deleteNote = (id: string): Promise<{ trashed_to: string }> =>
 
 export const updateNote = (
   id: string,
-  payload: { title: string; tags: string[]; body: string },
+  payload: { title: string; tags: string[]; body: string; aliases?: string[] },
 ): Promise<NoteFull> =>
   request("PUT", `/api/notes/${encodeURIComponent(id)}`, payload);
 

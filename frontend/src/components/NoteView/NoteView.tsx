@@ -31,6 +31,7 @@ import { noteTitleClashesIn } from "@/lib/findCollision";
 import { normalizeNoteTitle } from "@/lib/noteTitle";
 import { QK } from "@/lib/queryClient";
 
+import { PropertiesPanel } from "./PropertiesPanel";
 import { attachScrollSync } from "./scrollSync";
 import { TagChipStrip } from "./TagChipStrip";
 
@@ -138,6 +139,10 @@ export function NoteView({
         title: payload.title,
         tags: payload.tags,
         body: payload.body,
+        // D3: PUT defaults aliases to [] when missing (which CLEARS
+        // them server-side). Pass current aliases through so a body /
+        // title / tag save never wipes them.
+        aliases: payload.aliases ?? [],
       }),
     onSuccess: (data, vars) => {
       qc.setQueryData(QK.note(vars.id), data);
@@ -178,6 +183,7 @@ export function NoteView({
         title,
         tags: payload.tags,
         body: payload.body,
+        aliases: payload.aliases ?? [],
       }),
     onMutate: ({ id, title }) => {
       const prevTree = qc.getQueryData<TreeFolder>(QK.tree);
@@ -222,6 +228,7 @@ export function NoteView({
         title: payload.title,
         tags,
         body: payload.body,
+        aliases: payload.aliases ?? [],
       }),
     onMutate: ({ id, tags }) => {
       const prevNote = qc.getQueryData<NoteFull>(QK.note(id));
@@ -240,6 +247,40 @@ export function NoteView({
       void qc.invalidateQueries({ queryKey: QK.tags });
       void qc.invalidateQueries({ queryKey: QK.tagsWithNotes });
       void qc.invalidateQueries({ queryKey: QK.tree });
+    },
+  });
+
+  // Phase 1 D / D3 — aliases mutation. Same shape as tag updates but
+  // doesn't touch QK.tags / QK.tagsWithNotes (aliases are per-note
+  // metadata, not a vault-wide taxonomy).
+  const updateAliasesMutation = useMutation({
+    mutationFn: ({
+      id,
+      aliases,
+      payload,
+    }: {
+      id: string;
+      aliases: string[];
+      payload: NoteFull;
+    }) =>
+      updateNote(id, {
+        title: payload.title,
+        tags: payload.tags,
+        body: payload.body,
+        aliases,
+      }),
+    onMutate: ({ id, aliases }) => {
+      const prevNote = qc.getQueryData<NoteFull>(QK.note(id));
+      if (prevNote) {
+        qc.setQueryData<NoteFull>(QK.note(id), { ...prevNote, aliases });
+      }
+      return { prevNote };
+    },
+    onError: (_err, vars, ctx) => {
+      if (ctx?.prevNote) qc.setQueryData(QK.note(vars.id), ctx.prevNote);
+    },
+    onSuccess: (data, vars) => {
+      qc.setQueryData(QK.note(vars.id), data);
     },
   });
 
@@ -667,6 +708,20 @@ export function NoteView({
               payload: note.data!,
             });
           }}
+        />
+        <PropertiesPanel
+          noteId={note.data.id}
+          aliases={note.data.aliases ?? []}
+          source={note.data.source ?? null}
+          createdAt={note.data.created_at}
+          updatedAt={note.data.updated_at}
+          onAliasesChange={(next) =>
+            updateAliasesMutation.mutate({
+              id: note.data!.id,
+              aliases: next,
+              payload: note.data!,
+            })
+          }
         />
       </header>
       {/* Both panes are ALWAYS mounted — we toggle visibility via the
