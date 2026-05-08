@@ -143,6 +143,73 @@ try {
     assert(!stillOpen, "Esc should close focus mode");
   });
 
+  await runTest(
+    "IME composition: Enter during pinyin compose must NOT trigger open",
+    async () => {
+      // Regression: Phase 1 D slice 2 dogfood — Enter during a Chinese
+      // IME composition was committing the active result + closing the
+      // panel instead of letting the IME confirm its candidate.
+      // Playwright doesn't run a real IME but we can simulate with
+      // composition events + the CompositionEvent / KeyboardEvent
+      // API; the handler reads `e.nativeEvent.isComposing` so a
+      // dispatched Enter while isComposing=true must be a no-op.
+      await page.keyboard.press("Meta+Shift+F");
+      await page.waitForTimeout(300);
+      const input = page.locator('[data-testid="search-input"]');
+      await input.fill("quantum");
+      await page.waitForTimeout(600);
+      // Sanity: there are results (so Enter would naïvely fire open).
+      const before = await page
+        .locator('[data-testid="search-result-row"]')
+        .count();
+      assert(before >= 1, `expected results before IME test — got ${before}`);
+      // Simulate IME composition and dispatch Enter as if from IME.
+      // Browsers set keyCode=229 + isComposing=true for IME-driven
+      // Enters; the imeSafeKeyHandler must skip them.
+      const handlerFiredOpen = await page.evaluate(() => {
+        const el = document.querySelector(
+          '[data-testid="search-input"]',
+        );
+        if (!(el instanceof HTMLInputElement)) return "no-input";
+        // Start composition.
+        el.dispatchEvent(new CompositionEvent("compositionstart"));
+        // Dispatch Enter while still composing. React listens via
+        // synthetic events, so we use KeyboardEvent and `isComposing`.
+        const ev = new KeyboardEvent("keydown", {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 229,
+          which: 229,
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+        });
+        // `isComposing` is read-only on KeyboardEvent so we override
+        // via property descriptor — same trick the React testing
+        // ecosystem uses.
+        Object.defineProperty(ev, "isComposing", { get: () => true });
+        el.dispatchEvent(ev);
+        // End composition cleanly.
+        el.dispatchEvent(new CompositionEvent("compositionend"));
+        // Was the focus mode closed? If yes, the handler fired
+        // through the IME guard (BUG). If no, guard worked (good).
+        return !!document.querySelector('[data-testid="search-focus-mode"]');
+      });
+      assert(
+        handlerFiredOpen === true,
+        `IME-Enter must NOT close focus mode; got handlerFiredOpen=${handlerFiredOpen}`,
+      );
+      // Now press Enter normally (no composition) — should open.
+      await input.press("Enter");
+      await page.waitForTimeout(500);
+      const stillOpen = await page
+        .locator('[data-testid="search-focus-mode"]')
+        .isVisible()
+        .catch(() => false);
+      assert(!stillOpen, "real Enter (no IME) should still close the panel");
+    },
+  );
+
   await runTest("Result rows render highlighted matches", async () => {
     await page.keyboard.press("Meta+Shift+F");
     await page.waitForTimeout(300);

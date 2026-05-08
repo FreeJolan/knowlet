@@ -15,7 +15,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Search, X } from "lucide-react";
 import {
   type ChangeEvent,
-  type KeyboardEvent,
   useEffect,
   useMemo,
   useRef,
@@ -25,6 +24,7 @@ import { useTranslation } from "react-i18next";
 
 import { searchVault } from "@/api/client";
 import type { SearchPayload } from "@/api/types";
+import { imeSafeKeyHandler } from "@/lib/imeSafe";
 import { QK } from "@/lib/queryClient";
 
 interface Props {
@@ -83,9 +83,13 @@ export function SearchFocusMode({ open, onClose, onOpenNote }: Props) {
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Reset state on open / close.
+  // Reset state on open / close. Genuinely "external state changed
+  // (open prop), reset transient UI" — the no-set-state-in-effect rule
+  // applies more to derived-from-render cases; this is a clear sync
+  // boundary.
   useEffect(() => {
     if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setQuery("");
     setDebouncedQuery("");
     setActiveIndex(0);
@@ -123,7 +127,11 @@ export function SearchFocusMode({ open, onClose, onOpenNote }: Props) {
 
   const hits = useMemo(() => results.data?.hits ?? [], [results.data]);
 
-  const onInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+  // IME-safe: Enter / arrows fire only when no pinyin / IME composition
+  // is active. During composition, the keys belong to the IME (confirm
+  // candidate / move candidate window) and must not trigger panel
+  // navigation.
+  const onInputKeyDown = imeSafeKeyHandler<HTMLInputElement>((e) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setActiveIndex((i) => Math.min(hits.length - 1, i + 1));
@@ -138,7 +146,7 @@ export function SearchFocusMode({ open, onClose, onOpenNote }: Props) {
         onClose();
       }
     }
-  };
+  });
 
   if (!open) return null;
 

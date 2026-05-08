@@ -24,6 +24,7 @@ import { useTranslation } from "react-i18next";
 
 import { listTags } from "@/api/client";
 import type { TagSummary } from "@/api/types";
+import { imeSafeKeyHandler } from "@/lib/imeSafe";
 import { QK } from "@/lib/queryClient";
 
 interface Props {
@@ -123,7 +124,11 @@ export function TagChipStrip({ tags, onAdd, onRemove, noteId }: Props) {
             placeholder={t("noteTags.placeholder")}
             data-testid="tag-add-input"
             onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
+            // IME-safe: Enter / "," / Esc / Backspace handlers fire
+            // only when no pinyin / IME composition is active. During
+            // composition Enter means "confirm candidate" — committing
+            // a half-typed tag would steal that keystroke.
+            onKeyDown={imeSafeKeyHandler<HTMLInputElement>((e) => {
               if (e.key === "Enter" || e.key === ",") {
                 e.preventDefault();
                 commit(draft);
@@ -135,7 +140,7 @@ export function TagChipStrip({ tags, onAdd, onRemove, noteId }: Props) {
                 // Pop the last tag on backspace-into-empty (Bear / Notion style).
                 onRemove(tags[tags.length - 1] as string);
               }
-            }}
+            })}
             onBlur={() => {
               // Defer so a click on a suggestion can register first.
               window.setTimeout(() => {
