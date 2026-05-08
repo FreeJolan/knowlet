@@ -25,7 +25,7 @@ interface Props {
   onOpenSource: (sourceId: string, line: number) => void;
   onOpenTarget: (targetNoteId: string) => void;
   onEnterGraphFocus: () => void;
-  onJumpToHeading: (slug: string) => void;
+  onJumpToHeading: (slug: string, line: number) => void;
 }
 
 export function RightRail({

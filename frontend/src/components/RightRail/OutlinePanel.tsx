@@ -23,14 +23,20 @@ import { QK } from "@/lib/queryClient";
 
 interface Props {
   noteId: string | null;
-  /** Click a heading → host scrolls editor to its slugged anchor. */
-  onJumpToHeading: (slug: string) => void;
+  /** Click a heading → host scrolls BOTH panes:
+   *  - `slug` drives the preview-side `scrollIntoView` (rehype-slug
+   *    anchor)
+   *  - `line` drives the CodeMirror-side `scrollIntoView` so split
+   *    mode stays in sync with the preview jump
+   *  Host can pass either or both; outline always supplies both. */
+  onJumpToHeading: (slug: string, line: number) => void;
 }
 
 interface OutlineEntry {
   level: number;
   text: string;
   slug: string;
+  line: number;
 }
 
 export function OutlinePanel({ noteId, onJumpToHeading }: Props) {
@@ -53,6 +59,7 @@ export function OutlinePanel({ noteId, onJumpToHeading }: Props) {
       // matching rehype-slug behavior, so a doc with two `## Notes` still
       // produces stable distinct anchors.
       slug: slugger.slug(h.text),
+      line: h.line,
     }));
   }, [note.data]);
 
@@ -107,10 +114,11 @@ export function OutlinePanel({ noteId, onJumpToHeading }: Props) {
             <li key={`${e.slug}-${i}`}>
               <button
                 type="button"
-                onClick={() => onJumpToHeading(e.slug)}
+                onClick={() => onJumpToHeading(e.slug, e.line)}
                 data-testid="outline-row"
                 data-level={e.level}
                 data-slug={e.slug}
+                data-line={e.line}
                 className="flex w-full items-center gap-1.5 px-3 py-1 text-left text-[12px] transition-colors hover:bg-accent/30"
                 style={{
                   color: "var(--ink, #2a2823)",

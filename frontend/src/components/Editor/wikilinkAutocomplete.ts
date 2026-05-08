@@ -55,24 +55,37 @@ function findNoteByTitle(
 }
 
 /** Parse a markdown body for ATX headings (`# Heading` … `###### x`).
- *  Returns level + raw text, in document order. We skip headings inside
- *  fenced code blocks because ``` ```\n# inside ``` `` looks like a
- *  heading otherwise.
+ *  Returns level + raw text + 1-based line number, in document order.
+ *  We skip headings inside fenced code blocks because ```\n# inside ```
+ *  looks like a heading otherwise.
  *
- *  Exported so the Outline panel (Phase 1 D slice 1) can reuse the same
- *  parser. The slugged anchor (rehype-slug) is the consumer's job; this
- *  just gives raw level + text. */
-export function parseHeadings(body: string): { level: number; text: string }[] {
-  const out: { level: number; text: string }[] = [];
+ *  Exported so the Outline panel (Phase 1 D slice 1) can reuse the
+ *  same parser. The slugged anchor (rehype-slug) is the consumer's
+ *  job; this just gives raw level + text + line. */
+export interface ParsedHeading {
+  level: number;
+  text: string;
+  /** 1-based line number in `body`. Used by the Outline panel to
+   *  scroll the CodeMirror editor (in split mode) alongside the
+   *  preview's anchor jump, so both panes stay in sync. */
+  line: number;
+}
+
+export function parseHeadings(body: string): ParsedHeading[] {
+  const out: ParsedHeading[] = [];
   let inFence = false;
-  for (const line of body.split("\n")) {
+  const lines = body.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
     if (/^\s*```/.test(line)) {
       inFence = !inFence;
       continue;
     }
     if (inFence) continue;
     const m = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
-    if (m) out.push({ level: m[1]!.length, text: m[2]!.trim() });
+    if (m) {
+      out.push({ level: m[1]!.length, text: m[2]!.trim(), line: i + 1 });
+    }
   }
   return out;
 }

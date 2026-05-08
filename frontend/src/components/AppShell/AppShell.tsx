@@ -429,12 +429,15 @@ export function AppShell() {
                       setPendingLine(null);
                     }}
                     onEnterGraphFocus={() => setGraphFocusOpen(true)}
-                    onJumpToHeading={(slug) => {
-                      // Outline click → scroll preview to the matching
-                      // heading anchor. Same path wikilink heading
-                      // anchors (`[[Note#Heading]]`) already use.
+                    onJumpToHeading={(slug, line) => {
+                      // Outline click → scroll BOTH panes:
+                      //   - pendingHash drives the preview's
+                      //     scrollIntoView via rehype-slug anchor
+                      //   - pendingLine drives CodeMirror's
+                      //     scrollIntoView; in split mode the editor
+                      //     pane follows alongside the preview
                       setPendingHash(slug);
-                      setPendingLine(null);
+                      setPendingLine(line);
                     }}
                   />
                 </ResizablePanel>
