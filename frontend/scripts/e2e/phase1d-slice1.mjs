@@ -178,6 +178,48 @@ try {
     await page.waitForTimeout(150);
   });
 
+  await runTest("Outline click in preview-only mode keeps preview mode", async () => {
+    await clickRow("Outline target");
+    // Preview only.
+    await page.locator('button[data-mode="preview"]').click();
+    await page.waitForTimeout(300);
+    await page.locator('[data-testid="rail-tab-outline"]').click();
+    await page.waitForTimeout(200);
+    const deepest = page.locator('[data-testid="outline-row"]').last();
+    await deepest.click();
+    await page.waitForTimeout(500);
+    // Still in preview after the jump (no auto-switch to split).
+    const previewBtn = page.locator('button[data-mode="preview"]');
+    const isActive = await previewBtn.evaluate((el) =>
+      el.getAttribute("aria-pressed") === "true" ||
+      el.getAttribute("aria-current") === "true" ||
+      el.classList.contains("active") ||
+      el.dataset.active === "true",
+    );
+    // Some shadcn buttons mark active via data-state; fallback: check
+    // the editor pane's `hidden` attr. In preview-only, edit pane has
+    // class "hidden".
+    const editPaneHidden = await page.evaluate(() => {
+      const editPane = document.querySelector(".cm-editor");
+      if (!editPane) return false;
+      // Walk up to find the wrapping div with the "hidden" class.
+      let el = editPane.parentElement;
+      while (el) {
+        if (el.classList.contains("hidden")) return true;
+        el = el.parentElement;
+        if (el && el.tagName.toLowerCase() === "main") break;
+      }
+      return false;
+    });
+    assert(
+      isActive || editPaneHidden,
+      `outline click in preview-only must NOT auto-switch to split (preview active: ${isActive}, edit pane hidden: ${editPaneHidden})`,
+    );
+    // Reset to edit for stable subsequent tests.
+    await page.locator('button[data-mode="edit"]').click();
+    await page.waitForTimeout(150);
+  });
+
   await runTest("Outline empty state for note with no headings", async () => {
     await clickRow("Linker");
     await page.locator('[data-testid="rail-tab-outline"]').click();

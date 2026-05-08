@@ -90,6 +90,11 @@ export function AppShell() {
   // Phase 1 C slice 1: clicking a backlink row asks NoteView to scroll
   // its CodeMirror view to a specific 1-based line.
   const [pendingLine, setPendingLine] = useState<number | null>(null);
+  // Phase 1 D slice 1: outline-driven jumps are *intra-note* — they
+  // shouldn't auto-switch viewMode the way cross-note navigation
+  // (backlinks / wikilinks) does. When this flag is true, NoteView's
+  // scroll effects skip the mode switch.
+  const [pendingPreserveMode, setPendingPreserveMode] = useState(false);
   // Phase 1 C: right rail collapse toggle. Persisted across reloads so
   // the user's preference sticks.
   const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
@@ -193,6 +198,7 @@ export function AppShell() {
         // If we're already on this note, skip the swap so the preview's
         // scroll position isn't reset; just navigate the hash.
         if (hit.id !== selectedNoteId) setSelectedNoteId(hit.id);
+        setPendingPreserveMode(false);
         setPendingHash(detail.hash || null);
       })();
     };
@@ -371,6 +377,7 @@ export function AppShell() {
                         setSelectedNoteId(id);
                         setPendingHash(null);
                         setPendingLine(null);
+                        setPendingPreserveMode(false);
                       }}
                       onMutating={setTreeBusy}
                     />
@@ -380,6 +387,7 @@ export function AppShell() {
                         setSelectedNoteId(id);
                         setPendingHash(null);
                         setPendingLine(null);
+                        setPendingPreserveMode(false);
                       }}
                       pendingTag={pendingTag}
                       onPendingTagConsumed={() => setPendingTag(null)}
@@ -403,6 +411,7 @@ export function AppShell() {
                 onPendingHashConsumed={() => setPendingHash(null)}
                 pendingLine={pendingLine}
                 onPendingLineConsumed={() => setPendingLine(null)}
+                preserveViewMode={pendingPreserveMode}
               />
             </ResizablePanel>
             {!railCollapsed && (
@@ -420,6 +429,7 @@ export function AppShell() {
                       if (sourceId !== selectedNoteId)
                         setSelectedNoteId(sourceId);
                       setPendingHash(null);
+                      setPendingPreserveMode(false);
                       setPendingLine(line);
                     }}
                     onOpenTarget={(targetId) => {
@@ -427,15 +437,16 @@ export function AppShell() {
                         setSelectedNoteId(targetId);
                       setPendingHash(null);
                       setPendingLine(null);
+                      setPendingPreserveMode(false);
                     }}
                     onEnterGraphFocus={() => setGraphFocusOpen(true)}
                     onJumpToHeading={(slug, line) => {
-                      // Outline click → scroll BOTH panes:
-                      //   - pendingHash drives the preview's
-                      //     scrollIntoView via rehype-slug anchor
-                      //   - pendingLine drives CodeMirror's
-                      //     scrollIntoView; in split mode the editor
-                      //     pane follows alongside the preview
+                      // Outline click → scroll BOTH panes (preview
+                      // anchor + CM line). preserveMode = true tells
+                      // NoteView this is an *intra-note* jump, so it
+                      // should NOT auto-switch from edit / preview to
+                      // split (the user explicitly chose their mode).
+                      setPendingPreserveMode(true);
                       setPendingHash(slug);
                       setPendingLine(line);
                     }}
@@ -486,6 +497,7 @@ export function AppShell() {
           setSelectedNoteId(id);
           setPendingHash(null);
           setPendingLine(null);
+          setPendingPreserveMode(false);
         }}
       />
       <SettingsDialog

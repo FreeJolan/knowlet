@@ -69,6 +69,7 @@ export function NoteView({
   onPendingHashConsumed,
   pendingLine,
   onPendingLineConsumed,
+  preserveViewMode = false,
 }: {
   noteId: string | null;
   pendingHash?: string | null;
@@ -77,6 +78,13 @@ export function NoteView({
    *  line and place the cursor there. Used by Backlinks panel clicks. */
   pendingLine?: number | null;
   onPendingLineConsumed?: () => void;
+  /** Phase 1 D slice 1: when true, the pendingHash / pendingLine
+   *  effects MUST NOT auto-switch viewMode. Outline-driven jumps are
+   *  intra-note and should respect the user's chosen mode (preview /
+   *  edit / split); cross-note nav (backlinks / wikilinks) keeps the
+   *  old auto-switch behavior because changing notes implies the
+   *  destination is what matters. */
+  preserveViewMode?: boolean;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -339,12 +347,11 @@ export function NoteView({
   useEffect(() => {
     if (!pendingHash || !note.data) return;
     // Switching from edit to split is the whole point of a wikilink-with-
-    // anchor click — there's nothing to scroll to in edit mode. The
-    // set-state-in-effect rule is OK to bend here for the same reason
-    // the pendingLine effect does (this is genuinely a "user requested
-    // a side-effect that requires a mode switch" situation).
+    // anchor click — there's nothing to scroll to in edit mode. Skip
+    // the switch when caller asked us to preserve mode (outline-driven
+    // intra-note jumps).
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (viewMode === "edit") setViewMode("split");
+    if (!preserveViewMode && viewMode === "edit") setViewMode("split");
     setPreviewBody(note.data.body);
     const slugger = new GithubSlugger();
     const slug = slugger.slug(pendingHash);
@@ -372,7 +379,7 @@ export function NoteView({
     return () => {
       cancelled = true;
     };
-  }, [pendingHash, note.data, viewMode, onPendingHashConsumed]);
+  }, [pendingHash, note.data, viewMode, onPendingHashConsumed, preserveViewMode]);
 
   // Phase 1 C slice 1 — Backlinks-driven line jump. When AppShell asks us
   // to scroll to line N (1-based), force a mode that shows the editor
@@ -381,10 +388,11 @@ export function NoteView({
   // may not be mounted yet right after a note swap.
   useEffect(() => {
     if (!pendingLine || !note.data) return;
-    // See pendingHash effect above for why this is a deliberate
-    // exception to the no-setState-in-effect rule.
+    // Cross-note nav (backlinks click) wants preview→split so the
+    // user sees the line. Intra-note jumps (outline) keep the user's
+    // chosen mode — see preserveViewMode prop docstring.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (viewMode === "preview") setViewMode("split");
+    if (!preserveViewMode && viewMode === "preview") setViewMode("split");
     let cancelled = false;
     const t0 = Date.now();
     const tick = () => {
@@ -410,7 +418,7 @@ export function NoteView({
     return () => {
       cancelled = true;
     };
-  }, [pendingLine, note.data, viewMode, onPendingLineConsumed]);
+  }, [pendingLine, note.data, viewMode, onPendingLineConsumed, preserveViewMode]);
 
   // Flush pending edits for the previous note BEFORE remount.
   useEffect(() => {
