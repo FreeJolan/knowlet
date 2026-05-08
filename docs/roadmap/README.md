@@ -171,6 +171,9 @@ knowlet 阶段一的原子能力按 MCP 标准设计([ADR-0004](../decisions/000
 | **Tidy advisor**(M8.1 信号扩展:散落语义簇 / 超大文件夹 / 孤儿 note / dangling concept;ambient 提案)| ADR-0023 §8.2 / ADR-0024 §4 | Phase 3(随知识地图)|
 | **Reorg planner**(用户主动触发的整子树重排;5 条硬约束:plan-then-apply / auto-snapshot / 逆向 manifest / 必读 wiki_schema / scope 默认子文件夹)| ADR-0023 §8.3 / ADR-0024 §4 | Phase 3 之后 |
 | **AI-assist envelope 7 层架构**(per-action prompt 模板 + 静态/派生/任务三类层 + lazy loading + 7 个 AI role 边界)| ADR-0024 §3-4 | Phase 3(随所有 AI 入口重做)|
+| **GitHub-style 活跃度 heatmap**(用户每日 vault.events 聚合可视化;非导航,情感设备 / 隐性激励 — "本月活跃 X 天",**不显示 streak / 不报中断 / 无 push reminder**)| 2026-05-09 头脑风暴(Phase 2 D Slice 1 后) | Phase 2.5 或 Phase 3,**跟 events log 共生** |
+| **工作流(Workflow)**(快捷操作的"时间型 / 后台 / 多步链 / LLM-aware"升级版;复用 action runner;Phase 3 跟 mining task 重做合并;cron / dry-run / dead-letter / cost 透明)| ADR-0025 §"Phase 3 范围" | Phase 3(归约现 mining task)|
+| **per-folder default template**(任意文件夹挂默认模板,凡在该文件夹建 note 自动套)| 2026-05-09 头脑风暴 — quick action 已覆盖大部分,留作 dogfood 撞到再加的 backstop | dogfood 触发(Phase 2 D Slice 之后)|
 
 ### 🟢 等阶段切换(灰度 / 上线 / 阶段二 / 三)
 

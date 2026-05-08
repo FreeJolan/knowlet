@@ -20,6 +20,16 @@
 - [0012 — 笔记本位 / AI 是可选增强](./0012-notes-first-ai-optional.md)
 - [0013 — 知识管理契约 / 碎片化治理三层框架](./0013-knowledge-management-contract.md)
 - [0014 — 笔记考试模式 / Scope-driven 主动召回](./0014-note-quiz-mode.md)
+- [0015 — Hover quote / 选区引用 / 来源胶囊](./0015-hover-quote-and-source-citations.md)
+- [0016 — URL Capture · 浏览习惯 → 笔记入口](./0016-url-capture.md)
+- [0017 — Web Search 工具(LLM-callable)](./0017-web-search.md)
+- [0019 — Frontend stack:React 19 + Vite + TS + Tailwind + shadcn/ui](./0019-frontend-stack.md)
+- [0020 — Backend Python discipline:mypy strict + ruff strict + CI](./0020-backend-python-discipline.md)
+- [0021 — Knowledge-base-first roadmap(实施顺序)](./0021-knowledge-base-first-roadmap.md)
+- [0022 — 产品阶段:开发期 / 灰度期 / 上线期](./0022-product-lifecycle-phases.md)
+- [0023 — LLM Wiki 对比 + 吸纳 7 特性](./0023-llm-wiki-comparison-and-takeaways.md)
+- [0024 — AI 协助边界 + 系统 prompt 分层架构](./0024-ai-assist-envelope.md)
+- [0025 — 快捷操作 vs 工作流:两种叙事 + 共享 runner](./0025-quick-actions-and-workflows.md)
 
 历史 / 已不代表当前方向的 ADR 见 [`archive/`](./archive/)。
 
