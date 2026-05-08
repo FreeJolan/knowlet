@@ -234,6 +234,51 @@ try {
     assert(inputs === 0, "input dismissed");
   });
 
+  await runTest(
+    "tree rename of currently-open note: NoteView h1 updates immediately (regression)",
+    async () => {
+      // 2026-05-09 dogfood: renaming the open note via the file tree
+      // updated the tree row but NoT the right-pane <h1> until the
+      // user clicked away. Root cause: FileTree's renameNoteM only
+      // patched QK.tree, not QK.note(id) — NoteView's useQuery served
+      // the stale cached note. Fix: optimistic patch on both caches.
+      // Open lab/alpha first.
+      if (!(await hasRow(page, "alpha"))) {
+        await page.locator(".group").filter({ hasText: "lab" }).first().click();
+        await page.waitForTimeout(150);
+      }
+      await page.locator(".group").filter({ hasText: "alpha" }).first().click();
+      await page.waitForTimeout(300);
+      const titleH1 = page.locator('[data-testid="note-title"]').first();
+      await titleH1.waitFor({ state: "visible", timeout: 2000 });
+      const before = (await titleH1.textContent()) ?? "";
+      assert(/alpha/.test(before), `setup: h1 should show alpha, got "${before}"`);
+      // Rename via right-click → Rename.
+      await page.locator(".group").filter({ hasText: "alpha" }).first().click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Rename" }).click();
+      const input = page.locator('input[data-rename-input="true"]');
+      await input.waitFor({ state: "visible", timeout: 2000 });
+      await typeInto(page, input, "alpha-renamed-from-tree");
+      await page.keyboard.press("Enter");
+      // The NoteView h1 must reflect the new title within the next
+      // few frames — same render cycle as the optimistic patch, no
+      // refetch needed.
+      await page.waitForFunction(
+        () => {
+          const h1 = document.querySelector('[data-testid="note-title"]');
+          return h1 && /alpha-renamed-from-tree/.test(h1.textContent ?? "");
+        },
+        null,
+        { timeout: 1500, polling: 50 },
+      );
+      const after = (await titleH1.textContent()) ?? "";
+      assert(
+        /alpha-renamed-from-tree/.test(after),
+        `h1 must show new title without page click — got "${after}"`,
+      );
+    },
+  );
+
   if (env.errors.length > 0) {
     console.log("✗ no console errors");
     for (const e of env.errors) console.log("  ", e.type, e.text);

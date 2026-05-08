@@ -54,7 +54,7 @@ import {
 import { normalizeNoteTitle } from "@/lib/noteTitle";
 import { QK } from "@/lib/queryClient";
 
-import type { TreeFolder } from "@/api/types";
+import type { NoteFull, TreeFolder } from "@/api/types";
 
 import {
   injectPending,
@@ -195,27 +195,56 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
   const renameNoteM = useMutation({
     mutationFn: async ({ id, title }: { id: string; title: string }) => {
       const cur = await getNote(id);
-      return updateNote(id, { title, tags: cur.tags, body: cur.body });
+      return updateNote(id, {
+        title,
+        tags: cur.tags,
+        body: cur.body,
+        // Phase 1 D / D3: aliases is tri-state on the backend
+        // (None=preserve / []=clear / [..]=replace). Echo current so
+        // a tree-driven rename never wipes an aliases list the user
+        // edited via NoteView.
+        aliases: cur.aliases ?? [],
+      });
     },
-    // Optimistic update: write the new title into the tree query cache
-    // BEFORE the PUT round-trips. Otherwise arborist's submit() flips
-    // the row out of edit mode immediately, the row re-renders the
-    // <span> with the OLD cached title, the user sees "alpha" for
-    // ~100 ms, then the refetch replaces with "newname". User reads
-    // it as a flash of the old name.
+    // Optimistic update: write the new title into BOTH the tree query
+    // cache AND the per-note cache (QK.note(id)) BEFORE the PUT
+    // round-trips. Two reasons:
+    //   - arborist's submit() flips the row out of edit mode on Enter;
+    //     without the tree patch, the <span> re-renders the OLD cached
+    //     title for ~100 ms (user reads it as a flash).
+    //   - NoteView reads `useQuery(QK.note(id))`. If we don't patch
+    //     this cache, the open note's <h1> shows the OLD title until
+    //     the next refetch (2026-05-09 dogfood: "目录树改文件名时
+    //     内容区标题没实时刷新"). settled() invalidates both, but
+    //     until that fires the per-note cache returns stale data.
     onMutate: ({ id, title }) => {
       onMutating?.(true);
-      const previous = qc.getQueryData<TreeFolder>(QK.tree);
-      if (previous) {
+      const previousTree = qc.getQueryData<TreeFolder>(QK.tree);
+      if (previousTree) {
         qc.setQueryData<TreeFolder>(
           QK.tree,
-          applyToTree(previous, (root) => updateNoteInTree(root, id, { title })),
+          applyToTree(previousTree, (root) =>
+            updateNoteInTree(root, id, { title }),
+          ),
         );
       }
-      return { previous };
+      const previousNote = qc.getQueryData<NoteFull>(QK.note(id));
+      if (previousNote) {
+        qc.setQueryData<NoteFull>(QK.note(id), { ...previousNote, title });
+      }
+      return { previousTree, previousNote, id };
     },
     onError: (_err, _vars, ctx) => {
-      if (ctx?.previous) qc.setQueryData(QK.tree, ctx.previous);
+      if (ctx?.previousTree) qc.setQueryData(QK.tree, ctx.previousTree);
+      if (ctx?.previousNote && ctx?.id) {
+        qc.setQueryData(QK.note(ctx.id), ctx.previousNote);
+      }
+    },
+    onSuccess: (data, vars) => {
+      // PUT response is the canonical post-rename note; trust it over
+      // the optimistic patch (handles backend-side title normalization
+      // like trailing-`.md` strip).
+      qc.setQueryData(QK.note(vars.id), data);
     },
     onSettled: settled,
   });
