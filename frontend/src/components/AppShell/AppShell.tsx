@@ -12,10 +12,11 @@ import {
   Network,
   PanelRight,
   PanelRightOpen,
+  Plus,
   Settings as SettingsIcon,
   Trash2,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { getTree } from "@/api/client";
@@ -27,6 +28,7 @@ import { CommandPalette } from "@/components/Palette/CommandPalette";
 import { RightRail } from "@/components/RightRail/RightRail";
 import { SearchFocusMode } from "@/components/Search/SearchFocusMode";
 import { SettingsDialog } from "@/components/Settings/SettingsDialog";
+import { NewDocDialog } from "@/components/NewDoc/NewDocDialog";
 import { TabStrip } from "@/components/TabStrip/TabStrip";
 import { TagBrowser } from "@/components/TagBrowser/TagBrowser";
 import { TemplatesDialog } from "@/components/Templates/TemplatesDialog";
@@ -124,6 +126,11 @@ export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Phase 1 D slice 2 — global search focus mode (Cmd+Shift+F).
   const [searchFocusOpen, setSearchFocusOpen] = useState(false);
+  // Phase 2 D Slice 2 — 新建文档 dialog. `seedFolder` is the folder
+  // pre-selected when the dialog opens (current tree selection or the
+  // folder right-clicked from the tree's context menu).
+  const [newDocOpen, setNewDocOpen] = useState(false);
+  const [newDocSeedFolder, setNewDocSeedFolder] = useState<string>("");
   const [windowWidth, setWindowWidth] = useState(() =>
     typeof window === "undefined" ? 1400 : window.innerWidth,
   );
@@ -139,6 +146,12 @@ export function AppShell() {
   });
   useEffect(() => {
     if (!treeQuery.data) return;
+    // Don't prune while a refetch is in flight — a freshly-created
+    // note (NewDocDialog / Daily) lands in the tabs the same tick we
+    // invalidate QK.tree, but the cached `treeQuery.data` is still
+    // the pre-invalidation snapshot until the refetch completes. If
+    // we prune here we'd erroneously close the just-created tab.
+    if (treeQuery.isFetching) return;
     const valid = new Set<string>();
     const stack: TreeFolder[] = [treeQuery.data];
     while (stack.length) {
@@ -149,7 +162,38 @@ export function AppShell() {
     }
     const stale = tabsApi.tabs.filter((id) => !valid.has(id));
     for (const id of stale) tabsApi.closeTab(id);
-  }, [treeQuery.data, tabsApi]);
+  }, [treeQuery.data, treeQuery.isFetching, tabsApi]);
+
+  // Phase 2 D Slice 2 — seed folder for the New-doc dialog. Default
+  // is the folder of the currently-active note; if no note is open,
+  // fall back to vault root. Right-click on a folder in the tree
+  // overrides this via `setNewDocSeedFolder` before opening.
+  const activeNoteFolder = useMemo(() => {
+    if (!selectedNoteId || !treeQuery.data) return "";
+    const stack: { folder: TreeFolder; path: string }[] = [
+      { folder: treeQuery.data, path: "" },
+    ];
+    while (stack.length) {
+      const node = stack.pop();
+      if (!node) continue;
+      for (const n of node.folder.notes) {
+        if (n.id === selectedNoteId) return node.path;
+      }
+      for (const sub of node.folder.folders) {
+        const subPath = node.path ? `${node.path}/${sub.name}` : sub.name;
+        stack.push({ folder: sub, path: subPath });
+      }
+    }
+    return "";
+  }, [selectedNoteId, treeQuery.data]);
+
+  const openNewDocDialog = useCallback(
+    (seed?: string) => {
+      setNewDocSeedFolder(seed ?? activeNoteFolder);
+      setNewDocOpen(true);
+    },
+    [activeNoteFolder],
+  );
 
   // Look up the currently-selected note's title from the tree cache so
   // the Backlinks empty-state can render `[[Title]]` correctly. Tree is
@@ -288,20 +332,38 @@ export function AppShell() {
         e.preventDefault();
         void openTodayDaily();
       }
+      // Phase 2 D Slice 2 — Cmd+N opens the New-doc dialog. Seed folder
+      // = current active note's folder (or root if none).
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        (e.key === "n" || e.key === "N")
+      ) {
+        e.preventDefault();
+        openNewDocDialog();
+      }
     };
+    // Phase 2 D Slice 2 — NewDocDialog footer link dispatches this
+    // event when the user clicks "Templates → Settings / Templates".
+    // For Slice 2a we still surface the existing TemplatesDialog as
+    // the "manager" UI; Slice 2c will move it under Settings.
+    const openTemplates = () => setTemplatesOpen(true);
     window.addEventListener("knowlet:open-palette", openPalette);
     window.addEventListener("knowlet:open-trash", openTrash);
+    window.addEventListener("knowlet:open-templates", openTemplates);
     window.addEventListener("knowlet:open-wikilink", openWikilink);
     window.addEventListener("knowlet:open-tag", openTag);
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("knowlet:open-palette", openPalette);
       window.removeEventListener("knowlet:open-trash", openTrash);
+      window.removeEventListener("knowlet:open-templates", openTemplates);
       window.removeEventListener("knowlet:open-wikilink", openWikilink);
       window.removeEventListener("knowlet:open-tag", openTag);
       window.removeEventListener("keydown", onKey);
     };
-  }, [qc, selectedNoteId]);
+  }, [qc, selectedNoteId, openNewDocDialog]);
 
   return (
     <>
@@ -320,6 +382,37 @@ export function AppShell() {
             {t("app.title")}
           </div>
           <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => openNewDocDialog()}
+              data-testid="new-document-button"
+              className="inline-flex items-center gap-1.5"
+              style={{
+                background: "var(--accent-soft)",
+                color: "var(--accent-2)",
+                border: "1px solid var(--accent-tint-2)",
+                fontSize: 12,
+                fontWeight: 500,
+                height: 28,
+                padding: "0 10px",
+              }}
+              title={t("app.newDocument") + " (⌘N)"}
+            >
+              <Plus className="size-3.5" />
+              <span>{t("app.newDocument")}</span>
+              <span
+                className="ml-0.5 rounded-sm font-mono"
+                style={{
+                  fontSize: 10,
+                  color: "var(--ink-mute)",
+                  padding: "1px 5px",
+                  background: "var(--bg-1)",
+                }}
+              >
+                ⌘N
+              </span>
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -599,6 +692,17 @@ export function AppShell() {
         onClose={() => setSearchFocusOpen(false)}
         onOpenNote={(id) => {
           setSelectedNoteId(id);
+          setPendingHash(null);
+          setPendingLine(null);
+          setPendingPreserveMode(false);
+        }}
+      />
+      <NewDocDialog
+        open={newDocOpen}
+        onClose={() => setNewDocOpen(false)}
+        seedFolder={newDocSeedFolder}
+        onCreated={(note) => {
+          setSelectedNoteId(note.id);
           setPendingHash(null);
           setPendingLine(null);
           setPendingPreserveMode(false);

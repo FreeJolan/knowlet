@@ -6,7 +6,8 @@
     "templates": "模板",
     "graph": "图谱",
     "settings": "设置",
-    "daily": "今日笔记"
+    "daily": "今日笔记",
+    "newDocument": "新建文档"
   },
   "search": {
     "placeholder": "搜索所有笔记…",
@@ -30,6 +31,31 @@
       "system": "跟随系统",
       "systemHint": "当前系统偏好:{{resolved}}。"
     }
+  },
+  "newDoc": {
+    "title": "新建文档",
+    "close": "关闭",
+    "try": "试试",
+    "folderLabel": "位置",
+    "folderHint": "跟随树中选择",
+    "templateLabel": "模板",
+    "templateNone": "无 — 从空白开始",
+    "titleLabel": "标题",
+    "titleHint": "支持 {{date}} {{week}} {{month}}",
+    "titlePlaceholder": "未命名",
+    "previewLabel": "预览",
+    "saveAsAction": "保存为快捷操作",
+    "saveAsActionComingSoon": "下个版本上线 — 这次只创建文档。",
+    "manageTemplatesPrefix": "模板管理 →",
+    "manageTemplatesLink": "设置 / 模板",
+    "cancel": "取消",
+    "create": "创建",
+    "creating": "创建中…",
+    "defaultTitle": "未命名",
+    "conceptAction": "快捷操作",
+    "conceptFolder": "位置",
+    "conceptTemplate": "模板",
+    "conceptDoc": "文档"
   },
   "noteTags": {
     "add": "加 tag",

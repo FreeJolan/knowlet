@@ -6,7 +6,8 @@
     "templates": "Templates",
     "graph": "Graph",
     "settings": "Settings",
-    "daily": "Today's note"
+    "daily": "Today's note",
+    "newDocument": "New document"
   },
   "search": {
     "placeholder": "Search across all notes…",
@@ -42,6 +43,31 @@
     "untitled": "(untitled)",
     "tabFiles": "Files",
     "tabTags": "Tags"
+  },
+  "newDoc": {
+    "title": "New document",
+    "close": "Close",
+    "try": "Try",
+    "folderLabel": "Position",
+    "folderHint": "follows tree selection",
+    "templateLabel": "Template",
+    "templateNone": "None — start blank",
+    "titleLabel": "Title",
+    "titleHint": "supports {{date}} {{week}} {{month}}",
+    "titlePlaceholder": "Untitled",
+    "previewLabel": "Preview",
+    "saveAsAction": "Save as quick action",
+    "saveAsActionComingSoon": "Coming in the next slice — for now, just create the doc.",
+    "manageTemplatesPrefix": "Templates →",
+    "manageTemplatesLink": "Settings / Templates",
+    "cancel": "Cancel",
+    "create": "Create",
+    "creating": "Creating…",
+    "defaultTitle": "Untitled",
+    "conceptAction": "Quick action",
+    "conceptFolder": "position",
+    "conceptTemplate": "template",
+    "conceptDoc": "document"
   },
   "noteTags": {
     "add": "Add tag",
