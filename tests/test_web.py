@@ -1631,6 +1631,50 @@ def test_search_endpoint_clamps_top_k(tmp_path: Path):
         assert r.status_code == 200
 
 
+def test_search_dummy_backend_is_fts_only_no_noise(tmp_path: Path):
+    """Phase 1 D dogfood regression: with the dummy embedding backend,
+    vector search returned near-uniform cosine across the whole vault
+    so every note matched every query (noise). Search now skips the
+    vec leg when backend is dummy — only FTS-matching notes appear."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    n1 = Note(id=new_id(), title="A", body="contains the rare word fhqwhgads")
+    n2 = Note(id=new_id(), title="B", body="totally unrelated content")
+    n3 = Note(id=new_id(), title="C", body="more unrelated content")
+    for n in (n1, n2, n3):
+        v.write_note(n)
+        runtime.index.upsert_note(n, chunk_size=64, chunk_overlap=16)
+
+    r = client.get("/api/search", params={"q": "fhqwhgads"})
+    assert r.status_code == 200
+    titles = [h["title"] for h in r.json()["hits"]]
+    assert titles == ["A"], (
+        f"only the FTS-matching note should appear with dummy backend; got {titles}"
+    )
+
+
+def test_search_excludes_templates_folder(tmp_path: Path):
+    """`_templates/` notes are storage for the Templates dialog, not
+    user knowledge — they must not appear in search results even if
+    their placeholder text happens to match the query."""
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime_or_init()
+    real = Note(id=new_id(), title="Daily 2026-05-08", body="my real note about hello world")
+    tmpl = Note(id=new_id(), title="Hello template", body="hello {{title}}")
+    v.write_note(real)
+    v.write_note(tmpl, folder="_templates")
+    runtime.index.upsert_note(real, chunk_size=64, chunk_overlap=16)
+    runtime.index.upsert_note(tmpl, chunk_size=64, chunk_overlap=16)
+
+    r = client.get("/api/search", params={"q": "hello"})
+    assert r.status_code == 200
+    titles = [h["title"] for h in r.json()["hits"]]
+    assert "Daily 2026-05-08" in titles
+    assert "Hello template" not in titles, (
+        f"_templates/ notes must not appear in search; got {titles}"
+    )
+
+
 def test_graph_endpoint_basic(tmp_path: Path):
     """Phase 1 C slice 3 — `/api/graph` returns the user-authored bilink
     graph with degree counts, dangling links excluded."""

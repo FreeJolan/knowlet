@@ -1512,6 +1512,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     folder = runtime.vault.folder_of(Path(h.path))
                 except (TypeError, ValueError):
                     folder = ""
+            # Templates live under `_templates/` as a vault convention
+            # (per ADR / Phase 1 B slice 8) — they're storage for the
+            # Templates dialog, not user knowledge. Hide from the global
+            # search so they don't dilute results when the query happens
+            # to overlap a template's placeholder text.
+            if folder.startswith("_templates"):
+                continue
             out.append(
                 SearchHitRow(
                     note_id=h.note_id,

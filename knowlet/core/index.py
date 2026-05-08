@@ -394,7 +394,18 @@ class Index:
         conn = self.connect()
 
         fts_rows = self._search_fts(conn, query, limit=top_k * 4)
-        vec_rows = self._search_vec(conn, query, limit=top_k * 4)
+        # When the embedding backend is the deterministic-hash DummyBackend
+        # (test harness + first-run vaults without an API key / model),
+        # vector search returns near-uniform cosine across the entire vault
+        # — every note "matches" every query. Pure noise. Skip it; FTS
+        # alone gives precise keyword matches. Real backends (BGE / OpenAI /
+        # Ollama) keep the hybrid RRF behavior.
+        from knowlet.core.embedding import DummyBackend
+
+        if isinstance(self.embedding, DummyBackend):
+            vec_rows: list[tuple[int, float]] = []
+        else:
+            vec_rows = self._search_vec(conn, query, limit=top_k * 4)
 
         ranks: dict[int, float] = {}
         for rank, (chunk_id, _) in enumerate(fts_rows, start=1):
