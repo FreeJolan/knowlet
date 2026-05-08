@@ -8,7 +8,7 @@ Knowlet 按 Wedge 战略分阶段演进。能力同源、相互增强;叙事按�
 
 **产品阶段** = 开发期(per [ADR-0022](../decisions/0022-product-lifecycle-phases.md))。无外部用户,允许激进迭代。
 
-**项目状态** = **Phase 1 ABC 完成 + tag m1c**(2026-05-08)。下一步是 **Phase 1 D**(2026-05-08 dogfood 后追加,补 6 个 Obsidian-baseline UX 缺口)。详见 ADR-0019 / 0020 / 0021。
+**项目状态** = **Phase 1 ABCD 完成 + tag m1d**(2026-05-09)。Phase 1 ABC = 知识库基线;Phase 1 D = 6 项 Obsidian-baseline UX 缺口。下一步 = Phase 2(D + E,该有可推)或直接 Phase 3 AI 重做,看用户优先级。详见 ADR-0019 / 0020 / 0021 / 0022。
 
 - **前端**:Alpine 弃用,改 React 19 + Vite + TypeScript + shadcn/ui + AI SDK + CodeMirror 6 + react-arborist + Tanstack Query
 - **后端**:不重写,加 mypy strict + ruff + pre-commit + CI(per ADR-0020)
@@ -43,7 +43,7 @@ Phase 1   知识库基线 A + B + C(必备)                  4-5 周     ✅ 完
    A. File ops 跟齐 Obsidian:右键菜单 / 拖拽 / 重命名 / 移动 / 多选 / Trash UI / 文件夹创建 UI / 全文搜索
    B. 编辑器跟齐 Bear:CodeMirror 6 + Math (KaTeX) + Mermaid + 模板 + 块引用
    C. 知识连接:Wikilinks autocomplete + Backlinks + Graph view + Tag 浏览器
-Phase 1 D Obsidian-baseline UX 补齐(2026-05-08 dogfood 后追加)  2 周
+Phase 1 D Obsidian-baseline UX 补齐(2026-05-08 dogfood 后追加)        ✅ 完成 (m1d, 2026-05-09)
           dogfood 实测 Phase 1 ABC 完成后,对比 Obsidian 仍有 6 个用户每天会撞到的 baseline 缺口
    D1. 多 tab / 多窗格(最大项):tab strip 在 NoteView 之上,水平/垂直 split,pin / close / reorder, 状态持久化  ✅ Slice 4 基础版完成 (2026-05-09, 树点击/wikilink/搜索/backlinks 自动入 tab、✕ 关、localStorage、删除自动清;pin / 拖拽 / split panes 留 v2)
    D2. 全文搜索面板:消费已有 FTS5 + 向量后端,新 rail tab "Search" 或 ⌘⇧F focus mode,query + 结果列表 + snippet + 点击跳转 + 高亮  ✅ Slice 2 完成 (2026-05-08, focus mode + dummy/templates 噪音过滤 + 短查询 LIKE 兜底)
