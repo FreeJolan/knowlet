@@ -80,16 +80,46 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
   const [folderMenuOpen, setFolderMenuOpen] = useState(false);
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
 
-  // Reset the form whenever the dialog opens. Closing keeps state until
-  // next open so a brief mis-close + re-open doesn't lose typing.
+  // Reset the form ONLY on a closed→open transition. If we keyed off
+  // `seedFolder` changes too, the bubble-up effect (window event →
+  // AppShell sets seedFolder → reset fires → state cleared) would
+  // erase the user's just-clicked title/template. Use a ref to track
+  // the previous `open` value so the reset is gated on the actual
+  // edge.
+  const prevOpenRef = useRef<boolean>(false);
   useEffect(() => {
-    if (open) {
+    if (open && !prevOpenRef.current) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setFolder(seedFolder ?? "");
       setTemplateId(null);
       setTitleTemplate("");
     }
+    prevOpenRef.current = open;
   }, [open, seedFolder]);
+
+  // Phase 2 D Slice 2b — bubble folder changes via a window event
+  // for the tree's ghost selection to follow. Deferring via
+  // setTimeout(0) breaks the synchronous render chain that triggered
+  // a React #185 cascade with arborist's tree (the cycle was:
+  // openNewDocDialog setStates → dialog mounts → useState init runs
+  // → Reset effect "redundantly" sets folder → Folder-change effect
+  // dispatches synchronously → AppShell setNewDocSeedFolder → arborist
+  // re-renders during the same commit → schedule loop).
+  const lastDispatchedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!open) {
+      lastDispatchedRef.current = null;
+      return;
+    }
+    if (lastDispatchedRef.current === folder) return;
+    lastDispatchedRef.current = folder;
+    const handle = window.setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent("knowlet:new-doc-folder-change", { detail: folder }),
+      );
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, [folder, open]);
 
   const tree = useQuery<TreeFolder>({ queryKey: QK.tree, queryFn: getTree });
   const folders = useMemo(() => listFoldersFlat(tree.data), [tree.data]);

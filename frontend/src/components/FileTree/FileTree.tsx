@@ -124,9 +124,19 @@ export interface FileTreeProps {
   selectedNoteId: string | null;
   onSelectNote: (id: string) => void;
   onMutating?: (busy: boolean) => void;
+  /** Phase 2 D Slice 2b — when the New-doc dialog is open, this is
+   *  the folder path the dialog currently targets. The tree
+   *  highlights that folder + the path from root to it ("ghost
+   *  selection"). Empty / undefined = no highlight. */
+  ghostFolder?: string;
 }
 
-export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeProps) {
+export function FileTree({
+  selectedNoteId,
+  onSelectNote,
+  onMutating,
+  ghostFolder,
+}: FileTreeProps) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const treeRef = useRef<TreeApi<TreeNodeData> | null>(null);
@@ -556,6 +566,63 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
     return pendingCreate ? injectPending(base, pendingCreate) : base;
   }, [tree.data, pendingCreate]);
 
+  // Phase 2 D Slice 2b — auto-expand path on ghost-folder change is
+  // temporarily disabled while we investigate a React #185 cascade
+  // it triggers in combination with arborist's row re-renders.
+  // Without auto-expand, ghost highlight only appears if the user
+  // has the target folder already expanded. Slice 2c will revisit.
+
+  // Phase 2 D Slice 2b — compute "hot depths" per visible row when
+  // the New-doc dialog is open with a target folder. Hot depths form
+  // a continuous vertical line from root → target by lighting up each
+  // ancestor's column in every row that lives between the ancestor
+  // and the target (inclusive of target). See ADR-0025 + Claude
+  // Design 2026-05-09 v2.
+  const ghost = useMemo(() => {
+    const empty = {
+      hotMap: new Map<string, Set<number>>(),
+      targetId: null as string | null,
+    };
+    if (ghostFolder === undefined || ghostFolder === "") return empty;
+    const targetId = `folder:${ghostFolder}`;
+    // Flatten visible nodes in DFS order respecting openMap.
+    type Flat = { id: string; level: number };
+    const flat: Flat[] = [];
+    const visit = (nodes: TreeNodeData[], level: number) => {
+      for (const n of nodes) {
+        flat.push({ id: n.id, level });
+        const open = openMap[n.id] === undefined ? true : openMap[n.id];
+        if (open && n.children?.length) visit(n.children, level + 1);
+      }
+    };
+    visit(data, 0);
+    const tIdx = flat.findIndex((n) => n.id === targetId);
+    if (tIdx < 0) return { ...empty, targetId };
+    const target = flat[tIdx];
+    if (!target) return { ...empty, targetId };
+    const hotMap = new Map<string, Set<number>>();
+    for (let d = target.level - 1; d >= 0; d--) {
+      // Find ancestor at depth d (walk back from target).
+      let aIdx = -1;
+      for (let i = tIdx - 1; i >= 0; i--) {
+        const row = flat[i];
+        if (row && row.level === d) {
+          aIdx = i;
+          break;
+        }
+      }
+      if (aIdx < 0) continue;
+      // Mark rows (aIdx, tIdx] as hot at depth d.
+      for (let i = aIdx + 1; i <= tIdx; i++) {
+        const row = flat[i];
+        if (!row) continue;
+        if (!hotMap.has(row.id)) hotMap.set(row.id, new Set());
+        hotMap.get(row.id)!.add(d);
+      }
+    }
+    return { hotMap, targetId };
+  }, [data, openMap, ghostFolder]);
+
   if (tree.isLoading) {
     return <div className="p-4 text-sm text-muted-foreground">{t("tree.loading")}</div>;
   }
@@ -655,6 +722,8 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
                 openMap={openMap}
                 setOpenMap={setOpenMap}
                 onClickRow={setLastClickedId}
+                ghostHotDepths={ghost.hotMap.get(props.node.id) ?? EMPTY_SET}
+                isGhostTarget={ghost.targetId === props.node.id}
                 onCreateChildFolder={(parentPath) => startCreate("folder", parentPath)}
                 onCommitPending={commitPending}
                 onCancelPending={cancelPending}
@@ -714,7 +783,23 @@ interface RowProps extends NodeRendererProps<TreeNodeData> {
   onCancelPending: () => void;
   onDeleteFolder: (folderPath: string, name: string) => void;
   onDeleteNote: (noteId: string, name: string) => void;
+  /** Phase 2 D Slice 2b — depths whose indent guide should render
+   *  with the highlighted accent color (path from root to dialog
+   *  target folder). Empty set when dialog is closed. */
+  ghostHotDepths: Set<number>;
+  /** True when this row is the dialog's currently-selected target
+   *  folder. Adds a left-edge accent border + accent-tint bg. */
+  isGhostTarget: boolean;
 }
+
+/** Phase 2 D Slice 2b — passive indent guide + dialog-driven ghost
+ *  selection. `--line-soft` 1px guides per depth (always visible).
+ *  When the New-doc dialog is open, the path from root → target gets
+ *  `accent` 2px guides + the target row gets a ghost selection bg. */
+const INDENT = 14;
+const ROW_LEFT_PAD = 8;
+const HOT_GUIDE = "rgba(91,122,156,.55)";
+const EMPTY_SET: Set<number> = new Set();
 
 function Row({
   node,
@@ -728,6 +813,8 @@ function Row({
   onCancelPending,
   onDeleteFolder,
   onDeleteNote,
+  ghostHotDepths,
+  isGhostTarget,
 }: RowProps) {
   const { t } = useTranslation();
   const isPending =
@@ -757,24 +844,78 @@ function Row({
     } else node.activate();
   };
 
+  // Phase 2 D Slice 2b — indent guides + ghost selection chrome.
+  // Build N spans (one per ancestor depth). Highlighted depths use a
+  // 2 px accent-tint stroke; passive depths use a 1 px line-soft.
+  // The spans are absolutely-positioned within `rowBody` so they
+  // span the row's full height and tile vertically with adjacent rows
+  // to form continuous lines.
+  const indentGuides = (
+    <>
+      {Array.from({ length: node.level }).map((_, depth) => {
+        const hot = ghostHotDepths.has(depth);
+        return (
+          <span
+            key={`g-${depth}`}
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              left: ROW_LEFT_PAD + depth * INDENT + 7 - (hot ? 0.5 : 0),
+              top: 0,
+              bottom: 0,
+              width: hot ? 2 : 1,
+              background: hot ? HOT_GUIDE : "var(--line-soft)",
+              pointerEvents: "none",
+              transition: "background 0.14s, width 0.14s",
+            }}
+          />
+        );
+      })}
+    </>
+  );
+
   const rowBody = (
     <div
       ref={dragHandle}
-      style={style}
+      style={{ ...style, position: "relative" }}
+      data-ghost-target={isGhostTarget ? "1" : undefined}
       // pr-3 = 12 px right gutter so the inline-edit input's border /
       // ring doesn't kiss the panel's right edge (visually merging with
       // the resize handle when renaming).
       className="group flex h-full items-center pr-3 pl-1 select-none cursor-default"
     >
+      {indentGuides}
+      {/* Ghost-target left bar — sits at the row's far left, full height. */}
+      {isGhostTarget && (
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 2,
+            background: "var(--accent)",
+            pointerEvents: "none",
+          }}
+        />
+      )}
       <div
         onClick={handleClick}
         className={`flex h-[calc(100%-2px)] w-full items-center gap-2 rounded-md px-2 text-sm ${
           node.isEditing || isPending
             ? "" // Editing rows: input ring is the focus indicator; no row bg.
-            : node.isSelected
-              ? "bg-secondary text-foreground"
-              : "hover:bg-muted/60"
+            : isGhostTarget
+              ? "" // Ghost selection bg is set inline below.
+              : node.isSelected
+                ? "bg-secondary text-foreground"
+                : "hover:bg-muted/60"
         }`}
+        style={
+          isGhostTarget && !node.isEditing && !isPending
+            ? { background: "var(--accent-tint)" }
+            : undefined
+        }
       >
         {/* Chevron is purely visual — the row's onClick handles toggle.
             Empty folders get the spacer (no chevron) — Obsidian convention,
@@ -858,13 +999,21 @@ function Row({
         {isFolder && (
           <>
             <ContextMenuItem
-              onSelect={() =>
-                window.dispatchEvent(
-                  new CustomEvent("knowlet:open-new-doc", {
-                    detail: { seedFolder: node.data.folderPath },
-                  }),
-                )
-              }
+              onSelect={() => {
+                // Defer the dispatch by one microtask so Radix's
+                // menu-close + focus-restore sequence completes
+                // before the dialog mounts. Synchronous dispatch
+                // races with Radix's portal cleanup and the dialog
+                // ends up not visible in the resulting render.
+                const folderPath = node.data.folderPath;
+                setTimeout(() => {
+                  window.dispatchEvent(
+                    new CustomEvent("knowlet:open-new-doc", {
+                      detail: { seedFolder: folderPath },
+                    }),
+                  );
+                }, 0);
+              }}
             >
               {t("menu.newNoteInside")}
             </ContextMenuItem>

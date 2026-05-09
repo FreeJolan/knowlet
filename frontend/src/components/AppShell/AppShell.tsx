@@ -356,10 +356,19 @@ export function AppShell() {
       const detail = (e as CustomEvent<{ seedFolder?: string }>).detail;
       openNewDocDialog(detail?.seedFolder ?? "");
     };
+    // Phase 2 D Slice 2b — when user changes the folder field inside
+    // the dialog, sync the seed so FileTree's ghost selection follows.
+    // We use a window event (not a prop callback) to break the
+    // render cycle that triggered React #185 — see NewDocDialog.tsx.
+    const onFolderChange = (e: Event) => {
+      const folder = (e as CustomEvent<string>).detail ?? "";
+      setNewDocSeedFolder(folder);
+    };
     window.addEventListener("knowlet:open-palette", openPalette);
     window.addEventListener("knowlet:open-trash", openTrash);
     window.addEventListener("knowlet:open-templates", openTemplates);
     window.addEventListener("knowlet:open-new-doc", openNewDoc);
+    window.addEventListener("knowlet:new-doc-folder-change", onFolderChange);
     window.addEventListener("knowlet:open-wikilink", openWikilink);
     window.addEventListener("knowlet:open-tag", openTag);
     window.addEventListener("keydown", onKey);
@@ -368,6 +377,10 @@ export function AppShell() {
       window.removeEventListener("knowlet:open-trash", openTrash);
       window.removeEventListener("knowlet:open-templates", openTemplates);
       window.removeEventListener("knowlet:open-new-doc", openNewDoc);
+      window.removeEventListener(
+        "knowlet:new-doc-folder-change",
+        onFolderChange,
+      );
       window.removeEventListener("knowlet:open-wikilink", openWikilink);
       window.removeEventListener("knowlet:open-tag", openTag);
       window.removeEventListener("keydown", onKey);
@@ -531,6 +544,7 @@ export function AppShell() {
                         setPendingPreserveMode(false);
                       }}
                       onMutating={setTreeBusy}
+                      ghostFolder={newDocOpen ? newDocSeedFolder : undefined}
                     />
                   ) : (
                     <TagBrowser

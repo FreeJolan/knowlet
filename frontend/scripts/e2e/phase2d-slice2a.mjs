@@ -54,7 +54,7 @@ try {
   await runTest("Right-click folder → New note inside opens dialog with seed", async () => {
     // Close any open dialog first.
     await page.keyboard.press("Escape").catch(() => {});
-    await page.waitForTimeout(150);
+    await page.waitForTimeout(500);
     // Right-click projects/ai folder.
     await page
       .locator('[role="treeitem"]', { hasText: /^ai$/ })
@@ -76,7 +76,7 @@ try {
 
   await runTest("Tree [+ Note] Shift+click keeps legacy inline path", async () => {
     await page.keyboard.press("Escape").catch(() => {});
-    await page.waitForTimeout(150);
+    await page.waitForTimeout(500);
     // Modifier-click via Playwright.
     await page.locator('button[aria-label="New note"]').click({
       modifiers: ["Shift"],
@@ -103,7 +103,7 @@ try {
       .locator('[data-testid="new-document-dialog"]')
       .waitFor({ state: "visible", timeout: 2000 });
     await page.locator('[data-testid="inspiration-weekly"]').click();
-    await page.waitForTimeout(150);
+    await page.waitForTimeout(500);
     const folder = await page
       .locator('[data-testid="dialog-folder-picker"]')
       .innerText();
@@ -128,6 +128,9 @@ try {
   });
 
   await runTest("Cmd+N seeds folder = active note's folder", async () => {
+    // Wait extra for any lingering Radix dialog overlay animation
+    // before interacting with the tree.
+    await page.waitForTimeout(400);
     // Open alpha (lives in projects/ai).
     await page
       .locator('[role="treeitem"]', { hasText: "alpha" })
@@ -163,7 +166,7 @@ try {
           '[data-testid="dialog-folder-option"][data-folder="personal"]',
         )
         .click();
-      await page.waitForTimeout(150);
+      await page.waitForTimeout(500);
       // Type title with placeholder.
       const titleInput = page.locator('[data-testid="new-document-title"]');
       await titleInput.click();
