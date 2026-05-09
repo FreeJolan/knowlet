@@ -30,6 +30,11 @@ export interface PaletteCommand {
   /** Search keywords appended to the cmdk match value. */
   keywords?: string[];
   run: () => void | Promise<void>;
+  /** Whether the palette should close itself after `run()` returns.
+   *  Default: true. Quick actions set this to false because their
+   *  React Query mutation handles close-on-success itself (so we
+   *  don't double-close before the note opens). */
+  closeAfterRun?: boolean;
 }
 
 export interface BuildBuiltinsArgs {

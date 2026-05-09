@@ -142,6 +142,14 @@ try {
       before !== after,
       `theme preference should advance — was "${before}", now "${after}"`,
     );
+    // Regression for 2026-05-10 bug — built-in commands must close
+    // the palette themselves; only quick actions opt out (their
+    // mutation handles close after the note opens).
+    const stillOpen = await page
+      .locator('[data-testid="palette-input"]')
+      .isVisible()
+      .catch(() => false);
+    assert(!stillOpen, "palette must close after running a built-in command");
   });
 
   await runTest("Quick action runs from commands mode (creates today's note)", async () => {

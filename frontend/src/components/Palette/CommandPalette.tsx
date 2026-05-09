@@ -155,6 +155,9 @@ export function CommandPalette({
         description: a.description ?? undefined,
         shortcut: a.shortcut ?? undefined,
         keywords: ["action", "quick", "快捷", "操作"],
+        // Mutation onSuccess handles close (after the note opens).
+        // We must NOT close here, or selectedNoteId never updates.
+        closeAfterRun: false,
         run: () => runMutation.mutate(a.id),
       })) ?? [];
     return [...actionRows, ...builtinCommands];
@@ -183,10 +186,13 @@ export function CommandPalette({
           }
           shouldFilter={true}
         >
-          {/* Mode banner — shown only in commands mode so power users
-              know they're in a different surface (and how to leave).
-              Files mode is the "default" state, no banner needed. */}
-          {mode === "commands" && (
+          {/* Mode banner — rendered in BOTH modes for layout stability.
+              Files mode shows a non-interactive hint about the > prefix
+              (also serves as discovery for the alternate mode). Commands
+              mode shows a clickable pill that returns to files. Same
+              vertical footprint either way, so switching modes doesn't
+              shift the input position vertically. */}
+          {mode === "commands" ? (
             <button
               type="button"
               onClick={() => setMode("files")}
@@ -200,6 +206,17 @@ export function CommandPalette({
                 {t("palette.backspaceHint")}
               </span>
             </button>
+          ) : (
+            <div
+              className="flex items-center gap-1 px-3 pt-2 font-mono text-[11px] text-muted-foreground/60"
+              data-testid="palette-mode-hint"
+            >
+              <ChevronRight className="size-3 opacity-40" />
+              <span>{t("palette.filesLabel")}</span>
+              <span className="ml-1 text-[10px] opacity-70">
+                {t("palette.commandsHint")}
+              </span>
+            </div>
           )}
           <CommandInput
             data-testid="palette-input"
@@ -232,7 +249,14 @@ export function CommandPalette({
                       value={`${c.name} ${c.description ?? ""} ${
                         c.shortcut ?? ""
                       } ${(c.keywords ?? []).join(" ")}`}
-                      onSelect={() => void c.run()}
+                      onSelect={() => {
+                        void c.run();
+                        // Default: close after run. Async commands
+                        // (quick actions) opt out via closeAfterRun:
+                        // false so their mutation can close after the
+                        // note opens.
+                        if (c.closeAfterRun !== false) onClose();
+                      }}
                       data-testid={
                         isAction ? "palette-action-item" : "palette-command-item"
                       }
