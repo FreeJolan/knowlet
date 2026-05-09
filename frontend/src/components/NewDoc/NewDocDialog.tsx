@@ -311,7 +311,6 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
                 setFolder(f);
                 setFolderMenuOpen(false);
               }}
-              hint={t("newDoc.folderHint")}
             />
           </Field>
 
@@ -576,14 +575,12 @@ function FolderPickerButton({
   open,
   onToggle,
   onSelect,
-  hint,
 }: {
   folder: string;
   folders: string[];
   open: boolean;
   onToggle: () => void;
   onSelect: (f: string) => void;
-  hint: string;
 }) {
   const segs = folder ? folder.split("/") : ["root"];
   return (
@@ -625,16 +622,6 @@ function FolderPickerButton({
           ))}
         </span>
         <span className="flex-1" />
-        <span
-          className="italic"
-          style={{
-            fontSize: 10,
-            color: "var(--ink-mute)",
-            fontFamily: "var(--font-sans)",
-          }}
-        >
-          {hint}
-        </span>
         <ChevronDown size={11} />
       </button>
       {open ? (
