@@ -31,14 +31,14 @@ const env = await setupTestEnv({
 const { page, baseURL, teardown } = env;
 
 async function gotoTags() {
-  await page.locator('[data-testid="left-tab-files"]').click();
+  await page.locator('[data-testid="activity-bar-notes"]').click();
   await page.waitForTimeout(150);
-  await page.locator('[data-testid="left-tab-tags"]').click();
+  await page.locator('[data-testid="activity-bar-tags"]').click();
   await page.waitForTimeout(300);
 }
 
 async function clickFileTreeNote(title) {
-  await page.locator('[data-testid="left-tab-files"]').click();
+  await page.locator('[data-testid="activity-bar-notes"]').click();
   await page.waitForTimeout(150);
   const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const row = page
@@ -54,15 +54,15 @@ try {
   await page.waitForTimeout(500);
 
   await runTest("Files tab is active by default; Tags tab visible", async () => {
-    const tagsTab = page.locator('[data-testid="left-tab-tags"]');
+    const tagsTab = page.locator('[data-testid="activity-bar-tags"]');
     await tagsTab.waitFor({ state: "visible", timeout: 3000 });
-    const filesTab = page.locator('[data-testid="left-tab-files"]');
+    const filesTab = page.locator('[data-testid="activity-bar-notes"]');
     const filesPressed = await filesTab.getAttribute("aria-pressed");
     assert(filesPressed === "true", `files tab should be active by default (got ${filesPressed})`);
   });
 
   await runTest("Tags tree renders top-level tags", async () => {
-    await page.locator('[data-testid="left-tab-tags"]').click();
+    await page.locator('[data-testid="activity-bar-tags"]').click();
     await page.waitForTimeout(500);
     // Top-level tags: design (3), shared (2), topic-x (2), topic-y (1).
     // (`design/ui` is nested so it doesn't show until parent expands.)
@@ -145,7 +145,7 @@ try {
   });
 
   await runTest("Files tab returns the file tree intact", async () => {
-    await page.locator('[data-testid="left-tab-files"]').click();
+    await page.locator('[data-testid="activity-bar-notes"]').click();
     await page.waitForTimeout(300);
     const row = page
       .locator(".group")
@@ -182,7 +182,7 @@ try {
     const after = await strip.locator('[data-testid="tag-chip"]').count();
     assert(after === 1, `tag should be added — strip has ${after} chips`);
     // Tags tree should now include the new tag.
-    await page.locator('[data-testid="left-tab-tags"]').click();
+    await page.locator('[data-testid="activity-bar-tags"]').click();
     await page.waitForTimeout(500);
     const newRow = page.locator('[data-testid="tag-row"][data-tag="freshly-added"]');
     await newRow.waitFor({ state: "visible", timeout: 3000 });
@@ -202,7 +202,7 @@ try {
       .count();
     assert(stillThere === 0, "shared chip should be removed from strip");
     // Note C still has #shared, so the row remains in the tree.
-    await page.locator('[data-testid="left-tab-tags"]').click();
+    await page.locator('[data-testid="activity-bar-tags"]').click();
     await page.waitForTimeout(500);
     const sharedRow = page.locator('[data-testid="tag-row"][data-tag="shared"]');
     const sharedCount = await sharedRow.count();

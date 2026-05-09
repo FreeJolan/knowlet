@@ -15,7 +15,7 @@ async function checkLanguage(language, expectedHeading, expectedMenuItem) {
 
     await runTest(`heading reads ${JSON.stringify(expectedHeading)} for ${language}`, async () => {
       const heading = (
-        await page.locator("header + div span").first().textContent()
+        await page.locator('[data-testid="file-tree-heading"]').first().textContent()
       )?.trim();
       if (heading !== expectedHeading) {
         throw new Error(`expected ${expectedHeading}, got ${heading}`);

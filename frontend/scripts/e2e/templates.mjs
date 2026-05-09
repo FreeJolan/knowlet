@@ -62,7 +62,7 @@ try {
 
   await runTest("Templates tab exists in left rail next to Files / Tags", async () => {
     await page
-      .locator('[data-testid="left-tab-templates"]')
+      .locator('[data-testid="activity-bar-templates"]')
       .waitFor({ state: "visible", timeout: 3000 });
   });
 
@@ -83,7 +83,7 @@ try {
   });
 
   await runTest("Templates tab shows _templates/ contents as the visible tree", async () => {
-    await page.locator('[data-testid="left-tab-templates"]').click();
+    await page.locator('[data-testid="activity-bar-templates"]').click();
     await page.waitForTimeout(300);
     // Seeded vault has 2 templates: daily + meeting. Both should be
     // visible at the top level of the templates view.
@@ -114,7 +114,7 @@ try {
   });
 
   await runTest("'+ Note' in Templates tab creates a template under _templates/", async () => {
-    await page.locator('[data-testid="left-tab-templates"]').click();
+    await page.locator('[data-testid="activity-bar-templates"]').click();
     await page.waitForTimeout(200);
     // Use Shift+click to enter inline create (per Slice 2 — plain
     // click opens NewDocDialog, which doesn't apply for templates
@@ -136,7 +136,7 @@ try {
 
   await runTest("`/` slash command inserts template body at cursor", async () => {
     // Switch back to Files tab — previous tests left us on Templates.
-    await page.locator('[data-testid="left-tab-files"]').click();
+    await page.locator('[data-testid="activity-bar-notes"]').click();
     await page.waitForTimeout(200);
     // Open a regular note ("reading"), put cursor at end, type `/`,
     // pick "daily" — body should land in the editor with placeholders
@@ -208,7 +208,7 @@ try {
     // duplicate row in the tree).
     // Make sure we're in Files tab — duplicate-check is per-folder; we
     // want to collide with "reading" which lives at vault root.
-    await page.locator('[data-testid="left-tab-files"]').click();
+    await page.locator('[data-testid="activity-bar-notes"]').click();
     await page.waitForTimeout(200);
     const dialogs = [];
     page.on("dialog", (d) => {

@@ -8,10 +8,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarDays,
+  FileText,
+  LayoutTemplate,
   Network,
   PanelRight,
   PanelRightOpen,
   Settings as SettingsIcon,
+  Tag as TagIcon,
   Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -344,6 +347,20 @@ export function AppShell() {
         e.preventDefault();
         openNewDocDialog();
       }
+      // Phase 2 D Slice 2c.2-A' — Cmd+1/2/3 switch the activity bar
+      // view directly (笔记 / 标签 / 模板). Skip when modifier
+      // combinations would conflict (Shift / Alt held — those are
+      // for power-user shortcuts that may bind 1/2/3 themselves).
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        (e.key === "1" || e.key === "2" || e.key === "3")
+      ) {
+        e.preventDefault();
+        const map = { "1": "files", "2": "tags", "3": "templates" } as const;
+        setLeftTab(map[e.key as "1" | "2" | "3"]);
+      }
     };
     // Phase 2 D Slice 2c.2 — NewDocDialog footer link dispatches this
     // event. Templates manage now lives in the Templates tab (left
@@ -478,77 +495,20 @@ export function AppShell() {
               minSize={sidebarSizes.minSize}
               maxSize={MAX_SIDEBAR_PERCENT}
             >
-              <div className="flex h-full min-h-0 flex-col">
-                <div
-                  className="flex shrink-0 border-b"
-                  style={{
-                    borderColor: "var(--line)",
-                    background: "var(--panel)",
-                  }}
-                  data-testid="left-tabs"
-                >
-                  <button
-                    type="button"
-                    onClick={() => setLeftTab("files")}
-                    aria-pressed={leftTab === "files"}
-                    data-testid="left-tab-files"
-                    className="flex-1 px-3 py-1.5 text-xs transition-colors"
-                    style={{
-                      color:
-                        leftTab === "files"
-                          ? "var(--ink)"
-                          : "var(--ink-mute)",
-                      fontWeight: leftTab === "files" ? 500 : 400,
-                      borderBottom:
-                        leftTab === "files"
-                          ? "2px solid var(--accent, #5b7a9c)"
-                          : "2px solid transparent",
-                    }}
-                  >
-                    {t("tree.tabFiles")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLeftTab("tags")}
-                    aria-pressed={leftTab === "tags"}
-                    data-testid="left-tab-tags"
-                    className="flex-1 px-3 py-1.5 text-xs transition-colors"
-                    style={{
-                      color:
-                        leftTab === "tags"
-                          ? "var(--ink)"
-                          : "var(--ink-mute)",
-                      fontWeight: leftTab === "tags" ? 500 : 400,
-                      borderBottom:
-                        leftTab === "tags"
-                          ? "2px solid var(--accent, #5b7a9c)"
-                          : "2px solid transparent",
-                    }}
-                  >
-                    {t("tree.tabTags")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLeftTab("templates")}
-                    aria-pressed={leftTab === "templates"}
-                    data-testid="left-tab-templates"
-                    className="flex-1 px-3 py-1.5 text-xs transition-colors"
-                    style={{
-                      color:
-                        leftTab === "templates"
-                          ? "var(--ink)"
-                          : "var(--ink-mute)",
-                      fontWeight: leftTab === "templates" ? 500 : 400,
-                      borderBottom:
-                        leftTab === "templates"
-                          ? "2px solid var(--accent, #5b7a9c)"
-                          : "2px solid transparent",
-                    }}
-                  >
-                    {t("tree.tabTemplates")}
-                  </button>
-                </div>
-                <div className="min-h-0 flex-1">
+              <div className="flex h-full min-h-0">
+                {/* Activity bar — vertical icon strip (VS Code style).
+                 *  Replaces the horizontal tab row that was eating
+                 *  ~30px of vertical room. Icons-only with hover
+                 *  tooltips; selected view's icon gets accent left
+                 *  border + accent-tint bg. ⌘1/2/3 keyboard direct.
+                 *  Per 2026-05-10 design discussion: scales better as
+                 *  more views land (Pinned / Search / Knowledge Map). */}
+                <ActivityBar
+                  active={leftTab}
+                  onSelect={setLeftTab}
+                  t={t}
+                />
+                <div className="flex min-h-0 flex-1 flex-col">
                   {leftTab === "files" ? (
                     <FileTree
                       selectedNoteId={selectedNoteId}
@@ -571,10 +531,6 @@ export function AppShell() {
                         setPendingPreserveMode(false);
                       }}
                       onMutating={setTreeBusy}
-                      // Pin tree to the `_templates/` subfolder. New
-                      // notes / folders created here land under
-                      // `_templates/`. NoteView edits these like any
-                      // note via the same QK.note(id) path.
                       rootFolderPath="_templates"
                     />
                   ) : (
@@ -719,5 +675,98 @@ export function AppShell() {
         }}
       />
     </>
+  );
+}
+
+/** Phase 2 D Slice 2c.2-A' — VS Code-style activity bar.
+ *
+ *  3 icons (笔记 / 标签 / 模板) at 40px width. Selected gets
+ *  `--accent-tint` background + 2px accent left bar. Tooltip via
+ *  `title` attribute carries the i18n name + ⌘<n> shortcut hint.
+ */
+function ActivityBar({
+  active,
+  onSelect,
+  t,
+}: {
+  active: "files" | "tags" | "templates";
+  onSelect: (v: "files" | "tags" | "templates") => void;
+  t: (key: string) => string;
+}) {
+  const items: {
+    key: "files" | "tags" | "templates";
+    icon: typeof FileText;
+    label: string;
+    shortcut: string;
+    testid: string;
+  }[] = [
+    {
+      key: "files",
+      icon: FileText,
+      label: t("tree.tabNotes"),
+      shortcut: "⌘1",
+      testid: "activity-bar-notes",
+    },
+    {
+      key: "tags",
+      icon: TagIcon,
+      label: t("tree.tabTags"),
+      shortcut: "⌘2",
+      testid: "activity-bar-tags",
+    },
+    {
+      key: "templates",
+      icon: LayoutTemplate,
+      label: t("tree.tabTemplates"),
+      shortcut: "⌘3",
+      testid: "activity-bar-templates",
+    },
+  ];
+  return (
+    <div
+      data-testid="activity-bar"
+      className="flex shrink-0 flex-col items-center gap-1 py-2"
+      style={{
+        width: 40,
+        borderRight: "1px solid var(--line)",
+        background: "var(--bg-1)",
+      }}
+    >
+      {items.map(({ key, icon: Icon, label, shortcut, testid }) => {
+        const isActive = active === key;
+        return (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onSelect(key)}
+            aria-pressed={isActive}
+            aria-label={label}
+            title={`${label} (${shortcut})`}
+            data-testid={testid}
+            className="relative flex size-7 items-center justify-center rounded-md transition-colors hover:text-[color:var(--ink)]"
+            style={{
+              color: isActive ? "var(--accent-2)" : "var(--ink-mute)",
+              background: isActive ? "var(--accent-tint)" : "transparent",
+            }}
+          >
+            {isActive && (
+              <span
+                aria-hidden="true"
+                className="absolute"
+                style={{
+                  left: -8,
+                  top: 4,
+                  bottom: 4,
+                  width: 2,
+                  background: "var(--accent)",
+                  borderRadius: 1,
+                }}
+              />
+            )}
+            <Icon className="size-4" />
+          </button>
+        );
+      })}
+    </div>
   );
 }

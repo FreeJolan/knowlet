@@ -100,7 +100,7 @@
     "retry": "重试",
     "empty": "笔记库为空。点上方按钮新建笔记或文件夹。",
     "untitled": "(无标题)",
-    "tabFiles": "文件",
+    "tabNotes": "笔记",
     "tabTags": "标签",
     "tabTemplates": "模板",
     "templatesEmptyHint": "还没有模板。点上方 + 新建一个 —— 模板就是用来作为新文档骨架的笔记。",

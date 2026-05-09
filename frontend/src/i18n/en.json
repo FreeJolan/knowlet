@@ -41,7 +41,7 @@
     "retry": "Retry",
     "empty": "Empty vault. Use the buttons above to create a note or folder.",
     "untitled": "(untitled)",
-    "tabFiles": "Files",
+    "tabNotes": "Notes",
     "tabTags": "Tags",
     "tabTemplates": "Templates",
     "templatesEmptyHint": "No templates yet. Use the + above to create one — they're notes used as scaffolds for new documents.",

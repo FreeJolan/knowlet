@@ -670,8 +670,13 @@ export function FileTree({
         className="flex shrink-0 items-center justify-between border-b py-1.5 pr-1 pl-3"
         style={{ borderColor: "var(--line)" }}
       >
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-foreground/80">
-          {t("tree.vault")}
+        <span
+          data-testid="file-tree-heading"
+          className="text-[11px] font-semibold uppercase tracking-wide text-foreground/80"
+        >
+          {rootFolderPath === "_templates"
+            ? t("tree.tabTemplates")
+            : t("tree.vault")}
         </span>
         <div className="flex items-center gap-0.5">
           <Button
