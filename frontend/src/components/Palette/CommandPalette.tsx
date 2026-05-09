@@ -170,7 +170,13 @@ export function CommandPalette({
         if (!o) onClose();
       }}
     >
-      <DialogContent className="gap-0 p-0 sm:max-w-3xl">
+      <DialogContent
+        // Top-align the dialog (override the default centering) so
+        // changes to the list height — typing a query, switching modes,
+        // anything that drops or adds rows — don't bounce the input
+        // vertically. VS Code's palette uses the same trick.
+        className="top-[12vh] translate-y-0 gap-0 p-0 sm:max-w-3xl"
+      >
         <DialogHeader className="sr-only">
           <DialogTitle>
             {mode === "commands"
