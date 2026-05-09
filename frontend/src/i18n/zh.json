@@ -46,9 +46,7 @@
     "editorTitleNew": "新建快捷操作",
     "editorTitleEdit": "编辑快捷操作",
     "editorSaveNew": "创建",
-    "editorSaveEdit": "保存",
-    "contentTemplateLabel": "模板 id",
-    "contentTemplateHint": "可选模板笔记 id"
+    "editorSaveEdit": "保存"
   },
   "newDoc": {
     "title": "新建文档",

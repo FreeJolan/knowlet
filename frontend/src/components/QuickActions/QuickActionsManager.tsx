@@ -19,7 +19,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Trash2, Zap } from "lucide-react";
+import { ChevronDown, Pencil, Plus, Trash2, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -27,9 +27,11 @@ import {
   createQuickAction,
   deleteQuickAction,
   listQuickActions,
+  listTemplates,
   runQuickAction,
   updateQuickAction,
 } from "@/api/client";
+import type { TemplateSummary } from "@/api/client";
 import type { NoteFull, QuickAction, QuickActionPayload } from "@/api/types";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { imeSafeKeyHandler } from "@/lib/imeSafe";
@@ -92,6 +94,7 @@ export function QuickActionsManager({ open, onClose, onRan }: ManagerProps) {
     >
       <DialogContent
         data-testid="quick-actions-manager"
+        showCloseButton={false}
         className="p-0"
         style={{
           width: 640,
@@ -316,6 +319,13 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
   const [shortcut, setShortcut] = useState(initial?.shortcut ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
 
+  const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const templates = useQuery<TemplateSummary[]>({
+    queryKey: QK.templates,
+    queryFn: listTemplates,
+    staleTime: 30_000,
+  });
+
   const createMut = useMutation({
     mutationFn: (payload: QuickActionPayload) => createQuickAction(payload),
     onSuccess: () => {
@@ -358,6 +368,7 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
     <Dialog open={true} onOpenChange={(v) => (v ? null : onClose())}>
       <DialogContent
         data-testid="quick-actions-editor"
+        showCloseButton={false}
         className="p-0"
         style={{
           width: 520,
@@ -460,26 +471,17 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
             className="grid gap-3"
             style={{ gridTemplateColumns: "1fr 130px" }}
           >
-            <Field
-              label={t("quickActions.contentTemplateLabel")}
-              hint={t("quickActions.contentTemplateHint")}
-            >
-              <input
-                type="text"
-                value={contentTemplateId}
-                placeholder=""
-                onChange={(e) => setContentTemplateId(e.target.value)}
-                data-testid="editor-content-template"
-                className="font-mono outline-none"
-                style={{
-                  height: 30,
-                  border: "1px solid var(--line)",
-                  borderRadius: 5,
-                  background: "var(--card)",
-                  padding: "0 10px",
-                  fontSize: 12,
-                  color: "var(--ink-soft)",
+            <Field label={t("newDoc.templateLabel")}>
+              <TemplatePicker
+                templates={templates.data ?? []}
+                value={contentTemplateId || null}
+                open={templateMenuOpen}
+                onToggle={() => setTemplateMenuOpen((v) => !v)}
+                onSelect={(id) => {
+                  setContentTemplateId(id ?? "");
+                  setTemplateMenuOpen(false);
                 }}
+                placeholder={t("newDoc.templateNone")}
               />
             </Field>
             <Field label={t("newDoc.actionShortcutLabel")}>
@@ -569,6 +571,109 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Template picker — same UX as NewDocDialog's so users get the same
+ *  affordance (pick by title, never expose ULIDs). 2026-05-10 dogfood
+ *  fix: previous text input "模板 ID 可选模板笔记 id" leaked the
+ *  internal id concept; user can't memorize ULIDs. */
+function TemplatePicker({
+  templates,
+  value,
+  open,
+  onToggle,
+  onSelect,
+  placeholder,
+}: {
+  templates: TemplateSummary[];
+  value: string | null;
+  open: boolean;
+  onToggle: () => void;
+  onSelect: (id: string | null) => void;
+  placeholder: string;
+}) {
+  const current = templates.find((t) => t.id === value);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        data-testid="editor-template-picker"
+        className="flex w-full items-center gap-2"
+        style={{
+          height: 30,
+          border: "1px solid var(--line)",
+          borderRadius: 5,
+          background: "var(--card)",
+          padding: "0 10px",
+          fontSize: 12.5,
+        }}
+      >
+        {current ? (
+          <span style={{ color: "var(--ink)" }}>{current.title}</span>
+        ) : (
+          <span className="italic" style={{ color: "var(--ink-mute)" }}>
+            {placeholder}
+          </span>
+        )}
+        <span className="flex-1" />
+        <ChevronDown size={11} style={{ color: "var(--ink-mute)" }} />
+      </button>
+      {open ? (
+        <ul
+          data-testid="editor-template-menu"
+          className="absolute z-50 mt-1 max-h-56 overflow-y-auto"
+          style={{
+            left: 0,
+            right: 0,
+            background: "var(--card)",
+            border: "1px solid var(--line)",
+            borderRadius: 5,
+            boxShadow: "0 8px 22px rgba(40,30,20,.18)",
+          }}
+        >
+          <li>
+            <button
+              type="button"
+              onClick={() => onSelect(null)}
+              data-testid="editor-template-option"
+              data-template-id=""
+              className="flex w-full items-center px-3 py-1.5 italic hover:bg-accent/30"
+              style={{
+                fontSize: 12,
+                color: value === null ? "var(--accent-2)" : "var(--ink-mute)",
+                background:
+                  value === null ? "var(--accent-tint)" : "transparent",
+                textAlign: "left",
+              }}
+            >
+              {placeholder}
+            </button>
+          </li>
+          {templates.map((tpl) => (
+            <li key={tpl.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(tpl.id)}
+                data-testid="editor-template-option"
+                data-template-id={tpl.id}
+                className="flex w-full items-center px-3 py-1.5 hover:bg-accent/30"
+                style={{
+                  fontSize: 12,
+                  color: tpl.id === value ? "var(--accent-2)" : "var(--ink)",
+                  background:
+                    tpl.id === value ? "var(--accent-tint)" : "transparent",
+                  textAlign: "left",
+                }}
+              >
+                {tpl.title}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 

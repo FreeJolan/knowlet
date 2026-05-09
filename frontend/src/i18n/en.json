@@ -61,9 +61,7 @@
     "editorTitleNew": "New quick action",
     "editorTitleEdit": "Edit quick action",
     "editorSaveNew": "Create",
-    "editorSaveEdit": "Save",
-    "contentTemplateLabel": "Template id",
-    "contentTemplateHint": "optional template note id"
+    "editorSaveEdit": "Save"
   },
   "newDoc": {
     "title": "New document",
