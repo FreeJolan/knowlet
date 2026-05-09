@@ -7,7 +7,8 @@
     "graph": "Graph",
     "settings": "Settings",
     "daily": "Today's note",
-    "newDocument": "New document"
+    "newDocument": "New document",
+    "quickActions": "Quick actions"
   },
   "search": {
     "placeholder": "Search across all notes…",
@@ -46,6 +47,23 @@
     "tabTemplates": "Templates",
     "templatesEmptyHint": "No templates yet. Use the + above to create one — they're notes used as scaffolds for new documents.",
     "newNoteHint": "Create a new document (Shift+click for quick inline)"
+  },
+  "quickActions": {
+    "title": "Quick actions",
+    "loading": "Loading…",
+    "newAction": "New action",
+    "emptyTitle": "No quick actions yet.",
+    "emptyHint": "Tick \"Save as quick action\" in the new document dialog, or click + above to create a standalone preset.",
+    "run": "Run",
+    "edit": "Edit",
+    "delete": "Delete",
+    "deleteConfirm": "Delete \"{{name}}\"?",
+    "editorTitleNew": "New quick action",
+    "editorTitleEdit": "Edit quick action",
+    "editorSaveNew": "Create",
+    "editorSaveEdit": "Save",
+    "contentTemplateLabel": "Template id",
+    "contentTemplateHint": "optional template note id"
   },
   "newDoc": {
     "title": "New document",

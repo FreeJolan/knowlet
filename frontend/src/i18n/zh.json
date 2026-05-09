@@ -7,7 +7,8 @@
     "graph": "图谱",
     "settings": "设置",
     "daily": "今日笔记",
-    "newDocument": "新建文档"
+    "newDocument": "新建文档",
+    "quickActions": "快捷操作"
   },
   "search": {
     "placeholder": "搜索所有笔记…",
@@ -31,6 +32,23 @@
       "system": "跟随系统",
       "systemHint": "当前系统偏好:{{resolved}}。"
     }
+  },
+  "quickActions": {
+    "title": "快捷操作",
+    "loading": "加载中…",
+    "newAction": "新建",
+    "emptyTitle": "还没有快捷操作。",
+    "emptyHint": "在新建文档对话框勾选「保存为快捷操作」,或者点上方 + 直接新建一个独立预设。",
+    "run": "运行",
+    "edit": "编辑",
+    "delete": "删除",
+    "deleteConfirm": "删除「{{name}}」?",
+    "editorTitleNew": "新建快捷操作",
+    "editorTitleEdit": "编辑快捷操作",
+    "editorSaveNew": "创建",
+    "editorSaveEdit": "保存",
+    "contentTemplateLabel": "模板 id",
+    "contentTemplateHint": "可选模板笔记 id"
   },
   "newDoc": {
     "title": "新建文档",

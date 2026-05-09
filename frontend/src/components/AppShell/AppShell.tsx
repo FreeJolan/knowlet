@@ -16,6 +16,7 @@ import {
   Settings as SettingsIcon,
   Tag as TagIcon,
   Trash2,
+  Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -30,6 +31,7 @@ import { RightRail } from "@/components/RightRail/RightRail";
 import { SearchFocusMode } from "@/components/Search/SearchFocusMode";
 import { SettingsDialog } from "@/components/Settings/SettingsDialog";
 import { NewDocDialog } from "@/components/NewDoc/NewDocDialog";
+import { QuickActionsManager } from "@/components/QuickActions/QuickActionsManager";
 import { TabStrip } from "@/components/TabStrip/TabStrip";
 import { TagBrowser } from "@/components/TagBrowser/TagBrowser";
 import { TrashPanel } from "@/components/Trash/TrashPanel";
@@ -135,6 +137,8 @@ export function AppShell() {
   // folder right-clicked from the tree's context menu).
   const [newDocOpen, setNewDocOpen] = useState(false);
   const [newDocSeedFolder, setNewDocSeedFolder] = useState<string>("");
+  // Phase 2 D Slice 2c.2-B' — quick actions manager (⚡).
+  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [windowWidth, setWindowWidth] = useState(() =>
     typeof window === "undefined" ? 1400 : window.innerWidth,
   );
@@ -361,6 +365,16 @@ export function AppShell() {
         const map = { "1": "files", "2": "tags", "3": "templates" } as const;
         setLeftTab(map[e.key as "1" | "2" | "3"]);
       }
+      // Phase 2 D Slice 2c.2-B' — Cmd+Shift+A opens the quick-actions
+      // manager. Pairs with the header ⚡ icon below.
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        (e.key === "a" || e.key === "A")
+      ) {
+        e.preventDefault();
+        setQuickActionsOpen((v) => !v);
+      }
     };
     // Phase 2 D Slice 2c.2 — NewDocDialog footer link dispatches this
     // event. Templates manage now lives in the Templates tab (left
@@ -443,6 +457,16 @@ export function AppShell() {
               data-testid="header-daily-button"
             >
               <CalendarDays className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={t("app.quickActions")}
+              title={t("app.quickActions") + " (⌘⇧A)"}
+              onClick={() => setQuickActionsOpen(true)}
+              data-testid="header-quick-actions-button"
+            >
+              <Zap className="size-4" />
             </Button>
             <Button
               variant="ghost"
@@ -668,6 +692,16 @@ export function AppShell() {
         onClose={() => setNewDocOpen(false)}
         seedFolder={newDocSeedFolder}
         onCreated={(note) => {
+          setSelectedNoteId(note.id);
+          setPendingHash(null);
+          setPendingLine(null);
+          setPendingPreserveMode(false);
+        }}
+      />
+      <QuickActionsManager
+        open={quickActionsOpen}
+        onClose={() => setQuickActionsOpen(false)}
+        onRan={(note) => {
           setSelectedNoteId(note.id);
           setPendingHash(null);
           setPendingLine(null);
