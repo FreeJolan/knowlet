@@ -216,7 +216,7 @@ try {
       void d.dismiss();
     });
     // Click + new-note button, type the title of an existing note.
-    await page.locator('button[aria-label="New note"]').click();
+    await page.locator('button[aria-label="New note"]').click({ modifiers: ['Shift'] });
     const input = page.locator('input[data-rename-input="true"]');
     await input.waitFor({ state: "visible", timeout: 3000 });
     await input.fill("reading"); // already exists in seeded vault

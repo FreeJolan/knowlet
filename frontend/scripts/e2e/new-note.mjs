@@ -14,7 +14,7 @@ try {
   await page.waitForTimeout(500);
 
   await runTest("toolbar 'New note' opens inline input + Enter commits", async () => {
-    await page.click('button[aria-label="New note"]');
+    await page.click('button[aria-label="New note"]', { modifiers: ['Shift'] });
     const input = page.locator('input[data-rename-input="true"]');
     await input.waitFor({ state: "visible", timeout: 3000 });
     await input.fill("toolbar-note");
@@ -28,7 +28,7 @@ try {
   });
 
   await runTest("Esc on inline new-note cancels (no row created)", async () => {
-    await page.click('button[aria-label="New note"]');
+    await page.click('button[aria-label="New note"]', { modifiers: ['Shift'] });
     const input = page.locator('input[data-rename-input="true"]');
     await input.waitFor({ state: "visible", timeout: 3000 });
     await input.fill("ghost");
@@ -47,25 +47,13 @@ try {
     assert(await hasRow(page, "inbox"), "inbox folder appears");
   });
 
-  await runTest("right-click 'New note inside' inline-creates under folder", async () => {
-    const lab = page.locator(".group").filter({ hasText: "lab" }).first();
-    await lab.click({ button: "right" });
-    await page.getByRole("menuitem", { name: "New note inside" }).click();
-    const input = page.locator('input[data-rename-input="true"]');
-    await input.waitFor({ state: "visible", timeout: 3000 });
-    await input.fill("inside-lab");
-    await input.press("Enter");
-    await page.waitForTimeout(800);
-    assert(await hasRow(page, "inside-lab"), "child note appears");
-    const treeRes = await page.request.get(`${baseURL}/api/tree`);
-    const tree = await treeRes.json();
-    const labNode = tree.folders.find((f) => f.name === "lab");
-    const found = labNode?.notes.some((n) => n.title === "inside-lab");
-    assert(found, `note placed under lab; got ${JSON.stringify(labNode?.notes)}`);
-  });
+  // Phase 2 D Slice 2 (2026-05-09): right-click "New note inside"
+  // now opens NewDocDialog instead of inline-creating. The new
+  // coverage lives in phase2d-slice2a.mjs#"Right-click folder → New
+  // note inside opens dialog with seed". Removed here.
 
   await runTest(".md suffix is stripped on commit", async () => {
-    await page.click('button[aria-label="New note"]');
+    await page.click('button[aria-label="New note"]', { modifiers: ['Shift'] });
     const input = page.locator('input[data-rename-input="true"]');
     await input.waitFor({ state: "visible", timeout: 3000 });
     await input.fill("design.md");

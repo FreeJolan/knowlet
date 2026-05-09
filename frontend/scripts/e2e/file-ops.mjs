@@ -43,7 +43,7 @@ try {
   });
 
   await runTest("new note via toolbar (inline)", async () => {
-    await page.click('button[aria-label="New note"]');
+    await page.click('button[aria-label="New note"]', { modifiers: ['Shift'] });
     const input = page.locator('input[data-rename-input="true"]');
     await input.waitFor({ state: "visible", timeout: 3000 });
     await input.fill("zeta");

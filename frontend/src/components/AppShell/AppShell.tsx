@@ -12,7 +12,6 @@ import {
   Network,
   PanelRight,
   PanelRightOpen,
-  Plus,
   Settings as SettingsIcon,
   Trash2,
 } from "lucide-react";
@@ -349,9 +348,18 @@ export function AppShell() {
     // For Slice 2a we still surface the existing TemplatesDialog as
     // the "manager" UI; Slice 2c will move it under Settings.
     const openTemplates = () => setTemplatesOpen(true);
+    // FileTree's "+ Note" toolbar button (click) and right-click
+    // "New note inside <folder>" both dispatch this event with the
+    // seedFolder. Shift+click on the toolbar uses the legacy inline-
+    // create path inside FileTree itself.
+    const openNewDoc = (e: Event) => {
+      const detail = (e as CustomEvent<{ seedFolder?: string }>).detail;
+      openNewDocDialog(detail?.seedFolder ?? "");
+    };
     window.addEventListener("knowlet:open-palette", openPalette);
     window.addEventListener("knowlet:open-trash", openTrash);
     window.addEventListener("knowlet:open-templates", openTemplates);
+    window.addEventListener("knowlet:open-new-doc", openNewDoc);
     window.addEventListener("knowlet:open-wikilink", openWikilink);
     window.addEventListener("knowlet:open-tag", openTag);
     window.addEventListener("keydown", onKey);
@@ -359,6 +367,7 @@ export function AppShell() {
       window.removeEventListener("knowlet:open-palette", openPalette);
       window.removeEventListener("knowlet:open-trash", openTrash);
       window.removeEventListener("knowlet:open-templates", openTemplates);
+      window.removeEventListener("knowlet:open-new-doc", openNewDoc);
       window.removeEventListener("knowlet:open-wikilink", openWikilink);
       window.removeEventListener("knowlet:open-tag", openTag);
       window.removeEventListener("keydown", onKey);
@@ -382,37 +391,6 @@ export function AppShell() {
             {t("app.title")}
           </div>
           <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => openNewDocDialog()}
-              data-testid="new-document-button"
-              className="inline-flex items-center gap-1.5"
-              style={{
-                background: "var(--accent-soft)",
-                color: "var(--accent-2)",
-                border: "1px solid var(--accent-tint-2)",
-                fontSize: 12,
-                fontWeight: 500,
-                height: 28,
-                padding: "0 10px",
-              }}
-              title={t("app.newDocument") + " (⌘N)"}
-            >
-              <Plus className="size-3.5" />
-              <span>{t("app.newDocument")}</span>
-              <span
-                className="ml-0.5 rounded-sm font-mono"
-                style={{
-                  fontSize: 10,
-                  color: "var(--ink-mute)",
-                  padding: "1px 5px",
-                  background: "var(--bg-1)",
-                }}
-              >
-                ⌘N
-              </span>
-            </Button>
             <Button
               variant="ghost"
               size="sm"

@@ -30,7 +30,7 @@ try {
   await page.waitForTimeout(500);
 
   await runTest("toolbar 'New note' input gets focus immediately", async () => {
-    await page.click('button[aria-label="New note"]');
+    await page.click('button[aria-label="New note"]', { modifiers: ['Shift'] });
     const input = page.locator('input[data-rename-input="true"]');
     await input.waitFor({ state: "visible", timeout: 3000 });
     await expectFocused(page, input, "new-note input is focused");
@@ -58,7 +58,7 @@ try {
   });
 
   await runTest("inline-edit input has a visible caret-color (not text color)", async () => {
-    await page.click('button[aria-label="New note"]');
+    await page.click('button[aria-label="New note"]', { modifiers: ['Shift'] });
     const input = page.locator('input[data-rename-input="true"]');
     await input.waitFor({ state: "visible", timeout: 3000 });
     const styles = await input.evaluate((el) => {
@@ -76,7 +76,7 @@ try {
   await runTest(
     "real keystrokes type into new-note input + Enter commits exactly that text",
     async () => {
-      await page.click('button[aria-label="New note"]');
+      await page.click('button[aria-label="New note"]', { modifiers: ['Shift'] });
       const input = page.locator('input[data-rename-input="true"]');
       await input.waitFor({ state: "visible", timeout: 3000 });
       await typeInto(page, input, "design");
@@ -92,7 +92,7 @@ try {
   await runTest(
     "new note stays visible across slow backend (no transient disappearance)",
     async () => {
-      await page.click('button[aria-label="New note"]');
+      await page.click('button[aria-label="New note"]', { modifiers: ['Shift'] });
       const input = page.locator('input[data-rename-input="true"]');
       await input.waitFor({ state: "visible", timeout: 3000 });
       await typeInto(page, input, "persistent");
@@ -114,7 +114,7 @@ try {
   await runTest(
     "IME composition: Enter during candidate confirm does NOT submit",
     async () => {
-      await page.click('button[aria-label="New note"]');
+      await page.click('button[aria-label="New note"]', { modifiers: ['Shift'] });
       const input = page.locator('input[data-rename-input="true"]');
       await input.waitFor({ state: "visible", timeout: 3000 });
       // Simulate user typing pinyin for 设计 — composition starts,
@@ -146,7 +146,7 @@ try {
       await labRow.click();
       await page.waitForTimeout(100);
 
-      await page.click('button[aria-label="New note"]');
+      await page.click('button[aria-label="New note"]', { modifiers: ['Shift'] });
       const input = page.locator('input[data-rename-input="true"]');
       await input.waitFor({ state: "visible", timeout: 3000 });
       await typeInto(page, input, "isolated");
@@ -211,7 +211,7 @@ try {
 
   await runTest("F2 inside an existing input does NOT cascade", async () => {
     // While the user is typing in the rename input, F2 must do nothing.
-    await page.click('button[aria-label="New note"]');
+    await page.click('button[aria-label="New note"]', { modifiers: ['Shift'] });
     const input = page.locator('input[data-rename-input="true"]');
     await input.waitFor({ state: "visible", timeout: 2000 });
     await page.keyboard.press("F2");
@@ -223,7 +223,7 @@ try {
   });
 
   await runTest("Esc cancels without committing", async () => {
-    await page.click('button[aria-label="New note"]');
+    await page.click('button[aria-label="New note"]', { modifiers: ['Shift'] });
     const input = page.locator('input[data-rename-input="true"]');
     await input.waitFor({ state: "visible", timeout: 3000 });
     await typeInto(page, input, "phantom");

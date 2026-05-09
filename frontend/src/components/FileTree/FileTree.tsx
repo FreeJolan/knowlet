@@ -586,7 +586,22 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
             variant="ghost"
             size="icon"
             aria-label={t("tree.newNote")}
-            onClick={onNewRootNote}
+            onClick={(e) => {
+              // Phase 2 D Slice 2 — click opens NewDocDialog (with the
+              // template / placement chooser); Shift+click keeps the
+              // legacy inline-create path for fast "blank-note-here"
+              // workflow. Right-click (context menu on the icon's
+              // wrapping element) doesn't apply since the button itself
+              // doesn't carry a menu — that lives on tree rows.
+              if (e.shiftKey) onNewRootNote();
+              else
+                window.dispatchEvent(
+                  new CustomEvent("knowlet:open-new-doc", {
+                    detail: { seedFolder: "" },
+                  }),
+                );
+            }}
+            title={t("tree.newNoteHint")}
             className="size-6"
           >
             <FilePlus className="size-3.5" />
@@ -640,7 +655,6 @@ export function FileTree({ selectedNoteId, onSelectNote, onMutating }: FileTreeP
                 openMap={openMap}
                 setOpenMap={setOpenMap}
                 onClickRow={setLastClickedId}
-                onCreateChildNote={(parentPath) => startCreate("note", parentPath)}
                 onCreateChildFolder={(parentPath) => startCreate("folder", parentPath)}
                 onCommitPending={commitPending}
                 onCancelPending={cancelPending}
@@ -695,7 +709,6 @@ interface RowProps extends NodeRendererProps<TreeNodeData> {
   openMap: Record<string, boolean>;
   setOpenMap: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   onClickRow: (id: string) => void;
-  onCreateChildNote: (parentPath: string) => void;
   onCreateChildFolder: (parentPath: string) => void;
   onCommitPending: (name: string) => void;
   onCancelPending: () => void;
@@ -710,7 +723,6 @@ function Row({
   openMap,
   setOpenMap,
   onClickRow,
-  onCreateChildNote,
   onCreateChildFolder,
   onCommitPending,
   onCancelPending,
@@ -846,7 +858,13 @@ function Row({
         {isFolder && (
           <>
             <ContextMenuItem
-              onSelect={() => onCreateChildNote(node.data.folderPath)}
+              onSelect={() =>
+                window.dispatchEvent(
+                  new CustomEvent("knowlet:open-new-doc", {
+                    detail: { seedFolder: node.data.folderPath },
+                  }),
+                )
+              }
             >
               {t("menu.newNoteInside")}
             </ContextMenuItem>

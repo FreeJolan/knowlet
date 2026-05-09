@@ -42,7 +42,8 @@
     "empty": "Empty vault. Use the buttons above to create a note or folder.",
     "untitled": "(untitled)",
     "tabFiles": "Files",
-    "tabTags": "Tags"
+    "tabTags": "Tags",
+    "newNoteHint": "Create a new document (Shift+click for quick inline)"
   },
   "newDoc": {
     "title": "New document",

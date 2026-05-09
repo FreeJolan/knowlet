@@ -99,7 +99,8 @@
     "empty": "笔记库为空。点上方按钮新建笔记或文件夹。",
     "untitled": "(无标题)",
     "tabFiles": "文件",
-    "tabTags": "标签"
+    "tabTags": "标签",
+    "newNoteHint": "新建文档(Shift+ 单击 = 快速 inline)"
   },
   "templates": {
     "dialogTitle": "模板",

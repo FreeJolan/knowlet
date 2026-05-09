@@ -34,7 +34,7 @@ import {
 } from "@/api/client";
 import type { TemplateSummary } from "@/api/client";
 import type { NoteFull, TreeFolder } from "@/api/types";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { imeSafeKeyHandler } from "@/lib/imeSafe";
 import { renderPlaceholders } from "@/lib/placeholders";
 import { QK } from "@/lib/queryClient";
@@ -184,16 +184,18 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
           style={{ borderBottom: "1px solid var(--line-soft)" }}
         >
           <div className="flex items-center gap-3">
-            <h2
-              className="m-0 font-serif font-semibold"
-              style={{
-                fontSize: 18,
-                color: "var(--ink)",
-                letterSpacing: "-0.012em",
-              }}
-            >
-              {t("newDoc.title")}
-            </h2>
+            <DialogTitle asChild>
+              <h2
+                className="m-0 font-serif font-semibold"
+                style={{
+                  fontSize: 18,
+                  color: "var(--ink)",
+                  letterSpacing: "-0.012em",
+                }}
+              >
+                {t("newDoc.title")}
+              </h2>
+            </DialogTitle>
             <span className="flex-1" />
             <span
               className="font-mono"

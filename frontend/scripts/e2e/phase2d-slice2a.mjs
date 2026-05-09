@@ -41,14 +41,67 @@ try {
     await page.waitForTimeout(200);
   });
 
-  await runTest("Header [+ 新建文档] button opens dialog", async () => {
-    await page.locator('[data-testid="new-document-button"]').click();
+  await runTest("Tree [+ Note] button (click) opens dialog", async () => {
+    // Header [+ 新建文档] button removed in 2026-05-09 dogfood iter —
+    // tree's existing "+ Note" toolbar button now opens the dialog;
+    // Shift+click keeps the legacy inline path.
+    await page.locator('button[aria-label="New note"]').click();
     await page
       .locator('[data-testid="new-document-dialog"]')
       .waitFor({ state: "visible", timeout: 2000 });
   });
 
+  await runTest("Right-click folder → New note inside opens dialog with seed", async () => {
+    // Close any open dialog first.
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(150);
+    // Right-click projects/ai folder.
+    await page
+      .locator('[role="treeitem"]', { hasText: /^ai$/ })
+      .first()
+      .click({ button: "right" });
+    await page.getByRole("menuitem", { name: /New note inside/ }).click();
+    await page
+      .locator('[data-testid="new-document-dialog"]')
+      .waitFor({ state: "visible", timeout: 2000 });
+    // Folder picker should show projects/ai pre-selected.
+    const folder = await page
+      .locator('[data-testid="dialog-folder-picker"]')
+      .innerText();
+    assert(
+      /projects/.test(folder) && /ai/.test(folder),
+      `seedFolder should be projects/ai, got "${folder}"`,
+    );
+  });
+
+  await runTest("Tree [+ Note] Shift+click keeps legacy inline path", async () => {
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(150);
+    // Modifier-click via Playwright.
+    await page.locator('button[aria-label="New note"]').click({
+      modifiers: ["Shift"],
+    });
+    // Inline create stages a tree-row input, NOT the dialog.
+    const dialogShown = await page
+      .locator('[data-testid="new-document-dialog"]')
+      .isVisible()
+      .catch(() => false);
+    assert(!dialogShown, "Shift+click must NOT open the dialog");
+    await page
+      .locator('input[data-rename-input="true"]')
+      .waitFor({ state: "visible", timeout: 2000 });
+    // Cancel the inline edit so the test environment is clean for the
+    // next case.
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+  });
+
   await runTest("Inspiration chip 周报 fills folder + title", async () => {
+    // Re-open dialog (previous test closed it via Escape).
+    await page.keyboard.press("Meta+N");
+    await page
+      .locator('[data-testid="new-document-dialog"]')
+      .waitFor({ state: "visible", timeout: 2000 });
     await page.locator('[data-testid="inspiration-weekly"]').click();
     await page.waitForTimeout(150);
     const folder = await page
