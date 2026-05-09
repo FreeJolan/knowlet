@@ -198,15 +198,18 @@ try {
   );
 
   await runTest(
-    "Footer 'Templates → Settings/Templates' link opens manager",
+    "Footer 'Templates → Settings/Templates' link opens manager — NewDocDialog stays open",
     async () => {
       await page.keyboard.press("Meta+N");
       await page
         .locator('[data-testid="new-document-dialog"]')
         .waitFor({ state: "visible", timeout: 2000 });
+      // Type into title so we can verify state survives the round-trip.
+      const titleInput = page.locator('[data-testid="new-document-title"]');
+      await titleInput.fill("draft-{{date}}");
       await page.locator('[data-testid="open-templates-manager"]').click();
       await page.waitForTimeout(400);
-      // Existing TemplatesDialog should be visible (text "Templates").
+      // Templates manager should be visible.
       const tplDialog = await page
         .locator("text=Templates")
         .filter({ hasNotText: "Quick" })
@@ -216,6 +219,26 @@ try {
       assert(
         tplDialog,
         "Templates manager should open after clicking footer link",
+      );
+      // 2026-05-10 regression: NewDocDialog stays open behind the
+      // templates manager. User returns to their in-progress form
+      // (with title / folder / inspiration intact) when they close
+      // templates.
+      const newDocStillOpen = await page
+        .locator('[data-testid="new-document-dialog"]')
+        .isVisible()
+        .catch(() => false);
+      assert(
+        newDocStillOpen,
+        "NewDocDialog must stay open behind the templates manager",
+      );
+      // Close templates → NewDocDialog still there with title intact.
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(300);
+      const titleAfter = await titleInput.inputValue();
+      assert(
+        titleAfter === "draft-{{date}}",
+        `title preserved across templates round-trip — got "${titleAfter}"`,
       );
       await page.keyboard.press("Escape");
       await page.waitForTimeout(200);

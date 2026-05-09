@@ -454,7 +454,13 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
               type="button"
               data-testid="open-templates-manager"
               onClick={() => {
-                onClose();
+                // Keep NewDocDialog OPEN so the user returns to the
+                // form after browsing / editing templates — they
+                // typically click this link because they want to use
+                // a template they're about to create. Closing on
+                // this click would lose the in-progress folder /
+                // title / inspiration selections (2026-05-10 dogfood:
+                // "为什么点 设置/模板 后我的 dialog 直接没了").
                 window.dispatchEvent(new CustomEvent("knowlet:open-templates"));
               }}
               className="underline decoration-dotted underline-offset-2"
