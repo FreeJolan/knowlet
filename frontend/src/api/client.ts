@@ -12,6 +12,8 @@ import type {
   GraphPayload,
   NoteFull,
   NoteSummary,
+  QuickAction,
+  QuickActionPayload,
   SearchPayload,
   TagSummary,
   TagWithNotes,
@@ -129,6 +131,27 @@ export const listTagsWithNotes = (): Promise<TagWithNotes[]> =>
 
 export const getGraph = (): Promise<GraphPayload> =>
   request("GET", "/api/graph");
+
+// ---------- quick actions (Phase 2 D slice 2c, ADR-0025) ----------
+
+export const listQuickActions = (): Promise<QuickAction[]> =>
+  request("GET", "/api/quick-actions");
+
+export const createQuickAction = (
+  payload: QuickActionPayload,
+): Promise<QuickAction> => request("POST", "/api/quick-actions", payload);
+
+export const updateQuickAction = (
+  id: string,
+  payload: QuickActionPayload,
+): Promise<QuickAction> =>
+  request("PUT", `/api/quick-actions/${encodeURIComponent(id)}`, payload);
+
+export const deleteQuickAction = (id: string): Promise<{ ok: boolean }> =>
+  request("DELETE", `/api/quick-actions/${encodeURIComponent(id)}`);
+
+export const runQuickAction = (id: string): Promise<NoteFull> =>
+  request("POST", `/api/quick-actions/${encodeURIComponent(id)}/run`);
 
 // ---------- search (Phase 1 D slice 2) ----------
 

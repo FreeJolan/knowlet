@@ -57,7 +57,12 @@
     "titlePlaceholder": "Untitled",
     "previewLabel": "Preview",
     "saveAsAction": "Save as quick action",
-    "saveAsActionComingSoon": "Coming in the next slice — for now, just create the doc.",
+    "saveAsActionHint": "One-tap recreate next time. You can edit / delete it in Settings.",
+    "actionNameLabel": "Name",
+    "actionNamePlaceholder": "Weekly review",
+    "actionShortcutLabel": "Shortcut (optional)",
+    "actionShortcutPlaceholder": "Cmd+Shift+W",
+    "actionDescriptionLabel": "Description (optional)",
     "manageTemplatesPrefix": "Templates →",
     "manageTemplatesLink": "Settings / Templates",
     "cancel": "Cancel",
@@ -160,7 +165,9 @@
     "placeholder": "Type a title…",
     "noMatches": "No matches.",
     "notesCount_one": "1 note",
-    "notesCount_other": "{{count}} notes"
+    "notesCount_other": "{{count}} notes",
+    "actionsCount_one": "1 quick action",
+    "actionsCount_other": "{{count}} quick actions"
   },
   "errorBoundary": {
     "title": "Something broke.",

@@ -28,6 +28,7 @@ import { useTranslation } from "react-i18next";
 import {
   createBlankNote,
   createFolder,
+  createQuickAction,
   getNote,
   getTree,
   listTemplates,
@@ -78,6 +79,11 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [titleTemplate, setTitleTemplate] = useState<string>("");
   const [folderMenuOpen, setFolderMenuOpen] = useState(false);
+  // Phase 2 D Slice 2c: save-as-quick-action toggle + sub-fields.
+  const [saveAsAction, setSaveAsAction] = useState<boolean>(false);
+  const [actionName, setActionName] = useState<string>("");
+  const [actionShortcut, setActionShortcut] = useState<string>("");
+  const [actionDescription, setActionDescription] = useState<string>("");
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
 
   // Reset the form ONLY on a closed→open transition. If we keyed off
@@ -93,6 +99,10 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
       setFolder(seedFolder ?? "");
       setTemplateId(null);
       setTitleTemplate("");
+      setSaveAsAction(false);
+      setActionName("");
+      setActionShortcut("");
+      setActionDescription("");
     }
     prevOpenRef.current = open;
   }, [open, seedFolder]);
@@ -173,10 +183,32 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
         folder: folder || undefined,
         templateId: templateId ?? undefined,
       });
+      // Phase 2 D Slice 2c: also persist as a quick action when the
+      // user opted in. Note creation succeeded → action save can fail
+      // independently without rolling back the note (we surface
+      // failure to console; toast UI is Phase 3 polish).
+      if (saveAsAction && actionName.trim()) {
+        try {
+          await createQuickAction({
+            name: actionName.trim(),
+            description: actionDescription.trim() || null,
+            shortcut: actionShortcut.trim() || null,
+            params: {
+              kind: "create_note",
+              folder,
+              title_template: titleTemplate,
+              content_template_id: templateId ?? null,
+            },
+          });
+        } catch (err) {
+          console.error("save-as-quick-action failed", err);
+        }
+      }
       return fresh;
     },
     onSuccess: (fresh) => {
       void qc.invalidateQueries({ queryKey: QK.tree });
+      void qc.invalidateQueries({ queryKey: QK.quickActions });
       onCreated(fresh);
       onClose();
     },
@@ -401,26 +433,35 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
             </Field>
           ) : null}
 
-          {/* Save-as-quick-action — placeholder until Slice 2c */}
+          {/* Save-as-quick-action — checkbox card + expanded sub-form */}
           <button
             type="button"
-            disabled
-            title={t("newDoc.saveAsActionComingSoon")}
             data-testid="save-as-quick-action"
-            className="flex cursor-not-allowed items-start gap-2.5 rounded-md px-3 py-2.5 opacity-60"
+            onClick={() => setSaveAsAction((v) => !v)}
+            aria-pressed={saveAsAction}
+            className="flex items-start gap-2.5 rounded-md px-3 py-2.5 text-left transition-colors hover:bg-accent/15"
             style={{
-              border: "1px dashed var(--line)",
-              background: "var(--card)",
+              border: "1px solid var(--line)",
+              background: saveAsAction
+                ? "var(--accent-tint)"
+                : "var(--card)",
             }}
           >
             <span
               className="flex size-3.5 shrink-0 items-center justify-center rounded-sm"
               style={{
-                border: "1.5px solid var(--ink-mute)",
+                border: saveAsAction
+                  ? "1px solid var(--accent)"
+                  : "1.5px solid var(--ink-mute)",
+                background: saveAsAction ? "var(--accent)" : "transparent",
+                color: "#faf7f0",
                 marginTop: 1,
+                fontSize: 10,
               }}
-            />
-            <span className="flex flex-col items-start gap-0.5 text-left">
+            >
+              {saveAsAction ? "✓" : ""}
+            </span>
+            <span className="flex flex-col gap-0.5">
               <span
                 style={{
                   fontSize: 12.5,
@@ -431,10 +472,85 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
                 {t("newDoc.saveAsAction")}
               </span>
               <span style={{ fontSize: 11, color: "var(--ink-soft)" }}>
-                {t("newDoc.saveAsActionComingSoon")}
+                {t("newDoc.saveAsActionHint")}
               </span>
             </span>
           </button>
+          {saveAsAction && (
+            <div
+              className="ml-6 flex flex-col gap-2.5 pl-3.5"
+              style={{ borderLeft: "1px solid var(--line-soft)" }}
+              data-testid="save-as-quick-action-fields"
+            >
+              <div
+                className="grid gap-3"
+                style={{ gridTemplateColumns: "1fr 130px" }}
+              >
+                <Field label={t("newDoc.actionNameLabel")}>
+                  <input
+                    type="text"
+                    value={actionName}
+                    placeholder={t("newDoc.actionNamePlaceholder")}
+                    onChange={(e) => setActionName(e.target.value)}
+                    onKeyDown={imeSafeKeyHandler<HTMLInputElement>((e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        submit();
+                      }
+                    })}
+                    data-testid="action-name"
+                    className="outline-none"
+                    style={{
+                      height: 30,
+                      border: "1px solid var(--line)",
+                      borderRadius: 5,
+                      background: "var(--card)",
+                      padding: "0 10px",
+                      fontSize: 13,
+                      color: "var(--ink)",
+                    }}
+                  />
+                </Field>
+                <Field label={t("newDoc.actionShortcutLabel")}>
+                  <input
+                    type="text"
+                    value={actionShortcut}
+                    placeholder={t("newDoc.actionShortcutPlaceholder")}
+                    onChange={(e) => setActionShortcut(e.target.value)}
+                    data-testid="action-shortcut"
+                    className="font-mono outline-none"
+                    style={{
+                      height: 30,
+                      border: "1px solid var(--line)",
+                      borderRadius: 5,
+                      background: "var(--card)",
+                      padding: "0 10px",
+                      fontSize: 11,
+                      color: "var(--ink-soft)",
+                    }}
+                  />
+                </Field>
+              </div>
+              <Field label={t("newDoc.actionDescriptionLabel")}>
+                <input
+                  type="text"
+                  value={actionDescription}
+                  onChange={(e) => setActionDescription(e.target.value)}
+                  data-testid="action-description"
+                  className="outline-none"
+                  style={{
+                    height: 30,
+                    border: "1px solid var(--line)",
+                    borderRadius: 5,
+                    background: "var(--card)",
+                    padding: "0 10px",
+                    fontSize: 13,
+                    color: "var(--ink)",
+                  }}
+                />
+              </Field>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

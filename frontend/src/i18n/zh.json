@@ -44,7 +44,12 @@
     "titlePlaceholder": "未命名",
     "previewLabel": "预览",
     "saveAsAction": "保存为快捷操作",
-    "saveAsActionComingSoon": "下个版本上线 — 这次只创建文档。",
+    "saveAsActionHint": "下次一键重做。可以在设置里编辑或删除。",
+    "actionNameLabel": "名称",
+    "actionNamePlaceholder": "周报",
+    "actionShortcutLabel": "快捷键(可选)",
+    "actionShortcutPlaceholder": "Cmd+Shift+W",
+    "actionDescriptionLabel": "描述(可选)",
     "manageTemplatesPrefix": "模板管理 →",
     "manageTemplatesLink": "设置 / 模板",
     "cancel": "取消",
@@ -160,7 +165,9 @@
     "placeholder": "输入标题…",
     "noMatches": "没有匹配。",
     "notesCount_one": "1 篇笔记",
-    "notesCount_other": "{{count}} 篇笔记"
+    "notesCount_other": "{{count}} 篇笔记",
+    "actionsCount_one": "1 个快捷操作",
+    "actionsCount_other": "{{count}} 个快捷操作"
   },
   "errorBoundary": {
     "title": "出错了。",

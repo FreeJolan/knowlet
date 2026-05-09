@@ -28,6 +28,34 @@ export interface NoteFull extends NoteSummary {
   body: string;
 }
 
+// ---------- Quick actions (Phase 2 D Slice 2c, ADR-0025) ----------
+
+export interface CreateNoteParams {
+  kind: "create_note";
+  folder: string;
+  title_template: string;
+  content_template_id?: string | null;
+}
+
+/** Discriminated union — when more `kind` values ship, append. */
+export type QuickActionParams = CreateNoteParams;
+
+export interface QuickAction {
+  schema_version: number;
+  id: string;
+  name: string;
+  description?: string | null;
+  shortcut?: string | null;
+  params: QuickActionParams;
+}
+
+export interface QuickActionPayload {
+  name: string;
+  description?: string | null;
+  shortcut?: string | null;
+  params: QuickActionParams;
+}
+
 export interface TreeNote {
   id: string;
   title: string;

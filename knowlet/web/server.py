@@ -48,6 +48,13 @@ from knowlet.core.fsrs_wrap import initial_state, schedule_next
 from knowlet.core.i18n import SUPPORTED_LANGUAGES, all_keys, set_language
 from knowlet.core.index import Index, IndexDimensionMismatchError
 from knowlet.core.llm import ToolCall
+from knowlet.core.quick_actions import (
+    CreateNoteParams,
+    QuickAction,
+    QuickActionStore,
+    new_action_id,
+    render_title_placeholders,
+)
 from knowlet.core.mining.runner import reset_task_state, run_task
 from knowlet.core.mining.scheduler import MiningScheduler
 from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
@@ -317,6 +324,22 @@ class TemplateSummary(BaseModel):
 
     id: str
     title: str
+
+
+class QuickActionPayload(BaseModel):
+    """Shape accepted by POST / PUT /api/quick-actions{,/<id>}.
+
+    The server assigns `id` if missing on create and ignores any
+    client-supplied id on update (path id wins). `params` is a
+    nested object whose `kind` discriminator selects the variant.
+    """
+
+    name: str
+    description: str | None = None
+    shortcut: str | None = None
+    # CreateNoteParams is a Pydantic model; allow it as a plain dict
+    # at the boundary so the discriminator works through JSON.
+    params: dict[str, Any]
 
 
 class TrashEntry(BaseModel):
@@ -1871,6 +1894,179 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             path = runtime.vault.write_note(note, folder=req.folder or None)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        runtime.index.upsert_note(
+            note,
+            chunk_size=runtime.config.retrieval.chunk_size,
+            chunk_overlap=runtime.config.retrieval.chunk_overlap,
+        )
+        return NoteFull(
+            id=note.id,
+            title=note.title,
+            path=str(path),
+            folder=runtime.vault.folder_of(path),
+            tags=note.tags,
+            aliases=list(note.aliases),
+            source=note.source,
+            created_at=note.created_at,
+            updated_at=note.updated_at,
+            body=note.body,
+        )
+
+    # ---------- Quick actions (Phase 2 D Slice 2c, ADR-0025) ----------
+
+    def _quick_action_store(runtime: ChatRuntime) -> QuickActionStore:
+        return QuickActionStore(vault_root=runtime.vault.root)
+
+    def _coerce_payload(payload: QuickActionPayload, *, action_id: str) -> QuickAction:
+        """Validate the JSON payload through the discriminated-union
+        Pydantic model. Raises 400 on invalid `kind` / missing fields."""
+        kind = payload.params.get("kind")
+        if kind == "create_note":
+            params: CreateNoteParams = CreateNoteParams.model_validate(payload.params)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"unsupported action kind: {kind!r}",
+            )
+        return QuickAction(
+            id=action_id,
+            name=payload.name,
+            description=payload.description,
+            shortcut=payload.shortcut,
+            params=params,
+        )
+
+    @app.get("/api/quick-actions", response_model=list[QuickAction])
+    def list_quick_actions(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[QuickAction]:
+        return _quick_action_store(runtime).load()
+
+    @app.post("/api/quick-actions", response_model=QuickAction)
+    def create_quick_action(
+        payload: QuickActionPayload,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> QuickAction:
+        action = _coerce_payload(payload, action_id=new_action_id())
+        return _quick_action_store(runtime).upsert(action)
+
+    @app.put("/api/quick-actions/{action_id}", response_model=QuickAction)
+    def update_quick_action(
+        action_id: str,
+        payload: QuickActionPayload,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> QuickAction:
+        store = _quick_action_store(runtime)
+        if store.get(action_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"quick action not found: {action_id}",
+            )
+        action = _coerce_payload(payload, action_id=action_id)
+        return store.upsert(action)
+
+    @app.delete("/api/quick-actions/{action_id}")
+    def delete_quick_action(
+        action_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        ok = _quick_action_store(runtime).delete(action_id)
+        if not ok:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"quick action not found: {action_id}",
+            )
+        return {"ok": True, "id": action_id}
+
+    @app.post("/api/quick-actions/{action_id}/run", response_model=NoteFull)
+    def run_quick_action(
+        action_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> NoteFull:
+        """Execute the action. v1 only handles `kind=create_note`:
+        renders the title placeholders, mkdirs the target folder if
+        missing, and creates the note (idempotent: same folder + same
+        rendered title returns the existing note instead of duplicating).
+        """
+        from knowlet.core.note import Note as _Note
+        from knowlet.core.note import new_id
+
+        action = _quick_action_store(runtime).get(action_id)
+        if action is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"quick action not found: {action_id}",
+            )
+        if not isinstance(action.params, CreateNoteParams):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"action kind {action.params.kind!r} is not runnable in v1",
+            )
+        params = action.params
+        title = render_title_placeholders(params.title_template).strip()
+        if not title:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="rendered title is empty",
+            )
+        # Idempotency: if a note with this title already exists in the
+        # target folder, return it. Mirrors daily-note semantics so a
+        # user re-running "今日笔记" doesn't pile up duplicates.
+        target_folder = params.folder.strip("/")
+        notes_dir = runtime.vault.notes_dir
+        scan_dir = (notes_dir / target_folder) if target_folder else notes_dir
+        if scan_dir.is_dir():
+            for p in sorted(scan_dir.glob("*.md")):
+                try:
+                    existing = runtime.vault.read_note(p)
+                except FileNotFoundError:
+                    continue
+                if existing.title == title:
+                    return NoteFull(
+                        id=existing.id,
+                        title=existing.title,
+                        path=str(p),
+                        folder=runtime.vault.folder_of(p),
+                        tags=existing.tags,
+                        aliases=list(existing.aliases),
+                        source=existing.source,
+                        created_at=existing.created_at,
+                        updated_at=existing.updated_at,
+                        body=existing.body,
+                    )
+        # Mkdir if needed.
+        if target_folder:
+            try:
+                runtime.vault.mkdir_folder(target_folder)
+            except FileExistsError:
+                pass
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
+        body = ""
+        if params.content_template_id:
+            tpl_path: Path | None = None
+            for p in runtime.vault.iter_templates():
+                try:
+                    tpl = runtime.vault.read_note(p)
+                except FileNotFoundError:
+                    continue
+                if tpl.id == params.content_template_id:
+                    tpl_path = p
+                    body = runtime.vault.apply_template_placeholders(
+                        tpl.body, title=title
+                    )
+                    break
+            if tpl_path is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"template not found: {params.content_template_id}",
+                )
+        merged_tags = merge_with_inline_tags([], body)
+        note = _Note(id=new_id(), title=title, body=body, tags=merged_tags)
+        path = runtime.vault.write_note(note, folder=target_folder or None)
         runtime.index.upsert_note(
             note,
             chunk_size=runtime.config.retrieval.chunk_size,

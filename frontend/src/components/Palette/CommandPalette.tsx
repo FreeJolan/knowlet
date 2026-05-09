@@ -6,11 +6,12 @@
  * for body-text matching; Phase 1 A keeps it title-only for snap response.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { getTree } from "@/api/client";
+import { getTree, listQuickActions, runQuickAction } from "@/api/client";
 import {
   Command,
   CommandEmpty,
@@ -19,6 +20,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import type { QuickAction } from "@/api/types";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { QK } from "@/lib/queryClient";
 
@@ -53,10 +55,20 @@ export function CommandPalette({
   onSelectNote: (id: string) => void;
 }) {
   const { t } = useTranslation();
+  const qc = useQueryClient();
   const tree = useQuery({
     queryKey: QK.tree,
     queryFn: getTree,
     enabled: open,
+  });
+  const actions = useQuery<QuickAction[]>({
+    queryKey: QK.quickActions,
+    queryFn: listQuickActions,
+    enabled: open,
+    // Always refetch on open: the palette is the canonical place to
+    // run actions; users editing actions in Settings (Slice 2c.2)
+    // expect fresh state without a manual reload.
+    staleTime: 0,
   });
   const notes = useMemo(
     () => (tree.data ? flatten(tree.data) : []),
@@ -67,6 +79,18 @@ export function CommandPalette({
   useEffect(() => {
     if (!open) setQuery("");
   }, [open]);
+
+  // Phase 2 D Slice 2c — running a quick action returns NoteFull
+  // (idempotent: same-day re-runs reuse the existing note). On
+  // success: invalidate tree + open the note via onSelectNote.
+  const runMutation = useMutation({
+    mutationFn: (id: string) => runQuickAction(id),
+    onSuccess: (note) => {
+      void qc.invalidateQueries({ queryKey: QK.tree });
+      onSelectNote(note.id);
+      onClose();
+    },
+  });
 
   // Global Cmd+P / Ctrl+P keyboard shortcut is wired by the parent (AppShell).
   // We just reset state when closed.
@@ -93,6 +117,36 @@ export function CommandPalette({
             * cramped on a wide dialog. */}
           <CommandList className="max-h-[60vh]">
             <CommandEmpty>{t("palette.noMatches")}</CommandEmpty>
+            {actions.data && actions.data.length > 0 && (
+              <CommandGroup heading={t("palette.actionsCount", { count: actions.data.length })}>
+                {actions.data.map((a) => (
+                  <CommandItem
+                    key={a.id}
+                    className="!py-1.5"
+                    value={`${a.name} ${a.description ?? ""} ${a.shortcut ?? ""} action`}
+                    onSelect={() => runMutation.mutate(a.id)}
+                    data-testid="palette-action-item"
+                    data-action-id={a.id}
+                  >
+                    <Zap
+                      className="size-3.5 shrink-0"
+                      style={{ color: "var(--accent)" }}
+                    />
+                    <span className="truncate">{a.name}</span>
+                    {a.description && (
+                      <span className="ml-2 truncate text-[11px] text-muted-foreground">
+                        {a.description}
+                      </span>
+                    )}
+                    {a.shortcut && (
+                      <span className="ml-auto shrink-0 pl-3 font-mono text-[11px] text-muted-foreground">
+                        {a.shortcut}
+                      </span>
+                    )}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
             <CommandGroup heading={t("palette.notesCount", { count: notes.length })}>
               {notes.map((n) => (
                 <CommandItem
