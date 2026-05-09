@@ -209,6 +209,13 @@ export function AppShell() {
     [activeNoteFolder],
   );
 
+  // Phase 2 D Slice 3 — Set of pinned tab ids; passed to TabStrip for
+  // O(1) lookup during render and reused below by builtinCommands.
+  const pinnedSet = useMemo(
+    () => new Set(tabsApi.pinned),
+    [tabsApi.pinned],
+  );
+
   // Phase 2 D Slice 2c.3 — built-in palette commands. Memoize so cmdk
   // doesn't re-render the list every parent render. Closures capture
   // setters (stable React refs); the only changing inputs are t, the
@@ -227,6 +234,8 @@ export function AppShell() {
         tabs: {
           activeId: tabsApi.activeId,
           count: tabsApi.tabs.length,
+          activeIsPinned:
+            tabsApi.activeId !== null && pinnedSet.has(tabsApi.activeId),
           closeActive: () => {
             const id = tabsApi.activeId;
             if (id) tabsApi.closeTab(id);
@@ -235,7 +244,11 @@ export function AppShell() {
             const id = tabsApi.activeId;
             if (id) tabsApi.closeOthers(id);
           },
-          closeAll: () => tabsApi.closeAll(),
+          closeAll: () => tabsApi.closeUnpinned(),
+          togglePinActive: () => {
+            const id = tabsApi.activeId;
+            if (id) tabsApi.togglePin(id);
+          },
         },
       }),
     [
@@ -245,7 +258,9 @@ export function AppShell() {
       tabsApi.tabs.length,
       tabsApi.closeTab,
       tabsApi.closeOthers,
-      tabsApi.closeAll,
+      tabsApi.closeUnpinned,
+      tabsApi.togglePin,
+      pinnedSet,
     ],
   );
 
@@ -655,12 +670,14 @@ export function AppShell() {
             >
               <div className="flex h-full min-h-0 flex-col">
                 <TabStrip
-                  tabs={tabsApi.tabs}
+                  tabs={tabsApi.displayTabs}
                   activeId={tabsApi.activeId}
+                  pinnedSet={pinnedSet}
                   onActivate={tabsApi.setActive}
                   onClose={tabsApi.closeTab}
                   onCloseOthers={tabsApi.closeOthers}
-                  onCloseAll={tabsApi.closeAll}
+                  onCloseAll={tabsApi.closeUnpinned}
+                  onTogglePin={tabsApi.togglePin}
                 />
                 <div className="min-h-0 flex-1">
                   <NoteView

@@ -210,6 +210,8 @@
     "closeTab": "Close tab",
     "closeOtherTabs": "Close other tabs",
     "closeAllTabs": "Close all tabs",
+    "pinTab": "Pin tab",
+    "unpinTab": "Unpin tab",
     "theme": {
       "light": "light",
       "dark": "dark",
@@ -219,7 +221,9 @@
   "tabs": {
     "close": "Close",
     "closeOthers": "Close Others",
-    "closeAll": "Close All"
+    "closeAll": "Close All",
+    "pin": "Pin",
+    "unpin": "Unpin"
   },
   "errorBoundary": {
     "title": "Something broke.",

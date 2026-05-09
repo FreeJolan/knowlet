@@ -210,6 +210,8 @@
     "closeTab": "关闭当前 tab",
     "closeOtherTabs": "关闭其他 tab",
     "closeAllTabs": "关闭所有 tab",
+    "pinTab": "固定当前 tab",
+    "unpinTab": "取消固定",
     "theme": {
       "light": "浅色",
       "dark": "深色",
@@ -219,7 +221,9 @@
   "tabs": {
     "close": "关闭",
     "closeOthers": "关闭其他",
-    "closeAll": "全部关闭"
+    "closeAll": "全部关闭",
+    "pin": "固定",
+    "unpin": "取消固定"
   },
   "errorBoundary": {
     "title": "出错了。",

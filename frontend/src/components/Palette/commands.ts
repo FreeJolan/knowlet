@@ -52,9 +52,11 @@ export interface BuildBuiltinsArgs {
   tabs: {
     activeId: string | null;
     count: number;
+    activeIsPinned: boolean;
     closeActive: () => void;
     closeOthers: () => void;
     closeAll: () => void;
+    togglePinActive: () => void;
   };
 }
 
@@ -136,6 +138,16 @@ export function buildBuiltinCommands(
     // that wouldn't change anything.
     ...(args.tabs.activeId !== null
       ? [
+          {
+            id: "builtin.tab-pin",
+            name: args.tabs.activeIsPinned
+              ? t("commands.unpinTab")
+              : t("commands.pinTab"),
+            keywords: args.tabs.activeIsPinned
+              ? ["unpin", "tab", "取消", "固定"]
+              : ["pin", "tab", "固定"],
+            run: () => args.tabs.togglePinActive(),
+          },
           {
             id: "builtin.tab-close",
             name: t("commands.closeTab"),

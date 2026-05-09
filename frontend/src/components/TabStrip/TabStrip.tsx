@@ -15,7 +15,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { X } from "lucide-react";
+import { Pin, PinOff, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { getTree } from "@/api/client";
@@ -31,14 +31,21 @@ import {
 import { QK } from "@/lib/queryClient";
 
 interface Props {
+  /** Display-order tab list — pinned first, then unpinned. The owner
+   *  computes this; TabStrip just renders. */
   tabs: string[];
   activeId: string | null;
+  /** Set of pinned ids; renders the pin affordance + survives "Close
+   *  All". */
+  pinnedSet: Set<string>;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
-  /** Close every tab except `keepId`. */
+  /** Close every tab except `keepId` (and any pinned). */
   onCloseOthers: (keepId: string) => void;
-  /** Close every tab. */
+  /** Close all unpinned tabs (pinned survive). */
   onCloseAll: () => void;
+  /** Toggle pin state of `id`. */
+  onTogglePin: (id: string) => void;
 }
 
 /** Walk the tree once to produce a `noteId → title` map. The tree
@@ -58,16 +65,23 @@ function indexTreeTitles(root: TreeFolder | undefined): Map<string, string> {
 export function TabStrip({
   tabs,
   activeId,
+  pinnedSet,
   onActivate,
   onClose,
   onCloseOthers,
   onCloseAll,
+  onTogglePin,
 }: Props) {
   const { t } = useTranslation();
   const tree = useQuery<TreeFolder>({ queryKey: QK.tree, queryFn: getTree });
   const titles = indexTreeTitles(tree.data);
 
   if (tabs.length === 0) return null;
+
+  // Track where the pinned section ends so we can render a hairline
+  // separator between pinned and unpinned tabs.
+  const pinnedCount = tabs.filter((id) => pinnedSet.has(id)).length;
+  const onlyOne = tabs.length === 1;
 
   return (
     <div
@@ -78,12 +92,11 @@ export function TabStrip({
         borderBottom: "1px solid var(--line)",
       }}
     >
-      {tabs.map((id) => {
+      {tabs.map((id, idx) => {
         const active = id === activeId;
         const title = titles.get(id) ?? "(missing)";
-        // Disable "Close Others" when this is the only open tab —
-        // there's nothing to close. Disable "Close All" when no tabs.
-        const onlyOne = tabs.length === 1;
+        const isPinned = pinnedSet.has(id);
+        const isLastPinned = isPinned && idx === pinnedCount - 1;
         return (
           <ContextMenu key={id}>
             <ContextMenuTrigger asChild>
@@ -93,6 +106,7 @@ export function TabStrip({
                 data-testid="tab"
                 data-note-id={id}
                 data-active={active}
+                data-pinned={isPinned}
                 onClick={() => onActivate(id)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
@@ -104,7 +118,11 @@ export function TabStrip({
                 className="group flex min-w-0 cursor-pointer items-center gap-2 px-3 py-1.5 text-[12px] transition-colors"
                 style={{
                   maxWidth: 200,
-                  borderRight: "1px solid var(--line-soft)",
+                  // Stronger separator after the last pinned tab so
+                  // the strip reads as "[pinned] | [unpinned]".
+                  borderRight: isLastPinned
+                    ? "1px solid var(--line)"
+                    : "1px solid var(--line-soft)",
                   background: active ? "var(--bg)" : "transparent",
                   color: active ? "var(--ink)" : "var(--ink-mute)",
                   fontWeight: active ? 500 : 400,
@@ -114,36 +132,69 @@ export function TabStrip({
                 }}
                 title={title}
               >
+                {isPinned && (
+                  <Pin
+                    className="size-3 shrink-0 rotate-45"
+                    style={{ color: "var(--accent)", opacity: 0.85 }}
+                    aria-label="pinned"
+                  />
+                )}
                 <span
                   className="min-w-0 truncate"
                   style={{ flex: 1, lineHeight: 1.2 }}
                 >
                   {title}
                 </span>
-                <button
-                  type="button"
-                  data-testid="tab-close"
-                  data-note-id={id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onClose(id);
-                  }}
-                  onContextMenu={(e) => {
-                    // Prevent the × button itself from spawning the
-                    // browser's native menu — let the parent tab's
-                    // ContextMenu handle right-click everywhere.
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  aria-label={`Close ${title}`}
-                  className="flex size-4 shrink-0 items-center justify-center rounded-sm opacity-50 transition-opacity hover:bg-accent/30 hover:opacity-100 group-hover:opacity-80"
-                  style={{ color: "var(--ink-mute)" }}
-                >
-                  <X size={11} />
-                </button>
+                {isPinned ? (
+                  // Pinned tabs hide × so the user can't accidentally
+                  // close them with a click. Right-click → Unpin first
+                  // (or click the pin icon area itself — falls through
+                  // to the tab activate; that's fine, unpin is a
+                  // deliberate action).
+                  <span
+                    className="size-4 shrink-0"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    data-testid="tab-close"
+                    data-note-id={id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onClose(id);
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    aria-label={`Close ${title}`}
+                    className="flex size-4 shrink-0 items-center justify-center rounded-sm opacity-50 transition-opacity hover:bg-accent/30 hover:opacity-100 group-hover:opacity-80"
+                    style={{ color: "var(--ink-mute)" }}
+                  >
+                    <X size={11} />
+                  </button>
+                )}
               </div>
             </ContextMenuTrigger>
             <ContextMenuContent data-testid="tab-context-menu">
+              <ContextMenuItem
+                data-testid="tab-context-pin"
+                onSelect={() => onTogglePin(id)}
+              >
+                {isPinned ? (
+                  <>
+                    <PinOff />
+                    {t("tabs.unpin")}
+                  </>
+                ) : (
+                  <>
+                    <Pin />
+                    {t("tabs.pin")}
+                  </>
+                )}
+              </ContextMenuItem>
+              <ContextMenuSeparator />
               <ContextMenuItem
                 data-testid="tab-context-close"
                 onSelect={() => onClose(id)}
@@ -158,7 +209,6 @@ export function TabStrip({
               >
                 {t("tabs.closeOthers")}
               </ContextMenuItem>
-              <ContextMenuSeparator />
               <ContextMenuItem
                 data-testid="tab-context-close-all"
                 onSelect={() => onCloseAll()}
