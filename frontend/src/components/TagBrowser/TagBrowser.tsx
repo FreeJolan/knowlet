@@ -247,11 +247,20 @@ function Row({ node, style, dragHandle }: NodeRendererProps<RowData>) {
       data-tag={isTag ? node.data.fullTag : undefined}
       data-note-id={isTag ? undefined : node.data.noteId}
       data-synthetic={node.data.synthetic ? "1" : undefined}
-      className={[
-        "group flex items-center gap-1.5 px-2 text-sm cursor-pointer transition-colors hover:bg-accent/30",
-        node.isSelected ? "bg-accent/40" : "",
-      ].join(" ")}
+      // 2026-05-10: outer keeps the left-rail's pl-1 pr-3 gutter so
+      // the inner rounded highlight has breathing room from the
+      // panel edge, mirroring FileTree's two-layer pattern. Inner
+      // div carries the actual hover / selection chrome.
+      className="group flex h-full cursor-pointer items-center pr-3 pl-1 select-none"
     >
+      <div
+        className={[
+          "flex h-[calc(100%-2px)] w-full items-center gap-1.5 rounded-md px-2 text-sm transition-colors",
+          node.isSelected
+            ? "bg-secondary text-foreground"
+            : "hover:bg-muted/60",
+        ].join(" ")}
+      >
       {/* Indent caret only when there are children. Otherwise reserve
        *  the same width so labels align across rows. */}
       {isTag && node.children && node.children.length > 0 ? (
@@ -296,6 +305,7 @@ function Row({ node, style, dragHandle }: NodeRendererProps<RowData>) {
             : node.data.ownCount}
         </span>
       )}
+      </div>
     </div>
   );
 }
