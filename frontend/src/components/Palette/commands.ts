@@ -46,6 +46,16 @@ export interface BuildBuiltinsArgs {
   setGraphFocusOpen: (updater: (v: boolean) => boolean) => void;
   setSearchFocusOpen: (updater: (v: boolean) => boolean) => void;
   setSettingsOpen: (open: boolean) => void;
+  /** Tab API — needed for the close-tab family of palette commands.
+   *  Whether each command is reachable depends on tabs.length / the
+   *  active id; the builder filters out no-op rows. */
+  tabs: {
+    activeId: string | null;
+    count: number;
+    closeActive: () => void;
+    closeOthers: () => void;
+    closeAll: () => void;
+  };
 }
 
 const cycleTheme = (cur: ThemePreference): ThemePreference =>
@@ -120,5 +130,40 @@ export function buildBuiltinCommands(
       keywords: ["settings", "preferences", "config", "设置", "配置"],
       run: () => args.setSettingsOpen(true),
     },
+    // Tab management (Slice 2c.4). Hide rows that would be a no-op:
+    // no point listing "Close tab" when no tab is open, "Close others"
+    // when only one tab exists, etc. The palette never offers actions
+    // that wouldn't change anything.
+    ...(args.tabs.activeId !== null
+      ? [
+          {
+            id: "builtin.tab-close",
+            name: t("commands.closeTab"),
+            shortcut: "⌘W",
+            keywords: ["close", "tab", "关闭"],
+            run: () => args.tabs.closeActive(),
+          },
+        ]
+      : []),
+    ...(args.tabs.count > 1
+      ? [
+          {
+            id: "builtin.tab-close-others",
+            name: t("commands.closeOtherTabs"),
+            keywords: ["close", "others", "tab", "关闭", "其他"],
+            run: () => args.tabs.closeOthers(),
+          },
+        ]
+      : []),
+    ...(args.tabs.count > 0
+      ? [
+          {
+            id: "builtin.tab-close-all",
+            name: t("commands.closeAllTabs"),
+            keywords: ["close", "all", "tab", "关闭", "全部"],
+            run: () => args.tabs.closeAll(),
+          },
+        ]
+      : []),
   ];
 }

@@ -207,11 +207,19 @@
     "toggleGraph": "Toggle graph focus",
     "toggleSearch": "Toggle global search",
     "openSettings": "Open settings…",
+    "closeTab": "Close tab",
+    "closeOtherTabs": "Close other tabs",
+    "closeAllTabs": "Close all tabs",
     "theme": {
       "light": "light",
       "dark": "dark",
       "system": "system"
     }
+  },
+  "tabs": {
+    "close": "Close",
+    "closeOthers": "Close Others",
+    "closeAll": "Close All"
   },
   "errorBoundary": {
     "title": "Something broke.",

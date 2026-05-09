@@ -29,6 +29,14 @@ export default function App() {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("knowlet:open-trash"));
       }
+      // Phase 2 D Slice 2c.4 — ⌘W closes the active tab (matches
+      // VS Code / browser tab semantics). Browsers reserve ⌘W for
+      // closing the window/tab; we preventDefault to claim it for
+      // ourselves. ⌘⇧W still falls through to the browser.
+      if (meta && !e.shiftKey && !e.altKey && key === "w") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("knowlet:close-active-tab"));
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

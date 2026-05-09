@@ -70,6 +70,9 @@ export interface TabsApi {
   setActive: (id: string) => void;
   /** Close all tabs (used on vault reset / "open trash" flows). */
   closeAll: () => void;
+  /** Close every tab EXCEPT the given id; activate that id. No-op if
+   *  the id isn't already in `tabs`. */
+  closeOthers: (id: string) => void;
 }
 
 export function useTabs(): TabsApi {
@@ -118,6 +121,17 @@ export function useTabs(): TabsApi {
     setState({ tabs: [], activeId: null });
   }, []);
 
+  const closeOthers = useCallback((id: string) => {
+    setState((prev) => {
+      if (!prev.tabs.includes(id)) return prev;
+      // Already isolated — nothing to close, but make sure it's active.
+      if (prev.tabs.length === 1) {
+        return prev.activeId === id ? prev : { ...prev, activeId: id };
+      }
+      return { tabs: [id], activeId: id };
+    });
+  }, []);
+
   return {
     tabs: state.tabs,
     activeId: state.activeId,
@@ -125,5 +139,6 @@ export function useTabs(): TabsApi {
     closeTab,
     setActive,
     closeAll,
+    closeOthers,
   };
 }

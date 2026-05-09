@@ -211,9 +211,9 @@ export function AppShell() {
 
   // Phase 2 D Slice 2c.3 — built-in palette commands. Memoize so cmdk
   // doesn't re-render the list every parent render. Closures capture
-  // setters (which are stable React refs), so the dependency list can
-  // be limited to t (i18n) + openNewDocDialog (changes when active
-  // folder changes).
+  // setters (stable React refs); the only changing inputs are t, the
+  // open-new-doc callback, and the tab counts (so close-tab rows
+  // appear/disappear correctly when tabs change).
   const builtinCommands = useMemo(
     () =>
       buildBuiltinCommands({
@@ -224,8 +224,29 @@ export function AppShell() {
         setGraphFocusOpen,
         setSearchFocusOpen,
         setSettingsOpen,
+        tabs: {
+          activeId: tabsApi.activeId,
+          count: tabsApi.tabs.length,
+          closeActive: () => {
+            const id = tabsApi.activeId;
+            if (id) tabsApi.closeTab(id);
+          },
+          closeOthers: () => {
+            const id = tabsApi.activeId;
+            if (id) tabsApi.closeOthers(id);
+          },
+          closeAll: () => tabsApi.closeAll(),
+        },
       }),
-    [t, openNewDocDialog],
+    [
+      t,
+      openNewDocDialog,
+      tabsApi.activeId,
+      tabsApi.tabs.length,
+      tabsApi.closeTab,
+      tabsApi.closeOthers,
+      tabsApi.closeAll,
+    ],
   );
 
   // Look up the currently-selected note's title from the tree cache so
@@ -326,6 +347,10 @@ export function AppShell() {
       setPaletteOpen(true);
     };
     const openTrash = () => setTrashOpen(true);
+    const closeActiveTab = () => {
+      const id = tabsApi.activeId;
+      if (id) tabsApi.closeTab(id);
+    };
     const openWikilink = (e: Event) => {
       const detail = (e as CustomEvent<{ title: string; hash: string }>).detail;
       if (!detail || !detail.title) return;
@@ -448,6 +473,7 @@ export function AppShell() {
     };
     window.addEventListener("knowlet:open-palette", openPalette);
     window.addEventListener("knowlet:open-trash", openTrash);
+    window.addEventListener("knowlet:close-active-tab", closeActiveTab);
     window.addEventListener("knowlet:open-templates", openTemplates);
     window.addEventListener("knowlet:open-new-doc", openNewDoc);
     window.addEventListener("knowlet:new-doc-folder-change", onFolderChange);
@@ -457,6 +483,7 @@ export function AppShell() {
     return () => {
       window.removeEventListener("knowlet:open-palette", openPalette);
       window.removeEventListener("knowlet:open-trash", openTrash);
+      window.removeEventListener("knowlet:close-active-tab", closeActiveTab);
       window.removeEventListener("knowlet:open-templates", openTemplates);
       window.removeEventListener("knowlet:open-new-doc", openNewDoc);
       window.removeEventListener(
@@ -632,6 +659,8 @@ export function AppShell() {
                   activeId={tabsApi.activeId}
                   onActivate={tabsApi.setActive}
                   onClose={tabsApi.closeTab}
+                  onCloseOthers={tabsApi.closeOthers}
+                  onCloseAll={tabsApi.closeAll}
                 />
                 <div className="min-h-0 flex-1">
                   <NoteView
