@@ -179,11 +179,37 @@
   },
   "palette": {
     "placeholder": "Type a title…",
+    "commandsPlaceholder": "Type a command…",
+    "commandsTitle": "Command palette",
+    "commandsLabel": "COMMANDS",
+    "switchToFiles": "Switch back to files (Backspace)",
+    "backspaceHint": "(⌫ to leave)",
+    "footerFiles": "Type > or press ⌘⇧P for commands · Esc to close",
+    "footerCommands": "⌫ to switch back to files · Esc to close",
     "noMatches": "No matches.",
     "notesCount_one": "1 note",
     "notesCount_other": "{{count}} notes",
     "actionsCount_one": "1 quick action",
-    "actionsCount_other": "{{count}} quick actions"
+    "actionsCount_other": "{{count}} quick actions",
+    "commandsCount_one": "1 command",
+    "commandsCount_other": "{{count}} commands"
+  },
+  "commands": {
+    "newNote": "New note",
+    "toggleTheme": "Toggle theme",
+    "toggleThemeHint": "currently {{current}}",
+    "openNotesTab": "Show: Notes",
+    "openTagsTab": "Show: Tags",
+    "openTemplatesTab": "Show: Templates",
+    "openQuickActionsManager": "Manage quick actions…",
+    "toggleGraph": "Toggle graph focus",
+    "toggleSearch": "Toggle global search",
+    "openSettings": "Open settings…",
+    "theme": {
+      "light": "light",
+      "dark": "dark",
+      "system": "system"
+    }
   },
   "errorBoundary": {
     "title": "Something broke.",

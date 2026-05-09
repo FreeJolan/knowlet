@@ -6,17 +6,26 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/queryClient";
 
 export default function App() {
-  // Global keyboard shortcuts. Cmd+P / Ctrl+P → toggle palette. We dispatch
-  // a CustomEvent that AppShell listens for; this avoids threading state
-  // through the QueryClientProvider boundary.
+  // Global keyboard shortcuts. Mirrors VS Code:
+  //   ⌘P     → quick switcher (files mode)
+  //   ⌘⇧P    → command palette (commands mode)
+  //   ⌘⇧T    → trash
+  // We dispatch CustomEvents so AppShell can stay the single owner of
+  // dialog state without threading setters through QueryClientProvider.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
-      if (meta && e.key.toLowerCase() === "p") {
+      const key = e.key.toLowerCase();
+      if (meta && key === "p") {
         e.preventDefault();
-        window.dispatchEvent(new CustomEvent("knowlet:open-palette"));
+        window.dispatchEvent(
+          new CustomEvent<{ mode: "files" | "commands" }>(
+            "knowlet:open-palette",
+            { detail: { mode: e.shiftKey ? "commands" : "files" } },
+          ),
+        );
       }
-      if (meta && e.shiftKey && e.key.toLowerCase() === "t") {
+      if (meta && e.shiftKey && key === "t") {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("knowlet:open-trash"));
       }

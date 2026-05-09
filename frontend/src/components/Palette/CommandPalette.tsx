@@ -1,13 +1,19 @@
 /**
- * Cmd+P quick switcher (Phase 1 A, Slice 2.5).
+ * Cmd+K quick switcher (Phase 1 A, Slice 2.5) +
+ * Cmd+Shift+P command palette (Phase 2 D Slice 2c.3).
  *
- * Pulls every note title once (cheap on the tree), filters client-side
- * with cmdk's fuzzy match. Phase 1 B will add a /api/search backend call
- * for body-text matching; Phase 1 A keeps it title-only for snap response.
+ * Two modes share one dialog (VS Code pattern):
+ *   - "files":    list notes only. Default for ⌘K.
+ *   - "commands": list quick actions + built-in UI commands.
+ *                 Default for ⌘⇧P; reachable from files mode by
+ *                 typing "`>`" as the first character.
+ *
+ * Backspace at empty input in commands mode returns to files mode.
+ * Esc closes the dialog.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Zap } from "lucide-react";
+import { ChevronRight, FileText, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -24,11 +30,14 @@ import type { QuickAction } from "@/api/types";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { QK } from "@/lib/queryClient";
 
+import type { PaletteCommand } from "./commands";
 import type { TreeFolder, TreeNote } from "@/api/types";
 
 interface FlatNote extends TreeNote {
   folderPath: string;
 }
+
+export type PaletteMode = "files" | "commands";
 
 // Top-level folders the palette should NOT walk into. Mirrors the file
 // tree's HIDDEN_TOP_LEVEL_FOLDERS — templates are managed via the
@@ -47,26 +56,37 @@ function flatten(root: TreeFolder, prefix: string = ""): FlatNote[] {
 
 export function CommandPalette({
   open,
+  initialMode = "files",
   onClose,
   onSelectNote,
+  builtinCommands,
 }: {
   open: boolean;
+  /** Mode the palette opens in. Caller resets this each time it opens
+   *  (⌘K → "files", ⌘⇧P → "commands"). */
+  initialMode?: PaletteMode;
   onClose: () => void;
   onSelectNote: (id: string) => void;
+  /** Built-in UI commands provided by AppShell — closures over its
+   *  setters. Quick actions are fetched separately. */
+  builtinCommands: PaletteCommand[];
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const [mode, setMode] = useState<PaletteMode>(initialMode);
+  const [query, setQuery] = useState("");
+
   const tree = useQuery({
     queryKey: QK.tree,
     queryFn: getTree,
-    enabled: open,
+    enabled: open && mode === "files",
   });
   const actions = useQuery<QuickAction[]>({
     queryKey: QK.quickActions,
     queryFn: listQuickActions,
-    enabled: open,
+    enabled: open && mode === "commands",
     // Always refetch on open: the palette is the canonical place to
-    // run actions; users editing actions in Settings (Slice 2c.2)
+    // run actions; users editing actions in the manager (Slice 2c.2)
     // expect fresh state without a manual reload.
     staleTime: 0,
   });
@@ -74,11 +94,14 @@ export function CommandPalette({
     () => (tree.data ? flatten(tree.data) : []),
     [tree.data],
   );
-  const [query, setQuery] = useState("");
 
+  // Reset state on every open so the dialog is "clean" each time.
   useEffect(() => {
-    if (!open) setQuery("");
-  }, [open]);
+    if (open) {
+      setMode(initialMode);
+      setQuery("");
+    }
+  }, [open, initialMode]);
 
   // Phase 2 D Slice 2c — running a quick action returns NoteFull
   // (idempotent: same-day re-runs reuse the existing note). On
@@ -92,8 +115,50 @@ export function CommandPalette({
     },
   });
 
-  // Global Cmd+P / Ctrl+P keyboard shortcut is wired by the parent (AppShell).
-  // We just reset state when closed.
+  const handleQueryChange = (next: string) => {
+    // Files-mode "`>`" prefix → switch to commands mode + strip the `>`.
+    // Mirrors VS Code's ⌘P → "`>`" behavior. We only react to the very
+    // first character so users can still search note titles that
+    // legitimately contain a ">" later in the query.
+    if (mode === "files" && next.startsWith(">")) {
+      setMode("commands");
+      setQuery(next.slice(1).trimStart());
+      return;
+    }
+    setQuery(next);
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Backspace at empty input in commands mode → back to files mode.
+    // (Pressing Esc still closes the dialog at the cmdk level.)
+    if (
+      mode === "commands" &&
+      e.key === "Backspace" &&
+      query.length === 0 &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey
+    ) {
+      e.preventDefault();
+      setMode("files");
+    }
+  };
+
+  // Build the commands-mode list once per render. Quick actions are
+  // mapped to PaletteCommand shape so cmdk filters uniformly.
+  const commandRows: PaletteCommand[] = useMemo(() => {
+    if (mode !== "commands") return [];
+    const actionRows: PaletteCommand[] =
+      actions.data?.map((a) => ({
+        id: `action.${a.id}`,
+        name: a.name,
+        description: a.description ?? undefined,
+        shortcut: a.shortcut ?? undefined,
+        keywords: ["action", "quick", "快捷", "操作"],
+        run: () => runMutation.mutate(a.id),
+      })) ?? [];
+    return [...actionRows, ...builtinCommands];
+  }, [mode, actions.data, builtinCommands, runMutation]);
 
   return (
     <Dialog
@@ -104,73 +169,133 @@ export function CommandPalette({
     >
       <DialogContent className="gap-0 p-0 sm:max-w-3xl">
         <DialogHeader className="sr-only">
-          <DialogTitle>{t("app.quickSwitch")}</DialogTitle>
+          <DialogTitle>
+            {mode === "commands"
+              ? t("palette.commandsTitle")
+              : t("app.quickSwitch")}
+          </DialogTitle>
         </DialogHeader>
-        <Command label={t("app.quickSwitch")} shouldFilter={true}>
+        <Command
+          label={
+            mode === "commands"
+              ? t("palette.commandsTitle")
+              : t("app.quickSwitch")
+          }
+          shouldFilter={true}
+        >
+          {/* Mode banner — shown only in commands mode so power users
+              know they're in a different surface (and how to leave).
+              Files mode is the "default" state, no banner needed. */}
+          {mode === "commands" && (
+            <button
+              type="button"
+              onClick={() => setMode("files")}
+              className="flex items-center gap-1 px-3 pt-2 text-left font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+              title={t("palette.switchToFiles")}
+              data-testid="palette-mode-pill"
+            >
+              <ChevronRight className="size-3" />
+              <span>{t("palette.commandsLabel")}</span>
+              <span className="ml-1 text-[10px] opacity-70">
+                {t("palette.backspaceHint")}
+              </span>
+            </button>
+          )}
           <CommandInput
-            placeholder={t("palette.placeholder")}
+            data-testid="palette-input"
+            placeholder={
+              mode === "commands"
+                ? t("palette.commandsPlaceholder")
+                : t("palette.placeholder")
+            }
             value={query}
-            onValueChange={setQuery}
+            onValueChange={handleQueryChange}
+            onKeyDown={handleInputKeyDown}
           />
-          {/* Bump the list height so a dozen notes are visible without
-            * scrolling. shadcn's default `max-h-72` (288px) feels
-            * cramped on a wide dialog. */}
+          {/* Bump the list height so a dozen rows are visible without
+              scrolling. shadcn's default `max-h-72` (288px) feels
+              cramped on a wide dialog. */}
           <CommandList className="max-h-[60vh]">
             <CommandEmpty>{t("palette.noMatches")}</CommandEmpty>
-            {actions.data && actions.data.length > 0 && (
-              <CommandGroup heading={t("palette.actionsCount", { count: actions.data.length })}>
-                {actions.data.map((a) => (
+            {mode === "commands" ? (
+              <CommandGroup
+                heading={t("palette.commandsCount", {
+                  count: commandRows.length,
+                })}
+              >
+                {commandRows.map((c) => {
+                  const isAction = c.id.startsWith("action.");
+                  return (
+                    <CommandItem
+                      key={c.id}
+                      className="!py-1.5"
+                      value={`${c.name} ${c.description ?? ""} ${
+                        c.shortcut ?? ""
+                      } ${(c.keywords ?? []).join(" ")}`}
+                      onSelect={() => void c.run()}
+                      data-testid={
+                        isAction ? "palette-action-item" : "palette-command-item"
+                      }
+                      data-command-id={c.id}
+                    >
+                      {isAction ? (
+                        <Zap
+                          className="size-3.5 shrink-0"
+                          style={{ color: "var(--accent)" }}
+                        />
+                      ) : (
+                        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="truncate">{c.name}</span>
+                      {c.description && (
+                        <span className="ml-2 truncate text-[11px] text-muted-foreground">
+                          {c.description}
+                        </span>
+                      )}
+                      {c.shortcut && (
+                        <span className="ml-auto shrink-0 pl-3 font-mono text-[11px] text-muted-foreground">
+                          {c.shortcut}
+                        </span>
+                      )}
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            ) : (
+              <CommandGroup
+                heading={t("palette.notesCount", { count: notes.length })}
+              >
+                {notes.map((n) => (
                   <CommandItem
-                    key={a.id}
+                    key={n.id}
+                    // Compact row: tighter vertical padding overrides the
+                    // shadcn default `py-1.5` so a long list isn't a wall
+                    // of evenly-spaced "cards". Folder context renders
+                    // INLINE on the right (gray + small) so two notes
+                    // with the same title but different folders are
+                    // distinguishable at a glance.
                     className="!py-1.5"
-                    value={`${a.name} ${a.description ?? ""} ${a.shortcut ?? ""} action`}
-                    onSelect={() => runMutation.mutate(a.id)}
-                    data-testid="palette-action-item"
-                    data-action-id={a.id}
+                    value={`${n.title} ${n.folderPath}`}
+                    onSelect={() => onSelectNote(n.id)}
                   >
-                    <Zap
-                      className="size-3.5 shrink-0"
-                      style={{ color: "var(--accent)" }}
-                    />
-                    <span className="truncate">{a.name}</span>
-                    {a.description && (
-                      <span className="ml-2 truncate text-[11px] text-muted-foreground">
-                        {a.description}
-                      </span>
-                    )}
-                    {a.shortcut && (
-                      <span className="ml-auto shrink-0 pl-3 font-mono text-[11px] text-muted-foreground">
-                        {a.shortcut}
+                    <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{n.title}</span>
+                    {n.folderPath && (
+                      <span className="ml-auto shrink-0 truncate pl-3 font-mono text-[11px] text-muted-foreground">
+                        {n.folderPath}
                       </span>
                     )}
                   </CommandItem>
                 ))}
               </CommandGroup>
             )}
-            <CommandGroup heading={t("palette.notesCount", { count: notes.length })}>
-              {notes.map((n) => (
-                <CommandItem
-                  key={n.id}
-                  // Compact row: tighter vertical padding overrides the
-                  // shadcn default `py-1.5` so a long list isn't a wall
-                  // of evenly-spaced "cards". Folder context renders
-                  // INLINE on the right (gray + small) so two notes
-                  // with the same title but different folders are
-                  // distinguishable at a glance.
-                  className="!py-1.5"
-                  value={`${n.title} ${n.folderPath}`}
-                  onSelect={() => onSelectNote(n.id)}
-                >
-                  <span className="truncate">{n.title}</span>
-                  {n.folderPath && (
-                    <span className="ml-auto shrink-0 truncate pl-3 font-mono text-[11px] text-muted-foreground">
-                      {n.folderPath}
-                    </span>
-                  )}
-                </CommandItem>
-              ))}
-            </CommandGroup>
           </CommandList>
+          {/* Footer — quiet hint about the alternate mode. */}
+          <div className="border-t px-3 py-1.5 text-[11px] text-muted-foreground">
+            {mode === "commands"
+              ? t("palette.footerCommands")
+              : t("palette.footerFiles")}
+          </div>
         </Command>
       </DialogContent>
     </Dialog>

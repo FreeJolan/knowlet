@@ -26,6 +26,7 @@ import { FileTree } from "@/components/FileTree/FileTree";
 import { GraphFocusMode } from "@/components/Graph/GraphFocusMode";
 import { NoteView } from "@/components/NoteView/NoteView";
 import { CommandPalette } from "@/components/Palette/CommandPalette";
+import { buildBuiltinCommands } from "@/components/Palette/commands";
 import { RightRail } from "@/components/RightRail/RightRail";
 import { SearchFocusMode } from "@/components/Search/SearchFocusMode";
 import { SettingsDialog } from "@/components/Settings/SettingsDialog";
@@ -96,6 +97,12 @@ export function AppShell() {
   const setSelectedNoteId = tabsApi.openNote;
   const [trashOpen, setTrashOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Phase 2 D Slice 2c.3 — palette opens in either "files" mode (⌘K)
+  // or "commands" mode (⌘⇧P). The initial mode is reset every time
+  // the dialog opens.
+  const [paletteInitialMode, setPaletteInitialMode] = useState<
+    "files" | "commands"
+  >("files");
   // Phase 2 D Slice 2c.2 — `templatesOpen` was the on/off for the
   // legacy manager dialog. Removed in favor of Templates tab. State
   // dropped entirely.
@@ -202,6 +209,25 @@ export function AppShell() {
     [activeNoteFolder],
   );
 
+  // Phase 2 D Slice 2c.3 — built-in palette commands. Memoize so cmdk
+  // doesn't re-render the list every parent render. Closures capture
+  // setters (which are stable React refs), so the dependency list can
+  // be limited to t (i18n) + openNewDocDialog (changes when active
+  // folder changes).
+  const builtinCommands = useMemo(
+    () =>
+      buildBuiltinCommands({
+        t,
+        setLeftTab,
+        setQuickActionsOpen,
+        openNewDocDialog,
+        setGraphFocusOpen,
+        setSearchFocusOpen,
+        setSettingsOpen,
+      }),
+    [t, openNewDocDialog],
+  );
+
   // Look up the currently-selected note's title from the tree cache so
   // the Backlinks empty-state can render `[[Title]]` correctly. Tree is
   // already cached for the FileTree, so this is free.
@@ -294,7 +320,11 @@ export function AppShell() {
   };
 
   useEffect(() => {
-    const openPalette = () => setPaletteOpen(true);
+    const openPalette = (e: Event) => {
+      const detail = (e as CustomEvent<{ mode?: "files" | "commands" }>).detail;
+      setPaletteInitialMode(detail?.mode ?? "files");
+      setPaletteOpen(true);
+    };
     const openTrash = () => setTrashOpen(true);
     const openWikilink = (e: Event) => {
       const detail = (e as CustomEvent<{ title: string; hash: string }>).detail;
@@ -388,6 +418,10 @@ export function AppShell() {
         e.preventDefault();
         setQuickActionsOpen((v) => !v);
       }
+      // Phase 2 D Slice 2c.3 — palette open shortcuts (⌘P / ⌘⇧P) live
+      // in App.tsx so they fire even before AppShell mounts; both
+      // dispatch `knowlet:open-palette` with a `mode` detail that the
+      // listener above reads.
     };
     // Phase 2 D Slice 2c.2 — NewDocDialog footer link dispatches this
     // event. Templates manage now lives in the Templates tab (left
@@ -455,8 +489,12 @@ export function AppShell() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setPaletteOpen(true)}
+              onClick={() => {
+                setPaletteInitialMode("files");
+                setPaletteOpen(true);
+              }}
               className="font-mono text-xs"
+              title="⌘P · ⌘⇧P for commands"
             >
               <span style={{ color: "var(--ink-mute)" }}>⌘P</span>
               <span className="ml-2">{t("app.quickSwitch")}</span>
@@ -657,6 +695,8 @@ export function AppShell() {
       />
       <CommandPalette
         open={paletteOpen}
+        initialMode={paletteInitialMode}
+        builtinCommands={builtinCommands}
         onClose={() => setPaletteOpen(false)}
         onSelectNote={(id) => {
           setSelectedNoteId(id);

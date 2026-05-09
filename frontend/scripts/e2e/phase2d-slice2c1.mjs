@@ -79,34 +79,37 @@ try {
     );
   });
 
-  await runTest("Cmd+P palette shows action under '快捷操作' section", async () => {
-    await page.keyboard.press("Meta+P");
+  // 2026-05-10 — Slice 2c.3 split palette into files (⌘P) / commands
+  // (⌘⇧P) modes; quick actions only appear in commands mode now. The
+  // following tests use ⌘⇧P; the seeded today-note + the test's own
+  // "Weekly review" action both live there.
+  await runTest("⌘⇧P commands palette lists the saved action", async () => {
+    await page.keyboard.press("Meta+Shift+P");
     await page.waitForTimeout(400);
-    const items = await page.locator('[data-testid="palette-action-item"]').count();
-    assert(items === 1, `palette should show 1 action item, got ${items}`);
-    const text = await page
+    const allActions = await page
       .locator('[data-testid="palette-action-item"]')
-      .first()
-      .textContent();
+      .allInnerTexts();
     assert(
-      /Weekly review/.test(text ?? ""),
-      `palette action text mismatch: "${text}"`,
+      allActions.some((t) => /Weekly review/.test(t)),
+      `commands mode should list Weekly review — got ${JSON.stringify(allActions)}`,
     );
     await page.keyboard.press("Escape");
     await page.waitForTimeout(200);
   });
 
-  await runTest("Running action from palette opens the existing note (idempotent)", async () => {
-    // Get the existing note id from the tree.
+  await runTest("Running action from commands mode opens the existing note (idempotent)", async () => {
     const tree = await page.evaluate(async () =>
       (await fetch("/api/tree")).json(),
     );
     const weekly = tree.folders.find((f) => f.name === "weekly");
     const initialNote = weekly?.notes?.[0];
     assert(initialNote, "must have created a weekly note in previous test");
-    // Open palette and click the action.
-    await page.keyboard.press("Meta+P");
+    await page.keyboard.press("Meta+Shift+P");
     await page.waitForTimeout(300);
+    // Filter to just our action so click hits the right row even if
+    // today-note is also present.
+    await page.locator('[data-testid="palette-input"]').fill("Weekly");
+    await page.waitForTimeout(200);
     await page.locator('[data-testid="palette-action-item"]').first().click();
     await page.waitForTimeout(800);
     // Now check that the active tab title matches the existing note's title
@@ -131,20 +134,28 @@ try {
     );
   });
 
-  await runTest("Delete action via API removes it from palette", async () => {
+  await runTest("Delete action via API removes it from commands palette", async () => {
+    // Find Weekly review's id (today-note is also seeded; we want the
+    // user-created one).
     const actions = await page.evaluate(async () =>
       (await fetch("/api/quick-actions")).json(),
     );
-    const aid = actions[0].id;
+    const weekly = actions.find((a) => /Weekly review/.test(a.name));
+    assert(weekly, "Weekly review action must exist");
     await page.evaluate(
       async (id) => fetch(`/api/quick-actions/${id}`, { method: "DELETE" }),
-      aid,
+      weekly.id,
     );
     await page.waitForTimeout(200);
-    await page.keyboard.press("Meta+P");
+    await page.keyboard.press("Meta+Shift+P");
     await page.waitForTimeout(400);
-    const items = await page.locator('[data-testid="palette-action-item"]').count();
-    assert(items === 0, `palette should hide deleted action, got ${items}`);
+    const allActions = await page
+      .locator('[data-testid="palette-action-item"]')
+      .allInnerTexts();
+    assert(
+      !allActions.some((t) => /Weekly review/.test(t)),
+      `palette must not list deleted Weekly review — got ${JSON.stringify(allActions)}`,
+    );
     await page.keyboard.press("Escape");
   });
 

@@ -179,11 +179,37 @@
   },
   "palette": {
     "placeholder": "输入标题…",
+    "commandsPlaceholder": "输入命令…",
+    "commandsTitle": "命令面板",
+    "commandsLabel": "命令",
+    "switchToFiles": "返回文件搜索 (Backspace)",
+    "backspaceHint": "(⌫ 退出)",
+    "footerFiles": "输入 > 或按 ⌘⇧P 进入命令模式 · Esc 关闭",
+    "footerCommands": "⌫ 返回文件搜索 · Esc 关闭",
     "noMatches": "没有匹配。",
     "notesCount_one": "1 篇笔记",
     "notesCount_other": "{{count}} 篇笔记",
     "actionsCount_one": "1 个快捷操作",
-    "actionsCount_other": "{{count}} 个快捷操作"
+    "actionsCount_other": "{{count}} 个快捷操作",
+    "commandsCount_one": "1 个命令",
+    "commandsCount_other": "{{count}} 个命令"
+  },
+  "commands": {
+    "newNote": "新建笔记",
+    "toggleTheme": "切换主题",
+    "toggleThemeHint": "当前:{{current}}",
+    "openNotesTab": "切到:笔记",
+    "openTagsTab": "切到:标签",
+    "openTemplatesTab": "切到:模板",
+    "openQuickActionsManager": "管理快捷操作…",
+    "toggleGraph": "切换图谱聚焦",
+    "toggleSearch": "切换全局搜索",
+    "openSettings": "打开设置…",
+    "theme": {
+      "light": "浅色",
+      "dark": "深色",
+      "system": "跟随系统"
+    }
   },
   "errorBoundary": {
     "title": "出错了。",
