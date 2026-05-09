@@ -16,7 +16,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, FileText, Folder, Hash } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Hash } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -139,35 +139,61 @@ export function TagBrowser({
 
   // ----------------------------------------------------------- empty / errors
 
+  // 2026-05-10: shared header bar — keeps Tags tab visually aligned
+  // with Notes / Templates tabs (label at top-left, blank top-right
+  // since tags can't be created standalone).
+  const headerBar = (
+    <div
+      className="flex shrink-0 items-center justify-between border-b py-1.5 pr-1 pl-3"
+      style={{ borderColor: "var(--line)" }}
+    >
+      <span
+        data-testid="tag-browser-heading"
+        className="text-[11px] font-semibold uppercase tracking-wide text-foreground/80"
+      >
+        {t("tree.tabTags")}
+      </span>
+    </div>
+  );
+
   if (tagsQuery.isLoading) {
     return (
-      <div
-        className="px-3 py-3 text-xs"
-        style={{ color: "var(--ink-mute)" }}
-      >
-        {t("tags.loading")}
+      <div className="flex h-full flex-col">
+        {headerBar}
+        <div
+          className="px-3 py-3 text-xs"
+          style={{ color: "var(--ink-mute)" }}
+        >
+          {t("tags.loading")}
+        </div>
       </div>
     );
   }
   if (tagsQuery.isError) {
     return (
-      <div
-        className="px-3 py-3 text-xs"
-        style={{ color: "var(--ink-mute)" }}
-      >
-        {t("tags.loadFailed", {
-          error: (tagsQuery.error as { detail?: string })?.detail ?? "unknown",
-        })}
+      <div className="flex h-full flex-col">
+        {headerBar}
+        <div
+          className="px-3 py-3 text-xs"
+          style={{ color: "var(--ink-mute)" }}
+        >
+          {t("tags.loadFailed", {
+            error: (tagsQuery.error as { detail?: string })?.detail ?? "unknown",
+          })}
+        </div>
       </div>
     );
   }
   if (data.length === 0) {
     return (
-      <div
-        className="px-3 py-4 text-xs"
-        style={{ color: "var(--ink-mute)" }}
-      >
-        {t("tags.empty")}
+      <div className="flex h-full flex-col">
+        {headerBar}
+        <div
+          className="px-3 py-4 text-xs"
+          style={{ color: "var(--ink-mute)" }}
+        >
+          {t("tags.empty")}
+        </div>
       </div>
     );
   }
@@ -176,6 +202,7 @@ export function TagBrowser({
 
   return (
     <div ref={containerRef} className="flex h-full min-h-0 flex-col">
+      {headerBar}
       <Tree<RowData>
         ref={treeRef}
         data={data}
@@ -237,11 +264,12 @@ function Row({ node, style, dragHandle }: NodeRendererProps<RowData>) {
         <span style={{ display: "inline-block", width: 11 }} />
       )}
       {isTag ? (
-        node.children && node.children.some((c) => c.data.kind === "tag") ? (
-          <Folder size={12} style={{ color: "var(--ink-soft)" }} />
-        ) : (
-          <Hash size={12} style={{ color: "var(--ink-soft)" }} />
-        )
+        // 2026-05-10: always Hash icon. Was previously branching to
+        // Folder for "tag with sub-tag children" but that suggested
+        // tags-as-folders, which they aren't — the chevron already
+        // expresses expandability, and treating leaf vs parent the
+        // same makes the rail visually homogeneous.
+        <Hash size={12} style={{ color: "var(--ink-soft)" }} />
       ) : (
         <FileText size={12} style={{ color: "var(--ink-soft)" }} />
       )}
