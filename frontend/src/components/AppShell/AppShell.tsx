@@ -7,7 +7,6 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  CalendarDays,
   FileText,
   LayoutTemplate,
   Network,
@@ -41,7 +40,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { openOrCreateTodayDailyNote } from "@/lib/daily";
+import { listQuickActions, runQuickAction } from "@/api/client";
 import { QK } from "@/lib/queryClient";
 import { useTabs } from "@/hooks/useTabs";
 
@@ -266,17 +265,31 @@ export function AppShell() {
   // note that's about to be moved out from under them.
   const [, setTreeBusy] = useState(false);
 
-  // Phase 2 D Slice 1 — daily note open/create handler. Defined
-  // inside the component (not inside the effect) so the header
-  // button + keyboard shortcut can both call it; effect deps stay
-  // honest. tabsApi.openNote is stable across renders.
+  // Phase 2 D Slice 2c.2-C' — ⌘⇧D now runs the `today-note` quick
+  // action (default-seeded on first /api/quick-actions GET). The
+  // standalone CalendarDays header icon was removed in the same
+  // slice; the daily flow is just one example of the quick-actions
+  // mechanism, teaching the concept by use rather than by docs.
   const openTodayDaily = async () => {
     try {
-      const id = await openOrCreateTodayDailyNote(qc);
-      tabsApi.openNote(id);
+      const actions = await qc.fetchQuery({
+        queryKey: QK.quickActions,
+        queryFn: listQuickActions,
+      });
+      const today =
+        actions.find((a) => a.id === "today-note") ??
+        actions.find((a) => a.shortcut === "Cmd+Shift+D");
+      if (!today) {
+        // User explicitly deleted today-note. Honor the choice —
+        // don't silently re-create. They can rebuild via the
+        // manager (⚡) or NewDocDialog "save as quick action".
+        return;
+      }
+      const note = await runQuickAction(today.id);
+      tabsApi.openNote(note.id);
+      void qc.invalidateQueries({ queryKey: QK.tree });
     } catch (err) {
-      // Surface to console for now; toast UI is Phase 3 polish.
-      console.error("daily-note open/create failed", err);
+      console.error("daily-note action run failed", err);
     }
   };
 
@@ -448,16 +461,10 @@ export function AppShell() {
               <span style={{ color: "var(--ink-mute)" }}>⌘P</span>
               <span className="ml-2">{t("app.quickSwitch")}</span>
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={t("app.daily")}
-              title={t("app.daily") + " (⌘⇧D)"}
-              onClick={() => void openTodayDaily()}
-              data-testid="header-daily-button"
-            >
-              <CalendarDays className="size-4" />
-            </Button>
+            {/* Daily note CalendarDays icon removed 2026-05-10 — the
+             *  flow is now a default-seeded quick action mapped to
+             *  ⌘⇧D; user finds it (and edits / deletes it) inside
+             *  the ⚡ manager. */}
             <Button
               variant="ghost"
               size="icon"

@@ -1940,7 +1940,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     def list_quick_actions(
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> list[QuickAction]:
-        return _quick_action_store(runtime).load()
+        # First call seeds the default `today-note` action; subsequent
+        # calls just load whatever the user has now (including [] if
+        # they deleted everything). See QuickActionStore.load_with_defaults.
+        return _quick_action_store(runtime).load_with_defaults()
 
     @app.post("/api/quick-actions", response_model=QuickAction)
     def create_quick_action(

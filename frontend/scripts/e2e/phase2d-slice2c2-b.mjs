@@ -25,6 +25,15 @@ try {
   page.on("dialog", (d) => void d.accept());
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await page.waitForTimeout(500);
+  // Slice 2c.2-C': first GET /api/quick-actions seeds a default
+  // `today-note`. Wipe it so the rest of this suite's "empty",
+  // "exactly 1 row" assertions hold from a known clean baseline.
+  await page.evaluate(async () => {
+    const list = await (await fetch("/api/quick-actions")).json();
+    for (const a of list) {
+      await fetch(`/api/quick-actions/${a.id}`, { method: "DELETE" });
+    }
+  });
 
   await runTest("Header ⚡ icon opens manager (empty state)", async () => {
     await page.locator('[data-testid="header-quick-actions-button"]').click();

@@ -69,29 +69,10 @@ try {
     );
   });
 
-  await runTest("Header 'Today's note' button does the same", async () => {
-    // Open a non-daily note first to make sure the button activates the daily tab.
-    await page
-      .locator('[role="treeitem"]', { hasText: "filler" })
-      .first()
-      .click();
-    await page.waitForTimeout(300);
-    await page.locator('[data-testid="header-daily-button"]').click();
-    await page.waitForTimeout(500);
-    const activeTitle = await page.evaluate(() => {
-      const t = document.querySelector('[data-testid="tab"][data-active="true"]');
-      return t ? (t.textContent ?? "").trim().replace(/×$/, "").trim() : null;
-    });
-    assert(
-      activeTitle === today,
-      `daily button should activate today's tab, got "${activeTitle}"`,
-    );
-    // Still no duplicates.
-    const tree = await page.evaluate(async () => (await fetch("/api/tree")).json());
-    const daily = tree.folders.find((f) => f.name === "daily");
-    const todayCount = (daily?.notes ?? []).filter((n) => n.title === today).length;
-    assert(todayCount === 1, `still exactly 1 daily note, got ${todayCount}`);
-  });
+  // 2026-05-10 Slice 2c.2-C': dedicated CalendarDays header icon
+  // removed; daily flow is now a default-seeded quick action mapped
+  // to ⌘⇧D. The "header button does the same" test no longer
+  // applies — keyboard + manager (⚡) cover the surface.
 
   await runTest("After reload, Cmd+Shift+D still finds existing note (no dup)", async () => {
     await page.reload({ waitUntil: "networkidle" });

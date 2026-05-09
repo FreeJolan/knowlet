@@ -155,9 +155,15 @@ def _make_action(folder: str = "daily", title: str = "{{date}}") -> dict:
 
 def test_endpoint_list_create_delete_round_trip(tmp_path: Path):
     client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
-    # Empty list initially.
+    # First GET seeds the `today-note` default. Test acknowledges it
+    # by deleting before the round-trip the rest of the test cares about.
     r = client.get("/api/quick-actions")
     assert r.status_code == 200, r.text
+    seeded = r.json()
+    assert any(a["id"] == "today-note" for a in seeded)
+    for a in seeded:
+        client.delete(f"/api/quick-actions/{a['id']}")
+    r = client.get("/api/quick-actions")
     assert r.json() == []
     # Create.
     r = client.post("/api/quick-actions", json=_make_action())
@@ -174,6 +180,29 @@ def test_endpoint_list_create_delete_round_trip(tmp_path: Path):
     assert r.status_code == 200
     r = client.get("/api/quick-actions")
     assert r.json() == []
+
+
+def test_endpoint_seeds_today_note_on_first_get(tmp_path: Path):
+    """Phase 2 D Slice 2c.2-C': first GET seeds a default `today-note`
+    action. Subsequent calls load whatever the user has — including
+    [] if they deleted it. The file's existence is the "has been
+    seeded" marker; we never re-seed."""
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    r = client.get("/api/quick-actions")
+    assert r.status_code == 200
+    actions = r.json()
+    today = next((a for a in actions if a["id"] == "today-note"), None)
+    assert today is not None, "today-note must be seeded on first GET"
+    assert today["name"] == "今日笔记"
+    assert today["shortcut"] == "Cmd+Shift+D"
+    assert today["params"]["folder"] == "daily"
+    assert today["params"]["title_template"] == "{{date}}"
+    # Delete it.
+    client.delete(f"/api/quick-actions/{today['id']}")
+    # Re-GET must NOT re-seed (user explicitly removed it).
+    r = client.get("/api/quick-actions")
+    assert r.status_code == 200
+    assert all(a["id"] != "today-note" for a in r.json())
 
 
 def test_endpoint_update_replaces_in_place(tmp_path: Path):

@@ -214,6 +214,38 @@ class QuickActionStore:
                 return a
         return None
 
+    def load_with_defaults(self) -> list[QuickAction]:
+        """Like ``load()`` but seeds a default `today-note` action on
+        first access (when the file doesn't exist yet). Once written,
+        the user owns the file — if they delete the action, it stays
+        deleted and we don't re-seed. The file's existence is the
+        "has been seeded" marker.
+        """
+        if self.path.exists():
+            return self.load()
+        defaults = _build_default_actions()
+        self.save(defaults)
+        return defaults
+
+
+def _build_default_actions() -> list[QuickAction]:
+    """One ship'd preset — "今日笔记" mapped to ⌘⇧D. Replaces the
+    standalone CalendarDays header icon (Slice 2c.2-C', 2026-05-10):
+    the same affordance is now the canonical example of a quick
+    action, teaching the concept by use rather than by docs."""
+    return [
+        QuickAction(
+            id="today-note",
+            name="今日笔记",
+            description=None,
+            shortcut="Cmd+Shift+D",
+            params=CreateNoteParams(
+                folder="daily",
+                title_template="{{date}}",
+            ),
+        ),
+    ]
+
 
 # ---------- placeholder rendering ----------
 
