@@ -43,6 +43,8 @@
     "untitled": "(untitled)",
     "tabFiles": "Files",
     "tabTags": "Tags",
+    "tabTemplates": "Templates",
+    "templatesEmptyHint": "No templates yet. Use the + above to create one — they're notes used as scaffolds for new documents.",
     "newNoteHint": "Create a new document (Shift+click for quick inline)"
   },
   "newDoc": {
@@ -63,8 +65,6 @@
     "actionShortcutLabel": "Shortcut (optional)",
     "actionShortcutPlaceholder": "Cmd+Shift+W",
     "actionDescriptionLabel": "Description (optional)",
-    "manageTemplatesPrefix": "Templates →",
-    "manageTemplatesLink": "Settings / Templates",
     "cancel": "Cancel",
     "create": "Create",
     "creating": "Creating…",

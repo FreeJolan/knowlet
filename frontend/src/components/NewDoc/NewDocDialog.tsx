@@ -21,7 +21,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ExternalLink, FolderOpen, Plus, X } from "lucide-react";
+import { ChevronDown, FolderOpen, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -561,31 +561,11 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
             background: "var(--bg-1)",
           }}
         >
-          <span
-            className="font-mono"
-            style={{ fontSize: 11, color: "var(--ink-mute)" }}
-          >
-            {t("newDoc.manageTemplatesPrefix")}{" "}
-            <button
-              type="button"
-              data-testid="open-templates-manager"
-              onClick={() => {
-                // Keep NewDocDialog OPEN so the user returns to the
-                // form after browsing / editing templates — they
-                // typically click this link because they want to use
-                // a template they're about to create. Closing on
-                // this click would lose the in-progress folder /
-                // title / inspiration selections (2026-05-10 dogfood:
-                // "为什么点 设置/模板 后我的 dialog 直接没了").
-                window.dispatchEvent(new CustomEvent("knowlet:open-templates"));
-              }}
-              className="underline decoration-dotted underline-offset-2"
-              style={{ color: "var(--accent-2)" }}
-            >
-              {t("newDoc.manageTemplatesLink")}
-              <ExternalLink size={9} className="ml-0.5 inline" />
-            </button>
-          </span>
+          {/* "管理模板 → 设置 / 模板" footer link removed in 2026-05-10
+           *  redesign — templates manage now lives in the dedicated
+           *  Templates left-rail tab (always visible). The link was
+           *  a helpful crutch when templates were behind a header
+           *  dialog; with a tab right there, it's redundant. */}
           <span className="flex-1" />
           <button
             type="button"

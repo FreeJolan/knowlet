@@ -50,8 +50,6 @@
     "actionShortcutLabel": "快捷键(可选)",
     "actionShortcutPlaceholder": "Cmd+Shift+W",
     "actionDescriptionLabel": "描述(可选)",
-    "manageTemplatesPrefix": "模板管理 →",
-    "manageTemplatesLink": "设置 / 模板",
     "cancel": "取消",
     "create": "创建",
     "creating": "创建中…",
@@ -104,6 +102,8 @@
     "untitled": "(无标题)",
     "tabFiles": "文件",
     "tabTags": "标签",
+    "tabTemplates": "模板",
+    "templatesEmptyHint": "还没有模板。点上方 + 新建一个 —— 模板就是用来作为新文档骨架的笔记。",
     "newNoteHint": "新建文档(Shift+ 单击 = 快速 inline)"
   },
   "templates": {

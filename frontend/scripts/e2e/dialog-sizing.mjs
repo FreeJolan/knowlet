@@ -48,20 +48,11 @@ try {
     await page.waitForTimeout(150);
   });
 
-  await runTest("Templates dialog ≥ 800px on 1400px viewport", async () => {
-    await page.locator('[data-testid="templates-button"]').click();
-    await page
-      .locator('[data-slot="dialog-content"]')
-      .first()
-      .waitFor({ state: "visible", timeout: 3000 });
-    const w = await dialogWidth();
-    assert(
-      w >= 800 && w <= 1200,
-      `templates dialog width in 800..1200 — got ${Math.round(w)}px`,
-    );
-    await page.keyboard.press("Escape");
-    await page.waitForTimeout(150);
-  });
+  // 2026-05-10: Templates manage moved from a header dialog to the
+  // left-rail "Templates" tab. The standalone dialog was removed in
+  // Slice 2c.2-A'; no replacement size assertion needed (the tab
+  // shares the file-tree's left-rail width which is exercised in
+  // sidebar-width.mjs).
 
   await runTest("Trash dialog ≥ 900px on 1400px viewport", async () => {
     // Open via the global header icon. Trash is the widest dialog

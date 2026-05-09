@@ -8,7 +8,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarDays,
-  LayoutTemplate,
   Network,
   PanelRight,
   PanelRightOpen,
@@ -30,7 +29,6 @@ import { SettingsDialog } from "@/components/Settings/SettingsDialog";
 import { NewDocDialog } from "@/components/NewDoc/NewDocDialog";
 import { TabStrip } from "@/components/TabStrip/TabStrip";
 import { TagBrowser } from "@/components/TagBrowser/TagBrowser";
-import { TemplatesDialog } from "@/components/Templates/TemplatesDialog";
 import { TrashPanel } from "@/components/Trash/TrashPanel";
 import { Button } from "@/components/ui/button";
 import {
@@ -94,7 +92,9 @@ export function AppShell() {
   const setSelectedNoteId = tabsApi.openNote;
   const [trashOpen, setTrashOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [templatesOpen, setTemplatesOpen] = useState(false);
+  // Phase 2 D Slice 2c.2 — `templatesOpen` was the on/off for the
+  // legacy manager dialog. Removed in favor of Templates tab. State
+  // dropped entirely.
   // When a wikilink request includes a #heading anchor, NoteView remounts
   // for the new note; we stash the hash here so the freshly-mounted
   // preview can scroll to it once headings have ids assigned.
@@ -114,7 +114,9 @@ export function AppShell() {
     return window.localStorage.getItem(RAIL_COLLAPSE_KEY) === "1";
   });
   // Phase 1 C slice 2: left-rail tab — files (file tree) vs tags (tag browser).
-  const [leftTab, setLeftTab] = useState<"files" | "tags">("files");
+  const [leftTab, setLeftTab] = useState<"files" | "tags" | "templates">(
+    "files",
+  );
   // When a `#tag` chip in preview is clicked, AppShell hops to the Tags
   // tab and TagBrowser drills into that tag. We pass the requested tag
   // through `pendingTag` so TagBrowser (which just remounted) sees it.
@@ -343,11 +345,13 @@ export function AppShell() {
         openNewDocDialog();
       }
     };
-    // Phase 2 D Slice 2 — NewDocDialog footer link dispatches this
-    // event when the user clicks "Templates → Settings / Templates".
-    // For Slice 2a we still surface the existing TemplatesDialog as
-    // the "manager" UI; Slice 2c will move it under Settings.
-    const openTemplates = () => setTemplatesOpen(true);
+    // Phase 2 D Slice 2c.2 — NewDocDialog footer link dispatches this
+    // event. Templates manage now lives in the Templates tab (left
+    // rail), per user-story-first redesign 2026-05-10. The legacy
+    // TemplatesDialog is kept as a fallback target for callers that
+    // still expect dialog UX (none after this slice ships); switch
+    // the tab as the primary side effect.
+    const openTemplates = () => setLeftTab("templates");
     // FileTree's "+ Note" toolbar button (click) and right-click
     // "New note inside <folder>" both dispatch this event with the
     // seedFolder. Shift+click on the toolbar uses the legacy inline-
@@ -422,15 +426,6 @@ export function AppShell() {
               data-testid="header-daily-button"
             >
               <CalendarDays className="size-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={t("app.templates")}
-              onClick={() => setTemplatesOpen(true)}
-              data-testid="templates-button"
-            >
-              <LayoutTemplate className="size-4" />
             </Button>
             <Button
               variant="ghost"
@@ -532,6 +527,26 @@ export function AppShell() {
                   >
                     {t("tree.tabTags")}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setLeftTab("templates")}
+                    aria-pressed={leftTab === "templates"}
+                    data-testid="left-tab-templates"
+                    className="flex-1 px-3 py-1.5 text-xs transition-colors"
+                    style={{
+                      color:
+                        leftTab === "templates"
+                          ? "var(--ink)"
+                          : "var(--ink-mute)",
+                      fontWeight: leftTab === "templates" ? 500 : 400,
+                      borderBottom:
+                        leftTab === "templates"
+                          ? "2px solid var(--accent, #5b7a9c)"
+                          : "2px solid transparent",
+                    }}
+                  >
+                    {t("tree.tabTemplates")}
+                  </button>
                 </div>
                 <div className="min-h-0 flex-1">
                   {leftTab === "files" ? (
@@ -545,6 +560,22 @@ export function AppShell() {
                       }}
                       onMutating={setTreeBusy}
                       ghostFolder={newDocOpen ? newDocSeedFolder : undefined}
+                    />
+                  ) : leftTab === "templates" ? (
+                    <FileTree
+                      selectedNoteId={selectedNoteId}
+                      onSelectNote={(id) => {
+                        setSelectedNoteId(id);
+                        setPendingHash(null);
+                        setPendingLine(null);
+                        setPendingPreserveMode(false);
+                      }}
+                      onMutating={setTreeBusy}
+                      // Pin tree to the `_templates/` subfolder. New
+                      // notes / folders created here land under
+                      // `_templates/`. NoteView edits these like any
+                      // note via the same QK.note(id) path.
+                      rootFolderPath="_templates"
                     />
                   ) : (
                     <TagBrowser
@@ -645,25 +676,12 @@ export function AppShell() {
           setPaletteOpen(false);
         }}
       />
-      <TemplatesDialog
-        open={templatesOpen}
-        onClose={() => setTemplatesOpen(false)}
-        onUseTemplate={(templateId) => {
-          // Close dialog first, then trigger the FileTree's
-          // inline-create flow so the user types a title for the new
-          // note exactly like they would for "+ note".
-          setTemplatesOpen(false);
-          window.dispatchEvent(
-            new CustomEvent("knowlet:start-create-from-template", {
-              detail: { templateId },
-            }),
-          );
-        }}
-        onEditTemplate={(noteId) => {
-          setTemplatesOpen(false);
-          setSelectedNoteId(noteId);
-        }}
-      />
+      {/* TemplatesDialog removed in 2026-05-10 redesign — templates
+       *  manage now lives in the Templates left-rail tab; "use a
+       *  template to create a doc" lives in NewDocDialog's template
+       *  dropdown. The standalone manager dialog was redundant and
+       *  fragmented the user mental model (per user-story-first
+       *  redesign discussion). */}
       <GraphFocusMode
         open={graphFocusOpen}
         noteId={selectedNoteId}

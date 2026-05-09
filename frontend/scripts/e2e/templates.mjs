@@ -1,12 +1,19 @@
 /**
- * Phase 1 B slice 8 v2 — Templates as a first-class concept.
+ * Phase 2 D Slice 2c.2-A' — Templates as a left-rail tab.
+ *
+ * Replaces the old global header dialog (Phase 1 B slice 8 v2) with a
+ * dedicated tab in the left rail (Files / Tags / Templates). Reasons
+ * tracked in feedback_user_story_first.md — the dialog conflated
+ * "manage templates" with "use a template" and the icon's intent
+ * wasn't readable.
  *
  * Verifies:
- *   - global header has a Templates icon (📋) — always visible
- *   - dialog lists templates, supports filter, click = use, edit, delete
- *   - templates folder is HIDDEN from the regular file tree
+ *   - Templates tab exists in left rail (next to Files / Tags)
+ *   - Templates folder is HIDDEN from the regular Files tab
+ *   - Tab shows _templates/ contents as the visible tree root
+ *   - "+ Note" button creates a template inline under _templates/
  *   - inline `/` slash command in editor inserts template body at the
- *     cursor with placeholders substituted
+ *     cursor with placeholders substituted (unchanged)
  */
 
 import { assert, exitAfter, runTest, setupTestEnv } from "./_fixture.mjs";
@@ -53,9 +60,10 @@ try {
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await page.waitForTimeout(500);
 
-  await runTest("global header has Templates icon (always visible)", async () => {
-    const btn = page.locator('[data-testid="templates-button"]');
-    await btn.waitFor({ state: "visible", timeout: 3000 });
+  await runTest("Templates tab exists in left rail next to Files / Tags", async () => {
+    await page
+      .locator('[data-testid="left-tab-templates"]')
+      .waitFor({ state: "visible", timeout: 3000 });
   });
 
   await runTest("templates folder is HIDDEN from the regular tree", async () => {
@@ -74,74 +82,62 @@ try {
     assert(rows.includes("reading"), "regular note still visible");
   });
 
-  await runTest("dialog lists templates + filter + click = use", async () => {
-    await page.locator('[data-testid="templates-button"]').click();
-    const dialog = page.locator('[role="dialog"]');
-    await dialog.waitFor({ state: "visible", timeout: 3000 });
-    const items = await dialog
-      .locator('[data-testid="template-use"]')
-      .allTextContents();
-    const titles = items.map((s) => s.trim());
+  await runTest("Templates tab shows _templates/ contents as the visible tree", async () => {
+    await page.locator('[data-testid="left-tab-templates"]').click();
+    await page.waitForTimeout(300);
+    // Seeded vault has 2 templates: daily + meeting. Both should be
+    // visible at the top level of the templates view.
+    const rows = await page
+      .locator(".group")
+      .evaluateAll((els) => els.map((el) => (el.textContent ?? "").trim()));
     assert(
-      titles.includes("daily") && titles.includes("meeting"),
-      `dialog lists templates — got ${JSON.stringify(titles)}`,
+      rows.includes("daily") && rows.includes("meeting"),
+      `templates tab should list 'daily' + 'meeting' — got ${JSON.stringify(rows)}`,
     );
-    // Filter narrows to a single template.
-    await dialog.locator('[data-testid="templates-filter"]').fill("dai");
-    await page.waitForTimeout(150);
-    const filtered = await dialog
-      .locator('[data-testid="template-use"]')
-      .allTextContents();
+    // Regular note "reading" must NOT appear in templates tab.
     assert(
-      filtered.length === 1 && /daily/.test(filtered[0]),
-      `filter narrows list — got ${JSON.stringify(filtered)}`,
-    );
-    // Click "daily" to use it; dialog closes, inline title input opens.
-    await dialog.locator('[data-testid="template-use"]').first().click();
-    const titleInput = page.locator('input[data-rename-input="true"]');
-    await titleInput.waitFor({ state: "visible", timeout: 3000 });
-    await titleInput.fill("monday");
-    await titleInput.press("Enter");
-    await page.waitForFunction(
-      () => {
-        const rs = Array.from(document.querySelectorAll(".group"));
-        return rs.some((r) => /^monday$/.test((r.textContent ?? "").trim()));
-      },
-      null,
-      { timeout: 4000, polling: 80 },
-    );
-    const note = await getNoteByTitle("monday");
-    assert(note !== null, "monday note created");
-    const body = await getNoteBody(note.id);
-    assert(
-      /^# monday$/m.test(body ?? "") && /\d{4}-\d{2}-\d{2}/.test(body ?? ""),
-      `body has substituted title + date — got "${(body ?? "").slice(0, 120)}"`,
+      !rows.includes("reading"),
+      `templates tab should NOT show non-template notes — got ${JSON.stringify(rows)}`,
     );
   });
 
-  await runTest("dialog 'New template' creates a template and opens it", async () => {
-    await page.locator('[data-testid="templates-button"]').click();
-    const dialog = page.locator('[role="dialog"]');
-    await dialog.waitFor({ state: "visible", timeout: 3000 });
-    const before = await page.request.get(`${baseURL}/api/templates`);
-    const beforeCount = (await before.json()).length;
-    await dialog.locator('[data-testid="templates-new"]').click();
-    await page.waitForFunction(
-      (n) =>
-        document.querySelector('[role="dialog"]') === null &&
-        document.querySelector('[data-testid="markdown-editor"] .cm-content'),
-      beforeCount,
-      { timeout: 4000, polling: 80 },
-    );
-    const after = await page.request.get(`${baseURL}/api/templates`);
-    const afterCount = (await after.json()).length;
+  await runTest("Click a template in tab opens it for editing in NoteView", async () => {
+    const dailyRow = page
+      .locator(".group")
+      .filter({ hasText: /^daily$/ })
+      .first();
+    await dailyRow.click();
+    await page.waitForTimeout(300);
+    // Note title in main pane should reflect the template.
+    const h1 = (await page.locator('[data-testid="note-title"]').first().textContent()) ?? "";
+    assert(/daily/.test(h1), `NoteView should show daily template — got "${h1}"`);
+  });
+
+  await runTest("'+ Note' in Templates tab creates a template under _templates/", async () => {
+    await page.locator('[data-testid="left-tab-templates"]').click();
+    await page.waitForTimeout(200);
+    // Use Shift+click to enter inline create (per Slice 2 — plain
+    // click opens NewDocDialog, which doesn't apply for templates
+    // creation flow).
+    await page.click('button[aria-label="New note"]', { modifiers: ["Shift"] });
+    const input = page.locator('input[data-rename-input="true"]');
+    await input.waitFor({ state: "visible", timeout: 3000 });
+    await input.fill("weekly");
+    await input.press("Enter");
+    await page.waitForTimeout(800);
+    // The new template lands under _templates/.
+    const r = await page.request.get(`${baseURL}/api/templates`);
+    const titles = (await r.json()).map((t) => t.title);
     assert(
-      afterCount === beforeCount + 1,
-      `templates count grew by 1 — before=${beforeCount} after=${afterCount}`,
+      titles.includes("weekly"),
+      `'weekly' template created — got ${JSON.stringify(titles)}`,
     );
   });
 
   await runTest("`/` slash command inserts template body at cursor", async () => {
+    // Switch back to Files tab — previous tests left us on Templates.
+    await page.locator('[data-testid="left-tab-files"]').click();
+    await page.waitForTimeout(200);
     // Open a regular note ("reading"), put cursor at end, type `/`,
     // pick "daily" — body should land in the editor with placeholders
     // substituted (note's own title goes into {{title}}).
@@ -210,6 +206,10 @@ try {
     // backend, so the user gets feedback even when the backend would
     // happily accept (notes are ULID-keyed → would create a confusing
     // duplicate row in the tree).
+    // Make sure we're in Files tab — duplicate-check is per-folder; we
+    // want to collide with "reading" which lives at vault root.
+    await page.locator('[data-testid="left-tab-files"]').click();
+    await page.waitForTimeout(200);
     const dialogs = [];
     page.on("dialog", (d) => {
       dialogs.push(d.message());

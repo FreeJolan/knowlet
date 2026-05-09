@@ -129,6 +129,13 @@ export interface FileTreeProps {
    *  highlights that folder + the path from root to it ("ghost
    *  selection"). Empty / undefined = no highlight. */
   ghostFolder?: string;
+  /** Phase 2 D Slice 2c.2 — pin the tree to a sub-folder under
+   *  `notes/`. When set, FileTree behaves as if THAT folder is the
+   *  root: shows its descendants only, top-level mkdir/create stays
+   *  inside it, the HIDDEN_TOP_LEVEL_FOLDERS filter is bypassed
+   *  (since the user explicitly opted into that subtree). Used for
+   *  the Templates left-rail tab where rootFolderPath="_templates". */
+  rootFolderPath?: string;
 }
 
 export function FileTree({
@@ -136,6 +143,7 @@ export function FileTree({
   onSelectNote,
   onMutating,
   ghostFolder,
+  rootFolderPath,
 }: FileTreeProps) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -471,8 +479,10 @@ export function FileTree({
     }
     setPendingCreate({ kind, parentPath });
   };
-  const onNewRootFolder = () => startCreate("folder", "");
-  const onNewRootNote = () => startCreate("note", "");
+  // When pinned to a sub-folder root (Templates tab), "+" buttons
+  // create inside that pinned root rather than the vault root.
+  const onNewRootFolder = () => startCreate("folder", rootFolderPath ?? "");
+  const onNewRootNote = () => startCreate("note", rootFolderPath ?? "");
   const cancelPending = () => setPendingCreate(null);
 
   const [duplicateError, setDuplicateError] = useState<string | null>(null);
@@ -532,39 +542,54 @@ export function FileTree({
   // pruning; consumed for accessibility and (future) toast wiring.
   void duplicateError;
 
-  // Cross-component bridge: AppShell's Templates dialog dispatches a
-  // `knowlet:start-create-from-template` event when the user clicks
-  // "Use" on a template row. We pick it up here and run the same
-  // inline-title flow we use for plain "+ note", just with templateId
-  // attached. Keeps the dialog ignorant of FileTree internals.
-  useEffect(() => {
-    const onStart = (e: Event) => {
-      const detail = (
-        e as CustomEvent<{ templateId: string | null }>
-      ).detail;
-      treeRef.current?.reset();
-      setPendingCreate({
-        kind: "note",
-        parentPath: "",
-        templateId: detail?.templateId ?? null,
-      });
-    };
-    window.addEventListener("knowlet:start-create-from-template", onStart);
-    return () =>
-      window.removeEventListener(
-        "knowlet:start-create-from-template",
-        onStart,
-      );
-  }, []);
+  // The legacy TemplatesDialog dispatched `knowlet:start-create-from-
+  // template` events that this hook listened for. Slice 2c.2-A'
+  // removed the dialog (templates manage moved to Templates left-rail
+  // tab + use template via NewDocDialog dropdown), so this bridge is
+  // no longer wired. Keeping the comment as a marker in case the
+  // event needs to be re-introduced for some other surface.
 
   // Memoize the conversion so arborist's internal open/closed state isn't
   // reset every render. Without this, every click rebuilds the array and
   // arborist re-applies `openByDefault`, undoing the toggle. Must be called
   // before any conditional return so the hook order is stable across renders.
   const data = useMemo(() => {
-    const base = tree.data ? toArborist(tree.data) : [];
-    return pendingCreate ? injectPending(base, pendingCreate) : base;
-  }, [tree.data, pendingCreate]);
+    if (!tree.data) return [];
+    // Phase 2 D Slice 2c.2 — when pinned to a sub-folder root
+    // (`rootFolderPath`), find that folder in the tree and treat its
+    // children as the visible top-level rows. The HIDDEN_TOP_LEVEL_
+    // FOLDERS filter inside toArborist only fires at vault-root
+    // level, so subfolders bypass it naturally.
+    let rootFolder: TreeFolder | null = tree.data;
+    if (rootFolderPath) {
+      const parts = rootFolderPath.split("/");
+      let cursor: TreeFolder | undefined = tree.data;
+      for (const p of parts) {
+        cursor = cursor?.folders.find((f) => f.name === p);
+        if (!cursor) break;
+      }
+      rootFolder = cursor ?? null;
+    }
+    const base = rootFolder ? toArborist(rootFolder) : [];
+    if (!pendingCreate) return base;
+    // injectPending walks `base` by folder NAME starting from depth 0.
+    // When the visible tree is pinned (rootFolderPath set), the
+    // pending row's `parentPath` is the FULL path under notes/ but
+    // base doesn't contain the rootFolder itself as a row — so we
+    // strip the rootFolderPath prefix before injecting.
+    let injectionPath = pendingCreate.parentPath;
+    if (rootFolderPath) {
+      if (injectionPath === rootFolderPath) {
+        injectionPath = "";
+      } else if (injectionPath.startsWith(rootFolderPath + "/")) {
+        injectionPath = injectionPath.slice(rootFolderPath.length + 1);
+      }
+    }
+    return injectPending(base, {
+      kind: pendingCreate.kind,
+      parentPath: injectionPath,
+    });
+  }, [tree.data, pendingCreate, rootFolderPath]);
 
   // Phase 2 D Slice 2b — auto-expand path on ghost-folder change is
   // temporarily disabled while we investigate a React #185 cascade
