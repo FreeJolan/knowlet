@@ -153,10 +153,28 @@ export const deleteQuickAction = (id: string): Promise<{ ok: boolean }> =>
 export const runQuickAction = (id: string): Promise<NoteFull> =>
   request("POST", `/api/quick-actions/${encodeURIComponent(id)}/run`);
 
-// ---------- sync ----------
-// S0 (2026-05-10): all frontend sync surfaces removed. Sync redesign
-// restarts at S1 with per-note status indicator. CLI (`knowlet sync
-// push|pull|connect|status|disconnect`) remains the only sync UX.
+// ---------- sync (Slice S1, ADR-0027 redesign) ----------
+
+export type NoteSyncState =
+  | "unauthenticated"
+  | "offline"
+  | "synced"
+  | "dirty"
+  | "conflict";
+
+export interface NoteSyncStatus {
+  state: NoteSyncState;
+  last_synced_at: string | null;
+  drive_file_id: string | null;
+  last_known_revision: string | null;
+  current_drive_revision: string | null;
+  detail: string | null;
+}
+
+export const getNoteSyncStatus = (
+  noteId: string,
+): Promise<NoteSyncStatus> =>
+  request("GET", `/api/sync/note-status/${encodeURIComponent(noteId)}`);
 
 // ---------- search (Phase 1 D slice 2) ----------
 

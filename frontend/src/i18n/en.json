@@ -316,5 +316,13 @@
       "current": "current note"
     }
   },
-  "_sync_redesign_in_progress": "S0 cleared the sync UI surfaces; new strings will land with S1+ as each surface ships."
+  "syncStatus": {
+    "synced": "synced",
+    "dirty": "not synced",
+    "conflict": "conflict",
+    "offline": "offline",
+    "unauthenticated": "drive not connected",
+    "syncing": "syncing…",
+    "editing": "editing"
+  }
 }

@@ -315,5 +315,13 @@
       "current": "当前笔记"
     }
   },
-  "_sync_redesign_in_progress": "S0 清空了 sync UI 表面;新文案会随 S1+ 各 slice 落地"
+  "syncStatus": {
+    "synced": "已同步",
+    "dirty": "未同步",
+    "conflict": "有冲突",
+    "offline": "离线",
+    "unauthenticated": "未连接 Drive",
+    "syncing": "同步中…",
+    "editing": "编辑中"
+  }
 }

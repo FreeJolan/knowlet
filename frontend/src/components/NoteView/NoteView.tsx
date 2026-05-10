@@ -27,6 +27,7 @@ import { EditorView } from "@codemirror/view";
 import { MarkdownEditor } from "@/components/Editor/MarkdownEditor";
 import { MarkdownPreview } from "@/components/Editor/MarkdownPreview";
 import { InlineEditInput } from "@/components/InlineEdit/InlineEditInput";
+import { SyncStatusBadge } from "@/components/Sync/SyncStatusBadge";
 import { noteTitleClashesIn } from "@/lib/findCollision";
 import { normalizeNoteTitle } from "@/lib/noteTitle";
 import { QK } from "@/lib/queryClient";
@@ -750,6 +751,11 @@ export function NoteView({
                 </span>
               )}
             </span>
+            <SyncStatusBadge
+              noteId={note.data?.id ?? null}
+              isSaving={savingState === "saving"}
+              hasUnsavedEdits={dirtyRef.current}
+            />
             <ViewModeToggle value={viewMode} onChange={setViewMode} t={t} />
           </div>
         </div>

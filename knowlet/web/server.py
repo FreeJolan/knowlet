@@ -968,6 +968,34 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         finally:
             store.close()
 
+    # ---------------- per-note sync status (Slice S1) ----------------
+    # Single seam the UI binds the per-note SyncStatusBadge to.
+    # Returns one of {unauthenticated, offline, synced, dirty,
+    # conflict} plus tooltip metadata. ~150ms per request when
+    # connected (one Drive files.get round trip); the frontend
+    # polls every 10s for the active note.
+    @app.get("/api/sync/note-status/{note_id}")
+    def get_note_sync_status(note_id: str) -> dict[str, Any]:
+        from knowlet.core.sync.state import SyncStateStore
+        from knowlet.core.sync.status import compute_note_sync_status
+
+        store = SyncStateStore(vault.root)
+        try:
+            status = compute_note_sync_status(
+                vault_root=vault.root,
+                note_id=note_id,
+                state_store=store,
+            )
+        finally:
+            store.close()
+        return {
+            "state": status.state,
+            "last_synced_at": status.last_synced_at,
+            "drive_file_id": status.drive_file_id,
+            "last_known_revision": status.last_known_revision,
+            "current_drive_revision": status.current_drive_revision,
+            "detail": status.detail,
+        }
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
