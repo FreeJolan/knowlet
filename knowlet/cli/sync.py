@@ -252,6 +252,207 @@ def sync_pull(
         raise typer.Exit(code=3) from exc
 
 
+@app.command("push")
+def sync_push(
+    note_id: Annotated[
+        str | None,
+        typer.Argument(help="Note ULID to push. Omit to push every note."),
+    ] = None,
+) -> None:
+    """Phase 2 E Slice 5.C — push local note(s) to Drive.
+
+    First push of a Note creates a Drive file + records the
+    drive_file_id. Subsequent pushes are conditional on the last-
+    known head revision id; on a mismatch we surface the conflict
+    + tell the user to run [bold]knowlet sync resolve[/bold].
+    """
+    vault = resolve_vault_or_die()
+    cfg = load_config_or_default(vault)
+    _, tok_path = _resolve_paths(vault.root, cfg.sync)
+    from knowlet.core.note import Note
+    from knowlet.core.sync.credentials import load_credentials
+
+    creds = load_credentials(tok_path)
+    if creds is None:
+        err_console.print("[red]Not connected.[/red] Run knowlet sync connect first.")
+        raise typer.Exit(code=2)
+
+    try:
+        from knowlet.core.sync import (
+            SyncDependenciesMissingError,
+            require_google_libs,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.push import (
+            ConflictReport,
+            NoteFileMissingError,
+            push_note,
+        )
+        from knowlet.core.sync.state import SyncStateStore
+
+        require_google_libs()
+        client = DriveClient(creds)
+        service = client.service()
+        state = SyncStateStore(vault.root)
+        try:
+            # Pick targets.
+            if note_id:
+                paths = list(vault.iter_note_paths())
+                target = next((p for p in paths if p.stem == note_id), None)
+                if target is None:
+                    err_console.print(
+                        f"[red]No note with id {note_id!r} found in {vault.notes_dir}.[/red]"
+                    )
+                    raise typer.Exit(code=2)
+                targets = [Note.from_file(target)]
+            else:
+                targets = [Note.from_file(p) for p in vault.iter_note_paths()]
+
+            pushed = 0
+            conflicts: list[ConflictReport] = []
+            for n in targets:
+                try:
+                    result = push_note(service=service, state=state, note=n)
+                except NoteFileMissingError as exc:
+                    err_console.print(f"[yellow]Skip {n.id}: {exc}[/yellow]")
+                    continue
+                if isinstance(result, ConflictReport):
+                    conflicts.append(result)
+                    console.print(
+                        f"[yellow]Conflict[/yellow] {n.title} ({n.id}) — "
+                        "remote moved since last sync."
+                    )
+                else:
+                    verb = "Created" if result.created else "Updated"
+                    console.print(
+                        f"[green]{verb}[/green] {n.title} ({n.id}) → "
+                        f"drive:{result.drive_file.id}"
+                    )
+                    pushed += 1
+
+            console.print(
+                f"\n[bold]{pushed} pushed, {len(conflicts)} conflict(s).[/bold]"
+            )
+            if conflicts:
+                console.print(
+                    "Run [bold]knowlet sync resolve <note-id>[/bold] for each "
+                    "conflicted note. Use [bold]--strategy mine|remote|both[/bold]."
+                )
+        finally:
+            state.close()
+    except SyncDependenciesMissingError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=3) from exc
+
+
+@app.command("resolve")
+def sync_resolve(
+    note_id: Annotated[str, typer.Argument(help="Note ULID to resolve.")],
+    strategy: Annotated[
+        str,
+        typer.Option(
+            "--strategy",
+            help='"mine" overwrites remote with local; "remote" overwrites '
+            'local with remote; "both" keeps remote as a sibling conflict '
+            "copy and pushes local on next sync.",
+        ),
+    ] = "",
+) -> None:
+    """Resolve a sync conflict surfaced by ``knowlet sync push``.
+
+    Re-fetches both versions from Drive + local so the resolution
+    is applied to the current state, not stale data captured at the
+    earlier push attempt.
+    """
+    if strategy not in {"mine", "remote", "both"}:
+        err_console.print(
+            "[red]--strategy is required: one of mine | remote | both[/red]"
+        )
+        raise typer.Exit(code=2)
+    vault = resolve_vault_or_die()
+    cfg = load_config_or_default(vault)
+    _, tok_path = _resolve_paths(vault.root, cfg.sync)
+    from knowlet.core.note import Note
+    from knowlet.core.sync.credentials import load_credentials
+
+    creds = load_credentials(tok_path)
+    if creds is None:
+        err_console.print("[red]Not connected.[/red]")
+        raise typer.Exit(code=2)
+
+    try:
+        from knowlet.core.sync import (
+            SyncDependenciesMissingError,
+            require_google_libs,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.push import (
+            ConflictReport,
+            push_note,
+            resolve_keep_both,
+            resolve_use_mine,
+            resolve_use_remote,
+        )
+        from knowlet.core.sync.state import SyncStateStore
+
+        require_google_libs()
+        client = DriveClient(creds)
+        service = client.service()
+        state = SyncStateStore(vault.root)
+        try:
+            paths = list(vault.iter_note_paths())
+            target = next((p for p in paths if p.stem == note_id), None)
+            if target is None:
+                err_console.print(
+                    f"[red]No note with id {note_id!r} found.[/red]"
+                )
+                raise typer.Exit(code=2)
+            note = Note.from_file(target)
+            # Re-trigger the push to capture a fresh conflict snapshot.
+            result = push_note(service=service, state=state, note=note)
+            if not isinstance(result, ConflictReport):
+                console.print(
+                    "[green]No conflict — push completed cleanly.[/green]"
+                )
+                return
+
+            if strategy == "mine":
+                done = resolve_use_mine(
+                    service=service, state=state, conflict=result
+                )
+                console.print(
+                    f"[green]Resolved (mine):[/green] overwrote remote with "
+                    f"local; head revision now "
+                    f"{done.drive_file.head_revision_id}."
+                )
+            elif strategy == "remote":
+                resolve_use_remote(
+                    state=state, conflict=result, local_path=target
+                )
+                console.print(
+                    "[green]Resolved (remote):[/green] local file replaced "
+                    "with remote bytes. .knowlet/backups/ has the prior "
+                    "local version if you change your mind."
+                )
+            else:  # both
+                label = state.device_label()
+                copy_path = resolve_keep_both(
+                    state=state,
+                    conflict=result,
+                    local_path=target,
+                    device_label=label,
+                )
+                console.print(
+                    f"[green]Resolved (both):[/green] remote saved as "
+                    f"{copy_path.name}. Local kept; next push will retry."
+                )
+        finally:
+            state.close()
+    except SyncDependenciesMissingError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=3) from exc
+
+
 @app.command("disconnect")
 def sync_disconnect() -> None:
     """Delete the local tokens + reset sync state. Does NOT revoke
