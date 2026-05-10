@@ -103,7 +103,11 @@ export function ConflictResolveDialog({
     >
       <DialogContent
         data-testid="conflict-resolve-dialog"
-        className="max-w-5xl"
+        // Conflict review needs room: notes can be paragraphs, not
+        // one-liners. Override the shadcn default `sm:max-w-sm`
+        // (256px-ish) and pin top so the dialog doesn't bounce as
+        // textareas grow.
+        className="top-[5vh] left-1/2 w-[92vw] sm:max-w-[92vw] -translate-x-1/2 translate-y-0 max-h-[90vh]"
       >
         <DialogHeader>
           <DialogTitle>{t("conflict.title")}</DialogTitle>
@@ -144,7 +148,7 @@ export function ConflictResolveDialog({
                 data-testid="conflict-local-text"
                 readOnly
                 value={data.local_text}
-                className="h-72 w-full resize-none rounded-md border bg-muted/30 p-2 font-mono text-[12px]"
+                className="h-[62vh] w-full resize-none rounded-md border bg-muted/30 p-3 font-mono text-[12px] leading-relaxed"
               />
             </div>
             <div className="flex flex-col gap-1">
@@ -155,7 +159,7 @@ export function ConflictResolveDialog({
                 data-testid="conflict-remote-text"
                 readOnly
                 value={data.remote_text}
-                className="h-72 w-full resize-none rounded-md border bg-muted/30 p-2 font-mono text-[12px]"
+                className="h-[62vh] w-full resize-none rounded-md border bg-muted/30 p-3 font-mono text-[12px] leading-relaxed"
               />
             </div>
           </div>
