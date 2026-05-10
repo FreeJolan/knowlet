@@ -181,7 +181,19 @@ class Note:
 
     @classmethod
     def from_file(cls, path: Path) -> Note:
-        raw_text = path.read_text(encoding="utf-8")
+        return cls.from_text(path.read_text(encoding="utf-8"), path=path)
+
+    @classmethod
+    def from_text(cls, raw_text: str, *, path: Path | None = None) -> Note:
+        """Parse a knowlet markdown document from in-memory text.
+
+        ``path`` is optional metadata: when provided it seeds the
+        ``Note.path`` field, lets ``_id_from_filename`` reuse a
+        ULID-shaped filename, and unlocks file-mtime fallbacks for
+        timestamp synthesis. Used by the sync conflict-bundle path
+        (where ``remote_text`` arrives as bytes, no path) — see
+        Slice S5.5.
+        """
         fm_status, meta, body, corruption = _classify_frontmatter(raw_text)
 
         if fm_status != "valid":
@@ -189,13 +201,14 @@ class Note:
             # fields from whatever signals we have: filename (ULID
             # if it looks like one), first heading, file mtime/ctime.
             return cls(
-                id=_id_from_filename(path),
-                title=_first_heading(body) or path.stem,
+                id=_id_from_filename(path) if path else new_id(),
+                title=_first_heading(body)
+                or (path.stem if path else "Untitled"),
                 body=body,
                 tags=[],
                 aliases=[],
-                created_at=_iso_from_path_ctime(path),
-                updated_at=_iso_from_path_mtime(path),
+                created_at=_iso_from_path_ctime(path) if path else now_iso(),
+                updated_at=_iso_from_path_mtime(path) if path else now_iso(),
                 source=None,
                 path=path,
                 schema_version=NOTE_SCHEMA_VERSION,
@@ -227,16 +240,17 @@ class Note:
 
                 logging.getLogger(__name__).warning(
                     "note %s has invalid status %r; defaulting to %s",
-                    path.name,
+                    path.name if path else "<in-memory>",
                     status_raw,
                     DEFAULT_NOTE_STATUS,
                 )
             status = DEFAULT_NOTE_STATUS
         trashed_from_raw = meta.get("trashed_from")
         trashed_from = str(trashed_from_raw) if trashed_from_raw is not None else None
+        fallback_title = path.stem if path else "Untitled"
         return cls(
             id=str(meta.get("id") or new_id()),
-            title=str(meta.get("title") or path.stem),
+            title=str(meta.get("title") or fallback_title),
             body=body,
             tags=list(meta.get("tags") or []),
             aliases=[str(a) for a in (meta.get("aliases") or [])],

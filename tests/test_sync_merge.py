@@ -218,6 +218,17 @@ def test_resolve_merge_writes_locally_and_force_pushes(
     finally:
         store.close()
 
+    # S5.5: resolve-merge re-fetches remote bytes so the
+    # rule-based frontmatter merge sees current "theirs". Mock
+    # download_file alongside force_overwrite. The remote bytes are
+    # a synthetic markdown that parses cleanly so Note.from_text
+    # returns proper fields the merge rules can act on.
+    remote_text = (
+        "---\nschema_version: 2\nid: REMOTE-id\ntitle: alpha\n"
+        "tags: [from-remote]\nstatus: active\n"
+        "created_at: '2024-01-01T00:00:00Z'\n"
+        "updated_at: '2030-01-01T00:00:00Z'\n---\n\nremote body line\n"
+    )
     with (
         patch(
             "knowlet.core.sync.drive_client.DriveClient.service",
@@ -227,16 +238,27 @@ def test_resolve_merge_writes_locally_and_force_pushes(
             "knowlet.core.sync.push.force_overwrite",
             return_value=_meta("rev-MERGED"),
         ),
+        patch(
+            "knowlet.core.sync.files.download_file",
+            return_value=remote_text.encode("utf-8"),
+        ),
     ):
         r = client.post(
             f"/api/sync/resolve-merge/{note_id}",
-            json={"merged_text": "MERGED final text"},
+            json={"merged_text": "MERGED final body text"},
         )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["new_revision"] == "rev-MERGED"
     assert body["drive_file_id"] == "DRIVE-FID-1"
-    assert written_path.read_text(encoding="utf-8") == "MERGED final text"
+    # Local file now contains the composed result: synthesized
+    # frontmatter (rule-merged) + the user's merged body.
+    written = written_path.read_text(encoding="utf-8")
+    assert written.startswith("---\n")
+    assert "MERGED final body text" in written
+    # Frontmatter rules: tags union (from-remote was on theirs only),
+    # latest updated_at wins, etc.
+    assert "from-remote" in written
     # State advanced + dirty cleared.
     store2 = SyncStateStore(tmp_path)
     try:

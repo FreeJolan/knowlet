@@ -1198,6 +1198,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail=f"no Drive id tracked for note {note_id}",
             )
 
+        # S5.5: bundle returns BODY only — frontmatter is decided
+        # by rules in resolve_merge_endpoint, not by the user. Both
+        # branches parse via Note.from_text so the diff stays free
+        # of mechanical churn (updated_at / schema_version / tag
+        # reformatting), eliminating the false-conflict noise the
+        # user flagged in dogfood.
+
         # Dev seed-conflict short-circuit: read the fake remote text
         # from disk, fabricate metadata, skip Drive entirely.
         if record.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
@@ -1208,13 +1215,15 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     detail="dev conflict seed missing on disk",
                 )
             try:
-                local_text = local_path.read_text(encoding="utf-8")
+                local_raw = local_path.read_text(encoding="utf-8")
             except OSError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_410_GONE,
                     detail=f"local file read failed: {exc!r}",
                 ) from exc
-            remote_text = fake_path.read_text(encoding="utf-8")
+            remote_raw = fake_path.read_text(encoding="utf-8")
+            mine_note = Note.from_text(local_raw, path=local_path)
+            theirs_note = Note.from_text(remote_raw)
             local_modified_at: str | None
             try:
                 local_modified_at = _iso(local_path.stat().st_mtime)
@@ -1223,8 +1232,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             return {
                 "note_id": note_id,
                 "drive_file_id": record.drive_file_id,
-                "local_text": local_text,
-                "remote_text": remote_text,
+                "local_text": mine_note.body,
+                "remote_text": theirs_note.body,
                 "current_drive_revision": "dev-rev-new",
                 "last_known_revision": record.last_known_etag,
                 "local_modified_at": local_modified_at,
@@ -1252,19 +1261,22 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             ) from exc
 
         try:
-            local_text = local_path.read_text(encoding="utf-8")
+            local_raw = local_path.read_text(encoding="utf-8")
         except OSError as exc:
             raise HTTPException(
                 status_code=status.HTTP_410_GONE,
                 detail=f"local file read failed: {exc!r}",
             ) from exc
         try:
-            remote_text = remote_bytes.decode("utf-8")
+            remote_raw = remote_bytes.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise HTTPException(
                 status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
                 detail=f"remote bytes are not utf-8: {exc!r}",
             ) from exc
+
+        mine_note = Note.from_text(local_raw, path=local_path)
+        theirs_note = Note.from_text(remote_raw)
 
         # Human-readable timestamps + author for the merge editor's
         # column headers (S5 v2). The frontend turns these into
@@ -1279,8 +1291,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         return {
             "note_id": note_id,
             "drive_file_id": record.drive_file_id,
-            "local_text": local_text,
-            "remote_text": remote_text,
+            "local_text": mine_note.body,
+            "remote_text": theirs_note.body,
             "current_drive_revision": remote_meta.head_revision_id,
             "last_known_revision": record.last_known_etag,
             "local_modified_at": local_modified_at,
@@ -1297,6 +1309,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             load_credentials,
         )
         from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.files import download_file
+        from knowlet.core.sync.frontmatter_merge import merge_notes
         from knowlet.core.sync.push import resolve_with_merge
         from knowlet.core.sync.state import SyncStateStore
         from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
@@ -1316,12 +1330,45 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     detail=f"no Drive id tracked for note {note_id}",
                 )
 
+            # S5.5: the user's merged_text is BODY only. Re-parse mine
+            # + theirs at save time so the rule-based frontmatter
+            # merge sees the freshest sides (theirs may have moved
+            # between bundle-time and save-time). The composed file
+            # hits disk + Drive with a clean serialized frontmatter
+            # via Note.to_markdown.
+            try:
+                local_raw = local_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_410_GONE,
+                    detail=f"local file read failed: {exc!r}",
+                ) from exc
+            mine_note = Note.from_text(local_raw, path=local_path)
+
             # Dev seed-conflict path: write the merged result locally,
             # delete the synthetic remote bytes + the sync_state row.
             # The note returns to a clean local-only state (badge will
             # show "dirty" if something else later syncs it).
             if record.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
-                merged_bytes = body.merged_text.encode("utf-8")
+                fake_path = _dev_conflict_path(note_id)
+                if not fake_path.exists():
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="dev conflict seed missing on disk",
+                    )
+                theirs_note = Note.from_text(
+                    fake_path.read_text(encoding="utf-8")
+                )
+                merged_note = merge_notes(
+                    mine=mine_note,
+                    theirs=theirs_note,
+                    merged_body=body.merged_text,
+                )
+                # Force the URL id back on (mirrors the repair path) —
+                # corrupted-frontmatter sides synthesize fresh ULIDs;
+                # the canonical handle is whatever the user clicked.
+                merged_note.id = note_id
+                merged_bytes = merged_note.to_markdown().encode("utf-8")
                 tmp = local_path.with_suffix(local_path.suffix + ".tmp")
                 tmp.write_bytes(merged_bytes)
                 tmp.replace(local_path)
@@ -1337,14 +1384,37 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     status_code=status.HTTP_409_CONFLICT,
                     detail="not authenticated to Drive",
                 )
+            service = DriveClient(creds).service()
+            try:
+                remote_bytes = download_file(service, record.drive_file_id)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Drive fetch failed: {exc!r}",
+                ) from exc
+            try:
+                remote_raw = remote_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                    detail=f"remote bytes are not utf-8: {exc!r}",
+                ) from exc
+            theirs_note = Note.from_text(remote_raw)
+            merged_note = merge_notes(
+                mine=mine_note,
+                theirs=theirs_note,
+                merged_body=body.merged_text,
+            )
+            merged_note.id = note_id
+            merged_bytes = merged_note.to_markdown().encode("utf-8")
             try:
                 result = resolve_with_merge(
-                    service=DriveClient(creds).service(),
+                    service=service,
                     state=store,
                     note_id=note_id,
                     drive_file_id=record.drive_file_id,
                     local_path=local_path,
-                    merged_bytes=body.merged_text.encode("utf-8"),
+                    merged_bytes=merged_bytes,
                 )
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(

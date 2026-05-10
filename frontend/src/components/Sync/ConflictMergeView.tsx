@@ -134,9 +134,21 @@ export function ConflictMergeView({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="conflict-merge-dialog"
-        className="top-[5vh] left-1/2 w-[96vw] sm:max-w-[96vw] -translate-x-1/2 translate-y-0 max-h-[90vh] gap-3 overflow-hidden"
+        // ``!flex flex-col`` overrides DialogPrimitive's default
+        // ``grid`` so we can hand height out predictably:
+        //   - header / toolbar / footer get their natural height
+        //     (``shrink-0`` below)
+        //   - the merge body fills the remainder and scrolls
+        //     internally (``flex-1 min-h-0`` on its wrapper)
+        // Without this, long-form notes pushed the footer below
+        // the viewport and the save button was unreachable.
+        // ``min-h-[60vh]`` keeps the panes readable even when the
+        // diff is tiny; ``max-h-[90vh]`` caps tall content so the
+        // footer stays in view. The internal merge body flexes
+        // between these bounds and scrolls past 90vh.
+        className="!flex flex-col top-[5vh] left-1/2 w-[96vw] sm:max-w-[96vw] -translate-x-1/2 translate-y-0 min-h-[60vh] max-h-[90vh] gap-3 overflow-hidden"
       >
-        <DialogHeader>
+        <DialogHeader className="shrink-0">
           <DialogTitle>{t("merge.title", { title: noteTitle })}</DialogTitle>
           <DialogDescription>{t("merge.subtitle")}</DialogDescription>
         </DialogHeader>
@@ -189,7 +201,7 @@ export function ConflictMergeView({
           </>
         )}
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <p className="text-muted-foreground mr-auto text-xs">
             {t("merge.fallbackHint")}
           </p>
@@ -244,7 +256,7 @@ function GlobalToolbar({
     setChoices(new Array(count).fill(c));
   };
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-foreground/10 pb-2">
+    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-foreground/10 pb-2">
       <Button
         size="sm"
         variant="outline"
