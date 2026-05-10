@@ -1,41 +1,41 @@
 /**
- * #107a — global "sync conflicts" chip + inline inbox.
+ * #107a + #113 + #114 — unified sync chip in the app header.
  *
- * Mounted once at app-shell level (next to other top-bar status
- * affordances). Polls ``/api/sync/conflicts`` every 60s for the
- * cached preflight result. The first POST /preflight is fired
- * lazily on mount so a user landing on a fresh session gets a
- * scan within ~1s.
+ * Single chip surface covering both kinds of "sync needs your
+ * attention" state:
  *
- * Visibility rules:
- *   - hidden entirely when ``unauthenticated`` (Alice / new user)
- *   - hidden when the cached scan reports zero conflicts AND
- *     zero offline rows (clean vault — no chrome noise)
- *   - amber when there are real conflicts
- *   - muted gray when there are only "couldn't reach Drive" rows
- *     (transient — distinct from real conflicts so the user
- *     doesn't think they have work to do)
+ * - **Conflicts** (real merge required): amber, click → inbox row
+ *   per note → merge editor.
+ * - **Unpushed** (notes created before Drive auth / outside knowlet):
+ *   blue, click → "Push all" button in the inbox.
+ * - **Offline** (preflight couldn't reach Drive for some rows):
+ *   collapsible section, informational.
  *
- * Click → Popover with the inbox: each conflict row opens the
- * merge editor for that note. The merge editor lives in NoteView,
- * so we navigate to the note via TabStrip's open-note hook (the
- * NoteView's badge then auto-opens the dialog when the user clicks
- * "open merge editor" on the row, by setting the ``openMergeOnMount``
- * query-param sentinel — see NoteView's effect that reads it).
+ * Visibility rule: chip hidden iff no creds AND nothing in any
+ * bucket. Strict mode's blocking modal triggers ONLY on conflicts;
+ * unpushed notes don't block the app, they just nag via the chip.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CloudOff, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUpFromLine,
+  CloudOff,
+  RefreshCw,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
   getConflicts,
   getSyncMode,
+  getUnpushedStatus,
   type PreflightConflict,
   type PreflightReport,
+  pushAllUnpushed,
   runPreflight,
   type SyncModeResponse,
+  type UnpushedStatus,
 } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,13 +51,9 @@ import { QK } from "@/lib/queryClient";
 
 const POLL_MS = 60_000;
 
-export function ConflictsChip({
+export function SyncChip({
   onOpenNote,
 }: {
-  /** Called with a note id when the user clicks "open merge editor"
-   *  for a row. The host is expected to (a) navigate to the note's
-   *  view and (b) signal that the merge dialog should open on
-   *  mount. */
   onOpenNote: (noteId: string) => void;
 }): React.ReactNode {
   const { t } = useTranslation();
@@ -70,20 +66,23 @@ export function ConflictsChip({
     refetchInterval: POLL_MS,
     refetchOnWindowFocus: false,
   });
+  const unpushed = useQuery<UnpushedStatus>({
+    queryKey: QK.syncUnpushed,
+    queryFn: getUnpushedStatus,
+    refetchInterval: POLL_MS,
+    refetchOnWindowFocus: false,
+  });
   const mode = useQuery<SyncModeResponse>({
     queryKey: QK.syncMode,
     queryFn: getSyncMode,
     staleTime: 5 * 60_000,
   });
 
-  // First-mount preflight: fire the scan once after we've seen the
-  // initial cache GET come back. If the cache is empty (server has
-  // never scanned) AND we're not already unauthenticated, kick a
-  // scan so the chip lights up within a beat of app load.
   const refresh = useMutation({
     mutationFn: runPreflight,
     onSuccess: (report) => {
       qc.setQueryData(QK.syncConflicts, report);
+      void qc.invalidateQueries({ queryKey: QK.syncUnpushed });
     },
   });
   useEffect(() => {
@@ -100,24 +99,19 @@ export function ConflictsChip({
 
   if (!conflicts.data) return null;
   if (conflicts.data.unauthenticated) return null;
+
   const conflictCount = conflicts.data.conflicts.length;
   const offlineCount = conflicts.data.offline.length;
+  const unpushedCount = unpushed.data?.count ?? 0;
   const effectiveMode = mode.data?.effective_mode ?? "auto";
+
+  if (conflictCount === 0 && offlineCount === 0 && unpushedCount === 0) {
+    return null;
+  }
+
+  // Strict mode blocks ONLY on real conflicts. Unpushed notes are
+  // chrome, not work — never blocking.
   const isStrictBlocking = effectiveMode === "strict" && conflictCount > 0;
-
-  if (conflictCount === 0 && offlineCount === 0) return null;
-
-  const hasReal = conflictCount > 0;
-  const Icon = hasReal ? AlertTriangle : CloudOff;
-  const tone = hasReal
-    ? "bg-amber-100 text-amber-900 ring-amber-300 dark:bg-amber-950/40 dark:text-amber-100"
-    : "bg-muted text-muted-foreground ring-foreground/10";
-
-  // Strict mode + at least one real conflict → render the blocking
-  // modal instead of the Popover. The modal can't be dismissed
-  // (showCloseButton={false}, no overlay-click escape) — once the
-  // user resolves the last conflict the chip auto-hides because
-  // ``conflictCount`` drops to zero on the next refetch.
   if (isStrictBlocking) {
     return (
       <BlockingConflictsModal
@@ -129,13 +123,41 @@ export function ConflictsChip({
     );
   }
 
+  // Chip palette + label: conflicts dominate when present (amber);
+  // unpushed-only is blue (action available, no urgency); offline-only
+  // is muted (informational).
+  const hasConflict = conflictCount > 0;
+  const hasUnpushed = unpushedCount > 0;
+  const Icon = hasConflict
+    ? AlertTriangle
+    : hasUnpushed
+      ? ArrowUpFromLine
+      : CloudOff;
+  const tone = hasConflict
+    ? "bg-amber-100 text-amber-900 ring-amber-300 dark:bg-amber-950/40 dark:text-amber-100"
+    : hasUnpushed
+      ? "bg-blue-100 text-blue-900 ring-blue-300 dark:bg-blue-950/40 dark:text-blue-100"
+      : "bg-muted text-muted-foreground ring-foreground/10";
+  const label =
+    hasConflict && hasUnpushed
+      ? t("syncInbox.chipBoth", {
+          conflicts: conflictCount,
+          unpushed: unpushedCount,
+        })
+      : hasConflict
+        ? t("syncInbox.chipConflicts", { count: conflictCount })
+        : hasUnpushed
+          ? t("syncInbox.chipUnpushed", { count: unpushedCount })
+          : t("syncInbox.offline", { count: offlineCount });
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          data-testid="sync-conflicts-chip"
-          data-count={conflictCount}
+          data-testid="sync-chip"
+          data-conflicts={conflictCount}
+          data-unpushed={unpushedCount}
           className={[
             "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1",
             "hover:opacity-90 focus-visible:outline-none focus-visible:ring-2",
@@ -143,20 +165,17 @@ export function ConflictsChip({
           ].join(" ")}
         >
           <Icon className="size-3.5" />
-          <span>
-            {hasReal
-              ? t("syncInbox.chipLabel", { count: conflictCount })
-              : t("syncInbox.offline", { count: offlineCount })}
-          </span>
+          <span>{label}</span>
         </button>
       </PopoverTrigger>
       <PopoverContent
         align="end"
         className="w-[420px] p-0"
-        data-testid="sync-conflicts-inbox"
+        data-testid="sync-inbox"
       >
         <InboxPanel
           report={conflicts.data}
+          unpushedCount={unpushedCount}
           onOpenNote={(id) => {
             setOpen(false);
             onOpenNote(id);
@@ -172,16 +191,35 @@ export function ConflictsChip({
 
 function InboxPanel({
   report,
+  unpushedCount,
   onOpenNote,
   onRefresh,
   refreshing,
 }: {
   report: PreflightReport;
+  unpushedCount: number;
   onOpenNote: (noteId: string) => void;
   onRefresh: () => void;
   refreshing: boolean;
 }): React.ReactNode {
   const { t } = useTranslation();
+  const qc = useQueryClient();
+  const pushAll = useMutation({
+    mutationFn: pushAllUnpushed,
+    onSuccess: () => {
+      // Drainer takes over from here. The count won't drop instantly
+      // (push happens on the drainer's 5s tick) — invalidate so the
+      // panel re-fetches and starts trending toward zero.
+      void qc.invalidateQueries({ queryKey: QK.syncUnpushed });
+    },
+  });
+
+  const hasConflicts = report.conflicts.length > 0;
+  const hasOffline = report.offline.length > 0;
+  const hasUnpushed = unpushedCount > 0;
+  const isEmpty =
+    !hasConflicts && !hasOffline && !hasUnpushed && !refreshing;
+
   return (
     <div className="flex flex-col">
       <div className="flex items-start justify-between gap-2 border-b px-3 py-2">
@@ -198,7 +236,7 @@ function InboxPanel({
           variant="ghost"
           onClick={onRefresh}
           disabled={refreshing}
-          data-testid="sync-conflicts-refresh"
+          data-testid="sync-inbox-refresh"
           aria-label={t("syncInbox.refresh")}
         >
           <RefreshCw
@@ -207,37 +245,74 @@ function InboxPanel({
         </Button>
       </div>
 
-      {refreshing && report.conflicts.length === 0 && (
+      {refreshing && !hasConflicts && !hasUnpushed && (
         <div className="text-muted-foreground px-3 py-4 text-sm">
           {t("syncInbox.scanning")}
         </div>
       )}
 
-      {!refreshing &&
-        report.conflicts.length === 0 &&
-        report.offline.length === 0 && (
-          <div className="text-muted-foreground px-3 py-6 text-center text-sm">
-            {t("syncInbox.empty")}
-          </div>
-        )}
-
-      {report.conflicts.length > 0 && (
-        <ul
-          data-testid="sync-conflicts-list"
-          className="max-h-[60vh] overflow-y-auto"
-        >
-          {report.conflicts.map((c) => (
-            <ConflictRow
-              key={c.note_id}
-              conflict={c}
-              onOpenNote={onOpenNote}
-            />
-          ))}
-        </ul>
+      {isEmpty && (
+        <div className="text-muted-foreground px-3 py-6 text-center text-sm">
+          {t("syncInbox.empty")}
+        </div>
       )}
 
-      {report.offline.length > 0 && (
-        <details className="border-t" data-testid="sync-conflicts-offline">
+      {hasConflicts && (
+        <section
+          data-testid="sync-inbox-conflicts"
+          className="border-b"
+        >
+          <header className="text-muted-foreground px-3 pt-2 pb-1 text-[10px] font-medium uppercase tracking-wide">
+            {t("syncInbox.conflictsHeading")}
+          </header>
+          <ul className="max-h-[40vh] overflow-y-auto">
+            {report.conflicts.map((c) => (
+              <ConflictRow
+                key={c.note_id}
+                conflict={c}
+                onOpenNote={onOpenNote}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {hasUnpushed && (
+        <section
+          data-testid="sync-inbox-unpushed"
+          className="border-b"
+        >
+          <header className="text-muted-foreground px-3 pt-2 pb-1 text-[10px] font-medium uppercase tracking-wide">
+            {t("syncInbox.unpushedHeading")}
+          </header>
+          <div className="flex items-center justify-between gap-3 px-3 pb-3 pt-1">
+            <div className="text-muted-foreground min-w-0 flex-1 text-xs">
+              {t("syncInbox.unpushedSummary", { count: unpushedCount })}
+            </div>
+            <Button
+              size="sm"
+              data-testid="sync-inbox-push-all"
+              onClick={() => pushAll.mutate()}
+              disabled={pushAll.isPending}
+            >
+              {pushAll.isPending
+                ? t("syncInbox.unpushedQueuing")
+                : t("syncInbox.unpushedPushAll")}
+            </Button>
+          </div>
+          {pushAll.isSuccess && pushAll.data && (
+            <div className="text-muted-foreground px-3 pb-2 text-[10px]">
+              {t("syncInbox.unpushedQueued", { count: pushAll.data.queued })}
+            </div>
+          )}
+        </section>
+      )}
+
+      {hasOffline && (
+        <details
+          className="border-t"
+          data-testid="sync-inbox-offline"
+        >
           <summary className="text-muted-foreground cursor-pointer px-3 py-2 text-xs">
             {t("syncInbox.offlineHeading")}{" "}
             {t("syncInbox.offline", { count: report.offline.length })}
@@ -297,26 +372,6 @@ function ConflictRow({
 }
 
 
-function formatRowSubtitle(
-  c: PreflightConflict,
-  t: (k: string, opts?: Record<string, unknown>) => string,
-): string {
-  const when = c.remote_modified_at
-    ? formatRelative(c.remote_modified_at)
-    : c.last_synced_at
-      ? formatRelative(c.last_synced_at)
-      : "";
-  if (!when) return "";
-  if (c.remote_modified_by) {
-    return t("syncInbox.noteRowEditedByWho", {
-      who: c.remote_modified_by,
-      when,
-    });
-  }
-  return t("syncInbox.noteRowEditedBy", { when });
-}
-
-
 function BlockingConflictsModal({
   report,
   onOpenNote,
@@ -330,10 +385,6 @@ function BlockingConflictsModal({
 }): React.ReactNode {
   const { t } = useTranslation();
   const count = report.conflicts.length;
-  // Always-open dialog with no close affordance: ``onOpenChange`` is
-  // intentionally a no-op so users can't escape by ESC / overlay
-  // click. The modal disappears only when ``conflictCount`` drops
-  // to 0, at which point the parent ConflictsChip stops rendering it.
   return (
     <Dialog open onOpenChange={() => {}}>
       <DialogContent
@@ -386,6 +437,26 @@ function BlockingConflictsModal({
       </DialogContent>
     </Dialog>
   );
+}
+
+
+function formatRowSubtitle(
+  c: PreflightConflict,
+  t: (k: string, opts?: Record<string, unknown>) => string,
+): string {
+  const when = c.remote_modified_at
+    ? formatRelative(c.remote_modified_at)
+    : c.last_synced_at
+      ? formatRelative(c.last_synced_at)
+      : "";
+  if (!when) return "";
+  if (c.remote_modified_by) {
+    return t("syncInbox.noteRowEditedByWho", {
+      who: c.remote_modified_by,
+      when,
+    });
+  }
+  return t("syncInbox.noteRowEditedBy", { when });
 }
 
 

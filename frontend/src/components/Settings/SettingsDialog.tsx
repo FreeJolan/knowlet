@@ -16,11 +16,8 @@ import { useTranslation } from "react-i18next";
 
 import {
   getSyncMode,
-  getUnpushedStatus,
-  pushAllUnpushed,
   setSyncMode as apiSetSyncMode,
   type SyncModeResponse,
-  type UnpushedStatus,
 } from "@/api/client";
 import {
   Dialog,
@@ -107,74 +104,9 @@ export function SettingsDialog({ open, onClose }: Props) {
           <div className="mt-6">
             <SyncModePicker />
           </div>
-
-          <div className="mt-6">
-            <FirstPushPanel />
-          </div>
         </div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function FirstPushPanel(): React.ReactNode {
-  const { t } = useTranslation();
-  const qc = useQueryClient();
-  const q = useQuery<UnpushedStatus>({
-    queryKey: QK.syncUnpushed,
-    queryFn: getUnpushedStatus,
-    staleTime: 30_000,
-  });
-  const mut = useMutation({
-    mutationFn: pushAllUnpushed,
-    onSuccess: () => {
-      // Refetch the count immediately so the panel reflects the
-      // queued state. The drainer pushes on its own cadence, so
-      // the count will further decrease over the next minute or
-      // two — also reflected via the standard polling cadence.
-      void qc.invalidateQueries({ queryKey: QK.syncUnpushed });
-    },
-  });
-  // Hide the whole panel on boxes without Drive auth — there's
-  // nothing the user can do here yet, and an "all good" line on
-  // a never-connected vault would mislead them into thinking sync
-  // is set up.
-  if (!q.data?.authenticated) return null;
-  const count = q.data.count;
-  const summary =
-    count === 0
-      ? t("firstPush.summary_zero")
-      : t("firstPush.summary", { count });
-  return (
-    <Section title={t("firstPush.label")}>
-      <div className="text-muted-foreground w-full text-xs">{summary}</div>
-      {count > 0 && (
-        <button
-          type="button"
-          data-testid="first-push-button"
-          disabled={mut.isPending}
-          onClick={() => mut.mutate()}
-          className="mt-2 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors"
-          style={{
-            background: "var(--accent-soft, rgba(91, 122, 156, 0.18))",
-            color: "var(--accent-2, #34495e)",
-            borderColor: "var(--accent, #5b7a9c)",
-            fontWeight: 500,
-          }}
-        >
-          {mut.isPending ? t("firstPush.queuing") : t("firstPush.label")}
-        </button>
-      )}
-      {mut.isError && (
-        <div className="text-destructive mt-2 w-full text-xs">
-          {t("firstPush.failed", {
-            detail:
-              (mut.error as { detail?: string } | undefined)?.detail ??
-              String(mut.error),
-          })}
-        </div>
-      )}
-    </Section>
   );
 }
 

@@ -32,7 +32,7 @@ import { SearchFocusMode } from "@/components/Search/SearchFocusMode";
 import { SettingsDialog } from "@/components/Settings/SettingsDialog";
 import { NewDocDialog } from "@/components/NewDoc/NewDocDialog";
 import { QuickActionsManager } from "@/components/QuickActions/QuickActionsManager";
-import { ConflictsChip } from "@/components/Sync/ConflictsChip";
+import { SyncChip } from "@/components/Sync/SyncChip";
 import { TabStrip } from "@/components/TabStrip/TabStrip";
 import { MERGE_OPEN_EVENT, queueMergeOpen } from "@/lib/pendingMergeOpen";
 import { TagBrowser } from "@/components/TagBrowser/TagBrowser";
@@ -542,7 +542,7 @@ export function AppShell() {
             {t("app.title")}
           </div>
           <div className="flex items-center gap-1">
-            <ConflictsChip
+            <SyncChip
               onOpenNote={(id) => {
                 // Two-path delivery: queue the request so the
                 // NoteView's mount-time drain picks it up if the
