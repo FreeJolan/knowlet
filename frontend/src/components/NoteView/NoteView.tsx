@@ -135,7 +135,10 @@ export function NoteView({
   const [editingTitle, setEditingTitle] = useState(false);
   // D3 Properties UI: shared collapse state between the inline crumb
   // toggle and the rows below TagChipStrip. localStorage-backed.
-  const propsCollapse = usePropertiesCollapsed();
+  // Per-note collapse state — pass the active note's id so each
+  // note remembers its own preference instead of sharing one
+  // global toggle across the whole vault.
+  const propsCollapse = usePropertiesCollapsed(note.data?.id ?? null);
   // CM6 view + preview-scroll-container refs for split-mode sync.
   // viewRef is set once per note (key remount in MarkdownEditor) via
   // onViewMount. previewWrapperRef hooks the [data-testid] wrapper.
@@ -702,6 +705,21 @@ export function NoteView({
                 onSubmit={submitTitle}
                 onCancel={cancelTitle}
                 dataTestId="title-edit-input"
+                // Make the input read as a direct replacement for
+                // the h1 it stands in for: same serif font, same
+                // 28px size, same ink color, no border / bg / ring.
+                // A subtle bottom underline marks the edit affordance
+                // without the layout-shifting box of the default
+                // tree-row styling.
+                className="block w-full rounded-sm border-0 border-b bg-transparent p-0 font-serif font-semibold outline-none ring-0 focus:border-b focus:outline-none"
+                style={{
+                  color: "var(--ink)",
+                  fontSize: 28,
+                  lineHeight: 1.18,
+                  letterSpacing: "-0.014em",
+                  borderBottomColor: "var(--ring)",
+                  borderBottomWidth: 1,
+                }}
               />
             </div>
           ) : (

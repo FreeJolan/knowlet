@@ -39,6 +39,17 @@ export interface InlineEditInputProps {
   onCancel: () => void;
   /** Optional test/data hook. */
   dataTestId?: string;
+  /** Override the default tree-row class string. The tree row UX
+   * wants a visible border + ring; the note-title edit wants the
+   * input to read as a pure replacement for the h1 it's standing
+   * in for (no border, transparent bg, same font + size). When
+   * provided this entirely replaces the default class string. */
+  className?: string;
+  /** Inline styles merged on top of the focus-caret defaults. The
+   * caret + ring colors stay (caret invisibility was a real
+   * dogfood regression on warm paper) — caller's properties win
+   * any other key. */
+  style?: React.CSSProperties;
 }
 
 export function InlineEditInput({
@@ -47,6 +58,8 @@ export function InlineEditInput({
   onSubmit,
   onCancel,
   dataTestId,
+  className,
+  style,
 }: InlineEditInputProps) {
   const ref = useRef<HTMLInputElement | null>(null);
 
@@ -89,16 +102,23 @@ export function InlineEditInput({
       placeholder={placeholder}
       data-rename-input="true"
       data-testid={dataTestId}
-      className="flex-1 rounded-sm border bg-background px-1 text-foreground outline-none ring-2"
+      className={
+        className ??
+        "flex-1 rounded-sm border bg-background px-1 text-foreground outline-none ring-2"
+      }
       style={{
         // The dogfood report showed caret invisible on the warm paper
         // canvas. Force a high-contrast caret (the dusk-blue ring color)
         // and a clearly visible 2px ring so the user always sees the
-        // input is focused even if the cursor itself blinks.
+        // input is focused even if the cursor itself blinks. Caller
+        // overrides win for everything except caretColor.
         borderColor: "var(--ring)",
         // @ts-expect-error css custom prop
         "--tw-ring-color": "var(--ring)",
-        caretColor: "var(--ring)",
+        ...(style ?? {}),
+        // caretColor stays last so caller's typography overrides
+        // can't accidentally invisible-fy the caret.
+        caretColor: style?.caretColor ?? "var(--ring)",
       }}
       onKeyDown={(e) => {
         // IME composition: Enter / Escape are candidate-confirm /

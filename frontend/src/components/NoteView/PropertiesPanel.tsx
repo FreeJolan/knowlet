@@ -23,20 +23,33 @@
  * tags) → caller can hide row C entirely; this content still
  * renders created + (optionally) source.
  *
- * Collapse state is per-vault, not per-note. localStorage key
- * `knowlet.properties.collapsed.v1`. Default = collapsed.
+ * Collapse state is **per-note** — each note remembers its own
+ * preference. Keyed under ``knowlet.properties.collapsed.v2.<id>``
+ * in localStorage. Default for a never-toggled note = collapsed.
+ *
+ * v1 was a single global key; switching note A's properties open
+ * silently flipped note B's too, which dogfood flagged as wrong
+ * (you usually want properties expanded only for the few notes
+ * with metadata worth peeking at). v2 keys break by design — old
+ * v1 state isn't migrated; everyone starts collapsed and clicks
+ * once per note they care about.
  */
 
 import { ChevronRight, ExternalLink } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-const COLLAPSED_KEY = "knowlet.properties.collapsed.v1";
+const COLLAPSED_KEY_PREFIX = "knowlet.properties.collapsed.v2.";
 
-function readCollapsed(): boolean {
+function storageKey(noteId: string): string {
+  return COLLAPSED_KEY_PREFIX + noteId;
+}
+
+function readCollapsed(noteId: string): boolean {
+  if (!noteId) return true;
   if (typeof window === "undefined") return true;
   try {
-    const raw = window.localStorage.getItem(COLLAPSED_KEY);
+    const raw = window.localStorage.getItem(storageKey(noteId));
     if (raw === "0") return false;
     return true;
   } catch {
@@ -44,38 +57,55 @@ function readCollapsed(): boolean {
   }
 }
 
-function writeCollapsed(v: boolean): void {
+function writeCollapsed(noteId: string, v: boolean): void {
+  if (!noteId) return;
   try {
-    window.localStorage.setItem(COLLAPSED_KEY, v ? "1" : "0");
+    window.localStorage.setItem(storageKey(noteId), v ? "1" : "0");
   } catch {
     /* localStorage disabled — tolerate */
   }
 }
 
-export function usePropertiesCollapsed(): {
+export function usePropertiesCollapsed(noteId: string | null | undefined): {
   collapsed: boolean;
   toggle: () => void;
 } {
-  const [collapsed, setCollapsed] = useState<boolean>(readCollapsed);
+  // Use noteId as a state-key surrogate via the lazy initializer +
+  // the syncing useEffect below. ``noteId`` may be falsy on first
+  // render (note still loading); we just default to collapsed and
+  // re-sync once it arrives.
+  const id = noteId ?? "";
+  const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsed(id));
 
+  // Re-read whenever the active note changes, so switching notes
+  // doesn't carry the previous one's expand state.
   useEffect(() => {
+    setCollapsed(readCollapsed(id));
+  }, [id]);
+
+  // Cross-tab sync — only react to changes on THIS note's key.
+  useEffect(() => {
+    if (!id) return;
+    const myKey = storageKey(id);
     const onStorage = (e: StorageEvent) => {
-      if (e.key === COLLAPSED_KEY) setCollapsed(readCollapsed());
+      if (e.key === myKey) setCollapsed(readCollapsed(id));
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }, [id]);
 
   const toggle = useCallback(() => {
     setCollapsed((prev) => {
       const next = !prev;
-      writeCollapsed(next);
+      writeCollapsed(id, next);
+      // Manual storage event so a second tab on the same note
+      // updates without waiting for the OS-level event.
       window.dispatchEvent(
-        new StorageEvent("storage", { key: COLLAPSED_KEY }),
+        new StorageEvent("storage", { key: storageKey(id) }),
       );
       return next;
     });
-  }, []);
+  }, [id]);
 
   return { collapsed, toggle };
 }
