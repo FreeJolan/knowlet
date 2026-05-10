@@ -189,24 +189,38 @@ class SyncPoller:
                 client, page_token=cursor
             )
             state.set_start_page_token(new_token)
-            # Build a Drive-file-id → Note-id map from sync_state so
-            # we can attribute changes back to local notes.
-            id_map: dict[str, str] = {}
+            # Build (drive_file_id → FileState) so we can both
+            # attribute changes to local notes AND filter out self-
+            # induced ones. If the change's headRevisionId equals
+            # our last_known_etag for that note, we wrote it — there's
+            # nothing to notify about.
+            file_state_by_drive: dict[str, Any] = {}
             for entry in self._iter_file_state(state):
                 if entry.drive_file_id:
-                    id_map[entry.drive_file_id] = entry.entity_id
+                    file_state_by_drive[entry.drive_file_id] = entry
             for change in changes:
-                note_id = id_map.get(change.file_id)
-                if not note_id:
+                rec = file_state_by_drive.get(change.file_id)
+                if rec is None:
                     # Drive change for a file knowlet doesn't track
                     # (corrupt sync_state, race during the very
                     # first push, etc.) — skip rather than guess.
                     continue
-                self._pending[note_id] = RemoteChangeNotification(
-                    note_id=note_id,
+                change_rev = (change.file or {}).get("headRevisionId")
+                if (
+                    change_rev
+                    and rec.last_known_etag
+                    and change_rev == rec.last_known_etag
+                    and not change.removed
+                    and not change.trashed
+                ):
+                    # Self-induced: we wrote this revision. Don't
+                    # surface it as a "remote changed" notification.
+                    continue
+                self._pending[rec.entity_id] = RemoteChangeNotification(
+                    note_id=rec.entity_id,
                     drive_file_id=change.file_id,
                     detected_at=now_iso(),
-                    new_revision=(change.file or {}).get("headRevisionId"),
+                    new_revision=change_rev,
                     drive_file_name=(change.file or {}).get("name"),
                     removed=change.removed or change.trashed,
                 )

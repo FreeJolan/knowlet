@@ -17,9 +17,9 @@ import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -102,6 +102,18 @@ FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 class RenameSessionRequest(BaseModel):
     title: str
+
+
+class ResolveConflictRequest(BaseModel):
+    """Phase 2 E Slice 5.D.1 — body for /api/sync/conflicts/<id>/resolve.
+
+    Strategy is constrained to mine|remote|both at runtime; we keep
+    the type as plain str because Literal in pydantic generates a
+    422 with a confusing union-type error rather than the cleaner
+    400 we surface manually.
+    """
+
+    strategy: str
 
 
 class QuoteRefPayload(BaseModel):
@@ -1001,6 +1013,190 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             return {"cleared": False, "reason": "poller not running"}
         cleared = poller.clear(note_id)
         return {"cleared": cleared}
+
+    # ---------------- conflict resolve (Slice 5.D.1) ----------------
+    # The banner now opens a modal that shows local + remote text.
+    # GET fetches the side-by-side snapshot; POST applies a strategy.
+    # Both fail clean when the user isn't connected, the note isn't
+    # tracked, or the conflict has already been resolved elsewhere.
+    @app.get("/api/sync/conflicts/{note_id}")
+    def get_sync_conflict(note_id: str) -> dict[str, Any]:
+        from knowlet.core.note import Note
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.files import download_file, get_file_metadata
+        from knowlet.core.sync.oauth import (
+            ScopeUpgradeRequiredError,
+            verify_scope,
+        )
+        from knowlet.core.sync.state import SyncStateStore
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            raise HTTPException(409, detail="not connected")
+        try:
+            verify_scope(creds)
+        except ScopeUpgradeRequiredError as exc:
+            raise HTTPException(409, detail=str(exc)) from exc
+
+        # Find the local note path.
+        path = next(
+            (p for p in vault.iter_note_paths() if p.stem == note_id),
+            None,
+        )
+        if path is None:
+            raise HTTPException(404, detail=f"note {note_id} not found")
+        note = Note.from_file(path)
+
+        state = SyncStateStore(vault.root)
+        try:
+            record = state.get_file_state("note", note_id)
+            if record is None or not record.drive_file_id:
+                raise HTTPException(
+                    404,
+                    detail=f"note {note_id} has no Drive mapping yet",
+                )
+            client = DriveClient(creds)
+            service = client.service()
+            current = get_file_metadata(service, record.drive_file_id)
+            # If revisions match, there's no conflict — race between
+            # the banner showing and the user clicking. Tell the
+            # frontend so it can clear the banner gracefully.
+            no_conflict = (
+                current.head_revision_id == record.last_known_etag
+            )
+            local_bytes = path.read_bytes()
+            if no_conflict:
+                return {
+                    "conflict": False,
+                    "note_id": note_id,
+                    "drive_file_id": record.drive_file_id,
+                    "drive_file_name": current.name,
+                    "expected_revision": record.last_known_etag,
+                    "current_revision": current.head_revision_id,
+                    "local_text": local_bytes.decode("utf-8", errors="replace"),
+                    "remote_text": local_bytes.decode("utf-8", errors="replace"),
+                }
+            remote_bytes = download_file(service, record.drive_file_id)
+            return {
+                "conflict": True,
+                "note_id": note_id,
+                "drive_file_id": record.drive_file_id,
+                "drive_file_name": current.name,
+                "expected_revision": record.last_known_etag,
+                "current_revision": current.head_revision_id,
+                "local_text": local_bytes.decode("utf-8", errors="replace"),
+                "remote_text": remote_bytes.decode("utf-8", errors="replace"),
+            }
+        finally:
+            state.close()
+
+    @app.post("/api/sync/conflicts/{note_id}/resolve")
+    def post_sync_conflict_resolve(
+        note_id: str,
+        req: ResolveConflictRequest,
+    ) -> dict[str, Any]:
+        if req.strategy not in {"mine", "remote", "both"}:
+            raise HTTPException(
+                400,
+                detail=(
+                    f"strategy must be one of mine|remote|both; got {req.strategy!r}"
+                ),
+            )
+        from knowlet.core.note import Note
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.files import download_file, get_file_metadata
+        from knowlet.core.sync.oauth import (
+            ScopeUpgradeRequiredError,
+            verify_scope,
+        )
+        from knowlet.core.sync.push import (
+            ConflictReport,
+            resolve_keep_both,
+            resolve_use_mine,
+            resolve_use_remote,
+        )
+        from knowlet.core.sync.state import SyncStateStore
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            raise HTTPException(409, detail="not connected")
+        try:
+            verify_scope(creds)
+        except ScopeUpgradeRequiredError as exc:
+            raise HTTPException(409, detail=str(exc)) from exc
+
+        path = next(
+            (p for p in vault.iter_note_paths() if p.stem == note_id),
+            None,
+        )
+        if path is None:
+            raise HTTPException(404, detail=f"note {note_id} not found")
+
+        state = SyncStateStore(vault.root)
+        try:
+            record = state.get_file_state("note", note_id)
+            if record is None or not record.drive_file_id:
+                raise HTTPException(
+                    404, detail=f"note {note_id} has no Drive mapping yet"
+                )
+            client = DriveClient(creds)
+            service = client.service()
+            current = get_file_metadata(service, record.drive_file_id)
+            local_bytes = path.read_bytes()
+            remote_bytes = download_file(service, record.drive_file_id)
+            conflict = ConflictReport(
+                entity_type="note",
+                entity_id=note_id,
+                drive_file_id=record.drive_file_id,
+                expected_revision=record.last_known_etag or "",
+                local_bytes=local_bytes,
+                remote_bytes=remote_bytes,
+                remote_metadata=current,
+            )
+            if req.strategy == "mine":
+                result = resolve_use_mine(
+                    service=service, state=state, conflict=conflict
+                )
+                action_payload: dict[str, Any] = {
+                    "action": "mine",
+                    "new_revision": result.drive_file.head_revision_id,
+                }
+            elif req.strategy == "remote":
+                resolve_use_remote(
+                    state=state, conflict=conflict, local_path=path
+                )
+                action_payload = {
+                    "action": "remote",
+                    "new_revision": current.head_revision_id,
+                }
+            else:  # both
+                copy_path = resolve_keep_both(
+                    state=state,
+                    conflict=conflict,
+                    local_path=path,
+                    device_label=state.device_label(),
+                )
+                action_payload = {
+                    "action": "both",
+                    "conflict_copy_path": str(copy_path),
+                }
+        finally:
+            state.close()
+
+        # Clear the in-memory poller pending so the banner clears
+        # immediately (frontend's next poll picks it up).
+        poller = getattr(app.state, "sync_poller", None)
+        if poller is not None:
+            poller.clear(note_id)
+        return {"ok": True, **action_payload}
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:

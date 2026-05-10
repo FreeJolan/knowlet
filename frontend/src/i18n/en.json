@@ -317,13 +317,38 @@
     }
   },
   "sync": {
-    "bannerCurrent": "This note was modified on another device. Resolve via knowlet sync resolve before saving.",
+    "badgeTooltip_one": "1 unresolved sync conflict — click to review",
+    "badgeTooltip_other": "{{count}} unresolved sync conflicts — click to review",
+    "bannerCurrent": "This note was modified on another device.",
     "bannerRemoved": "This note was deleted on another device.",
+    "bannerResolve": "Review & resolve",
+    "bannerReviewRemoved": "Review",
     "bannerSummary_one": "1 note changed on another device:",
     "bannerSummary_other": "{{count}} notes changed on another device:",
     "bannerMore_one": "… and 1 more",
     "bannerMore_other": "… and {{count}} more",
     "removed": "deleted on remote",
     "dismissAria": "Dismiss this notification"
+  },
+  "syncInbox": {
+    "title": "Sync conflicts",
+    "description": "Notes that changed on another device since your last sync. Click one to review and resolve.",
+    "empty": "No pending sync conflicts. You're all caught up.",
+    "detectedAt": "detected {{ts}}"
+  },
+  "conflict": {
+    "title": "Resolve sync conflict",
+    "description": "Local and remote diverged. Choose how to merge.",
+    "loading": "Loading conflict snapshot…",
+    "alreadyResolved": "No conflict — Drive matches your last sync. The banner is being cleared.",
+    "localLabel": "Local (this device)",
+    "remoteLabel": "Remote (Google Drive)",
+    "useMine": "Use Mine",
+    "mineHint": "Overwrite the remote with your local content. Drive's version history (≈30 days) keeps the prior remote recoverable.",
+    "useRemote": "Use Remote",
+    "remoteHint": "Replace your local content with the remote version. Your prior local content is preserved in .knowlet/backups/.",
+    "keepBoth": "Keep Both",
+    "bothHint": "Save the remote version as a sibling conflict copy in your vault folder; keep your local untouched. Next sync will retry pushing local.",
+    "cancel": "Cancel"
   }
 }

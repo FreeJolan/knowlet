@@ -134,6 +134,45 @@ def test_tick_records_pending_notifications(tmp_path: Path) -> None:
     assert pending[0].removed is False
 
 
+def test_tick_filters_out_self_induced_changes(tmp_path: Path) -> None:
+    """If Drive's reported headRevisionId equals our locally-cached
+    last_known_etag for the same file, we ARE the writer. Don't
+    surface that as a "remote modified" banner — the user just
+    pushed it themselves. Otherwise the user sees their own work
+    bounce back as a conflict."""
+    _seed_creds(tmp_path)
+    note_id = new_id()
+    drive_id = "DRIVE-FID-SELF"
+    state = SyncStateStore(tmp_path)
+    try:
+        state.set_start_page_token("OLD-TOKEN")
+        state.upsert_file_state(
+            FileState(
+                entity_type="note",
+                entity_id=note_id,
+                drive_file_id=drive_id,
+                last_known_etag="rev-MINE",
+                last_synced_at="2026-05-10T00:00:00Z",
+                dirty=False,
+            )
+        )
+    finally:
+        state.close()
+    poller = SyncPoller(tmp_path)
+    self_change = DriveChange(
+        file_id=drive_id,
+        removed=False,
+        trashed=False,
+        file={"name": "alpha.md", "headRevisionId": "rev-MINE"},
+    )
+    with patch(
+        "knowlet.core.sync.changes.list_all_changes",
+        return_value=([self_change], "NEW-TOKEN"),
+    ):
+        poller._tick()  # noqa: SLF001
+    assert poller.pending_notifications() == []
+
+
 def test_tick_marks_removed_changes(tmp_path: Path) -> None:
     _seed_creds(tmp_path)
     note_id = new_id()

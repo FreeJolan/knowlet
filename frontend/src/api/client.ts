@@ -187,6 +187,39 @@ export const dismissSyncNotification = (
     `/api/sync/notifications/${encodeURIComponent(noteId)}/dismiss`,
   );
 
+export interface SyncConflictPayload {
+  conflict: boolean;
+  note_id: string;
+  drive_file_id: string;
+  drive_file_name: string;
+  expected_revision: string | null;
+  current_revision: string | null;
+  local_text: string;
+  remote_text: string;
+}
+
+export const getSyncConflict = (noteId: string): Promise<SyncConflictPayload> =>
+  request("GET", `/api/sync/conflicts/${encodeURIComponent(noteId)}`);
+
+export type ConflictStrategy = "mine" | "remote" | "both";
+
+export interface ConflictResolveResult {
+  ok: boolean;
+  action: ConflictStrategy;
+  new_revision?: string;
+  conflict_copy_path?: string;
+}
+
+export const resolveSyncConflict = (
+  noteId: string,
+  strategy: ConflictStrategy,
+): Promise<ConflictResolveResult> =>
+  request(
+    "POST",
+    `/api/sync/conflicts/${encodeURIComponent(noteId)}/resolve`,
+    { strategy },
+  );
+
 // ---------- search (Phase 1 D slice 2) ----------
 
 export const searchVault = (

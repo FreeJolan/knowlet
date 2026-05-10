@@ -94,10 +94,14 @@ def list_changes(
             pageToken=page_token,
             pageSize=page_size,
             spaces=APPDATA_FOLDER,
+            # `headRevisionId` is what we cache locally as the OCC
+            # cursor in sync_state.last_known_etag. Including it in
+            # the changes payload lets the poller filter out
+            # self-induced changes (a push we just made).
             fields=(
                 "newStartPageToken,nextPageToken,"
                 "changes(fileId,removed,file(name,modifiedTime,"
-                "mimeType,trashed))"
+                "mimeType,trashed,headRevisionId))"
             ),
         )
         .execute()

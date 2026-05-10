@@ -316,13 +316,38 @@
     }
   },
   "sync": {
-    "bannerCurrent": "这篇笔记被另一台设备修改过。保存前请用 knowlet sync resolve 处理。",
+    "badgeTooltip_one": "1 个待解决的同步冲突 — 点击查看",
+    "badgeTooltip_other": "{{count}} 个待解决的同步冲突 — 点击查看",
+    "bannerCurrent": "这篇笔记被另一台设备修改过。",
     "bannerRemoved": "这篇笔记在另一台设备上被删除了。",
+    "bannerResolve": "查看并处理",
+    "bannerReviewRemoved": "查看",
     "bannerSummary_one": "另一台设备改了 1 篇笔记:",
     "bannerSummary_other": "另一台设备改了 {{count}} 篇笔记:",
     "bannerMore_one": "… 还有 1 篇",
     "bannerMore_other": "… 还有 {{count}} 篇",
     "removed": "远端已删除",
     "dismissAria": "忽略此通知"
+  },
+  "syncInbox": {
+    "title": "同步冲突",
+    "description": "上次同步以来在另一台设备上修改过的笔记。点击查看并处理。",
+    "empty": "没有待处理的同步冲突,一切就绪。",
+    "detectedAt": "检测于 {{ts}}"
+  },
+  "conflict": {
+    "title": "解决同步冲突",
+    "description": "本地版本和远端版本分叉了。选一种方式合并。",
+    "loading": "正在加载冲突快照…",
+    "alreadyResolved": "已无冲突 —— Drive 与上次同步状态一致。Banner 正在清除。",
+    "localLabel": "本地(本设备)",
+    "remoteLabel": "远端(Google Drive)",
+    "useMine": "用我的",
+    "mineHint": "用本地版本覆盖远端。Drive 自带版本历史(≈30 天)能恢复之前的远端版本。",
+    "useRemote": "用远端的",
+    "remoteHint": "用远端版本替换本地。本地之前的内容存在 .knowlet/backups/。",
+    "keepBoth": "两份都留",
+    "bothHint": "把远端版本另存为同目录下的冲突副本;本地不动。下次同步时仍会尝试推送本地。",
+    "cancel": "取消"
   }
 }
