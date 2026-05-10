@@ -144,6 +144,15 @@ class PushDrainer:
                         row.entity_id,
                     )
                     continue
+                # Force the tracked entity_id onto the in-memory Note.
+                # For notes with corrupted / missing frontmatter +
+                # non-ULID-shaped filenames, ``Note.from_file``
+                # synthesizes a fresh ULID on every read; without
+                # this override push_note would treat each tick as
+                # a brand-new note and create a phantom Drive file
+                # plus a phantom sync_state row. Same trick the
+                # resolve-merge and repair endpoints already use.
+                note.id = row.entity_id
                 if service is None:
                     # Lazy: only authenticate when there's actually
                     # work to do. Saves a Drive handshake on idle.

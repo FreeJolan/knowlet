@@ -1525,6 +1525,172 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "remote_path": str(fake_path),
         }
 
+    # ---------------- dev real-Drive simulators ---------------------
+    # Single-device dogfood helpers. drive.appdata scope hides files
+    # from Drive web UI, so the natural "edit on the other side" loop
+    # is impossible without a second machine — these endpoints make
+    # it possible. Both use the user's real Drive credentials; they
+    # don't fake anything at the knowlet layer.
+
+    @app.post("/api/sync/dev-simulate-remote-edit/{note_id}")
+    def dev_simulate_remote_edit(note_id: str) -> dict[str, Any]:
+        """Pretend another device edited this note on Drive. Uses
+        the user's real OAuth token to force-overwrite the note's
+        Drive file with synthetic content — Drive's
+        ``headRevisionId`` bumps just like a real concurrent edit.
+        Next time knowlet's preflight runs (or the user saves
+        locally → drainer pushes → 412), the conflict surfaces
+        through the normal flow."""
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.files import download_file, force_overwrite
+        from knowlet.core.sync.state import SyncStateStore
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="not authenticated to Drive",
+            )
+        store = SyncStateStore(vault.root)
+        try:
+            rec = store.get_file_state("note", note_id)
+        finally:
+            store.close()
+        if rec is None or not rec.drive_file_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="note has never been pushed to Drive",
+            )
+        service = DriveClient(creds).service()
+        current = download_file(service, rec.drive_file_id).decode(
+            "utf-8", errors="replace"
+        )
+        # Inject a marker so the merge editor's diff shows something
+        # visibly "remote-side": append a paragraph the local file
+        # can't possibly have. The user will see it as a hunk on the
+        # right-hand pane.
+        from knowlet.core.note import now_iso
+
+        injected = (
+            current.rstrip()
+            + "\n\n[remote-side edit simulated at "
+            + now_iso()
+            + " — pretend a coworker added this paragraph from another device]\n"
+        )
+        df = force_overwrite(
+            service,
+            file_id=rec.drive_file_id,
+            content=injected.encode("utf-8"),
+        )
+        _invalidate_preflight_cache()
+        return {
+            "drive_file_id": df.id,
+            "new_revision": df.head_revision_id,
+            "bytes": len(injected),
+        }
+
+    @app.post("/api/sync/dev-cleanup-orphan-sync-rows")
+    def dev_cleanup_orphan_sync_rows() -> dict[str, Any]:
+        """Walk sync_state, delete rows whose entity_id isn't in the
+        index. Also delete the corresponding Drive files (they're
+        unreachable from knowlet's note browser anyway). Used to
+        recover from the corrupted-frontmatter id-regeneration bug
+        that fanned out phantom rows pre-fix."""
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.state import SyncStateStore
+
+        creds = load_credentials(credentials_path(vault.root))
+        runtime = state.runtime
+        if runtime is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="runtime not ready",
+            )
+        index_ids = {n["id"] for n in runtime.index.list_notes()}
+        store = SyncStateStore(vault.root)
+        deleted_rows = 0
+        deleted_drive = 0
+        drive_errors: list[str] = []
+        try:
+            service: Any = None
+            for fs in store.list_all_files():
+                if fs.entity_type != "note":
+                    continue
+                if fs.entity_id in index_ids:
+                    continue
+                # Orphan. Drop the Drive file if we have one + creds.
+                if fs.drive_file_id and creds is not None:
+                    if service is None:
+                        service = DriveClient(creds).service()
+                    try:
+                        service.files().delete(
+                            fileId=fs.drive_file_id
+                        ).execute()
+                        deleted_drive += 1
+                    except Exception as exc:  # noqa: BLE001
+                        drive_errors.append(
+                            f"{fs.entity_id}: {exc!r}"
+                        )
+                # Drop the sync_state row. SyncStateStore doesn't
+                # expose a row delete, so we use raw SQL on the
+                # underlying connection.
+                conn = store._connect()  # noqa: SLF001 — intentional
+                conn.execute(
+                    "DELETE FROM file_state "
+                    "WHERE entity_type=? AND entity_id=?",
+                    (fs.entity_type, fs.entity_id),
+                )
+                conn.commit()
+                deleted_rows += 1
+        finally:
+            store.close()
+        _invalidate_preflight_cache()
+        return {
+            "deleted_rows": deleted_rows,
+            "deleted_drive_files": deleted_drive,
+            "drive_errors": drive_errors[:5],
+        }
+
+    @app.post("/api/sync/dev-fake-other-device-heartbeat")
+    def dev_fake_other_device_heartbeat() -> dict[str, Any]:
+        """Plant a fake heartbeat for a synthetic second device in
+        Drive appData. Next preflight reads it + the local device's
+        own heartbeat → ``alive_devices`` count = 2 → Auto mode
+        auto-promotes to Strict."""
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.heartbeat import write_my_heartbeat
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="not authenticated to Drive",
+            )
+        service = DriveClient(creds).service()
+        # Use a stable fake id so re-runs overwrite instead of
+        # accumulating. The "fake" prefix makes it obviously not
+        # a real device when inspecting Drive appData manually.
+        fake_id = "01FAKEOTHERDEVICEDOGFOOD00"
+        write_my_heartbeat(
+            service,
+            device_id=fake_id,
+            device_label="fake-other-device (dogfood)",
+        )
+        _invalidate_preflight_cache()
+        return {"fake_device_id": fake_id, "ok": True}
+
     @app.delete("/api/sync/dev-seed-conflict/{note_id}")
     def dev_seed_conflict_clear(note_id: str) -> dict[str, Any]:
         from knowlet.core.sync.state import SyncStateStore
@@ -1655,6 +1821,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 "synced_count": 0,
                 "dirty_count": 0,
                 "unauthenticated": False,
+                "alive_devices": [],
             }
         return _serialize_preflight(report, state.preflight_ran_at)
 
@@ -1687,6 +1854,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "synced_count": report.synced_count,
             "dirty_count": report.dirty_count,
             "unauthenticated": report.unauthenticated,
+            "alive_devices": list(report.alive_devices),
         }
 
     def _invalidate_preflight_cache() -> None:
