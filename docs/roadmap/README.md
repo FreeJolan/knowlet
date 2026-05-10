@@ -106,7 +106,7 @@ Phase 4   整体 dogfood + 灰度准备                       1-2 周
 
 - **Plugin 生态**:开放接口让用户/社区写自定义 tool,扩展原子能力层
 - **移动端原生**:PWA 不够,音频 / OCR / 通知等场景需要原生能力
-- **knowlet 自建同步**:文件级同步的冲突体验不佳时,补 CRDT 或加密同步路径
+- **多设备同步**:[ADR-0027](../decisions/0027-sync-via-drive-api.md) 已起草 Google Drive API as remote authority(opt-in,远端权威 + ETag OCC)。CRDT 路径已显式排除(memory 记录用户经验)。Slice 5.A-5.G 实施序列待 sequence
 - **完整加密路径**:高隐私需求出现时(参见 [ADR-0006](../decisions/0006-storage-and-sync.md))
 - **Fallback 抓取后端**:支持不带原生 web_search 的 LLM(部分已 ship 在 ADR-0017)
 
@@ -181,7 +181,7 @@ knowlet 阶段一的原子能力按 MCP 标准设计([ADR-0004](../decisions/000
 |---|---|---|
 | Plugin 系统 | 阶段二 | ADR-0003 §"阶段二" |
 | 移动端原生 | 阶段二 | ADR-0003 §"阶段二" |
-| knowlet 自建同步(CRDT / 加密) | 阶段二 | ADR-0006 §"阶段二" |
+| Drive API 同步(remote authority,opt-in) | 阶段二 | [ADR-0027](../decisions/0027-sync-via-drive-api.md) |
 | Vault 加密(`git-crypt` / `age` / 自研) | 阶段二 | ADR-0006 §127 |
 | MCP server | 阶段三 | ADR-0003 §"阶段三" |
 | Tauri 桌面壳(M9+) | M9+ | ADR-0011 §"Schedule" |

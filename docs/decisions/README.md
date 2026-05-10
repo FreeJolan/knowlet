@@ -31,6 +31,8 @@
 - [0023 — LLM Wiki 对比 + 吸纳 7 特性](./0023-llm-wiki-comparison-and-takeaways.md)
 - [0024 — AI 协助边界 + 系统 prompt 分层架构](./0024-ai-assist-envelope.md)
 - [0025 — 快捷操作 vs 工作流:两种叙事 + 共享 runner](./0025-quick-actions-and-workflows.md)
+- [0026 — Command palette:一个对话框 × 两个前缀模式](./0026-command-palette-prefix-mode.md)
+- [0027 — 多设备同步:Google Drive API as remote authority](./0027-sync-via-drive-api.md)
 
 历史 / 已不代表当前方向的 ADR 见 [`archive/`](./archive/)。
 

@@ -88,7 +88,7 @@ knowlet 只做:
 
 附带含义:**knowlet 不需要账户系统**。Vault = 一个目录,谁打开谁就是用户。这与 [ADR-0002](./0002-core-principles.md) 数据主权进一步对齐 —— 数据连"上传到 knowlet"这一步都没有。
 
-阶段二 / 后续:knowlet 自建轻量同步服务(可能基于 CRDT 或加密同步)作为高级选项,与文件级同步共存。届时由新 ADR 决策。
+阶段二 / 后续:**[ADR-0027](./0027-sync-via-drive-api.md)** 引入 opt-in 的 Google Drive API 同步层(**远端权威 + ETag OCC**),与本 ADR 的文件级同步共存。CRDT 路径已被排除(项目 memory `feedback_sync_remote_authoritative` 记录了用户在过往 TODO 软件踩坑的经验);项目方维护 server 持用户数据的路径也已排除。
 
 ### 重建机制
 

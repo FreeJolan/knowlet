@@ -158,7 +158,7 @@ knowlet 的版本号采用 **SemVer**(`MAJOR.MINOR.PATCH`):
 - ❌ **多 major 跨版迁移**:N → N+2 不允许直跨。串两个迁移函数即可。
 - ❌ **运行时迁移用户内容**:迁移函数只能补 default / 删字段 / 改结构,**绝不修改用户写入的正文 / title / body**。Linter 报告"待补完"路径用 ADR-0023 §7 status 字段,**不动正文**。
 - ❌ **schema_version 字段串(`"v1.2"`)**:用整数,简单稳定。
-- ❌ **同步 / 远端 vault 兼容**:本 ADR 只覆盖 local-first 单 vault,跨设备同步是 ADR-0006 §同步策略 的责任(目前 = 用户自行选择 iCloud / Syncthing)。
+- ❌ **同步 / 远端 vault 兼容**:本 ADR 只覆盖 local-first 单 vault,跨设备同步由 [ADR-0006](./0006-storage-and-sync.md)(默认:用户自选文件同步)和 [ADR-0027](./0027-sync-via-drive-api.md)(opt-in:Google Drive API 远端权威)共同负责。本 ADR 是它们的本地耐久性基础。
 - ❌ **加密 vault**:不在本 ADR 范围;独立 ADR(如有需要)。
 
 ## Consequences
