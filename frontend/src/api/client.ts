@@ -125,9 +125,15 @@ export type SyncMode = "auto" | "strict" | "lax";
 
 export interface SyncModeResponse {
   mode: SyncMode;
-  /** What the UI should react to. Currently equal to ``mode`` —
-   *  diverges when cross-device auto-promotion lands (#107c). */
+  /** What the UI should react to. Differs from ``mode`` when Auto
+   *  auto-promotes to Strict via cross-device heartbeat detection
+   *  (#111). Settings UI shows ``device_count`` so the user knows
+   *  why. */
   effective_mode: SyncMode;
+  /** Number of distinct knowlet installations seen on this vault's
+   *  Drive appData within the heartbeat TTL (30 days). 0 when no
+   *  preflight has run yet OR no Drive auth. */
+  device_count: number;
 }
 
 export const getSyncMode = (): Promise<SyncModeResponse> =>

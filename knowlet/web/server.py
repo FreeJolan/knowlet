@@ -1771,6 +1771,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 dirty_count=0,
                 scanned=0,
                 unauthenticated=False,
+                alive_devices=[],
             )
             return
         if any(c.note_id == note_id for c in rep.conflicts):
@@ -1783,6 +1784,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             dirty_count=rep.dirty_count,
             scanned=rep.scanned,
             unauthenticated=rep.unauthenticated,
+            alive_devices=rep.alive_devices,
         )
 
     def _title_for_note(note_id: str) -> str | None:
@@ -1826,6 +1828,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             dirty_count=rep.dirty_count,
             scanned=rep.scanned,
             unauthenticated=rep.unauthenticated,
+            alive_devices=rep.alive_devices,
         )
 
     # ---------------- sync mode (#107b) ---------------------------
@@ -1846,7 +1849,25 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             mode = store.sync_mode()
         finally:
             store.close()
-        return {"mode": mode, "effective_mode": mode}
+        # #111 — Auto mode auto-promotes to Strict when ≥2 alive
+        # devices are seen in the cached preflight's heartbeat
+        # scan. The promotion is transparent: the frontend reads
+        # ``effective_mode`` and reacts to that. The Settings panel
+        # shows ``device_count`` so the user knows why Auto behaves
+        # like Strict.
+        rep = state.preflight_report
+        device_count = (
+            len(rep.alive_devices) if rep is not None else 0
+        )
+        if mode == "auto":
+            effective = "strict" if device_count >= 2 else "lax"
+        else:
+            effective = mode
+        return {
+            "mode": mode,
+            "effective_mode": effective,
+            "device_count": device_count,
+        }
 
     @app.put("/api/sync/mode")
     def put_sync_mode(body: SyncModeRequest) -> dict[str, Any]:
@@ -1864,7 +1885,19 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             new_mode = store.sync_mode()
         finally:
             store.close()
-        return {"mode": new_mode, "effective_mode": new_mode}
+        rep = state.preflight_report
+        device_count = (
+            len(rep.alive_devices) if rep is not None else 0
+        )
+        if new_mode == "auto":
+            effective = "strict" if device_count >= 2 else "lax"
+        else:
+            effective = new_mode
+        return {
+            "mode": new_mode,
+            "effective_mode": effective,
+            "device_count": device_count,
+        }
 
     # ---------------- background push drainer (S4 / #112) -----------
     # Wires the helper closures defined above (note lookup, conflict

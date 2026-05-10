@@ -330,6 +330,8 @@
     "description": "How knowlet handles unresolved conflicts.",
     "auto": "Auto",
     "autoHint": "Default — surface conflicts in the inbox; never block.",
+    "autoUpgradedHint_one": "Auto upgraded to Strict — {{count}} device detected on this vault.",
+    "autoUpgradedHint_other": "Auto upgraded to Strict — {{count}} devices detected on this vault.",
     "strict": "Strict",
     "strictHint": "Block the app on any unresolved conflict (multi-device).",
     "lax": "Quiet",

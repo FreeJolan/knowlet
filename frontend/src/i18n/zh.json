@@ -329,6 +329,8 @@
     "description": "knowlet 如何处理未解决的冲突。",
     "auto": "Auto",
     "autoHint": "默认。冲突进 inbox,不阻断使用。",
+    "autoUpgradedHint_one": "Auto 已自动升级到 Strict —— 检测到 {{count}} 台设备。",
+    "autoUpgradedHint_other": "Auto 已自动升级到 Strict —— 检测到 {{count}} 台设备。",
     "strict": "Strict",
     "strictHint": "任何未解决的冲突都阻断应用,逼你处理(多设备场景)。",
     "lax": "宽松",

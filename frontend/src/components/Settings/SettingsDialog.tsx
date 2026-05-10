@@ -129,6 +129,12 @@ function SyncModePicker(): React.ReactNode {
   });
 
   const current = q.data?.mode ?? "auto";
+  const effective = q.data?.effective_mode ?? current;
+  const deviceCount = q.data?.device_count ?? 0;
+  // #111 — only the Auto pill needs the auto-upgrade hint; Strict /
+  // Quiet are explicit user choices and don't have a hidden mode
+  // promotion to explain.
+  const autoUpgraded = current === "auto" && effective === "strict";
 
   return (
     <Section title={t("syncMode.label")}>
@@ -159,6 +165,14 @@ function SyncModePicker(): React.ReactNode {
         onClick={() => mut.mutate("lax")}
         testid="sync-mode-pill-lax"
       />
+      {autoUpgraded && (
+        <div
+          data-testid="sync-mode-auto-upgraded-hint"
+          className="text-warn-fg dark:text-warn-fg-dark mt-2 w-full text-xs"
+        >
+          {t("syncMode.autoUpgradedHint", { count: deviceCount })}
+        </div>
+      )}
     </Section>
   );
 }

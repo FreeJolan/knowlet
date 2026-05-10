@@ -82,7 +82,13 @@ class PreflightReport:
     """Result of one scan pass. The endpoint serializes this and
     React Query caches it client-side; the chip reads
     ``len(conflicts)``, the inbox renders the lists, the
-    ``unauthenticated`` flag tells the chip to stay hidden."""
+    ``unauthenticated`` flag tells the chip to stay hidden.
+
+    #111 — ``alive_devices`` is the list of distinct knowlet
+    installations seen on this vault's Drive appData within the
+    heartbeat TTL. Auto mode reads ``len(alive_devices)`` to
+    decide whether to promote to Strict; the chip / settings UI
+    surface the count back to the user."""
 
     conflicts: list[PreflightConflict]
     offline: list[PreflightOffline]
@@ -91,6 +97,7 @@ class PreflightReport:
     dirty_count: int
     scanned: int
     unauthenticated: bool
+    alive_devices: list[dict[str, str]]  # [{device_id, last_seen_at}]
 
 
 def preflight_scan(
@@ -119,6 +126,9 @@ def preflight_scan(
     """
     rows: list[FileState] = state_store.list_all_files()
     if not rows:
+        # Vault is fresh — no tracked files, no heartbeat work needed
+        # either (we only care about devices that have actually touched
+        # the vault).
         return PreflightReport(
             conflicts=[],
             offline=[],
@@ -127,6 +137,7 @@ def preflight_scan(
             dirty_count=0,
             scanned=0,
             unauthenticated=False,
+            alive_devices=[],
         )
 
     conflicts: list[PreflightConflict] = []
@@ -136,6 +147,18 @@ def preflight_scan(
     dirty = 0
     unauthenticated = False
     drive_service: Any = None
+    alive_devices: list[dict[str, str]] = []
+
+    # #111 — heartbeat write + scan happens BEFORE the per-note
+    # loop so the alive_devices count is populated even if every
+    # note short-circuits as unauthenticated. The auto-promotion
+    # decision needs to be available regardless of whether there's
+    # active sync work.
+    drive_service = _maybe_heartbeat_pass(
+        state_store=state_store,
+        service_factory=auto_pull_service_factory,
+        alive_devices_out=alive_devices,
+    )
 
     for row in rows:
         if row.entity_type != "note":
@@ -216,7 +239,56 @@ def preflight_scan(
         dirty_count=dirty,
         scanned=len(rows),
         unauthenticated=unauthenticated,
+        alive_devices=alive_devices,
     )
+
+
+def _maybe_heartbeat_pass(
+    *,
+    state_store: SyncStateStore,
+    service_factory: ServiceFactory,
+    alive_devices_out: list[dict[str, str]],
+) -> Any:
+    """Best-effort heartbeat write + alive-devices read. Returns the
+    Drive service handle so the caller can reuse it for auto-pull
+    work without re-authenticating.
+
+    Failures (no creds, Drive unreachable, list returns garbage) are
+    swallowed — the heartbeat is opt-in instrumentation; we don't
+    want a flaky network call to make the whole preflight fail."""
+    from knowlet.core.sync.heartbeat import (
+        list_alive_devices,
+        write_my_heartbeat,
+    )
+
+    service = service_factory()
+    if service is None:
+        return None
+    try:
+        write_my_heartbeat(
+            service,
+            device_id=state_store.device_id(),
+            device_label=state_store.device_label(),
+        )
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "preflight: heartbeat write failed", exc_info=True
+        )
+    try:
+        devices = list_alive_devices(service)
+        for d in devices:
+            alive_devices_out.append(
+                {"device_id": d.device_id, "last_seen_at": d.last_seen_at}
+            )
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "preflight: heartbeat list failed", exc_info=True
+        )
+    return service
 
 
 def _title(note_id: str, lookup: NoteMetaLookup) -> str | None:
