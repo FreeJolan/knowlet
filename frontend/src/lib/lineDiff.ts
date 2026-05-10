@@ -158,9 +158,13 @@ function groupHunks(ops: Op[]): LineHunk[] {
 export type HunkChoice = "mine" | "theirs" | "both" | null;
 
 /** Build the merged text from the hunks and per-diff choices.
- * Equal hunks always pass through. ``null`` choice on a diff hunk
- * means "not yet chosen" — we emit nothing for that hunk so the
- * preview clearly shows the user still has work to do. */
+ *
+ * Equal hunks always pass through. For an unresolved diff hunk
+ * (``choice === null``), the **saved** text omits it (the user
+ * isn't allowed to save while any choice is null — see the
+ * dialog's save-disabled gate). The **preview** version uses
+ * ``buildPreviewText`` instead, which renders an inline placeholder
+ * so the user can see exactly where they still owe a decision. */
 export function buildMergedText(
   hunks: LineHunk[],
   choices: HunkChoice[],
@@ -180,6 +184,34 @@ export function buildMergedText(
       lines.push(...h.mine, ...h.theirs);
     }
     // null → emit nothing, the user hasn't chosen yet.
+  }
+  return joinLines(lines);
+}
+
+/** Identical to ``buildMergedText`` but for unresolved hunks emits a
+ * single placeholder line containing ``placeholder``. The merge
+ * editor passes a localized "⟨waiting for choice⟩" string. */
+export function buildPreviewText(
+  hunks: LineHunk[],
+  choices: HunkChoice[],
+  placeholder: string,
+): string {
+  const lines: string[] = [];
+  let diffIndex = 0;
+  for (const h of hunks) {
+    if (h.kind === "equal") {
+      lines.push(...h.mine);
+      continue;
+    }
+    const choice = choices[diffIndex];
+    diffIndex++;
+    if (choice === "mine") lines.push(...h.mine);
+    else if (choice === "theirs") lines.push(...h.theirs);
+    else if (choice === "both") {
+      lines.push(...h.mine, ...h.theirs);
+    } else {
+      lines.push(placeholder);
+    }
   }
   return joinLines(lines);
 }

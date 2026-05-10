@@ -43,17 +43,22 @@ NOTE_MIME_TYPE = "text/markdown"
 @dataclass(frozen=True)
 class DriveFile:
     """Slim view of a Drive file resource — only the fields Slice
-    5.C needs. Bigger surfaces (parents, owners) come later.
+    5.C / S5 need. Bigger surfaces (parents, owners) come later.
 
     ``head_revision_id`` is the OCC cursor we persist in
     sync_state.file_state.last_known_etag (the column name predates
-    the v3 etag-removal; semantically it's now ``headRevisionId``)."""
+    the v3 etag-removal; semantically it's now ``headRevisionId``).
+
+    ``last_modifying_user_display_name`` (S5 v2) feeds the merge
+    editor's "who made the remote edit" label so users see
+    "drive · 17:08 by alice" instead of an opaque revision id."""
 
     id: str
     name: str
     mime_type: str
     modified_time: str | None
     head_revision_id: str | None
+    last_modifying_user_display_name: str | None = None
 
 
 class RemoteVersionMismatchError(RuntimeError):
@@ -86,18 +91,27 @@ class RemoteVersionMismatchError(RuntimeError):
 
 
 def _file_resource_to_drive_file(res: dict[str, Any]) -> DriveFile:
+    luser = res.get("lastModifyingUser") or {}
     return DriveFile(
         id=str(res.get("id") or ""),
         name=str(res.get("name") or ""),
         mime_type=str(res.get("mimeType") or ""),
         modified_time=res.get("modifiedTime"),
         head_revision_id=res.get("headRevisionId"),
+        last_modifying_user_display_name=(
+            luser.get("displayName") or luser.get("emailAddress")
+        ),
     )
 
 
 # Drive v3 doesn't accept ``etag`` in fields; using it returns
 # 400 "Invalid field selection". headRevisionId is our OCC cursor.
-_FIELDS = "id,name,mimeType,modifiedTime,headRevisionId"
+# lastModifyingUser(displayName,emailAddress) feeds S5's merge
+# editor — we'd rather show "alice" than "rev-abc123".
+_FIELDS = (
+    "id,name,mimeType,modifiedTime,headRevisionId,"
+    "lastModifyingUser(displayName,emailAddress)"
+)
 
 
 # ----------------------------------------------------- upload (create)

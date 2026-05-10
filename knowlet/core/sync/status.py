@@ -81,6 +81,15 @@ NoteSyncState = Literal[
     "stale",
 ]
 
+# Sentinel drive_file_id used by the dev seed-conflict endpoint
+# (knowlet/web/server.py). When status / bundle / resolve see this
+# value, they short-circuit Drive calls and read the synthetic
+# remote text from ``.knowlet/dev_conflicts/<id>.md`` instead.
+# Lets a developer dogfood the merge editor against their own
+# vault content without having to set up real Drive auth or two
+# devices.
+DEV_FAKE_DRIVE_FILE_ID = "DEV_FAKE_CONFLICT"
+
 
 @dataclass(frozen=True)
 class NoteSyncStatus:
@@ -109,6 +118,21 @@ def compute_note_sync_status(
     diffs against the sync_state record + the local file's mtime.
     Pure (no persistence side effects) — callers (the API endpoint,
     S3's orchestrator) decide when to act on a ``stale`` result."""
+    # Dev seed-conflict short-circuit comes FIRST, before the auth
+    # check — the whole point is to dogfood the merge editor on a
+    # box without Drive credentials. See DEV_FAKE_DRIVE_FILE_ID
+    # docstring for the rest of the contract.
+    record = state_store.get_file_state("note", note_id)
+    if record is not None and record.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
+        return _make_status(
+            "conflict",
+            last_synced_at=record.last_synced_at,
+            drive_file_id=record.drive_file_id,
+            last_known_revision=record.last_known_etag,
+            current_drive_revision="dev-rev-new",
+            detail="dev seed conflict — see /api/sync/dev-seed-conflict",
+        )
+
     creds = load_credentials(credentials_path(vault_root))
     if creds is None:
         return _make_status("unauthenticated")
@@ -117,7 +141,6 @@ def compute_note_sync_status(
     except ScopeUpgradeRequiredError as exc:
         return _make_status("unauthenticated", detail=str(exc))
 
-    record = state_store.get_file_state("note", note_id)
     if record is None or not record.drive_file_id:
         # First push hasn't happened. The note is local-only;
         # treat as "dirty" since pushing would make it match.

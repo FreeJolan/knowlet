@@ -667,9 +667,16 @@ export function NoteView({
     return <div className="p-6 text-sm text-muted-foreground">{t("tree.loading")}</div>;
   }
   if (note.isError) {
+    // ApiError is `{status, detail}`. ``String({...})`` gives the
+    // notorious "[object Object]" — extract ``detail`` first, then
+    // fall back to ``message`` for native Error, then a final
+    // string coerce as belt-and-braces.
+    const e = note.error as { detail?: string; message?: string } | null;
+    const errStr =
+      e?.detail ?? e?.message ?? (note.error ? String(note.error) : "unknown");
     return (
       <div className="p-6 text-sm text-destructive">
-        {t("note.loadFailed", { error: String(note.error) })}
+        {t("note.loadFailed", { error: errStr })}
       </div>
     );
   }

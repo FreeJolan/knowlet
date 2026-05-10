@@ -28,13 +28,14 @@ from knowlet.core.sync.state import FileState, SyncStateStore
 from knowlet.core.sync.status import _is_local_dirty
 
 
-def _meta(rev: str) -> DriveFile:
+def _meta(rev: str, by: str = "alice@example.com") -> DriveFile:
     return DriveFile(
         id="DRIVE-FID-1",
         name="alpha.md",
         mime_type="text/markdown",
         modified_time="2026-05-10T12:00:00Z",
         head_revision_id=rev,
+        last_modifying_user_display_name=by,
     )
 
 
@@ -153,6 +154,12 @@ def test_conflict_bundle_returns_local_and_remote_text(tmp_path: Path) -> None:
     assert body["current_drive_revision"] == "rev-NEW"
     assert body["last_known_revision"] == "rev-OLD"
     assert body["drive_file_id"] == "DRIVE-FID-1"
+    # S5 v2: human-readable column header fields.
+    assert body["remote_modified_at"] == "2026-05-10T12:00:00Z"
+    assert body["remote_modified_by"] == "alice@example.com"
+    assert body["local_modified_at"] is not None
+    # ISO format the frontend can ingest.
+    assert body["local_modified_at"].endswith("Z")
 
 
 def test_conflict_bundle_404_when_note_missing(tmp_path: Path) -> None:

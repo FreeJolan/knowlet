@@ -1,28 +1,30 @@
 /**
- * Phase 2 E Slice S5 — inline merge editor (ADR-0027 redesign).
+ * Phase 2 E Slice S5 v2 — inline merge editor (ADR-0027 redesign).
  *
- * Logseq-style first cut: two side-by-side panes (Mine | Theirs)
- * plus a live preview of the merged result. Each diff hunk gets
- * three buttons — Take Mine, Take Theirs, Take Both — and the
- * preview rebuilds as the user clicks through. Save → POST
- * /api/sync/resolve-merge with the assembled merged_text. Drive
- * keeps both pre-merge versions in its 30-day version history if
- * the merge needs to be unwound.
+ * Three-pane layout with VSCode-style gutter buttons:
  *
- * Deliberate scope cuts for this iteration:
- *  - No "Edit merged result" power-mode toggle yet (line buttons
- *    only). Power users land in the next slice.
- *  - No 3-pane base view — base bytes would require a Drive
- *    revisions.get_media call and we don't store it locally.
- *  - No syntax-aware diff. Line-level only. Fine for markdown;
- *    if the team wants word-level inside diff hunks later, swap
- *    the diff helper.
- *  - No keyboard shortcuts. Click-driven for the first dogfood
- *    pass; shortcuts come once the layout is settled.
+ *    [ Mine ] [ → ] [ Merged ] [ ← ] [ Theirs ]
  *
- * The component is mounted as a ``Dialog`` from the conflict-state
- * SyncStatusBadge (S5 Step D). Outside that path it renders nothing
- * — the parent owns visibility.
+ * Diff hunks render as a single CSS-grid row spanning the five
+ * columns, so each gutter button stays vertically aligned with the
+ * hunk it acts on. Click ``→`` to push mine into merged; ``←`` to
+ * push theirs. Clicking both gives you "take both" (mine first,
+ * then theirs — fixed ordering this iteration; ordered combinations
+ * land later via the editable-result power mode).
+ *
+ * Top toolbar exposes the global shortcuts the dogfood feedback
+ * surfaced ("全部用我的" / "全部用他们的" / "全部都保留") for the
+ * "I'll review later, just clear the conflict" persona.
+ *
+ * Column headers display human-friendly identifiers — local mtime
+ * vs. Drive's modifiedTime + lastModifyingUser — so users see
+ * "you · 14:32" vs. "drive · 17:08 by alice" instead of opaque
+ * revision ids.
+ *
+ * Saved file content is plain merged text — no git-style markers
+ * end up on disk. The placeholder shown for unresolved hunks lives
+ * in the preview only; the save button is disabled until every
+ * hunk has a choice, so the file is always clean.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -46,6 +48,7 @@ import {
 import { QK } from "@/lib/queryClient";
 import {
   buildMergedText,
+  buildPreviewText,
   countDiffHunks,
   diffLines,
   type HunkChoice,
@@ -77,12 +80,9 @@ export function ConflictMergeView({
     },
     enabled: !!noteId && open,
     refetchOnWindowFocus: false,
-    staleTime: Infinity, // user is actively merging — don't reshuffle under them
+    staleTime: Infinity,
   });
 
-  // diffLines + the choices array reset every time we get a new
-  // bundle. useMemo so we don't recompute on every keystroke once
-  // the user starts editing (a future power-mode feature).
   const hunks = useMemo<LineHunk[] | { error: "too-large" }>(() => {
     if (!bundleQ.data) return [];
     try {
@@ -113,6 +113,7 @@ export function ConflictMergeView({
     [choices],
   );
   const noConflicts = diffHunkCount === 0 && Array.isArray(hunks);
+  const pending = choices.filter((c) => c === null).length;
 
   const saveMut = useMutation({
     mutationFn: () => {
@@ -120,8 +121,6 @@ export function ConflictMergeView({
       return resolveMerge(noteId, merged);
     },
     onSuccess: () => {
-      // Sync-status badge polls; nudge it so the badge flips to
-      // "synced" without waiting up to 10s for the next tick.
       void qc.invalidateQueries({
         queryKey: QK.noteSyncStatus(noteId ?? ""),
       });
@@ -135,7 +134,7 @@ export function ConflictMergeView({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="conflict-merge-dialog"
-        className="top-[5vh] left-1/2 w-[92vw] sm:max-w-[92vw] -translate-x-1/2 translate-y-0 max-h-[90vh] gap-3 overflow-hidden"
+        className="top-[5vh] left-1/2 w-[96vw] sm:max-w-[96vw] -translate-x-1/2 translate-y-0 max-h-[90vh] gap-3 overflow-hidden"
       >
         <DialogHeader>
           <DialogTitle>{t("merge.title", { title: noteTitle })}</DialogTitle>
@@ -158,14 +157,14 @@ export function ConflictMergeView({
           </div>
         )}
 
-        {bundleQ.data && !Array.isArray(hunks) && hunks.error === "too-large" && (
-          <div className="text-muted-foreground text-sm">
-            {/* Future polish: offer take-mine / take-theirs full-file
-             * fallback for the cap-exceeded case. */}
-            Note exceeds the inline merge cap. Use Drive's web UI to
-            resolve manually for now.
-          </div>
-        )}
+        {bundleQ.data &&
+          !Array.isArray(hunks) &&
+          hunks.error === "too-large" && (
+            <div className="text-muted-foreground text-sm">
+              Note exceeds the inline merge cap. Use Drive's web UI to
+              resolve manually for now.
+            </div>
+          )}
 
         {bundleQ.data && Array.isArray(hunks) && noConflicts && (
           <div className="text-muted-foreground text-sm">
@@ -174,13 +173,20 @@ export function ConflictMergeView({
         )}
 
         {bundleQ.data && Array.isArray(hunks) && !noConflicts && (
-          <MergeBody
-            hunks={hunks}
-            choices={choices}
-            setChoices={setChoices}
-            merged={merged}
-            bundle={bundleQ.data}
-          />
+          <>
+            <GlobalToolbar
+              setChoices={setChoices}
+              count={diffHunkCount}
+              pending={pending}
+            />
+            <MergeGrid
+              hunks={hunks}
+              choices={choices}
+              setChoices={setChoices}
+              bundle={bundleQ.data}
+              placeholder={t("merge.placeholder")}
+            />
+          </>
         )}
 
         <DialogFooter>
@@ -221,169 +227,234 @@ export function ConflictMergeView({
   );
 }
 
-// --------------------------------------------------- inner panes
+// --------------------------------------------------- global toolbar
 
 
-function MergeBody({
-  hunks,
-  choices,
+function GlobalToolbar({
   setChoices,
-  merged,
-  bundle,
+  count,
+  pending,
 }: {
-  hunks: LineHunk[];
-  choices: HunkChoice[];
   setChoices: React.Dispatch<React.SetStateAction<HunkChoice[]>>;
-  merged: string;
-  bundle: ConflictBundle;
+  count: number;
+  pending: number;
 }): React.ReactNode {
   const { t } = useTranslation();
-  // Pre-walk the hunks to assign each diff hunk a stable index +
-  // collect what to render in each pane. Equal hunks render the
-  // same line range on both sides; diff hunks get tinted +
-  // floated buttons.
-  const rendered: Array<
-    | {
-        kind: "equal";
-        mine: string[];
-      }
-    | {
-        kind: "diff";
-        diffIndex: number;
-        mine: string[];
-        theirs: string[];
-      }
-  > = [];
-  let diffIdx = 0;
-  for (const h of hunks) {
-    if (h.kind === "equal") {
-      rendered.push({ kind: "equal", mine: h.mine });
-    } else {
-      rendered.push({
-        kind: "diff",
-        diffIndex: diffIdx,
-        mine: h.mine,
-        theirs: h.theirs,
-      });
-      diffIdx++;
-    }
-  }
-
-  const setChoice = (i: number, c: HunkChoice) => {
-    setChoices((prev) => {
-      const next = prev.slice();
-      next[i] = c;
-      return next;
-    });
+  const setAll = (c: HunkChoice) => {
+    setChoices(new Array(count).fill(c));
   };
-
   return (
-    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 overflow-hidden flex-1 min-h-0">
-      {/* Left pane — mine */}
-      <Pane
-        label={t("merge.leftPane")}
-        sublabel={
-          bundle.last_known_revision
-            ? t("merge.leftRevision", { rev: bundle.last_known_revision })
-            : ""
-        }
-        testId="merge-pane-mine"
+    <div className="flex flex-wrap items-center gap-2 border-b border-foreground/10 pb-2">
+      <Button
+        size="sm"
+        variant="outline"
+        data-testid="merge-all-mine"
+        onClick={() => setAll("mine")}
       >
-        {rendered.map((r, idx) => {
-          if (r.kind === "equal") {
-            return (
-              <PaneLines
-                key={`eq-${idx}`}
-                lines={r.mine}
-                tone="equal"
-              />
-            );
-          }
-          const c = choices[r.diffIndex];
-          return (
-            <PaneDiffBlock
-              key={`diff-mine-${r.diffIndex}`}
-              lines={r.mine}
-              side="mine"
-              chosen={c === "mine" || c === "both"}
-              hunkLabel={t("merge.hunkLabel", {
-                i: r.diffIndex + 1,
-                n: rendered.filter((x) => x.kind === "diff").length,
-              })}
-              onTakeThis={() => setChoice(r.diffIndex, "mine")}
-              onTakeBoth={() => setChoice(r.diffIndex, "both")}
-              takeThisLabel={t("merge.takeMine")}
-              takeBothLabel={t("merge.takeBoth")}
-            />
-          );
-        })}
-      </Pane>
-
-      {/* Middle pane — merged preview */}
-      <Pane
-        label={t("merge.mergedPane")}
-        sublabel=""
-        testId="merge-pane-merged"
-        emphasized
+        {t("merge.allMine")}
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        data-testid="merge-all-theirs"
+        onClick={() => setAll("theirs")}
       >
-        <pre className="font-mono text-xs whitespace-pre-wrap leading-snug">
-          {merged}
-        </pre>
-      </Pane>
-
-      {/* Right pane — theirs */}
-      <Pane
-        label={t("merge.rightPane")}
-        sublabel={
-          bundle.current_drive_revision
-            ? t("merge.rightRevision", { rev: bundle.current_drive_revision })
-            : ""
-        }
-        testId="merge-pane-theirs"
+        {t("merge.allTheirs")}
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        data-testid="merge-all-both"
+        onClick={() => setAll("both")}
       >
-        {rendered.map((r, idx) => {
-          if (r.kind === "equal") {
-            return (
-              <PaneLines
-                key={`eq-r-${idx}`}
-                lines={r.mine}
-                tone="equal"
-              />
-            );
-          }
-          const c = choices[r.diffIndex];
-          return (
-            <PaneDiffBlock
-              key={`diff-theirs-${r.diffIndex}`}
-              lines={r.theirs}
-              side="theirs"
-              chosen={c === "theirs" || c === "both"}
-              hunkLabel={t("merge.hunkLabel", {
-                i: r.diffIndex + 1,
-                n: rendered.filter((x) => x.kind === "diff").length,
-              })}
-              onTakeThis={() => setChoice(r.diffIndex, "theirs")}
-              onTakeBoth={() => setChoice(r.diffIndex, "both")}
-              takeThisLabel={t("merge.takeTheirs")}
-              takeBothLabel={t("merge.takeBoth")}
-            />
-          );
-        })}
-      </Pane>
+        {t("merge.allBoth")}
+      </Button>
+      {pending > 0 && (
+        <span
+          data-testid="merge-pending-count"
+          className="text-warn-fg dark:text-warn-fg-dark ml-auto text-xs"
+        >
+          {t("merge.pendingCount", { count: pending })}
+        </span>
+      )}
     </div>
   );
 }
 
-function Pane({
-  label,
-  sublabel,
-  children,
+// --------------------------------------------------- 5-column grid
+
+
+function MergeGrid({
+  hunks,
+  choices,
+  setChoices,
+  bundle,
+  placeholder,
+}: {
+  hunks: LineHunk[];
+  choices: HunkChoice[];
+  setChoices: React.Dispatch<React.SetStateAction<HunkChoice[]>>;
+  bundle: ConflictBundle;
+  placeholder: string;
+}): React.ReactNode {
+  const { t } = useTranslation();
+
+  const totalDiffs = useMemo(
+    () => hunks.filter((h) => h.kind === "diff").length,
+    [hunks],
+  );
+
+  const toggleSide = (i: number, side: "mine" | "theirs") => {
+    setChoices((prev) => {
+      const next = prev.slice();
+      const cur = next[i];
+      const mineActive = cur === "mine" || cur === "both";
+      const theirsActive = cur === "theirs" || cur === "both";
+      const newMine = side === "mine" ? !mineActive : mineActive;
+      const newTheirs = side === "theirs" ? !theirsActive : theirsActive;
+      next[i] = deriveChoice(newMine, newTheirs);
+      return next;
+    });
+  };
+
+  const previewText = useMemo(
+    () => buildPreviewText(hunks, choices, placeholder),
+    [hunks, choices, placeholder],
+  );
+
+  // Build per-hunk row metadata for stable React keys + diff index.
+  const rows: Array<
+    | { kind: "equal"; key: string; lines: string[] }
+    | {
+        kind: "diff";
+        key: string;
+        diffIndex: number;
+        mine: string[];
+        theirs: string[];
+        merged: string;
+      }
+  > = [];
+  let diffIdx = 0;
+  let mergedCursor = 0;
+  const previewLines = previewText === "" ? [] : previewText.split("\n");
+  for (let i = 0; i < hunks.length; i++) {
+    const h = hunks[i]!;
+    if (h.kind === "equal") {
+      rows.push({ kind: "equal", key: `eq-${i}`, lines: h.mine });
+      mergedCursor += h.mine.length;
+    } else {
+      // Slice the preview to figure out how many lines this hunk
+      // currently contributes to the middle pane.
+      const choice = choices[diffIdx];
+      const mergedLineCount =
+        choice === "mine"
+          ? h.mine.length
+          : choice === "theirs"
+            ? h.theirs.length
+            : choice === "both"
+              ? h.mine.length + h.theirs.length
+              : 1; // placeholder = 1 line
+      const mergedSlice = previewLines
+        .slice(mergedCursor, mergedCursor + mergedLineCount)
+        .join("\n");
+      rows.push({
+        kind: "diff",
+        key: `diff-${diffIdx}`,
+        diffIndex: diffIdx,
+        mine: h.mine,
+        theirs: h.theirs,
+        merged: mergedSlice,
+      });
+      diffIdx++;
+      mergedCursor += mergedLineCount;
+    }
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <ColumnHeaders bundle={bundle} t={t} />
+      <div
+        data-testid="merge-grid"
+        className="grid min-h-0 flex-1 overflow-auto"
+        style={{
+          gridTemplateColumns: "1fr 44px 1fr 44px 1fr",
+        }}
+      >
+        {rows.map((r) => {
+          if (r.kind === "equal") {
+            return (
+              <EqualRow key={r.key} lines={r.lines} />
+            );
+          }
+          const c = choices[r.diffIndex]!;
+          const mineActive = c === "mine" || c === "both";
+          const theirsActive = c === "theirs" || c === "both";
+          return (
+            <DiffRow
+              key={r.key}
+              diffIndex={r.diffIndex}
+              total={totalDiffs}
+              mine={r.mine}
+              theirs={r.theirs}
+              merged={r.merged}
+              mineActive={mineActive}
+              theirsActive={theirsActive}
+              onToggleMine={() => toggleSide(r.diffIndex, "mine")}
+              onToggleTheirs={() => toggleSide(r.diffIndex, "theirs")}
+              placeholder={placeholder}
+              t={t}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ColumnHeaders({
+  bundle,
+  t,
+}: {
+  bundle: ConflictBundle;
+  t: ReturnType<typeof useTranslation>["t"];
+}): React.ReactNode {
+  return (
+    <div
+      className="grid border-b border-foreground/10"
+      style={{ gridTemplateColumns: "1fr 44px 1fr 44px 1fr" }}
+    >
+      <PaneHeader
+        primary={t("merge.leftPane")}
+        secondary={t("merge.leftHeaderYou", {
+          when: formatLocalTime(bundle.local_modified_at),
+        })}
+        testId="merge-pane-mine-header"
+      />
+      <div className="border-x border-foreground/5" />
+      <PaneHeader
+        primary={t("merge.mergedPane")}
+        secondary=""
+        testId="merge-pane-merged-header"
+        emphasized
+      />
+      <div className="border-x border-foreground/5" />
+      <PaneHeader
+        primary={t("merge.rightPane")}
+        secondary={driveHeader(bundle, t)}
+        testId="merge-pane-theirs-header"
+      />
+    </div>
+  );
+}
+
+function PaneHeader({
+  primary,
+  secondary,
   testId,
   emphasized = false,
 }: {
-  label: string;
-  sublabel: string;
-  children: React.ReactNode;
+  primary: string;
+  secondary: string;
   testId: string;
   emphasized?: boolean;
 }): React.ReactNode {
@@ -391,89 +462,236 @@ function Pane({
     <div
       data-testid={testId}
       className={[
-        "flex min-h-0 min-w-0 flex-col rounded-md ring-1 ring-foreground/10",
+        "px-3 py-2 text-xs font-medium uppercase tracking-wide",
         emphasized ? "bg-accent/30" : "bg-background",
       ].join(" ")}
     >
-      <div className="border-b border-foreground/10 px-3 py-2 text-xs font-medium uppercase tracking-wide">
-        <div>{label}</div>
-        {sublabel && (
-          <div className="text-muted-foreground text-[10px] font-normal normal-case">
-            {sublabel}
-          </div>
-        )}
-      </div>
-      <div className="flex-1 overflow-auto p-3">{children}</div>
+      <div>{primary}</div>
+      {secondary && (
+        <div className="text-muted-foreground text-[10px] font-normal normal-case">
+          {secondary}
+        </div>
+      )}
     </div>
   );
 }
 
-function PaneLines({
-  lines,
-  tone,
+function EqualRow({ lines }: { lines: string[] }): React.ReactNode {
+  // Equal hunks span all three content panes with identical text;
+  // gutter cells stay empty. We use ``display: contents`` rows would
+  // be neater but lose styling at the row level — the simpler path
+  // is to render five direct grid children per row.
+  const text = lines.join("\n");
+  return (
+    <>
+      <PaneCell text={text} />
+      <GutterCell />
+      <PaneCell text={text} emphasized />
+      <GutterCell />
+      <PaneCell text={text} />
+    </>
+  );
+}
+
+function DiffRow({
+  diffIndex,
+  total,
+  mine,
+  theirs,
+  merged,
+  mineActive,
+  theirsActive,
+  onToggleMine,
+  onToggleTheirs,
+  placeholder,
+  t,
 }: {
-  lines: string[];
-  tone: "equal";
+  diffIndex: number;
+  total: number;
+  mine: string[];
+  theirs: string[];
+  merged: string;
+  mineActive: boolean;
+  theirsActive: boolean;
+  onToggleMine: () => void;
+  onToggleTheirs: () => void;
+  placeholder: string;
+  t: ReturnType<typeof useTranslation>["t"];
+}): React.ReactNode {
+  // S5 v2 colour convention — Mine = blue (Current), Theirs = green
+  // (Incoming), matching VSCode's merge editor. We deliberately
+  // skip git-diff red/green: red on mine reads as "this side will
+  // be deleted", which is wrong here — both sides are valid.
+  const mineTone =
+    "bg-blue-50 dark:bg-blue-950/40 ring-blue-200 dark:ring-blue-900";
+  const theirsTone =
+    "bg-emerald-50 dark:bg-emerald-950/40 ring-emerald-200 dark:ring-emerald-900";
+  const hunkLabel = t("merge.hunkLabel", { i: diffIndex + 1, n: total });
+  const placeholderTone =
+    merged === placeholder
+      ? "text-muted-foreground italic"
+      : "";
+
+  return (
+    <>
+      <DiffPaneCell
+        lines={mine}
+        tone={mineTone}
+        side="mine"
+        diffIndex={diffIndex}
+        label={hunkLabel}
+      />
+      <GutterCell>
+        <button
+          type="button"
+          data-testid={`merge-push-mine-${diffIndex}`}
+          aria-label={t("merge.takeMine")}
+          title={t("merge.takeMine")}
+          onClick={onToggleMine}
+          aria-pressed={mineActive}
+          className={[
+            "size-7 rounded-md text-sm leading-none ring-1 transition",
+            mineActive
+              ? "bg-blue-500 text-white ring-blue-600"
+              : "bg-background text-foreground ring-foreground/15 hover:bg-blue-50 dark:hover:bg-blue-950/40",
+          ].join(" ")}
+        >
+          →
+        </button>
+      </GutterCell>
+      <PaneCell
+        text={merged}
+        emphasized
+        testId={`merge-merged-row-${diffIndex}`}
+        extraClass={placeholderTone}
+      />
+      <GutterCell>
+        <button
+          type="button"
+          data-testid={`merge-push-theirs-${diffIndex}`}
+          aria-label={t("merge.takeTheirs")}
+          title={t("merge.takeTheirs")}
+          onClick={onToggleTheirs}
+          aria-pressed={theirsActive}
+          className={[
+            "size-7 rounded-md text-sm leading-none ring-1 transition",
+            theirsActive
+              ? "bg-emerald-600 text-white ring-emerald-700"
+              : "bg-background text-foreground ring-foreground/15 hover:bg-emerald-50 dark:hover:bg-emerald-950/40",
+          ].join(" ")}
+        >
+          ←
+        </button>
+      </GutterCell>
+      <DiffPaneCell
+        lines={theirs}
+        tone={theirsTone}
+        side="theirs"
+        diffIndex={diffIndex}
+        label={hunkLabel}
+      />
+    </>
+  );
+}
+
+function PaneCell({
+  text,
+  emphasized = false,
+  testId,
+  extraClass = "",
+}: {
+  text: string;
+  emphasized?: boolean;
+  testId?: string;
+  extraClass?: string;
 }): React.ReactNode {
   return (
     <pre
-      data-tone={tone}
-      className="font-mono text-xs whitespace-pre-wrap leading-snug"
+      data-testid={testId}
+      className={[
+        "min-w-0 overflow-x-auto whitespace-pre-wrap font-mono text-xs leading-snug px-3 py-1",
+        emphasized ? "bg-accent/15" : "",
+        extraClass,
+      ].join(" ")}
     >
-      {lines.join("\n")}
+      {text}
     </pre>
   );
 }
 
-function PaneDiffBlock({
+function DiffPaneCell({
   lines,
+  tone,
   side,
-  chosen,
-  hunkLabel,
-  onTakeThis,
-  onTakeBoth,
-  takeThisLabel,
-  takeBothLabel,
+  diffIndex,
+  label,
 }: {
   lines: string[];
+  tone: string;
   side: "mine" | "theirs";
-  chosen: boolean;
-  hunkLabel: string;
-  onTakeThis: () => void;
-  onTakeBoth: () => void;
-  takeThisLabel: string;
-  takeBothLabel: string;
+  diffIndex: number;
+  label: string;
 }): React.ReactNode {
-  const sideClass =
-    side === "mine"
-      ? "bg-blue-50 dark:bg-blue-950/40 ring-blue-200 dark:ring-blue-900"
-      : "bg-amber-50 dark:bg-amber-950/40 ring-amber-200 dark:ring-amber-900";
   return (
     <div
-      data-testid={`merge-hunk-${side}`}
-      data-chosen={chosen ? "true" : "false"}
-      className={[
-        "my-2 rounded-md p-2 ring-1",
-        chosen ? "opacity-100" : "opacity-90",
-        sideClass,
-      ].join(" ")}
+      data-testid={`merge-hunk-${side}-${diffIndex}`}
+      className={["min-w-0 px-2 py-1", "ring-1", tone].join(" ")}
     >
-      <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
-        <span>{hunkLabel}</span>
-        <Button
-          size="sm"
-          variant={chosen ? "default" : "outline"}
-          onClick={onTakeThis}
-        >
-          {takeThisLabel}
-        </Button>
-        <Button size="sm" variant="outline" onClick={onTakeBoth}>
-          {takeBothLabel}
-        </Button>
+      <div className="text-muted-foreground mb-1 text-[10px] uppercase tracking-wide">
+        {label}
       </div>
-      <pre className="font-mono text-xs whitespace-pre-wrap leading-snug">
+      <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs leading-snug">
         {lines.join("\n")}
       </pre>
     </div>
   );
+}
+
+function GutterCell({
+  children,
+}: {
+  children?: React.ReactNode;
+}): React.ReactNode {
+  return (
+    <div className="flex items-center justify-center px-1 py-1">
+      {children ?? null}
+    </div>
+  );
+}
+
+// --------------------------------------------------- helpers
+
+
+function deriveChoice(mineActive: boolean, theirsActive: boolean): HunkChoice {
+  if (mineActive && theirsActive) return "both";
+  if (mineActive) return "mine";
+  if (theirsActive) return "theirs";
+  return null;
+}
+
+function formatLocalTime(iso: string | null): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function driveHeader(
+  bundle: ConflictBundle,
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
+  const when = formatLocalTime(bundle.remote_modified_at);
+  const by = bundle.remote_modified_by;
+  if (when && by) return t("merge.rightHeaderBy", { when, by });
+  if (when) return t("merge.rightHeaderUnknown", { when });
+  return t("merge.rightHeaderUnknownTime");
 }

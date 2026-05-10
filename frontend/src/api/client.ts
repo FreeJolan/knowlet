@@ -185,6 +185,12 @@ export interface ConflictBundle {
   remote_text: string;
   current_drive_revision: string | null;
   last_known_revision: string | null;
+  /** ISO-UTC mtime of the local file. */
+  local_modified_at: string | null;
+  /** Drive's modifiedTime (ISO). */
+  remote_modified_at: string | null;
+  /** Drive's lastModifyingUser displayName / email. */
+  remote_modified_by: string | null;
 }
 
 export const getConflictBundle = (noteId: string): Promise<ConflictBundle> =>

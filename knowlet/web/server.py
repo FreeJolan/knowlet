@@ -119,6 +119,16 @@ class ResolveMergeRequest(BaseModel):
     merged_text: str
 
 
+class DevSeedConflictRequest(BaseModel):
+    """Dev-only — body for ``POST /api/sync/dev-seed-conflict/<id>``.
+    Optional ``remote_text`` lets the caller dictate the synthetic
+    "other side"; absent / None falls back to ``_synth_remote`` which
+    derives a divergent version from the local content. Module-level
+    for the same FastAPI body-vs-query reason as ResolveMergeRequest."""
+
+    remote_text: str | None = None
+
+
 class QuoteRefPayload(BaseModel):
     """M7.1 / M7.2: one capsule. `source = "note"` (M7.1 default) →
     the backend fetches the Note body via note_id and runs the enclosing-
@@ -1158,17 +1168,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         )
         from knowlet.core.sync.drive_client import DriveClient
         from knowlet.core.sync.files import (
+            DriveFile,
             download_file,
             get_file_metadata,
         )
         from knowlet.core.sync.state import SyncStateStore
+        from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
 
-        creds = load_credentials(credentials_path(vault.root))
-        if creds is None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="not authenticated to Drive",
-            )
         local_path = _resolve_note_local_path(note_id)
         if local_path is None:
             raise HTTPException(
@@ -1186,9 +1192,52 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail=f"no Drive id tracked for note {note_id}",
             )
 
+        # Dev seed-conflict short-circuit: read the fake remote text
+        # from disk, fabricate metadata, skip Drive entirely.
+        if record.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
+            fake_path = _dev_conflict_path(note_id)
+            if not fake_path.exists():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="dev conflict seed missing on disk",
+                )
+            try:
+                local_text = local_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_410_GONE,
+                    detail=f"local file read failed: {exc!r}",
+                ) from exc
+            remote_text = fake_path.read_text(encoding="utf-8")
+            local_modified_at: str | None
+            try:
+                local_modified_at = _iso(local_path.stat().st_mtime)
+            except OSError:
+                local_modified_at = None
+            return {
+                "note_id": note_id,
+                "drive_file_id": record.drive_file_id,
+                "local_text": local_text,
+                "remote_text": remote_text,
+                "current_drive_revision": "dev-rev-new",
+                "last_known_revision": record.last_known_etag,
+                "local_modified_at": local_modified_at,
+                "remote_modified_at": _iso(fake_path.stat().st_mtime),
+                "remote_modified_by": "dev seed (synthetic)",
+            }
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="not authenticated to Drive",
+            )
+
         service = DriveClient(creds).service()
         try:
-            remote_meta = get_file_metadata(service, record.drive_file_id)
+            remote_meta: DriveFile = get_file_metadata(
+                service, record.drive_file_id
+            )
             remote_bytes = download_file(service, record.drive_file_id)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
@@ -1211,6 +1260,16 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail=f"remote bytes are not utf-8: {exc!r}",
             ) from exc
 
+        # Human-readable timestamps + author for the merge editor's
+        # column headers (S5 v2). The frontend turns these into
+        # "you · 14:32 on this MacBook" vs "drive · 17:08 by alice"
+        # — opaque revision ids alone leave users guessing which
+        # side is which.
+        try:
+            local_modified_at = _iso(local_path.stat().st_mtime)
+        except OSError:
+            local_modified_at = None
+
         return {
             "note_id": note_id,
             "drive_file_id": record.drive_file_id,
@@ -1218,6 +1277,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "remote_text": remote_text,
             "current_drive_revision": remote_meta.head_revision_id,
             "last_known_revision": record.last_known_etag,
+            "local_modified_at": local_modified_at,
+            "remote_modified_at": remote_meta.modified_time,
+            "remote_modified_by": remote_meta.last_modifying_user_display_name,
         }
 
     @app.post("/api/sync/resolve-merge/{note_id}")
@@ -1231,13 +1293,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         from knowlet.core.sync.drive_client import DriveClient
         from knowlet.core.sync.push import resolve_with_merge
         from knowlet.core.sync.state import SyncStateStore
+        from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
 
-        creds = load_credentials(credentials_path(vault.root))
-        if creds is None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="not authenticated to Drive",
-            )
         local_path = _resolve_note_local_path(note_id)
         if local_path is None:
             raise HTTPException(
@@ -1251,6 +1308,28 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"no Drive id tracked for note {note_id}",
+                )
+
+            # Dev seed-conflict path: write the merged result locally,
+            # delete the synthetic remote bytes + the sync_state row.
+            # The note returns to a clean local-only state (badge will
+            # show "dirty" if something else later syncs it).
+            if record.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
+                merged_bytes = body.merged_text.encode("utf-8")
+                tmp = local_path.with_suffix(local_path.suffix + ".tmp")
+                tmp.write_bytes(merged_bytes)
+                tmp.replace(local_path)
+                _dev_conflict_clear(store, note_id)
+                return {
+                    "drive_file_id": DEV_FAKE_DRIVE_FILE_ID,
+                    "new_revision": "dev-resolved",
+                }
+
+            creds = load_credentials(credentials_path(vault.root))
+            if creds is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="not authenticated to Drive",
                 )
             try:
                 result = resolve_with_merge(
@@ -1272,6 +1351,134 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "drive_file_id": result.drive_file.id,
             "new_revision": result.drive_file.head_revision_id,
         }
+
+    # ---------------- dev seed-conflict (real-vault dogfood) -------
+    # Lets a developer manufacture a conflict against their own
+    # vault content without setting up Drive auth. Writes a fake
+    # "remote" text to .knowlet/dev_conflicts/<id>.md and stamps
+    # sync_state with the DEV_FAKE_DRIVE_FILE_ID sentinel; the
+    # status / bundle / resolve endpoints read that sentinel and
+    # serve the fake data instead of calling Drive.
+    #
+    # NOT a production feature; it's wired unconditionally for now
+    # because the operations are idempotent + reversible (DELETE
+    # endpoint cleans everything up). Gate behind an env var if it
+    # ever leaves the developer-tools box.
+
+    @app.post("/api/sync/dev-seed-conflict/{note_id}")
+    def dev_seed_conflict(
+        note_id: str,
+        body: DevSeedConflictRequest | None = Body(default=None),
+    ) -> dict[str, Any]:
+        from knowlet.core.sync.state import FileState, SyncStateStore
+        from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
+
+        local_path = _resolve_note_local_path(note_id)
+        if local_path is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note not found: {note_id}",
+            )
+        try:
+            local_text = local_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail=f"local file unreadable: {exc!r}",
+            ) from exc
+        remote_text = (body.remote_text if body else None) or _synth_remote(
+            local_text
+        )
+
+        fake_path = _dev_conflict_path(note_id)
+        fake_path.parent.mkdir(parents=True, exist_ok=True)
+        fake_path.write_text(remote_text, encoding="utf-8")
+
+        # Backdate the local file's mtime so the dirty-detector reads
+        # "no local edits since last sync" — this is the canonical
+        # conflict shape (revs differ + local clean would be 'stale'
+        # and auto-pull, but DEV_FAKE short-circuits before reaching
+        # that branch). For Carol-style conflicts (local dirty +
+        # remote moved) the user can edit the note after seeding.
+        store = SyncStateStore(vault.root)
+        try:
+            store.upsert_file_state(
+                FileState(
+                    entity_type="note",
+                    entity_id=note_id,
+                    drive_file_id=DEV_FAKE_DRIVE_FILE_ID,
+                    last_known_etag="dev-rev-old",
+                    last_synced_at="2020-01-01T00:00:00Z",
+                    dirty=False,
+                )
+            )
+        finally:
+            store.close()
+        return {
+            "note_id": note_id,
+            "remote_text_lines": len(remote_text.split("\n")),
+            "remote_path": str(fake_path),
+        }
+
+    @app.delete("/api/sync/dev-seed-conflict/{note_id}")
+    def dev_seed_conflict_clear(note_id: str) -> dict[str, Any]:
+        from knowlet.core.sync.state import SyncStateStore
+
+        store = SyncStateStore(vault.root)
+        try:
+            _dev_conflict_clear(store, note_id)
+        finally:
+            store.close()
+        return {"note_id": note_id, "cleared": True}
+
+    def _dev_conflict_path(note_id: str) -> Path:
+        return vault.root / ".knowlet" / "dev_conflicts" / f"{note_id}.md"
+
+    def _dev_conflict_clear(store: Any, note_id: str) -> None:
+        from knowlet.core.sync.state import FileState
+        from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
+
+        # Nuke the fake remote file.
+        fake = _dev_conflict_path(note_id)
+        try:
+            fake.unlink()
+        except FileNotFoundError:
+            pass
+        # Clear the sync_state row by overwriting with a no-op
+        # (clearing drive_file_id sends the note back to "dirty"
+        # on the next status poll, which is the right state for a
+        # never-pushed note). We can't easily DELETE through the
+        # store's upsert-only API; null out the fields instead.
+        existing = store.get_file_state("note", note_id)
+        if existing and existing.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
+            store.upsert_file_state(
+                FileState(
+                    entity_type="note",
+                    entity_id=note_id,
+                    drive_file_id=None,
+                    last_known_etag=None,
+                    last_synced_at=None,
+                    dirty=False,
+                )
+            )
+
+    def _synth_remote(local_text: str) -> str:
+        """Build a plausible synthetic remote text from the local
+        text — inserts a fake remotely-added line at ~1/3 mark and,
+        if the body is long enough, modifies a later line. The goal
+        is a diff that has BOTH "added on the remote side" hunks
+        and "modified on both sides" hunks so the merge editor's
+        full surface gets exercised."""
+        lines = local_text.split("\n") if local_text else [""]
+        insert_at = max(1, len(lines) // 3)
+        lines.insert(
+            insert_at,
+            "[remotely-added line — pretend a coworker added this on another device]",
+        )
+        if len(lines) > 7:
+            target = min(len(lines) - 1, insert_at + 4)
+            lines[target] = "[modified remotely] " + lines[target]
+        return "\n".join(lines)
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
