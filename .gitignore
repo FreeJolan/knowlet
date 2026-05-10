@@ -44,3 +44,16 @@ models/
 # user doesn't want in a public history. Kept on disk for the user's
 # reference; not tracked.
 docs/dogfood/
+
+# OAuth client_secret JSONs and any other credentials. Per Google's
+# docs Desktop OAuth secrets aren't truly confidential, but committing
+# them to a public repo trips GitHub's secret scanner and may trigger
+# auto-rotation by Google. The .secrets/ dir is the canonical place
+# to stash a downloaded client_secret*.json so we can find it again
+# (sync.client_secrets_path in config.toml points here). Distribution
+# strategy decision deferred — see the conversation around #113.
+.secrets/
+client_secret*.json
+*credentials*.json
+sync_credentials.json
+google_drive_credentials.json
