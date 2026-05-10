@@ -93,7 +93,7 @@ knowlet 现在没有外部用户,但所有 ADR / 设计 / 修复决策的"风险
 ### 跟其他 ADR 的关系
 
 - **ADR-0006 数据主权**:本 ADR 灰度期 / 上线期的"承诺底线"以 ADR-0006 为基础再加严格度
-- **ADR-0018(待起 / 数据耐久)**:灰度期进入条件之一,本 ADR 引用而不重复
+- **[ADR-0018 数据耐久](./0018-data-durability.md)**(2026-05-10 起草):灰度期进入条件之一,本 ADR 引用而不重复
 - **ADR-0019 / 0020 / 0021**:本 ADR 的"激进迭代"前提下,这三条得以快速 ship
 
 ## Consequences
@@ -117,5 +117,5 @@ knowlet 现在没有外部用户,但所有 ADR / 设计 / 修复决策的"风险
 ## References
 
 - [ADR-0006 数据主权](./0006-storage-and-sync.md)
-- [ADR-0018 数据耐久(planned)](#) — 见 `docs/roadmap/README.md` §"🟣 数据耐久性"
+- [ADR-0018 数据耐久](./0018-data-durability.md) — 灰度期入口前置;Slice 4.A 起草完成,4.B-4.E 实施中
 - [ADR-0019 前端栈](./0019-frontend-stack.md) — 开发期允许激进迭代 = 本 ADR 不需要 dual-render / feature flag

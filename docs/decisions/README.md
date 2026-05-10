@@ -23,6 +23,7 @@
 - [0015 — Hover quote / 选区引用 / 来源胶囊](./0015-hover-quote-and-source-citations.md)
 - [0016 — URL Capture · 浏览习惯 → 笔记入口](./0016-url-capture.md)
 - [0017 — Web Search 工具(LLM-callable)](./0017-web-search.md)
+- [0018 — 数据耐久性契约](./0018-data-durability.md)
 - [0019 — Frontend stack:React 19 + Vite + TS + Tailwind + shadcn/ui](./0019-frontend-stack.md)
 - [0020 — Backend Python discipline:mypy strict + ruff strict + CI](./0020-backend-python-discipline.md)
 - [0021 — Knowledge-base-first roadmap(实施顺序)](./0021-knowledge-base-first-roadmap.md)

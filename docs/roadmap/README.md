@@ -187,9 +187,9 @@ knowlet 阶段一的原子能力按 MCP 标准设计([ADR-0004](../decisions/000
 | Tauri 桌面壳(M9+) | M9+ | ADR-0011 §"Schedule" |
 | 浏览器扩展 / share-target | M9+ Tauri 阶段 | ADR-0016 §"Out of scope" |
 
-### 🟣 数据耐久性(Phase 2 E,ADR-0018 待起草)
+### 🟣 数据耐久性(Phase 2 E,[ADR-0018 已起草](../decisions/0018-data-durability.md))
 
-`knowlet vault snapshot` / `restore-snapshot` / `list-snapshots` + `knowlet doctor` 数据完整性检查 + Note `schema_version` 已在 commit `40cfcd0` ship,作为 dogfood 期的运营安全垫。下一步 ADR-0018 把契约钉死:
+`knowlet vault snapshot` / `restore-snapshot` / `list-snapshots` + `knowlet doctor` 数据完整性检查 + Note `schema_version` 已在 commit `40cfcd0` ship,作为 dogfood 期的运营安全垫。2026-05-10 [ADR-0018](../decisions/0018-data-durability.md) 起草完成,把契约钉死:
 
 - Schema 演进规则(只能加字段不能删字段;1 major version backward compat 强制)
 - Vault fixtures 测试套件(M0/M3/M7 vault snapshot,跑回归测试 "新代码能读旧 vault")
