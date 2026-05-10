@@ -662,6 +662,10 @@ class WebState:
         # re-scanning. React Query stale-times handle the cadence.
         self.preflight_report: Any | None = None
         self.preflight_ran_at: float | None = None
+        # S4 — background drainer that pushes locally-dirty notes to
+        # Drive. Instantiated by ``create_app`` after the helper
+        # closures are defined; started by ``lifespan``.
+        self.push_drainer: Any | None = None
 
     def start_bootstrap_async(self) -> None:
         """Kick off bootstrap on a daemon thread. Called from lifespan.
@@ -898,9 +902,18 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # All sync UI endpoints have been torn out; the poller has
         # no consumer right now. S2 will re-add it (state-reconciliation
         # path) when the per-note status indicator needs the data.
+
+        # S4 (#112) — start the background push drainer if it was
+        # configured by create_app. Idempotent. The drainer no-ops
+        # while creds are absent and while the runtime hasn't
+        # finished bootstrap, so start order is forgiving.
+        if state.push_drainer is not None:
+            state.push_drainer.start()
         try:
             yield
         finally:
+            if state.push_drainer is not None:
+                state.push_drainer.stop()
             state.close()
 
     app = FastAPI(title="knowlet", version=__version__, lifespan=lifespan)
@@ -1685,6 +1698,103 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         state.preflight_report = None
         state.preflight_ran_at = None
 
+    def _mark_note_dirty_for_push(note_id: str) -> None:
+        """S4 — call after Vault.write_note. Marks the note's
+        sync_state row dirty=True so the background drainer picks
+        it up on the next tick. No-op for notes that:
+          - have never been pushed (no sync_state row yet) — first
+            push happens via a separate "sync now" path, not the
+            drainer
+          - are dev-seeded (DEV_FAKE_CONFLICT) — those have no real
+            Drive backing
+        Cheap (one SQLite UPDATE); safe to call from every save."""
+        from knowlet.core.sync.state import FileState, SyncStateStore
+        from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
+
+        store = SyncStateStore(vault.root)
+        try:
+            rec = store.get_file_state("note", note_id)
+            if rec is None or not rec.drive_file_id:
+                return
+            if rec.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
+                return
+            if rec.dirty:
+                return  # already queued
+            store.upsert_file_state(
+                FileState(
+                    entity_type=rec.entity_type,
+                    entity_id=rec.entity_id,
+                    drive_file_id=rec.drive_file_id,
+                    last_known_etag=rec.last_known_etag,
+                    last_synced_at=rec.last_synced_at,
+                    dirty=True,
+                    dismissed_until=rec.dismissed_until,
+                )
+            )
+        finally:
+            store.close()
+
+    def _add_conflict_to_preflight(
+        note_id: str, drive_file_id: str | None
+    ) -> None:
+        """S4 — drainer-discovered conflict callback. When a save-
+        time push gets 412, the drainer calls this so the chip /
+        Strict modal lights up within seconds of the push attempt
+        rather than waiting up to 60s for the next manual preflight.
+
+        If the cache is empty (no prior scan), seed a minimal
+        report so the chip has SOMETHING to show. Otherwise, append
+        to the existing conflicts list (idempotent — checks if the
+        note is already in the list)."""
+        from knowlet.core.sync.preflight import (
+            PreflightConflict,
+            PreflightReport,
+        )
+
+        rep = state.preflight_report
+        new_conflict = PreflightConflict(
+            note_id=note_id,
+            note_title=_title_for_note(note_id),
+            drive_file_id=drive_file_id,
+            last_synced_at=None,
+            last_known_revision=None,
+            current_drive_revision=None,
+            remote_modified_at=None,
+            remote_modified_by=None,
+        )
+        if rep is None:
+            state.preflight_report = PreflightReport(
+                conflicts=[new_conflict],
+                offline=[],
+                auto_pulled_ids=[],
+                synced_count=0,
+                dirty_count=0,
+                scanned=0,
+                unauthenticated=False,
+            )
+            return
+        if any(c.note_id == note_id for c in rep.conflicts):
+            return
+        state.preflight_report = PreflightReport(
+            conflicts=[*rep.conflicts, new_conflict],
+            offline=rep.offline,
+            auto_pulled_ids=rep.auto_pulled_ids,
+            synced_count=rep.synced_count,
+            dirty_count=rep.dirty_count,
+            scanned=rep.scanned,
+            unauthenticated=rep.unauthenticated,
+        )
+
+    def _title_for_note(note_id: str) -> str | None:
+        runtime = state.runtime
+        if runtime is None:
+            return None
+        meta = runtime.index.get_note_meta(note_id)
+        if meta is None:
+            return None
+        title = meta.get("title")
+        return str(title) if title else None
+
     def _drop_from_preflight(note_id: str) -> None:
         """Surgical removal of one note's conflict / offline rows
         from the cached preflight report. Used after resolve-merge,
@@ -1755,6 +1865,54 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         finally:
             store.close()
         return {"mode": new_mode, "effective_mode": new_mode}
+
+    # ---------------- background push drainer (S4 / #112) -----------
+    # Wires the helper closures defined above (note lookup, conflict
+    # surfacer, synced clearer) into a daemon-thread drainer that
+    # the lifespan starts after bootstrap kicks off. The drainer
+    # itself is no-op while creds are absent or the runtime hasn't
+    # finished indexing — so it's safe to instantiate even on a
+    # fresh single-device vault.
+
+    def _drainer_note_lookup(note_id: str) -> Any:
+        runtime = state.runtime
+        if runtime is None:
+            return None
+        path = _resolve_note_local_path(note_id)
+        if path is None:
+            return None
+        try:
+            return runtime.vault.read_note(path)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _drainer_on_conflict(note_id: str, _report: Any) -> None:
+        _add_conflict_to_preflight(note_id, _report.drive_file_id)
+
+    @app.post("/api/sync/drain-now")
+    def drain_now_endpoint() -> dict[str, Any]:
+        """Manual trigger — useful for tests + dogfood when you'd
+        rather not wait the 5-second poll interval. Runs one tick
+        synchronously and returns. The daemon thread keeps running
+        in the background; this is just a "kick it now" handle."""
+        if state.push_drainer is None:
+            return {"ran": False, "reason": "drainer not configured"}
+        state.push_drainer.tick_once()
+        return {"ran": True}
+
+    # Defined AFTER all the helper closures above so the drainer's
+    # callbacks can close over them. Stored on state so lifespan can
+    # start/stop it without threading the instance through the
+    # whole closure scope.
+    from knowlet.core.sync.drainer import PushDrainer
+
+    state.push_drainer = PushDrainer(
+        vault_root=vault.root,
+        note_lookup=_drainer_note_lookup,
+        on_conflict=_drainer_on_conflict,
+        on_synced=_drop_from_preflight,
+        poll_interval=5.0,
+    )
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -2624,6 +2782,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             chunk_size=runtime.config.retrieval.chunk_size,
             chunk_overlap=runtime.config.retrieval.chunk_overlap,
         )
+        # S4 — queue this note for the background push drainer.
+        # No-op for never-pushed / dev-seeded notes; cheap otherwise.
+        _mark_note_dirty_for_push(note.id)
         return NoteFull(
             id=note.id,
             title=note.title,
