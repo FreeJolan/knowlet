@@ -97,6 +97,12 @@ def parse_interval_seconds(spec: str) -> int:
     return int(m.group(1)) * _INTERVAL_UNITS[m.group(2).lower()]
 
 
+# Phase 2 E Slice 4.D — MiningTask schema version (ADR-0018 §2). v1
+# stamps the existing shape; future bumps follow Note's lazy-migration
+# pattern (read N-1 transparently, restamp on next write).
+MINING_TASK_SCHEMA_VERSION = 1
+
+
 @dataclass
 class MiningTask:
     id: str = field(default_factory=new_id)
@@ -129,6 +135,7 @@ class MiningTask:
     body: str = ""  # free-form Markdown description
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
+    schema_version: int = MINING_TASK_SCHEMA_VERSION
     path: Path | None = None
 
     @property
@@ -141,6 +148,7 @@ class MiningTask:
 
     def to_markdown(self) -> str:
         meta: dict[str, Any] = {
+            "schema_version": MINING_TASK_SCHEMA_VERSION,
             "id": self.id,
             "name": self.name,
             "enabled": self.enabled,
@@ -180,6 +188,10 @@ class MiningTask:
 
         cap = _int_or_default(meta.get("max_items_per_run"), 50)
         keep = _int_or_default(meta.get("max_keep"), 30)
+        try:
+            schema_version = int(meta.get("schema_version") or 1)
+        except (TypeError, ValueError):
+            schema_version = 1
         return cls(
             id=str(meta.get("id") or new_id()),
             name=str(meta.get("name") or path.stem),
@@ -194,6 +206,7 @@ class MiningTask:
             body=post.content,
             created_at=str(meta.get("created_at") or now_iso()),
             updated_at=str(meta.get("updated_at") or now_iso()),
+            schema_version=schema_version,
             path=path,
         )
 

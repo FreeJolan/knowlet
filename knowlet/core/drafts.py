@@ -24,6 +24,11 @@ from knowlet.core.note import Note, new_id, now_iso, slugify
 
 DRAFTS_DIR = "drafts"
 
+# Phase 2 E Slice 4.D — Draft schema version (ADR-0018 §2). Same lazy-
+# migration policy as Note: legacy frontmatter without `schema_version`
+# defaults to v1 on read; current value is stamped on every write.
+DRAFT_SCHEMA_VERSION = 1
+
 
 @dataclass
 class Draft:
@@ -35,6 +40,7 @@ class Draft:
     task_id: str | None = None  # mining-task id that produced this draft, if any
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
+    schema_version: int = DRAFT_SCHEMA_VERSION
     path: Path | None = None
 
     @property
@@ -47,6 +53,7 @@ class Draft:
 
     def to_markdown(self) -> str:
         meta: dict[str, object] = {
+            "schema_version": DRAFT_SCHEMA_VERSION,
             "id": self.id,
             "title": self.title,
             "tags": list(self.tags),
@@ -66,6 +73,10 @@ class Draft:
         with path.open("r", encoding="utf-8") as f:
             post = frontmatter.load(f)
         meta = post.metadata
+        try:
+            schema_version = int(meta.get("schema_version") or 1)
+        except (TypeError, ValueError):
+            schema_version = 1
         return cls(
             id=str(meta.get("id") or new_id()),
             title=str(meta.get("title") or path.stem),
@@ -75,6 +86,7 @@ class Draft:
             task_id=meta.get("task_id"),
             created_at=str(meta.get("created_at") or now_iso()),
             updated_at=str(meta.get("updated_at") or now_iso()),
+            schema_version=schema_version,
             path=path,
         )
 

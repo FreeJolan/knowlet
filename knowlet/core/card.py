@@ -28,6 +28,13 @@ def _new_id() -> str:
     return str(ULID())
 
 
+# Phase 2 E Slice 4.D — Card schema version (ADR-0018 §2). v1 ships
+# alongside the current shape; future bumps follow the same lazy-
+# migration policy as Note: read N-1 transparently, stamp current
+# version on next write.
+CARD_SCHEMA_VERSION = 1
+
+
 @dataclass
 class Card:
     id: str = field(default_factory=_new_id)
@@ -39,10 +46,14 @@ class Card:
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
     fsrs_state: dict[str, Any] = field(default_factory=dict)
+    schema_version: int = CARD_SCHEMA_VERSION
     path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        # Always stamp current version on write — that's how lazy
+        # migration upgrades pre-versioned cards on the next save.
         d: dict[str, Any] = {
+            "schema_version": CARD_SCHEMA_VERSION,
             "id": self.id,
             "type": self.type,
             "front": self.front,
@@ -57,6 +68,11 @@ class Card:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Card:
+        # Pre-versioned cards default to v1 (same shape, just unmarked).
+        try:
+            schema_version = int(d.get("schema_version") or 1)
+        except (TypeError, ValueError):
+            schema_version = 1
         return cls(
             id=str(d.get("id") or _new_id()),
             type=str(d.get("type") or "basic"),
@@ -67,6 +83,7 @@ class Card:
             created_at=str(d.get("created_at") or now_iso()),
             updated_at=str(d.get("updated_at") or now_iso()),
             fsrs_state=dict(d.get("fsrs_state") or {}),
+            schema_version=schema_version,
         )
 
     @classmethod
