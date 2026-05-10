@@ -90,9 +90,16 @@ def push_note(
     record = state.get_file_state("note", note.id)
     name = note.path.name
     if record is None or not record.drive_file_id:
-        # First push: create on Drive.
+        # First push: create in the hidden appDataFolder (per 5.C.1).
+        # Without an explicit parent on drive.appdata scope, Drive
+        # 403s — the file MUST live in the appDataFolder.
+        from knowlet.core.sync.oauth import APPDATA_FOLDER
+
         df = upload_new_file(
-            service, name=name, content=content
+            service,
+            name=name,
+            content=content,
+            parent_folder_id=APPDATA_FOLDER,
         )
         state.upsert_file_state(
             FileState(

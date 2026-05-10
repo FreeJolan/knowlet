@@ -21,12 +21,47 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from knowlet.core.sync import SyncDependenciesMissingError, require_google_libs
-from knowlet.core.sync.credentials import load_credentials
+from knowlet.core.sync.credentials import SyncCredentials, load_credentials
 from knowlet.core.sync.oauth import (
+    APPDATA_FOLDER,
     SCOPES,
     ClientSecretsMissingError,
+    ScopeUpgradeRequiredError,
     run_connect_flow,
+    verify_scope,
 )
+
+
+def test_scope_uses_drive_appdata() -> None:
+    """ADR-0027 §"权威" — drive.appdata is the lock against the
+    Drive desktop client mirroring our files back to disk and the
+    user editing them via Drive web UI. If a future change tries
+    to add drive.file or drive.readonly scopes, this test should
+    force the author to update ADR-0027 first."""
+    assert SCOPES == ("https://www.googleapis.com/auth/drive.appdata",)
+    assert APPDATA_FOLDER == "appDataFolder"
+
+
+def test_verify_scope_accepts_token_with_required_scope() -> None:
+    creds = SyncCredentials(
+        token={"scopes": ["https://www.googleapis.com/auth/drive.appdata"]}
+    )
+    verify_scope(creds)  # should not raise
+
+
+def test_verify_scope_raises_when_required_scope_missing() -> None:
+    creds = SyncCredentials(
+        token={"scopes": ["https://www.googleapis.com/auth/drive.file"]}
+    )
+    with pytest.raises(ScopeUpgradeRequiredError) as ei:
+        verify_scope(creds)
+    assert "drive.appdata" in ei.value.missing[0]
+
+
+def test_verify_scope_raises_when_token_has_no_scopes() -> None:
+    creds = SyncCredentials(token={})
+    with pytest.raises(ScopeUpgradeRequiredError):
+        verify_scope(creds)
 
 
 # ----------------------------------------------------- helpers

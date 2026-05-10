@@ -67,6 +67,10 @@ def test_list_changes_parses_response() -> None:
     page = list_changes(
         _make_client_with_service(service), page_token="START"
     )
+    # 5.C.1: list must scope to the hidden appDataFolder; under
+    # drive.appdata we have no business reading the main Drive.
+    list_kwargs = service.changes.return_value.list.call_args.kwargs
+    assert list_kwargs.get("spaces") == "appDataFolder"
     assert page.next_token is None
     assert page.new_start_page_token == "FINAL-999"
     assert len(page.changes) == 3

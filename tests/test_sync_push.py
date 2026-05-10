@@ -69,6 +69,10 @@ def test_push_first_time_uploads_and_records(tmp_path: Path) -> None:
         kwargs = up.call_args.kwargs
         assert kwargs["name"] == note.path.name
         assert kwargs["content"] == note.path.read_bytes()
+        # 5.C.1: first push must land in the hidden appDataFolder,
+        # NOT in the user's main Drive root. Without a parent under
+        # drive.appdata scope the Drive API 403s.
+        assert kwargs["parent_folder_id"] == "appDataFolder"
     finally:
         state.close()
 

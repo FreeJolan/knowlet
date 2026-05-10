@@ -84,6 +84,60 @@ knowlet sync status
   tokens; the OAuth grant on Google's side is still active until you
   visit <https://myaccount.google.com/permissions> and revoke it.
 
+## Where files actually live in your Drive
+
+knowlet uses Google's **app-data folder** scope (`drive.appdata`),
+which is a hidden per-app storage area inside your Drive:
+
+- Your synced notes are **invisible** in Drive web UI / search /
+  Drive desktop client. You won't see them in your file list.
+- The Drive desktop client **doesn't mirror them** to your local
+  `~/Google Drive/` folder, so there's no risk of duplicate copies.
+- They still count against your Drive storage quota and Google's
+  built-in version history (≈30 days) is available via API for
+  recovery.
+- They live alongside your real Drive content but are sandboxed —
+  knowlet can only see files knowlet itself created.
+
+This was an explicit choice over `drive.file` (where files are
+visible in Drive UI but the desktop client mirrors them, creating
+"two equally authoritative copies" — the exact failure mode
+[ADR-0027](./decisions/0027-sync-via-drive-api.md) §"权威" rules
+out). Slice 5.C.1 locks this in.
+
+If you're reading this in a future where you want to inspect the
+files manually, use Drive's API:
+
+```bash
+# Lists every knowlet file you have on Drive (only knowlet can see them).
+knowlet sync pull --reset-token  # bootstrap a fresh changes cursor
+```
+
+A future `knowlet sync ls` will surface this directly.
+
+## Upgrading from an earlier scope
+
+If you ran `knowlet sync connect` on a build before Slice 5.C.1, your
+stored token has `drive.file` scope (notes were uploaded to your Drive
+root, visible). Slice 5.C.1 needs `drive.appdata` instead.
+
+Upgrade procedure:
+
+```bash
+# 1. Optional but recommended — clean up the old visible files in
+#    your Drive UI. Trash any 01KR... .md files knowlet created.
+# 2. Disconnect and reconnect to switch scopes.
+knowlet sync disconnect
+knowlet sync connect
+
+# 3. Re-push your notes; they'll now land in the hidden appdata folder.
+knowlet sync push
+```
+
+`knowlet sync status` warns you inline if the stored token's scopes
+are stale. Push / pull / resolve commands refuse to run until you
+reconnect.
+
 ## What this does NOT do (yet)
 
 Slice 5.A is **connect-only**. After `knowlet sync connect` succeeds,

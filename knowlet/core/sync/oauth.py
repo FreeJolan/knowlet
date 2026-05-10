@@ -29,9 +29,21 @@ from knowlet.core.sync.credentials import (
     save_credentials,
 )
 
-# OAuth scope: read + write the application-created files in the
-# user's Drive. We deliberately AVOID drive.readonly / drive (full
-# access) — knowlet should only ever see the files it created.
+# OAuth scope: knowlet's hidden per-app folder ONLY. ADR-0027 §"权威"
+# requires the remote to be the canonical truth and forbids any path
+# that lets a second authority (Drive desktop client, user editing
+# in Drive web UI) produce conflicting writes. The drive.appdata
+# scope is exactly that lock:
+#
+# - The "appDataFolder" is invisible to the user in Drive web UI
+#   AND not mirrored by Drive desktop client. So the user cannot
+#   accidentally edit a synced file outside knowlet.
+# - File IDs / ETags / Changes API still work just like drive.file.
+# - Storage limit is per-app (~10 GB historically, plenty for note
+#   text), and the data still counts against the user's Drive
+#   capacity (ADR-0013 §"用户拥有" stays satisfied — they own it).
+# - Drive's native version history is still available via API for
+#   any of our app's files.
 #
 # We deliberately do NOT also request email / profile / openid:
 # Google internally expands those into the full
@@ -41,8 +53,43 @@ from knowlet.core.sync.credentials import (
 # emailAddress + displayName under any drive scope, so we don't
 # need the OpenID identity scopes for what 5.A captures.
 SCOPES: tuple[str, ...] = (
-    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive.appdata",
 )
+
+
+# The "magic" parent ID for Google's per-app hidden folder. Used as
+# `parents=[APPDATA_FOLDER]` on file creation and
+# `spaces="appDataFolder"` on list / changes calls.
+APPDATA_FOLDER = "appDataFolder"
+
+
+class ScopeUpgradeRequiredError(RuntimeError):
+    """Raised when the user's stored token lacks the scopes the
+    current build needs. Caused by a scope upgrade between knowlet
+    versions (e.g. Slice 5.C → 5.C.1's drive.file → drive.appdata
+    transition). Caller renders the "disconnect + reconnect" hint."""
+
+    def __init__(self, *, missing: list[str]) -> None:
+        self.missing = list(missing)
+        super().__init__(
+            "Drive sync needs additional scopes that your stored "
+            "token doesn't have: " + ", ".join(missing) + ". Run "
+            "`knowlet sync disconnect` then `knowlet sync connect` "
+            "to re-authorize."
+        )
+
+
+def verify_scope(creds: object) -> None:
+    """Compare the stored token's scopes against the build's SCOPES.
+    Raises ScopeUpgradeRequiredError when a required scope isn't
+    present — typical after upgrading knowlet across a slice that
+    changed scopes. ``creds`` is duck-typed to a SyncCredentials."""
+    token = getattr(creds, "token", None) or {}
+    stored = set(token.get("scopes") or [])
+    required = set(SCOPES)
+    missing = required - stored
+    if missing:
+        raise ScopeUpgradeRequiredError(missing=sorted(missing))
 
 
 @dataclass

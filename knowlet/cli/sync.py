@@ -33,6 +33,40 @@ from knowlet.cli._common import (
 app = typer.Typer(help="Connect knowlet to Google Drive (opt-in sync).", no_args_is_help=True)
 
 
+def _load_and_verify_creds(tok_path: Path) -> "SyncCredentials | None":  # noqa: F821
+    """Load credentials and verify the stored scopes match the
+    build's required SCOPES. Returns None when no creds exist;
+    raises ScopeUpgradeRequiredError when scopes are stale.
+
+    Why this lives here vs in credentials.py: scope verification
+    needs ``oauth.SCOPES`` which transitively imports the optional
+    google libs. The sync CLI is the only entry point that needs
+    both, so the import + raise + render-friendly-message dance
+    happens here."""
+    from knowlet.core.sync.credentials import load_credentials
+    from knowlet.core.sync.oauth import verify_scope
+
+    creds = load_credentials(tok_path)
+    if creds is None:
+        return None
+    verify_scope(creds)
+    return creds
+
+
+# Forward reference resolved at runtime; we only need the type for
+# the helper above, not for module-level use.
+from knowlet.core.sync.credentials import SyncCredentials  # noqa: E402
+
+
+def _scope_err() -> type[Exception]:
+    """Lazy accessor for ScopeUpgradeRequiredError so the top-level
+    `except _scope_err()` clauses don't trigger an oauth import at
+    CLI module load time. (oauth pulls google client libs.)"""
+    from knowlet.core.sync.oauth import ScopeUpgradeRequiredError
+
+    return ScopeUpgradeRequiredError
+
+
 def _resolve_paths(
     vault_root: Path, sync_cfg: object
 ) -> tuple[Path | None, Path]:
@@ -60,11 +94,17 @@ def _resolve_paths(
 @app.command("status")
 def sync_status() -> None:
     """Show connection state. No network call; reads the cached
-    identity stored at connect time."""
+    identity stored at connect time. Status renders the scope-stale
+    warning inline (rather than raising) so users always get a
+    coherent picture of where they are."""
     vault = resolve_vault_or_die()
     cfg = load_config_or_default(vault)
     cs_path, tok_path = _resolve_paths(vault.root, cfg.sync)
     from knowlet.core.sync.credentials import load_credentials
+    from knowlet.core.sync.oauth import (
+        ScopeUpgradeRequiredError,
+        verify_scope,
+    )
 
     creds = load_credentials(tok_path)
     if creds is None:
@@ -91,6 +131,19 @@ def sync_status() -> None:
         f"[green]Connected[/green] · {creds.user_email} ({name})"
     )
     console.print(f"  tokens at: {tok_path}")
+    # Slice 5.C.1 — scope upgrade check. If the stored token was
+    # issued under an older scope set, surface the upgrade hint
+    # inline. status keeps reporting; commands like push / pull
+    # actually block until the user reconnects.
+    try:
+        verify_scope(creds)
+    except ScopeUpgradeRequiredError as exc:
+        console.print(
+            f"  [yellow]Scope upgrade needed:[/yellow] missing "
+            f"{', '.join(exc.missing)}.\n"
+            "  Run [bold]knowlet sync disconnect[/bold] then "
+            "[bold]knowlet sync connect[/bold] to re-authorize."
+        )
 
 
 @app.command("connect")
@@ -177,9 +230,12 @@ def sync_pull(
     vault = resolve_vault_or_die()
     cfg = load_config_or_default(vault)
     _, tok_path = _resolve_paths(vault.root, cfg.sync)
-    from knowlet.core.sync.credentials import load_credentials
 
-    creds = load_credentials(tok_path)
+    try:
+        creds = _load_and_verify_creds(tok_path)
+    except _scope_err() as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=4) from exc
     if creds is None:
         err_console.print(
             "[red]Not connected.[/red] Run "
@@ -270,9 +326,12 @@ def sync_push(
     cfg = load_config_or_default(vault)
     _, tok_path = _resolve_paths(vault.root, cfg.sync)
     from knowlet.core.note import Note
-    from knowlet.core.sync.credentials import load_credentials
 
-    creds = load_credentials(tok_path)
+    try:
+        creds = _load_and_verify_creds(tok_path)
+    except _scope_err() as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=4) from exc
     if creds is None:
         err_console.print("[red]Not connected.[/red] Run knowlet sync connect first.")
         raise typer.Exit(code=2)
@@ -373,9 +432,12 @@ def sync_resolve(
     cfg = load_config_or_default(vault)
     _, tok_path = _resolve_paths(vault.root, cfg.sync)
     from knowlet.core.note import Note
-    from knowlet.core.sync.credentials import load_credentials
 
-    creds = load_credentials(tok_path)
+    try:
+        creds = _load_and_verify_creds(tok_path)
+    except _scope_err() as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=4) from exc
     if creds is None:
         err_console.print("[red]Not connected.[/red]")
         raise typer.Exit(code=2)

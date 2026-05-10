@@ -54,7 +54,12 @@ def get_initial_start_page_token(client: DriveClient) -> str:
     now". Future polls use this as the start; we'll only see
     changes that happen AFTER this call. Storing the token before
     any user data has been pushed avoids the "boostrap saw all my
-    Drive history" pathology."""
+    Drive history" pathology.
+
+    Note: Drive's getStartPageToken doesn't accept a `spaces`
+    parameter — the token is opaque + filtering happens at list
+    time. Our list_changes call below scopes results to
+    ``appDataFolder`` per Slice 5.C.1."""
     service = client.service()
     res = service.changes().getStartPageToken().execute()
     token = res.get("startPageToken")
@@ -77,15 +82,18 @@ def list_changes(
     first one). Returns a single page; the caller paginates if
     `next_token` is non-None.
 
-    Spaces / corpora left at the API default (the user's Drive). We
-    only need files knowlet itself created (drive.file scope keeps
-    Google from returning anything else)."""
+    Scoped to the hidden ``appDataFolder`` per Slice 5.C.1 — under
+    drive.appdata we don't see (and don't want to see) the rest of
+    the user's Drive."""
+    from knowlet.core.sync.oauth import APPDATA_FOLDER
+
     service = client.service()
     res = (
         service.changes()
         .list(
             pageToken=page_token,
             pageSize=page_size,
+            spaces=APPDATA_FOLDER,
             fields=(
                 "newStartPageToken,nextPageToken,"
                 "changes(fileId,removed,file(name,modifiedTime,"
