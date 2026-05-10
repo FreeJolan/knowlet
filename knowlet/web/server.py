@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -39,15 +39,19 @@ from knowlet.chat.sediment import (
 )
 from knowlet.config import KnowletConfig, find_vault, load_config
 from knowlet.core.backlinks import find_backlinks
-from knowlet.core.graph import build_graph, read_body_via_note
-from knowlet.core.inline_tags import merge_with_inline_tags
 from knowlet.core.card import Card, parse_due
 from knowlet.core.drafts import Draft
 from knowlet.core.events import ErrorEvent, event_to_dict
 from knowlet.core.fsrs_wrap import initial_state, schedule_next
+from knowlet.core.graph import build_graph, read_body_via_note
 from knowlet.core.i18n import SUPPORTED_LANGUAGES, all_keys, set_language
 from knowlet.core.index import Index, IndexDimensionMismatchError
+from knowlet.core.inline_tags import merge_with_inline_tags
 from knowlet.core.llm import ToolCall
+from knowlet.core.mining.runner import reset_task_state, run_task
+from knowlet.core.mining.scheduler import MiningScheduler
+from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
+from knowlet.core.note import Note
 from knowlet.core.quick_actions import (
     CreateNoteParams,
     QuickAction,
@@ -55,10 +59,6 @@ from knowlet.core.quick_actions import (
     new_action_id,
     render_title_placeholders,
 )
-from knowlet.core.mining.runner import reset_task_state, run_task
-from knowlet.core.mining.scheduler import MiningScheduler
-from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
-from knowlet.core.note import Note
 from knowlet.core.quiz import (
     DEFAULT_N_QUESTIONS,
     QuizSession,
@@ -916,6 +916,45 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "failures": sum(1 for r in results if r[0] == "fail"),
             "warnings": sum(1 for r in results if r[0] == "warn"),
         }
+
+    # ----------------------------------------------------- audit log
+    # Phase 2 E Slice 4.B — read-only window into the vault audit log
+    # (ADR-0023 §3 + ADR-0018). Producer hooks live in Vault; the API
+    # stays narrow on purpose — no append endpoint, no UPDATE / DELETE.
+    # The contract is "the log is what the vault did", not "what the
+    # client says the vault did".
+    @app.get("/api/events")
+    def list_events(
+        kind: list[str] | None = Query(default=None),
+        entity_id: str | None = Query(default=None),
+        limit: int = Query(default=200, ge=1, le=2000),
+    ) -> dict[str, Any]:
+        from knowlet.core.audit_log import AuditEventStore
+
+        store = AuditEventStore(vault.root)
+        try:
+            events = store.query(
+                kinds=kind or None,
+                entity_id=entity_id,
+                limit=limit,
+            )
+            return {
+                "events": [
+                    {
+                        "id": e.id,
+                        "ts": e.ts,
+                        "kind": e.kind,
+                        "entity_type": e.entity_type,
+                        "entity_id": e.entity_id,
+                        "actor": e.actor,
+                        "payload": e.payload,
+                    }
+                    for e in events
+                ],
+                "total": store.count(),
+            }
+        finally:
+            store.close()
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -3088,7 +3127,11 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:  # pragma: no cove
     import uvicorn
 
     vault_root = find_vault()
-    vault = Vault(vault_root)
+    # Phase 2 E Slice 4.B — wire the audit log so the live web server
+    # records note.created / .updated / .deleted / .restored.
+    from knowlet.core.audit_log import AuditEventStore
+
+    vault = Vault(vault_root, audit_log=AuditEventStore(vault_root))
     cfg = load_config(vault.root)
     if not cfg.llm.api_key:
         raise SystemExit(

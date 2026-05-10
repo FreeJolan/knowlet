@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from knowlet.config import VAULT_MARKER_DIR
+from knowlet.core.audit_log import AuditEvent, AuditEventStore
 from knowlet.core.note import Note, now_iso
 
 NOTES_DIR = "notes"
@@ -23,8 +24,52 @@ BACKUPS_DIR = "backups"
 class Vault:
     """Filesystem operations on a knowlet vault."""
 
-    def __init__(self, root: Path):
+    def __init__(
+        self,
+        root: Path,
+        *,
+        audit_log: AuditEventStore | None = None,
+    ):
         self.root = root.resolve()
+        # Optional audit log. When set, Note write/trash/restore emit
+        # events through it (per ADR-0023 §3 + ADR-0018). Pass None
+        # in tests / scripts that don't care about the audit trail —
+        # the producer methods are no-ops in that case.
+        self.audit_log = audit_log
+
+    def _emit(
+        self,
+        kind: str,
+        entity_id: str,
+        payload: dict[str, object],
+        *,
+        actor: str = "user",
+    ) -> None:
+        """Emit a Note-scoped audit event. No-op when audit_log is
+        None. Failures are swallowed — the audit trail must never
+        break the user's actual write path."""
+        if self.audit_log is None:
+            return
+        try:
+            self.audit_log.append(
+                AuditEvent(
+                    kind=kind,
+                    entity_type="note",
+                    entity_id=entity_id,
+                    actor=actor,  # type: ignore[arg-type]
+                    payload=payload,
+                )
+            )
+        except Exception:
+            # Audit failure is logged but never raises into the write
+            # path. (We deliberately don't import logging at module
+            # top — the Vault is otherwise dep-light.)
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "audit log append failed for %s/%s", kind, entity_id,
+                exc_info=True,
+            )
 
     @property
     def notes_dir(self) -> Path:
@@ -192,11 +237,26 @@ class Vault:
         else:
             self.notes_dir.mkdir(parents=True, exist_ok=True)
             target = self.notes_dir / note.filename
+        # Capture create-vs-update BEFORE we overwrite — the file's
+        # existence at this moment is the only signal. After the
+        # rename below the answer is always "yes, exists".
+        is_create = not target.exists()
         note.path = target
         note.updated_at = now_iso()
         tmp = target.with_suffix(target.suffix + ".tmp")
         tmp.write_text(note.to_markdown(), encoding="utf-8")
         tmp.replace(target)
+        # Emit AFTER the atomic rename so a failed write doesn't
+        # leave a phantom event. Folder is recorded so log readers
+        # can see "where did it land".
+        self._emit(
+            "note.created" if is_create else "note.updated",
+            note.id,
+            {
+                "title": note.title,
+                "folder": self.folder_of(target),
+            },
+        )
         return target
 
     # ----------------------------------------------------- folder ops (Phase 1 A)
@@ -396,6 +456,21 @@ class Vault:
         if target.exists():
             target = self.trash_dir / f"{path.stem}-{now_iso().replace(':', '-')}.md"
         path.rename(target)
+        # Emit. note_id is the file stem (filename = "<id>.md").
+        # Title may be missing if frontmatter parse failed above —
+        # fall back to the stem.
+        try:
+            note_for_event = Note.from_file(target)
+            event_title = note_for_event.title
+            note_id = note_for_event.id
+        except Exception:
+            event_title = target.stem
+            note_id = target.stem
+        self._emit(
+            "note.deleted",
+            note_id,
+            {"title": event_title, "from_folder": original_folder},
+        )
         return target
 
     def restore_note(self, trashed_path: Path) -> Path:
@@ -430,6 +505,23 @@ class Vault:
             trashed_path.unlink()
         else:
             trashed_path.rename(target)
+        # Emit. Title is best-effort; we may have failed to parse.
+        try:
+            restored = note if note is not None else Note.from_file(target)
+            self._emit(
+                "note.restored",
+                restored.id,
+                {
+                    "title": restored.title,
+                    "to_folder": self.folder_of(target),
+                },
+            )
+        except Exception:
+            self._emit(
+                "note.restored",
+                target.stem,
+                {"to_folder": self.folder_of(target)},
+            )
         return target
 
     def _safe_relative_path(self, rel: str) -> bool:

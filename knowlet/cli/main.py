@@ -21,6 +21,7 @@ from knowlet import __version__
 from knowlet.cli import cards as cards_cli
 from knowlet.cli import config as config_cli
 from knowlet.cli import drafts as drafts_cli
+from knowlet.cli import events as events_cli
 from knowlet.cli import graph as graph_cli
 from knowlet.cli import mining as mining_cli
 from knowlet.cli import notes as notes_cli
@@ -66,6 +67,7 @@ app.add_typer(notes_cli.app, name="notes")
 app.add_typer(quiz_cli.app, name="quiz")
 app.add_typer(tags_cli.app, name="tags")
 app.add_typer(graph_cli.app, name="graph")
+app.add_typer(events_cli.app, name="events")
 
 
 # ------------------------------------------------------------------ root
@@ -278,7 +280,11 @@ def _ensure_ready_or_wizard() -> tuple[Vault, KnowletConfig]:
         vault_root = vault.root
         console.print(f"[green]{t('vault.created', root=str(vault.root))}[/green]\n")
 
-    vault = Vault(vault_root)
+    # Phase 2 E Slice 4.B — chat → sediment → note write goes through
+    # this Vault, so attach the audit log here too.
+    from knowlet.core.audit_log import AuditEventStore
+
+    vault = Vault(vault_root, audit_log=AuditEventStore(vault_root))
     cfg = load_config_or_default(vault)
     if not cfg.llm.api_key:
         console.print(
