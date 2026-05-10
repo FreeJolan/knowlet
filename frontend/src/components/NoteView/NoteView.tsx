@@ -60,7 +60,7 @@ function updateNoteTitleInTree(
 const AUTOSAVE_DEBOUNCE_MS = 800;
 const VIEW_MODE_STORAGE_KEY = "knowlet:view-mode";
 
-type SaveState = "idle" | "saving" | "saved";
+type SaveState = "idle" | "saving" | "saved" | "error";
 type ViewMode = "edit" | "split" | "preview";
 
 function loadInitialViewMode(): ViewMode {
@@ -153,6 +153,12 @@ export function NoteView({
         // title / tag save never wipes them.
         aliases: payload.aliases ?? [],
       }),
+    // Auto-retry transient failures (network blip, slow backend) with
+    // exponential backoff. After 3 attempts (~14s max wait) we give
+    // up and surface the failure visibly via onError below — per the
+    // "no silent failure" UX rule from sync-design discussion.
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
     onSuccess: (data, vars) => {
       qc.setQueryData(QK.note(vars.id), data);
       // Body saves can include inline `#tag` syntax that the backend
@@ -172,7 +178,30 @@ export function NoteView({
         }, 1200);
       }
     },
+    onError: (_err, vars) => {
+      // Reaching here means the backend rejected us OR all retries
+      // exhausted. The user must know — saving silently dropping
+      // edits is exactly the "沉默地陷入糟糕状态" failure mode the
+      // sync-design memory rules out.
+      if (loadedIdRef.current === vars.id) {
+        setSavingState("error");
+      }
+    },
   });
+
+  // Manual retry — clicked from the error badge. Re-fires the same
+  // save with the current editor body so the user doesn't lose
+  // anything just because the auto-retries exhausted.
+  const retryFailedSave = useCallback(() => {
+    const id = loadedIdRef.current;
+    const meta = note.data;
+    if (!id || !meta) return;
+    setSavingState("saving");
+    saveMutation.mutate({
+      id,
+      payload: { ...meta, body: bodyRef.current },
+    });
+  }, [note.data, saveMutation]);
 
   // Title rename — fired when the user finishes editing the inline
   // title input. Optimistic against both the per-note query AND the
@@ -684,15 +713,42 @@ export function NoteView({
              * text is wrapped in a span we toggle with `visibility`, which
              * preserves layout during the idle / saved transition. */}
             <span
-              className="inline-flex w-16 justify-end font-mono text-[11px] uppercase tracking-wider"
-              style={{ color: "var(--ink-mute)" }}
+              className="inline-flex min-w-16 items-center justify-end gap-2 font-mono text-[11px] uppercase tracking-wider"
+              style={{
+                color:
+                  savingState === "error"
+                    ? "var(--err, #c0392b)"
+                    : "var(--ink-mute)",
+              }}
               data-testid="autosave-state"
+              data-state={savingState}
             >
-              <span style={{ visibility: savingState === "idle" ? "hidden" : "visible" }}>
-                {savingState === "saving" && t("note.saving")}
-                {savingState === "saved" && t("note.saved")}
-                {savingState === "idle" && t("note.saved")}
-              </span>
+              {savingState === "error" ? (
+                <>
+                  <span title={t("note.saveFailedHint")}>
+                    {t("note.saveFailed")}
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="autosave-retry"
+                    onClick={retryFailedSave}
+                    className="rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wider transition-colors hover:bg-accent/30"
+                    style={{ borderColor: "currentColor" }}
+                  >
+                    {t("note.saveFailedRetry")}
+                  </button>
+                </>
+              ) : (
+                <span
+                  style={{
+                    visibility: savingState === "idle" ? "hidden" : "visible",
+                  }}
+                >
+                  {savingState === "saving" && t("note.saving")}
+                  {savingState === "saved" && t("note.saved")}
+                  {savingState === "idle" && t("note.saved")}
+                </span>
+              )}
             </span>
             <ViewModeToggle value={viewMode} onChange={setViewMode} t={t} />
           </div>
