@@ -31,4 +31,5 @@ export const QK = {
   search: (q: string) => ["search", q] as const,
   quickActions: ["quick-actions"] as const,
   noteSyncStatus: (id: string) => ["note-sync-status", id] as const,
+  syncConflicts: ["sync-conflicts"] as const,
 };

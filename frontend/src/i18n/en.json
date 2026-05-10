@@ -325,6 +325,25 @@
     "syncing": "syncing…",
     "editing": "editing"
   },
+  "syncInbox": {
+    "chipLabel_one": "{{count}} sync conflict",
+    "chipLabel_other": "{{count}} sync conflicts",
+    "chipLabel_zero": "no conflicts",
+    "title": "Sync conflicts",
+    "subtitle": "Notes whose local edits differ from Drive. Click one to merge.",
+    "refresh": "Refresh",
+    "scanning": "Scanning vault…",
+    "lastScan": "Last scan {{when}}",
+    "empty": "No conflicts. Everything's in sync.",
+    "offlineHeading": "Couldn't reach Drive for these:",
+    "offline_one": "{{count}} note couldn't be checked",
+    "offline_other": "{{count}} notes couldn't be checked",
+    "untitledNote": "(untitled)",
+    "noteRowEditedBy": "edited remotely · {{when}}",
+    "noteRowEditedByWho": "by {{who}} · {{when}}",
+    "openNote": "Open merge editor",
+    "close": "Close"
+  },
   "frontmatterCorrupted": {
     "headline": "This note's frontmatter looks damaged.",
     "detailLabel": "What we found:",

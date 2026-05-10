@@ -1,0 +1,256 @@
+"""Phase 2 E #107a — vault-wide pre-flight scan (ADR-0027).
+
+Walks every tracked file_state row, computes its sync status, and
+auto-resolves the safe cases so the user only sees the things that
+actually need their attention.
+
+Personas:
+
+- **Bob (sequential multi-device)** opens device B in the evening.
+  25 of 30 notes are ``stale`` (remote moved while he was offline);
+  preflight pulls them silently. 3 are real ``conflict``; preflight
+  surfaces just those 3. The "⚠️ 3" chip in the header is the
+  user's whole sync UI for this round.
+
+- **Dan (long pause)** comes back after a week. 30 stale auto-pull,
+  3 real conflicts surface, 2 are ``offline`` (network glitch);
+  inbox shows 3 + a collapsible "2 couldn't be reached" footer.
+
+- **Alice (single device)** has no creds; preflight returns
+  ``unauthenticated`` immediately, chip stays hidden.
+
+What this module does NOT do:
+
+- Persist the result. The endpoint layer holds the cache. Each
+  scan is a pure computation; callers decide cadence (mount,
+  manual refresh, post-resolve invalidation).
+- Attempt to push dirty notes. ``conflict`` only covers
+  remote-moved; "I have local edits I haven't pushed yet" is a
+  separate state ``dirty`` that S4 will surface via save-time push.
+- Run in parallel. Sequential scan keeps the Drive request rate
+  predictable; future optimization can bound concurrency if vault
+  size warrants it.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from knowlet.core.sync.pull import PullStateMissingError, pull_note_to_local
+from knowlet.core.sync.state import FileState, SyncStateStore
+from knowlet.core.sync.status import (
+    NoteSyncStatus,
+    compute_note_sync_status,
+)
+
+NoteMetaLookup = Callable[[str], dict[str, Any] | None]
+NotePathLookup = Callable[[str], Path | None]
+ServiceFactory = Callable[[], Any | None]
+
+
+@dataclass(frozen=True)
+class PreflightConflict:
+    """One row in the conflict inbox. The chip only shows the count;
+    the inbox renders these to let the user click into each."""
+
+    note_id: str
+    note_title: str | None
+    drive_file_id: str | None
+    last_synced_at: str | None
+    last_known_revision: str | None
+    current_drive_revision: str | None
+    remote_modified_at: str | None
+    remote_modified_by: str | None
+
+
+@dataclass(frozen=True)
+class PreflightOffline:
+    """One file we couldn't reach Drive for during this scan. Surfaced
+    as a quieter section in the inbox so the user knows the count
+    isn't authoritative until network recovers."""
+
+    note_id: str
+    note_title: str | None
+    detail: str | None
+
+
+@dataclass(frozen=True)
+class PreflightReport:
+    """Result of one scan pass. The endpoint serializes this and
+    React Query caches it client-side; the chip reads
+    ``len(conflicts)``, the inbox renders the lists, the
+    ``unauthenticated`` flag tells the chip to stay hidden."""
+
+    conflicts: list[PreflightConflict]
+    offline: list[PreflightOffline]
+    auto_pulled_ids: list[str]
+    synced_count: int
+    dirty_count: int
+    scanned: int
+    unauthenticated: bool
+
+
+def preflight_scan(
+    *,
+    vault_root: Path,
+    state_store: SyncStateStore,
+    note_meta_lookup: NoteMetaLookup,
+    note_path_lookup: NotePathLookup,
+    auto_pull_service_factory: ServiceFactory,
+) -> PreflightReport:
+    """Run one pass over every tracked file.
+
+    Parameters use callable seams so this module stays free of
+    web/runtime imports — the API endpoint passes:
+
+    - ``note_meta_lookup(note_id) -> dict | None``: returns the
+      indexed title (and other meta) for a note id, or None if the
+      note isn't in the index. Used to humanize the chip rows.
+    - ``note_path_lookup(note_id) -> Path | None``: returns the
+      on-disk path for that note id, or None.
+    - ``auto_pull_service_factory() -> service``: returns a Drive
+      service handle to pass through to ``pull_note_to_local``.
+      Called only when at least one ``stale`` is detected, so the
+      auth/network round trip happens once for the whole scan
+      rather than per-note.
+    """
+    rows: list[FileState] = state_store.list_all_files()
+    if not rows:
+        return PreflightReport(
+            conflicts=[],
+            offline=[],
+            auto_pulled_ids=[],
+            synced_count=0,
+            dirty_count=0,
+            scanned=0,
+            unauthenticated=False,
+        )
+
+    conflicts: list[PreflightConflict] = []
+    offline: list[PreflightOffline] = []
+    auto_pulled: list[str] = []
+    synced = 0
+    dirty = 0
+    unauthenticated = False
+    drive_service: Any = None
+
+    for row in rows:
+        if row.entity_type != "note":
+            continue
+        local_path = note_path_lookup(row.entity_id)
+        status = compute_note_sync_status(
+            vault_root=vault_root,
+            note_id=row.entity_id,
+            state_store=state_store,
+            local_path=local_path,
+        )
+
+        if status.state == "unauthenticated":
+            # First row already revealed no creds — bail early. The
+            # chip layer hides itself when this flag is set so the
+            # user doesn't see a confusing "0 conflicts" UI on a
+            # box that simply isn't connected to Drive.
+            unauthenticated = True
+            break
+
+        if status.state == "synced":
+            synced += 1
+            continue
+        if status.state == "dirty":
+            dirty += 1
+            continue
+        if status.state == "offline":
+            offline.append(_offline_row(row, status, note_meta_lookup))
+            continue
+        if status.state == "stale":
+            # Auto-pull. Lazy-initialize the Drive service handle so
+            # we only authenticate when there's actual stale work.
+            if drive_service is None:
+                drive_service = auto_pull_service_factory()
+            if drive_service is None or local_path is None:
+                # Couldn't get a service or the file vanished — treat
+                # as offline rather than crashing the whole scan.
+                offline.append(_offline_row(row, status, note_meta_lookup))
+                continue
+            try:
+                pull_note_to_local(
+                    service=drive_service,
+                    state=state_store,
+                    note_id=row.entity_id,
+                    local_path=local_path,
+                )
+                auto_pulled.append(row.entity_id)
+                synced += 1
+            except PullStateMissingError:
+                # Sync state malformed — surface as offline so it
+                # doesn't get lost. Manual repair via the doctor
+                # command can sort it.
+                offline.append(_offline_row(row, status, note_meta_lookup))
+            except Exception as exc:  # noqa: BLE001
+                # Network blip mid-pull. The note is still stale; we
+                # downgrade it to "offline" for THIS scan so the user
+                # sees something rather than a silent miss.
+                offline.append(
+                    PreflightOffline(
+                        note_id=row.entity_id,
+                        note_title=_title(row.entity_id, note_meta_lookup),
+                        detail=f"auto-pull failed: {exc!r}",
+                    )
+                )
+            continue
+        if status.state == "conflict":
+            conflicts.append(_conflict_row(row, status, note_meta_lookup))
+            continue
+        # Unknown state — defensively classify as offline so it
+        # surfaces somewhere rather than silently disappearing.
+        offline.append(_offline_row(row, status, note_meta_lookup))
+
+    return PreflightReport(
+        conflicts=conflicts,
+        offline=offline,
+        auto_pulled_ids=auto_pulled,
+        synced_count=synced,
+        dirty_count=dirty,
+        scanned=len(rows),
+        unauthenticated=unauthenticated,
+    )
+
+
+def _title(note_id: str, lookup: NoteMetaLookup) -> str | None:
+    meta = lookup(note_id)
+    if meta is None:
+        return None
+    title = meta.get("title")
+    return str(title) if title else None
+
+
+def _conflict_row(
+    row: FileState,
+    status: NoteSyncStatus,
+    lookup: NoteMetaLookup,
+) -> PreflightConflict:
+    return PreflightConflict(
+        note_id=row.entity_id,
+        note_title=_title(row.entity_id, lookup),
+        drive_file_id=row.drive_file_id,
+        last_synced_at=status.last_synced_at,
+        last_known_revision=status.last_known_revision,
+        current_drive_revision=status.current_drive_revision,
+        remote_modified_at=None,
+        remote_modified_by=None,
+    )
+
+
+def _offline_row(
+    row: FileState,
+    status: NoteSyncStatus,
+    lookup: NoteMetaLookup,
+) -> PreflightOffline:
+    return PreflightOffline(
+        note_id=row.entity_id,
+        note_title=_title(row.entity_id, lookup),
+        detail=status.detail,
+    )

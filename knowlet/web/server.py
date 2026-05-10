@@ -649,6 +649,11 @@ class WebState:
         self.bootstrap_status: str = "idle"
         self.bootstrap_error: Exception | None = None
         self._bootstrap_thread: threading.Thread | None = None
+        # #107a — last preflight scan result. None means "never run".
+        # The endpoint POSTs to refresh; the GET reads this without
+        # re-scanning. React Query stale-times handle the cadence.
+        self.preflight_report: Any | None = None
+        self.preflight_ran_at: float | None = None
 
     def start_bootstrap_async(self) -> None:
         """Kick off bootstrap on a daemon thread. Called from lifespan.
@@ -1373,6 +1378,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 tmp.write_bytes(merged_bytes)
                 tmp.replace(local_path)
                 _dev_conflict_clear(store, note_id)
+                _invalidate_preflight_cache()
                 return {
                     "drive_file_id": DEV_FAKE_DRIVE_FILE_ID,
                     "new_revision": "dev-resolved",
@@ -1423,6 +1429,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 ) from exc
         finally:
             store.close()
+        _invalidate_preflight_cache()
         return {
             "drive_file_id": result.drive_file.id,
             "new_revision": result.drive_file.head_revision_id,
@@ -1490,6 +1497,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             )
         finally:
             store.close()
+        _invalidate_preflight_cache()
         return {
             "note_id": note_id,
             "remote_text_lines": len(remote_text.split("\n")),
@@ -1505,6 +1513,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             _dev_conflict_clear(store, note_id)
         finally:
             store.close()
+        _invalidate_preflight_cache()
         return {"note_id": note_id, "cleared": True}
 
     def _dev_conflict_path(note_id: str) -> Path:
@@ -1555,6 +1564,116 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             target = min(len(lines) - 1, insert_at + 4)
             lines[target] = "[modified remotely] " + lines[target]
         return "\n".join(lines)
+
+    # ---------------- preflight scan + conflicts inbox (#107a) -----
+    # POST /api/sync/preflight runs the scan synchronously: per-note
+    # status compute, auto-pull stale, return real-conflict + offline
+    # lists. GET /api/sync/conflicts reads the cached result so the
+    # always-mounted chip can poll cheaply without re-scanning.
+    #
+    # The cache lives on WebState. Resolve-merge / repair / push all
+    # invalidate it on success so the chip count drops immediately
+    # after the user resolves a conflict.
+
+    @app.post("/api/sync/preflight")
+    def preflight_endpoint() -> dict[str, Any]:
+        import time as _time
+
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.preflight import preflight_scan
+        from knowlet.core.sync.state import SyncStateStore
+
+        runtime = state.runtime
+        note_meta: Any
+        note_path: Any
+        if runtime is None:
+            note_meta = lambda _id: None  # noqa: E731
+            note_path = lambda _id: None  # noqa: E731
+        else:
+            note_meta = runtime.index.get_note_meta
+            note_path = _resolve_note_local_path
+
+        def service_factory() -> Any | None:
+            creds = load_credentials(credentials_path(vault.root))
+            if creds is None:
+                return None
+            return DriveClient(creds).service()
+
+        store = SyncStateStore(vault.root)
+        try:
+            report = preflight_scan(
+                vault_root=vault.root,
+                state_store=store,
+                note_meta_lookup=note_meta,
+                note_path_lookup=note_path,
+                auto_pull_service_factory=service_factory,
+            )
+        finally:
+            store.close()
+        state.preflight_report = report
+        state.preflight_ran_at = _time.time()
+        return _serialize_preflight(report, state.preflight_ran_at)
+
+    @app.get("/api/sync/conflicts")
+    def conflicts_endpoint() -> dict[str, Any]:
+        report = state.preflight_report
+        if report is None:
+            # No scan has run yet — return an "empty + needs scan"
+            # shape so the chip stays hidden until the first POST
+            # /preflight comes back.
+            return {
+                "ran_at": None,
+                "scanned": 0,
+                "conflicts": [],
+                "offline": [],
+                "auto_pulled_ids": [],
+                "synced_count": 0,
+                "dirty_count": 0,
+                "unauthenticated": False,
+            }
+        return _serialize_preflight(report, state.preflight_ran_at)
+
+    def _serialize_preflight(report: Any, ran_at: float | None) -> dict[str, Any]:
+        return {
+            "ran_at": ran_at,
+            "scanned": report.scanned,
+            "conflicts": [
+                {
+                    "note_id": c.note_id,
+                    "note_title": c.note_title,
+                    "drive_file_id": c.drive_file_id,
+                    "last_synced_at": c.last_synced_at,
+                    "last_known_revision": c.last_known_revision,
+                    "current_drive_revision": c.current_drive_revision,
+                    "remote_modified_at": c.remote_modified_at,
+                    "remote_modified_by": c.remote_modified_by,
+                }
+                for c in report.conflicts
+            ],
+            "offline": [
+                {
+                    "note_id": o.note_id,
+                    "note_title": o.note_title,
+                    "detail": o.detail,
+                }
+                for o in report.offline
+            ],
+            "auto_pulled_ids": list(report.auto_pulled_ids),
+            "synced_count": report.synced_count,
+            "dirty_count": report.dirty_count,
+            "unauthenticated": report.unauthenticated,
+        }
+
+    def _invalidate_preflight_cache() -> None:
+        """Called from resolve-merge / dev-seed clear / repair so the
+        chip drops the just-resolved item without waiting for the
+        next manual scan."""
+        state.preflight_report = None
+        state.preflight_ran_at = None
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:

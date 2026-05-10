@@ -324,6 +324,25 @@
     "syncing": "同步中…",
     "editing": "编辑中"
   },
+  "syncInbox": {
+    "chipLabel_one": "{{count}} 处同步冲突",
+    "chipLabel_other": "{{count}} 处同步冲突",
+    "chipLabel_zero": "无冲突",
+    "title": "同步冲突",
+    "subtitle": "本地与 Drive 不一致的笔记。点击进入 merge 编辑器。",
+    "refresh": "刷新",
+    "scanning": "正在扫描 vault…",
+    "lastScan": "上次扫描 {{when}}",
+    "empty": "没有冲突,vault 完全同步。",
+    "offlineHeading": "以下笔记暂时无法连接 Drive:",
+    "offline_one": "{{count}} 篇暂时无法检查",
+    "offline_other": "{{count}} 篇暂时无法检查",
+    "untitledNote": "(未命名)",
+    "noteRowEditedBy": "远端修改 · {{when}}",
+    "noteRowEditedByWho": "{{who}} · {{when}}",
+    "openNote": "打开 merge 编辑器",
+    "close": "关闭"
+  },
   "frontmatterCorrupted": {
     "headline": "这篇笔记的 frontmatter 看起来损坏了。",
     "detailLabel": "原因:",

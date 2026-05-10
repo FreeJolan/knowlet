@@ -29,6 +29,10 @@ import { MarkdownPreview } from "@/components/Editor/MarkdownPreview";
 import { InlineEditInput } from "@/components/InlineEdit/InlineEditInput";
 import { ConflictMergeView } from "@/components/Sync/ConflictMergeView";
 import { SyncStatusBadge } from "@/components/Sync/SyncStatusBadge";
+import {
+  MERGE_OPEN_EVENT,
+  takePendingMergeOpen,
+} from "@/lib/pendingMergeOpen";
 
 import { FrontmatterCorruptedNotice } from "./FrontmatterCorruptedNotice";
 import { noteTitleClashesIn } from "@/lib/findCollision";
@@ -153,6 +157,38 @@ export function NoteView({
   // can be reopened without losing the user's hunk choices via
   // React Query's bundle cache.
   const [mergeOpen, setMergeOpen] = useState(false);
+  // #107a — the conflicts inbox can land us in either state when
+  // the user clicks a row:
+  //   * already-open note: the listener is already attached; the
+  //     custom event fires synchronously and we open the dialog.
+  //   * not-yet-open note: AppShell's openNote(id) shifts the active
+  //     tab; this NoteView's note.data eventually resolves to the
+  //     new id. The event might have fired before the listener
+  //     was attached, so we ALSO drain the pending queue every
+  //     time the active note id changes (covers cold-mount).
+  useEffect(() => {
+    const id = note.data?.id;
+    if (!id) return;
+    if (takePendingMergeOpen(id)) {
+      setMergeOpen(true);
+    }
+    const onOpenMerge = (e: Event) => {
+      const detail = (e as CustomEvent<{ noteId: string }>).detail;
+      if (detail?.noteId !== id) return;
+      // ``takePendingMergeOpen`` consumes the queue entry so the
+      // mount-time drain above doesn't double-fire if the user
+      // clicks the same note twice in quick succession.
+      if (takePendingMergeOpen(id)) {
+        setMergeOpen(true);
+      } else {
+        // No queue entry — direct event delivery (note was already
+        // open, AppShell only fired the event without queuing).
+        setMergeOpen(true);
+      }
+    };
+    window.addEventListener(MERGE_OPEN_EVENT, onOpenMerge);
+    return () => window.removeEventListener(MERGE_OPEN_EVENT, onOpenMerge);
+  }, [note.data?.id]);
 
   const saveMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: NoteFull }) =>

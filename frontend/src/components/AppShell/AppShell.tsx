@@ -32,7 +32,9 @@ import { SearchFocusMode } from "@/components/Search/SearchFocusMode";
 import { SettingsDialog } from "@/components/Settings/SettingsDialog";
 import { NewDocDialog } from "@/components/NewDoc/NewDocDialog";
 import { QuickActionsManager } from "@/components/QuickActions/QuickActionsManager";
+import { ConflictsChip } from "@/components/Sync/ConflictsChip";
 import { TabStrip } from "@/components/TabStrip/TabStrip";
+import { MERGE_OPEN_EVENT, queueMergeOpen } from "@/lib/pendingMergeOpen";
 import { TagBrowser } from "@/components/TagBrowser/TagBrowser";
 import { TrashPanel } from "@/components/Trash/TrashPanel";
 import { Button } from "@/components/ui/button";
@@ -540,6 +542,24 @@ export function AppShell() {
             {t("app.title")}
           </div>
           <div className="flex items-center gap-1">
+            <ConflictsChip
+              onOpenNote={(id) => {
+                // Two-path delivery: queue the request so the
+                // NoteView's mount-time drain picks it up if the
+                // note isn't open yet, AND fire the event so the
+                // already-mounted listener (note already open) can
+                // react synchronously. takePendingMergeOpen ensures
+                // only one of the two paths actually opens the
+                // dialog. See lib/pendingMergeOpen for the contract.
+                queueMergeOpen(id);
+                tabsApi.openNote(id);
+                window.dispatchEvent(
+                  new CustomEvent<{ noteId: string }>(MERGE_OPEN_EVENT, {
+                    detail: { noteId: id },
+                  }),
+                );
+              }}
+            />
             <Button
               variant="ghost"
               size="sm"

@@ -83,6 +83,42 @@ export const repairFrontmatter = (id: string): Promise<NoteFull> =>
     `/api/notes/${encodeURIComponent(id)}/repair-frontmatter`,
   );
 
+// ---------- preflight + conflicts inbox (#107a) ----------
+
+export interface PreflightConflict {
+  note_id: string;
+  note_title: string | null;
+  drive_file_id: string | null;
+  last_synced_at: string | null;
+  last_known_revision: string | null;
+  current_drive_revision: string | null;
+  remote_modified_at: string | null;
+  remote_modified_by: string | null;
+}
+
+export interface PreflightOffline {
+  note_id: string;
+  note_title: string | null;
+  detail: string | null;
+}
+
+export interface PreflightReport {
+  ran_at: number | null;
+  scanned: number;
+  conflicts: PreflightConflict[];
+  offline: PreflightOffline[];
+  auto_pulled_ids: string[];
+  synced_count: number;
+  dirty_count: number;
+  unauthenticated: boolean;
+}
+
+export const runPreflight = (): Promise<PreflightReport> =>
+  request("POST", "/api/sync/preflight");
+
+export const getConflicts = (): Promise<PreflightReport> =>
+  request("GET", "/api/sync/conflicts");
+
 export const moveNote = (id: string, targetFolder: string): Promise<NoteFull> =>
   request("POST", `/api/notes/${encodeURIComponent(id)}/move`, {
     target_folder: targetFolder,

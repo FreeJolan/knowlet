@@ -124,6 +124,9 @@ export function ConflictMergeView({
       void qc.invalidateQueries({
         queryKey: QK.noteSyncStatus(noteId ?? ""),
       });
+      // #107a — drop the conflict from the global inbox count
+      // immediately rather than waiting for the next 60s poll.
+      void qc.invalidateQueries({ queryKey: QK.syncConflicts });
       onOpenChange(false);
     },
   });
