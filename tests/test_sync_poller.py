@@ -46,17 +46,18 @@ def _seed_creds(vault_root: Path) -> SyncCredentials:
 
 def _patch_drive(revs: dict[str, str | None]):
     """Patches DriveClient + list_appdata_revisions so _tick runs
-    without touching Google."""
+    without touching Google. ``revs`` is a {drive_file_id → rev}
+    map; this helper wraps each value in a DriveFileBrief so callers
+    can stay shorthand."""
     from contextlib import ExitStack
     from unittest.mock import MagicMock
+
+    from knowlet.core.sync.files import DriveFileBrief
 
     stack = ExitStack()
     fake_service = MagicMock()
     fake_client = MagicMock()
     fake_client.service.return_value = fake_service
-    # Patch at the source modules — _tick imports these lazily, so
-    # patching `knowlet.core.sync.poller.X` doesn't work (X never
-    # appears as an attribute on the poller module).
     stack.enter_context(
         patch(
             "knowlet.core.sync.drive_client.DriveClient",
@@ -66,7 +67,10 @@ def _patch_drive(revs: dict[str, str | None]):
     stack.enter_context(
         patch(
             "knowlet.core.sync.files.list_appdata_revisions",
-            return_value=revs,
+            return_value={
+                fid: DriveFileBrief(head_revision_id=rev, name=None)
+                for fid, rev in revs.items()
+            },
         )
     )
     return stack

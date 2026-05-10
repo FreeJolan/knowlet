@@ -161,6 +161,10 @@ export interface SyncNotification {
   detected_at: string;
   new_revision: string | null;
   drive_file_name: string | null;
+  /** Human-friendly title pulled from local note frontmatter. The
+   *  Drive filename is a ULID (per ADR-0006 on-disk convention),
+   *  so callers should prefer this for display. */
+  note_title?: string | null;
   removed: boolean;
 }
 

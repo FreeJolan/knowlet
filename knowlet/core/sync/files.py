@@ -200,30 +200,44 @@ def get_file_metadata(service: Any, file_id: str) -> DriveFile:
     return _file_resource_to_drive_file(res)
 
 
-def list_appdata_revisions(service: Any) -> dict[str, str | None]:
-    """Slice 5.D.3.A — bulk fetch ``file_id → headRevisionId`` for
+@dataclass(frozen=True)
+class DriveFileBrief:
+    """Minimal fields we pull for the bulk reconciliation path —
+    just enough to attribute changes back to local notes and render
+    a friendly row label in the inbox."""
+
+    head_revision_id: str | None
+    name: str | None
+
+
+def list_appdata_revisions(service: Any) -> dict[str, DriveFileBrief]:
+    """Slice 5.D.3.A — bulk fetch ``file_id → DriveFileBrief`` for
     every file in the appDataFolder. One paginated round-trip
     regardless of file count, so the conflict-detection path stays
     cheap as a vault grows.
 
     Drive caps page size at 1000; few users will have >1000 synced
     notes, so the loop usually exits after the first call. Tracked
-    files no longer present on Drive map to ``None`` — caller treats
-    that as a "remote was deleted/trashed" conflict signal.
+    files no longer present on Drive aren't in the returned dict —
+    caller treats that as a "remote was deleted/trashed" conflict
+    signal.
     """
-    out: dict[str, str | None] = {}
+    out: dict[str, DriveFileBrief] = {}
     page_token: str | None = None
     while True:
         kwargs: dict[str, Any] = {
             "spaces": "appDataFolder",
-            "fields": "nextPageToken, files(id,headRevisionId)",
+            "fields": "nextPageToken, files(id,name,headRevisionId)",
             "pageSize": 1000,
         }
         if page_token:
             kwargs["pageToken"] = page_token
         resp = service.files().list(**kwargs).execute()
         for f in resp.get("files", []):
-            out[str(f.get("id"))] = f.get("headRevisionId")
+            out[str(f.get("id"))] = DriveFileBrief(
+                head_revision_id=f.get("headRevisionId"),
+                name=f.get("name"),
+            )
         page_token = resp.get("nextPageToken")
         if not page_token:
             break

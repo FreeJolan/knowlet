@@ -195,8 +195,8 @@ class SyncPoller:
                     and row.dismissed_until > now
                 ):
                     continue
-                current_rev = drive_revisions.get(row.drive_file_id)
-                if current_rev is None:
+                brief = drive_revisions.get(row.drive_file_id)
+                if brief is None:
                     # Drive says this file no longer exists. Treat
                     # as a removed-on-remote conflict so the user
                     # decides whether to push back from local or
@@ -212,18 +212,15 @@ class SyncPoller:
                         )
                     )
                     continue
-                if current_rev == row.last_known_etag:
+                if brief.head_revision_id == row.last_known_etag:
                     continue  # in sync
-                # Real divergence. We don't have the remote name in
-                # the bulk listing's minimal fields; the conflict
-                # dialog will fetch it on demand.
                 new_pending.append(
                     RemoteChangeNotification(
                         note_id=row.entity_id,
                         drive_file_id=row.drive_file_id,
                         detected_at=now,
-                        new_revision=current_rev,
-                        drive_file_name=None,
+                        new_revision=brief.head_revision_id,
+                        drive_file_name=brief.name,
                         removed=False,
                     )
                 )

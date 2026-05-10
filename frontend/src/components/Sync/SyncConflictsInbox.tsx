@@ -243,10 +243,12 @@ export function SyncConflictsInbox({
                       data-testid="sync-inbox-row-resolve"
                       className="flex-1 min-w-0 text-left"
                     >
-                      <div className="font-mono text-[12px] truncate">
-                        {n.drive_file_name || n.note_id}
+                      <div className="text-[13px] truncate">
+                        {n.note_title || n.drive_file_name || n.note_id}
                       </div>
-                      <div className="text-[11px] text-muted-foreground">
+                      <div className="text-[11px] text-muted-foreground font-mono truncate">
+                        {n.note_id}
+                        {" · "}
                         {n.removed
                           ? t("sync.removed")
                           : t("syncInbox.detectedAt", {

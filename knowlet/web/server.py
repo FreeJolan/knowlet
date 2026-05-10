@@ -1006,6 +1006,25 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         poller = getattr(app.state, "sync_poller", None)
         if poller is None:
             return {"running": False, "notifications": [], "health": {}}
+        # Enrich with the human-friendly note title from local
+        # frontmatter. Drive filenames are ULID-shaped (the on-disk
+        # convention from ADR-0006); the inbox should show real
+        # titles. This is a per-poll cost of ~1 file read per
+        # pending row — negligible at any realistic conflict count.
+        notifications = poller.pending_notifications()
+        title_by_id: dict[str, str] = {}
+        if notifications:
+            from knowlet.core.note import Note
+
+            wanted = {n.note_id for n in notifications}
+            for path in vault.iter_note_paths():
+                if path.stem not in wanted:
+                    continue
+                try:
+                    note = Note.from_file(path)
+                    title_by_id[note.id] = note.title
+                except Exception:
+                    pass
         return {
             "running": True,
             "health": poller.health(),
@@ -1016,9 +1035,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     "detected_at": n.detected_at,
                     "new_revision": n.new_revision,
                     "drive_file_name": n.drive_file_name,
+                    "note_title": title_by_id.get(n.note_id),
                     "removed": n.removed,
                 }
-                for n in poller.pending_notifications()
+                for n in notifications
             ],
         }
 
