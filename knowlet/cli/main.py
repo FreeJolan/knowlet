@@ -27,6 +27,7 @@ from knowlet.cli import graph as graph_cli
 from knowlet.cli import mining as mining_cli
 from knowlet.cli import notes as notes_cli
 from knowlet.cli import quiz as quiz_cli
+from knowlet.cli import sync as sync_cli
 from knowlet.cli import tags as tags_cli
 from knowlet.cli import user as user_cli
 from knowlet.cli import vault as vault_cli
@@ -70,6 +71,7 @@ app.add_typer(tags_cli.app, name="tags")
 app.add_typer(graph_cli.app, name="graph")
 app.add_typer(events_cli.app, name="events")
 app.add_typer(backups_cli.app, name="backups")
+app.add_typer(sync_cli.app, name="sync")
 
 
 # ------------------------------------------------------------------ root

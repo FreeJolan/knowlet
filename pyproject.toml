@@ -37,6 +37,14 @@ dependencies = [
 embed = [
     "sentence-transformers>=2.7",
 ]
+# Phase 2 E Slice 5.A — opt-in Google Drive sync (ADR-0027). Kept as an
+# extra so single-device users don't pull ~10 MB of OAuth + Google API
+# client deps. Install with `uv pip install -e ".[sync]"`.
+sync = [
+    "google-auth>=2.30",
+    "google-auth-oauthlib>=1.2",
+    "google-api-python-client>=2.130",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
@@ -115,6 +123,19 @@ module = [
     "watchdog.*",
     "sentence_transformers",
     "sentence_transformers.*",
+    # Phase 2 E Slice 5.A — Google client libs (optional [sync] extra).
+    # They ship without py.typed markers; we allow Any at the boundary
+    # and keep the rest of knowlet typed. The wrapper in
+    # knowlet/core/sync/ surfaces narrow typed shapes (DriveIdentity,
+    # ConnectResult, etc.) so callers don't see the untyped Any.
+    "google.auth",
+    "google.auth.*",
+    "google.oauth2",
+    "google.oauth2.*",
+    "google_auth_oauthlib",
+    "google_auth_oauthlib.*",
+    "googleapiclient",
+    "googleapiclient.*",
 ]
 ignore_missing_imports = true
 

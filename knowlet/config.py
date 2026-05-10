@@ -70,12 +70,33 @@ class WebSearchConfig(BaseModel):
     max_per_turn: int = 3  # hard ceiling per turn; tool raises beyond
 
 
+class SyncConfig(BaseModel):
+    """Phase 2 E Slice 5.A — opt-in Drive sync (ADR-0027).
+
+    Empty by default. ``client_secrets_path`` is the user-provided
+    Google OAuth client (downloaded from their own GCP project's
+    Credentials page). knowlet does NOT bundle a shared client —
+    requiring users to bring their own keeps trust local and avoids
+    a single point of compromise for the whole user base.
+    """
+
+    # Path to the user's OAuth client_secret.json. May be absolute
+    # or relative to the vault root. Empty = sync not configured.
+    client_secrets_path: str = ""
+    # Where the per-user tokens live. Default = inside .knowlet/ so
+    # they ride along with the vault and stay private to the
+    # local machine if .knowlet/ is excluded from cloud sync (per
+    # ADR-0006 §40 default).
+    token_path: str = ".knowlet/sync_credentials.json"
+
+
 class KnowletConfig(BaseModel):
     general: GeneralConfig = Field(default_factory=GeneralConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
+    sync: SyncConfig = Field(default_factory=SyncConfig)
 
 
 class VaultNotFoundError(RuntimeError):
