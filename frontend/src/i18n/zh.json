@@ -324,6 +324,21 @@
     "syncing": "同步中…",
     "editing": "编辑中"
   },
+  "syncMode": {
+    "label": "同步模式",
+    "description": "knowlet 如何处理未解决的冲突。",
+    "auto": "Auto",
+    "autoHint": "默认。冲突进 inbox,不阻断使用。",
+    "strict": "Strict",
+    "strictHint": "任何未解决的冲突都阻断应用,逼你处理(多设备场景)。",
+    "lax": "宽松",
+    "laxHint": "冲突进 inbox 安静处理,绝不阻断。当前与 Auto 等价。",
+    "blockingTitle": "请先解决冲突再继续",
+    "blockingSubtitle": "Strict 模式生效中,{{count}} 处冲突阻挡了工作。",
+    "blockingNoun_one": "冲突",
+    "blockingNoun_other": "冲突",
+    "blockingHint": "点击列表项进入 merge。所有冲突解决后应用自动解锁。"
+  },
   "syncInbox": {
     "chipLabel_one": "{{count}} 处同步冲突",
     "chipLabel_other": "{{count}} 处同步冲突",
@@ -380,6 +395,8 @@
     "allMine": "全部用我的",
     "allTheirs": "全部用云端",
     "allBoth": "全部都保留",
+    "reset": "重置",
+    "resetHint": "回到 auto-accept 默认值,清除你之前的选择。",
     "pendingCount_one": "还有 {{count}} 处差异未决",
     "pendingCount_other": "还有 {{count}} 处差异未决",
     "pushToMerged": "推到合并结果",

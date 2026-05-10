@@ -9,10 +9,16 @@
  * (sync / hotkeys / vault) slot into the same dialog.
  */
 
-import { Monitor, Moon, Sun } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CloudOff, Monitor, Moon, ShieldAlert, Sun, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import {
+  getSyncMode,
+  setSyncMode as apiSetSyncMode,
+  type SyncModeResponse,
+} from "@/api/client";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +26,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { QK } from "@/lib/queryClient";
 import {
   getThemePreference,
   resolveTheme,
@@ -93,9 +100,104 @@ export function SettingsDialog({ open, onClose }: Props) {
               })}
             </div>
           )}
+
+          <div className="mt-6">
+            <SyncModePicker />
+          </div>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function SyncModePicker(): React.ReactNode {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const q = useQuery<SyncModeResponse>({
+    queryKey: QK.syncMode,
+    queryFn: getSyncMode,
+    staleTime: 5 * 60_000,
+  });
+  const mut = useMutation({
+    mutationFn: apiSetSyncMode,
+    onSuccess: (resp) => {
+      qc.setQueryData(QK.syncMode, resp);
+      // Strict mode might want to escalate the inbox immediately —
+      // refetching conflicts so the chip / blocking modal reacts.
+      void qc.invalidateQueries({ queryKey: QK.syncConflicts });
+    },
+  });
+
+  const current = q.data?.mode ?? "auto";
+
+  return (
+    <Section title={t("syncMode.label")}>
+      <div className="text-muted-foreground mb-2 w-full text-xs">
+        {t("syncMode.description")}
+      </div>
+      <ModePill
+        icon={<Zap size={14} />}
+        label={t("syncMode.auto")}
+        hint={t("syncMode.autoHint")}
+        active={current === "auto"}
+        onClick={() => mut.mutate("auto")}
+        testid="sync-mode-pill-auto"
+      />
+      <ModePill
+        icon={<ShieldAlert size={14} />}
+        label={t("syncMode.strict")}
+        hint={t("syncMode.strictHint")}
+        active={current === "strict"}
+        onClick={() => mut.mutate("strict")}
+        testid="sync-mode-pill-strict"
+      />
+      <ModePill
+        icon={<CloudOff size={14} />}
+        label={t("syncMode.lax")}
+        hint={t("syncMode.laxHint")}
+        active={current === "lax"}
+        onClick={() => mut.mutate("lax")}
+        testid="sync-mode-pill-lax"
+      />
+    </Section>
+  );
+}
+
+function ModePill({
+  icon,
+  label,
+  hint,
+  active,
+  onClick,
+  testid,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  hint: string;
+  active: boolean;
+  onClick: () => void;
+  testid: string;
+}): React.ReactNode {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testid}
+      aria-pressed={active}
+      title={hint}
+      className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors"
+      style={{
+        background: active
+          ? "var(--accent-soft, rgba(91, 122, 156, 0.18))"
+          : "transparent",
+        color: active ? "var(--accent-2, #34495e)" : "var(--ink, #2a2823)",
+        borderColor: active ? "var(--accent, #5b7a9c)" : "var(--line)",
+        fontWeight: active ? 500 : 400,
+      }}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
   );
 }
 

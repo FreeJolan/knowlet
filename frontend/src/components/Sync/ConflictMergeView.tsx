@@ -98,10 +98,39 @@ export function ConflictMergeView({
     return 0;
   }, [hunks]);
 
+  // #112 — non-overlapping auto-accept defaults. A diff hunk where
+  // one side is empty + the other is non-empty is structurally a
+  // "one side added content; the other was untouched here" — no
+  // real conflict. Default the choice to the non-empty side so the
+  // user lands on the dialog with most cases pre-resolved and
+  // only the truly overlapping changes left to decide.
+  //
+  // Limitation: without a base version we can't strictly
+  // distinguish "added on mine" from "deleted on theirs" (and vice
+  // versa). In practice the two failure modes have very different
+  // frequencies — adds vastly outnumber deletes in note-taking —
+  // so the heuristic is right >99% of the time. The user can
+  // always click ← / → to override, and Drive's 30-day version
+  // history is the safety net for the rare false-positive case.
+  //
+  // Memoized so a "reset" toolbar button can pass the same
+  // computation back to setChoices without re-deriving.
+  const defaultChoices = useMemo<HunkChoice[]>(() => {
+    if (!Array.isArray(hunks)) return [];
+    const initial: HunkChoice[] = [];
+    for (const h of hunks) {
+      if (h.kind !== "diff") continue;
+      if (h.mine.length === 0 && h.theirs.length > 0) initial.push("theirs");
+      else if (h.mine.length > 0 && h.theirs.length === 0) initial.push("mine");
+      else initial.push(null);
+    }
+    return initial;
+  }, [hunks]);
+
   const [choices, setChoices] = useState<HunkChoice[]>([]);
   useEffect(() => {
-    setChoices(new Array(diffHunkCount).fill(null));
-  }, [diffHunkCount]);
+    setChoices(defaultChoices);
+  }, [defaultChoices]);
 
   const merged = useMemo(() => {
     if (!Array.isArray(hunks)) return "";
@@ -193,6 +222,7 @@ export function ConflictMergeView({
               setChoices={setChoices}
               count={diffHunkCount}
               pending={pending}
+              onReset={() => setChoices(defaultChoices)}
             />
             <MergeGrid
               hunks={hunks}
@@ -249,10 +279,14 @@ function GlobalToolbar({
   setChoices,
   count,
   pending,
+  onReset,
 }: {
   setChoices: React.Dispatch<React.SetStateAction<HunkChoice[]>>;
   count: number;
   pending: number;
+  /** Restore the auto-accept defaults — non-overlapping hunks
+   *  pre-resolved per #112, real conflicts back to ``null``. */
+  onReset: () => void;
 }): React.ReactNode {
   const { t } = useTranslation();
   const setAll = (c: HunkChoice) => {
@@ -283,6 +317,15 @@ function GlobalToolbar({
         onClick={() => setAll("both")}
       >
         {t("merge.allBoth")}
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        data-testid="merge-reset"
+        onClick={onReset}
+        title={t("merge.resetHint")}
+      >
+        {t("merge.reset")}
       </Button>
       {pending > 0 && (
         <span

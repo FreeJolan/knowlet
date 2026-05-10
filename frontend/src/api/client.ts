@@ -119,6 +119,23 @@ export const runPreflight = (): Promise<PreflightReport> =>
 export const getConflicts = (): Promise<PreflightReport> =>
   request("GET", "/api/sync/conflicts");
 
+// ---------- sync mode (#107b) ----------
+
+export type SyncMode = "auto" | "strict" | "lax";
+
+export interface SyncModeResponse {
+  mode: SyncMode;
+  /** What the UI should react to. Currently equal to ``mode`` —
+   *  diverges when cross-device auto-promotion lands (#107c). */
+  effective_mode: SyncMode;
+}
+
+export const getSyncMode = (): Promise<SyncModeResponse> =>
+  request("GET", "/api/sync/mode");
+
+export const setSyncMode = (mode: SyncMode): Promise<SyncModeResponse> =>
+  request("PUT", "/api/sync/mode", { mode });
+
 export const moveNote = (id: string, targetFolder: string): Promise<NoteFull> =>
   request("POST", `/api/notes/${encodeURIComponent(id)}/move`, {
     target_folder: targetFolder,

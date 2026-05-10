@@ -32,4 +32,5 @@ export const QK = {
   quickActions: ["quick-actions"] as const,
   noteSyncStatus: (id: string) => ["note-sync-status", id] as const,
   syncConflicts: ["sync-conflicts"] as const,
+  syncMode: ["sync-mode"] as const,
 };

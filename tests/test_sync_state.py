@@ -99,6 +99,40 @@ def test_device_label_defaults_to_hostname(tmp_path: Path) -> None:
 # ----------------------------------------------------- start_page_token
 
 
+def test_sync_mode_default_is_auto(tmp_path: Path) -> None:
+    store = SyncStateStore(tmp_path)
+    try:
+        assert store.sync_mode() == "auto"
+    finally:
+        store.close()
+
+
+def test_sync_mode_round_trip(tmp_path: Path) -> None:
+    store = SyncStateStore(tmp_path)
+    try:
+        store.set_sync_mode("strict")
+        assert store.sync_mode() == "strict"
+        store.set_sync_mode("lax")
+        assert store.sync_mode() == "lax"
+        store.set_sync_mode("auto")
+        assert store.sync_mode() == "auto"
+    finally:
+        store.close()
+
+
+def test_sync_mode_rejects_invalid(tmp_path: Path) -> None:
+    import pytest
+
+    store = SyncStateStore(tmp_path)
+    try:
+        with pytest.raises(ValueError):
+            store.set_sync_mode("paranoid")
+        # Bogus value never written → still default.
+        assert store.sync_mode() == "auto"
+    finally:
+        store.close()
+
+
 def test_start_page_token_round_trip(tmp_path: Path) -> None:
     store = SyncStateStore(tmp_path)
     try:

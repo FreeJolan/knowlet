@@ -325,6 +325,21 @@
     "syncing": "syncing…",
     "editing": "editing"
   },
+  "syncMode": {
+    "label": "Sync mode",
+    "description": "How knowlet handles unresolved conflicts.",
+    "auto": "Auto",
+    "autoHint": "Default — surface conflicts in the inbox; never block.",
+    "strict": "Strict",
+    "strictHint": "Block the app on any unresolved conflict (multi-device).",
+    "lax": "Quiet",
+    "laxHint": "Surface conflicts in the inbox quietly; never block. Same as Auto today.",
+    "blockingTitle": "Resolve conflicts before continuing",
+    "blockingSubtitle": "Strict mode is on. {{count}} unresolved {{noun}} block your work.",
+    "blockingNoun_one": "conflict",
+    "blockingNoun_other": "conflicts",
+    "blockingHint": "Click a row to merge. The app unlocks once all are resolved."
+  },
   "syncInbox": {
     "chipLabel_one": "{{count}} sync conflict",
     "chipLabel_other": "{{count}} sync conflicts",
@@ -381,6 +396,8 @@
     "allMine": "Use mine for everything",
     "allTheirs": "Use theirs for everything",
     "allBoth": "Take both for everything",
+    "reset": "Reset",
+    "resetHint": "Restore the auto-accepted defaults; clears your overrides.",
     "pendingCount_one": "{{count}} change still needs a choice",
     "pendingCount_other": "{{count}} changes still need a choice",
     "pushToMerged": "Push to merged",

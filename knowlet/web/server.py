@@ -129,6 +129,14 @@ class DevSeedConflictRequest(BaseModel):
     remote_text: str | None = None
 
 
+class SyncModeRequest(BaseModel):
+    """#107b — body for ``PUT /api/sync/mode``. Validation is a
+    closed three-way enum; backend re-validates so a malformed
+    request can't poison sync_state."""
+
+    mode: str
+
+
 class QuoteRefPayload(BaseModel):
     """M7.1 / M7.2: one capsule. `source = "note"` (M7.1 default) →
     the backend fetches the Note body via note_id and runs the enclosing-
@@ -1378,7 +1386,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 tmp.write_bytes(merged_bytes)
                 tmp.replace(local_path)
                 _dev_conflict_clear(store, note_id)
-                _invalidate_preflight_cache()
+                _drop_from_preflight(note_id)
                 return {
                     "drive_file_id": DEV_FAKE_DRIVE_FILE_ID,
                     "new_revision": "dev-resolved",
@@ -1429,7 +1437,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 ) from exc
         finally:
             store.close()
-        _invalidate_preflight_cache()
+        _drop_from_preflight(note_id)
         return {
             "drive_file_id": result.drive_file.id,
             "new_revision": result.drive_file.head_revision_id,
@@ -1513,7 +1521,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             _dev_conflict_clear(store, note_id)
         finally:
             store.close()
-        _invalidate_preflight_cache()
+        _drop_from_preflight(note_id)
         return {"note_id": note_id, "cleared": True}
 
     def _dev_conflict_path(note_id: str) -> Path:
@@ -1669,11 +1677,84 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         }
 
     def _invalidate_preflight_cache() -> None:
-        """Called from resolve-merge / dev-seed clear / repair so the
-        chip drops the just-resolved item without waiting for the
-        next manual scan."""
+        """Nuke the cached preflight report — used after seeds /
+        rescan-needed events. Don't use this after a single-note
+        resolve; the empty-cache → empty-conflicts → modal-unmounts
+        race in Strict mode flashes the modal away mid-resolve.
+        Use ``_drop_from_preflight`` for surgical removals."""
         state.preflight_report = None
         state.preflight_ran_at = None
+
+    def _drop_from_preflight(note_id: str) -> None:
+        """Surgical removal of one note's conflict / offline rows
+        from the cached preflight report. Used after resolve-merge,
+        repair, dev-seed-clear so the chip / Strict modal sees the
+        new count immediately without bouncing through an empty
+        cache. Safe no-op if the cache is already missing or the
+        note isn't in it.
+
+        ``synced_count`` is bumped when the dropped row was a
+        conflict (the resolve produced a synced note); offline
+        drops don't bump it because the offline state was
+        transient (no real status change happened)."""
+        from knowlet.core.sync.preflight import PreflightReport
+
+        rep = state.preflight_report
+        if rep is None:
+            return
+        was_conflict = any(c.note_id == note_id for c in rep.conflicts)
+        was_offline = any(o.note_id == note_id for o in rep.offline)
+        if not was_conflict and not was_offline:
+            return
+        new_conflicts = [c for c in rep.conflicts if c.note_id != note_id]
+        new_offline = [o for o in rep.offline if o.note_id != note_id]
+        state.preflight_report = PreflightReport(
+            conflicts=new_conflicts,
+            offline=new_offline,
+            auto_pulled_ids=list(rep.auto_pulled_ids),
+            synced_count=rep.synced_count + (1 if was_conflict else 0),
+            dirty_count=rep.dirty_count,
+            scanned=rep.scanned,
+            unauthenticated=rep.unauthenticated,
+        )
+
+    # ---------------- sync mode (#107b) ---------------------------
+    # User-selected behavior: auto / strict / lax. Strict mode shows
+    # the conflicts list as a blocking modal in the UI; lax disables
+    # the blocking; auto matches lax today and will auto-promote to
+    # strict once cross-device heartbeats land (#107c). The
+    # ``effective_mode`` field is the value the UI should react to —
+    # for now equal to ``mode``; the auto-promotion path will diverge
+    # the two when implemented.
+
+    @app.get("/api/sync/mode")
+    def get_sync_mode() -> dict[str, Any]:
+        from knowlet.core.sync.state import SyncStateStore
+
+        store = SyncStateStore(vault.root)
+        try:
+            mode = store.sync_mode()
+        finally:
+            store.close()
+        return {"mode": mode, "effective_mode": mode}
+
+    @app.put("/api/sync/mode")
+    def put_sync_mode(body: SyncModeRequest) -> dict[str, Any]:
+        from knowlet.core.sync.state import SyncStateStore
+
+        store = SyncStateStore(vault.root)
+        try:
+            try:
+                store.set_sync_mode(body.mode)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
+            new_mode = store.sync_mode()
+        finally:
+            store.close()
+        return {"mode": new_mode, "effective_mode": new_mode}
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:

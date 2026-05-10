@@ -207,6 +207,23 @@ class SyncStateStore:
     def set_start_page_token(self, token: str) -> None:
         self._set_meta("start_page_token", token)
 
+    # --------------------------------------------------- sync mode (#107b)
+
+    def sync_mode(self) -> str:
+        """One of "auto" / "strict" / "lax". Default "auto" — current
+        behavior matches "lax" (inbox only, no blocking modal); the
+        cross-device heartbeat slice (#107c) will let auto promote
+        itself to strict when a second device shows up."""
+        cached = self._get_meta("sync_mode")
+        if cached in {"auto", "strict", "lax"}:
+            return cached
+        return "auto"
+
+    def set_sync_mode(self, mode: str) -> None:
+        if mode not in {"auto", "strict", "lax"}:
+            raise ValueError(f"invalid sync_mode: {mode!r}")
+        self._set_meta("sync_mode", mode)
+
     # --------------------------------------------------- file_state
 
     @staticmethod

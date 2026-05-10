@@ -31,11 +31,17 @@ import { useTranslation } from "react-i18next";
 
 import {
   getConflicts,
+  getSyncMode,
   type PreflightConflict,
   type PreflightReport,
   runPreflight,
+  type SyncModeResponse,
 } from "@/api/client";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+} from "@/components/ui/dialog";
 import {
   Popover,
   PopoverContent,
@@ -64,6 +70,11 @@ export function ConflictsChip({
     refetchInterval: POLL_MS,
     refetchOnWindowFocus: false,
   });
+  const mode = useQuery<SyncModeResponse>({
+    queryKey: QK.syncMode,
+    queryFn: getSyncMode,
+    staleTime: 5 * 60_000,
+  });
 
   // First-mount preflight: fire the scan once after we've seen the
   // initial cache GET come back. If the cache is empty (server has
@@ -91,6 +102,9 @@ export function ConflictsChip({
   if (conflicts.data.unauthenticated) return null;
   const conflictCount = conflicts.data.conflicts.length;
   const offlineCount = conflicts.data.offline.length;
+  const effectiveMode = mode.data?.effective_mode ?? "auto";
+  const isStrictBlocking = effectiveMode === "strict" && conflictCount > 0;
+
   if (conflictCount === 0 && offlineCount === 0) return null;
 
   const hasReal = conflictCount > 0;
@@ -98,6 +112,22 @@ export function ConflictsChip({
   const tone = hasReal
     ? "bg-amber-100 text-amber-900 ring-amber-300 dark:bg-amber-950/40 dark:text-amber-100"
     : "bg-muted text-muted-foreground ring-foreground/10";
+
+  // Strict mode + at least one real conflict → render the blocking
+  // modal instead of the Popover. The modal can't be dismissed
+  // (showCloseButton={false}, no overlay-click escape) — once the
+  // user resolves the last conflict the chip auto-hides because
+  // ``conflictCount`` drops to zero on the next refetch.
+  if (isStrictBlocking) {
+    return (
+      <BlockingConflictsModal
+        report={conflicts.data}
+        onOpenNote={onOpenNote}
+        onRefresh={() => refresh.mutate()}
+        refreshing={refresh.isPending}
+      />
+    );
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -284,6 +314,78 @@ function formatRowSubtitle(
     });
   }
   return t("syncInbox.noteRowEditedBy", { when });
+}
+
+
+function BlockingConflictsModal({
+  report,
+  onOpenNote,
+  onRefresh,
+  refreshing,
+}: {
+  report: PreflightReport;
+  onOpenNote: (noteId: string) => void;
+  onRefresh: () => void;
+  refreshing: boolean;
+}): React.ReactNode {
+  const { t } = useTranslation();
+  const count = report.conflicts.length;
+  // Always-open dialog with no close affordance: ``onOpenChange`` is
+  // intentionally a no-op so users can't escape by ESC / overlay
+  // click. The modal disappears only when ``conflictCount`` drops
+  // to 0, at which point the parent ConflictsChip stops rendering it.
+  return (
+    <Dialog open onOpenChange={() => {}}>
+      <DialogContent
+        data-testid="strict-blocking-modal"
+        showCloseButton={false}
+        className="!flex flex-col top-[10vh] left-1/2 -translate-x-1/2 translate-y-0 w-[90vw] sm:max-w-lg max-h-[80vh] gap-3 overflow-hidden"
+        onEscapeKeyDown={(e) => e.preventDefault()}
+        onPointerDownOutside={(e) => e.preventDefault()}
+      >
+        <div className="flex shrink-0 items-start gap-3 border-b pb-3">
+          <AlertTriangle className="text-warn-fg dark:text-warn-fg-dark mt-0.5 size-5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="font-heading text-base font-medium leading-snug">
+              {t("syncMode.blockingTitle")}
+            </div>
+            <div className="text-muted-foreground mt-1 text-xs">
+              {t("syncMode.blockingSubtitle", {
+                count,
+                noun: t("syncMode.blockingNoun", { count }),
+              })}
+            </div>
+            <div className="text-muted-foreground mt-1 text-xs">
+              {t("syncMode.blockingHint")}
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onRefresh}
+            disabled={refreshing}
+            aria-label={t("syncInbox.refresh")}
+          >
+            <RefreshCw
+              className={`size-4 ${refreshing ? "animate-spin" : ""}`}
+            />
+          </Button>
+        </div>
+        <ul
+          data-testid="strict-blocking-list"
+          className="min-h-0 flex-1 overflow-y-auto"
+        >
+          {report.conflicts.map((c) => (
+            <ConflictRow
+              key={c.note_id}
+              conflict={c}
+              onOpenNote={onOpenNote}
+            />
+          ))}
+        </ul>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 
