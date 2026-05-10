@@ -281,3 +281,120 @@ def test_restore_note_collision_raises(tmp_path):
 
     with pytest.raises(FileExistsError):
         v.restore_note(trashed)
+
+
+# ----------------------------------------------------- Phase 2 E Slice 4.C
+# Note frontmatter v2 — `status` field + lazy migration from v1.
+
+
+def test_status_defaults_to_active() -> None:
+    """A fresh Note constructed without an explicit status starts
+    in `active` (the only sensible default per ADR-0023 §7)."""
+    n = Note(id=new_id(), title="x", body="b")
+    assert n.status == "active"
+
+
+def test_status_round_trips_via_frontmatter(tmp_path):
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+    n = Note(id=new_id(), title="t", body="b", status="needs-update")
+    path = v.write_note(n)
+    raw = path.read_text(encoding="utf-8")
+    assert "status: needs-update" in raw
+    re_read = Note.from_file(path)
+    assert re_read.status == "needs-update"
+
+
+def test_v2_emit_includes_schema_version(tmp_path):
+    """to_markdown must always stamp the current schema_version on
+    write — that's how lazy migration upgrades v1 files to v2 on the
+    next edit (ADR-0018 §1)."""
+    from knowlet.core.note import NOTE_SCHEMA_VERSION
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+    n = Note(id=new_id(), title="t", body="b")
+    path = v.write_note(n)
+    raw = path.read_text(encoding="utf-8")
+    assert f"schema_version: {NOTE_SCHEMA_VERSION}" in raw
+    assert NOTE_SCHEMA_VERSION >= 2
+
+
+def test_v1_file_reads_as_active_status(tmp_path):
+    """A note hand-written with no `status` and no `schema_version`
+    (legacy v1 shape) reads back with status=active. This is the
+    forward-compat contract of ADR-0018 §1: code at N reads N-1."""
+    legacy = tmp_path / "01ABC.md"
+    legacy.write_text(
+        "---\n"
+        "id: 01ABC\n"
+        "title: legacy\n"
+        "---\n"
+        "body\n",
+        encoding="utf-8",
+    )
+    n = Note.from_file(legacy)
+    assert n.schema_version == 1  # preserved as-read
+    assert n.status == "active"  # forward-compat default
+
+
+def test_v1_file_writes_back_as_v2(tmp_path):
+    """Lazy migration: open a v1 file (no status, no schema_version
+    on disk), write it back via the normal Vault path, and observe
+    that the saved file is now v2 with status stamped."""
+    from knowlet.core.note import NOTE_SCHEMA_VERSION
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+    legacy = v.notes_dir / "01ABC.md"
+    legacy.write_text(
+        "---\n"
+        "id: 01ABC\n"
+        "title: legacy\n"
+        "---\n"
+        "body\n",
+        encoding="utf-8",
+    )
+    n = Note.from_file(legacy)
+    # Re-write via Vault.
+    v.write_note(n)
+    raw = legacy.read_text(encoding="utf-8")
+    assert f"schema_version: {NOTE_SCHEMA_VERSION}" in raw
+    assert "status: active" in raw
+
+
+def test_invalid_status_value_falls_back_to_active(tmp_path):
+    """A bogus status value (typo, hand-edit gone wrong) does NOT
+    crash the read — it logs a warning and degrades to `active`.
+    Next write rewrites with a clean valid value."""
+    bogus = tmp_path / "01XYZ.md"
+    bogus.write_text(
+        "---\n"
+        "id: 01XYZ\n"
+        "title: bogus\n"
+        "schema_version: 2\n"
+        "status: total-nonsense\n"
+        "---\n"
+        "body\n",
+        encoding="utf-8",
+    )
+    n = Note.from_file(bogus)
+    assert n.status == "active"
+
+
+def test_all_status_values_round_trip(tmp_path):
+    """Every NoteStatus value writes + reads identically."""
+    from knowlet.core.note import NOTE_STATUSES
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+    for s in NOTE_STATUSES:
+        n = Note(id=new_id(), title=f"t-{s}", body="b", status=s)  # type: ignore[arg-type]
+        path = v.write_note(n)
+        re_read = Note.from_file(path)
+        assert re_read.status == s, f"round-trip lost {s!r}"

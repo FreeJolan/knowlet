@@ -19,9 +19,23 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal, get_args
 
 import frontmatter
 from ulid import ULID
+
+# Phase 2 E Slice 4.C — Note frontmatter v2 status (ADR-0023 §7).
+# `active`        — default; the note is live and current.
+# `stub`          — auto-detectable as undercooked (e.g. body < 100
+#                   chars + zero wikilinks); flagged in lint.
+# `needs-update`  — linter saw a newer source contradict this page.
+#                   ADR-0024 §5 B forbids the linter from rewriting
+#                   body — it can only flip the status.
+# `deprecated`    — user-marked superseded; stays around for
+#                   backlinks but de-prioritized in search.
+NoteStatus = Literal["active", "stub", "needs-update", "deprecated"]
+NOTE_STATUSES: tuple[str, ...] = get_args(NoteStatus)
+DEFAULT_NOTE_STATUS: NoteStatus = "active"
 
 
 def now_iso() -> str:
@@ -48,11 +62,16 @@ def slugify(title: str, max_len: int = 40) -> str:
 
 # Frontmatter schema version. Bump this whenever a Note field is added,
 # removed, or has its serialization changed in a way old code can't read.
-# Notes without `schema_version` in frontmatter are treated as v1 (pre-
-# tagging era — same shape, just unmarked). Migration policy: code at
-# major version N must be able to read notes written by major version
-# N-1 without manual intervention. ADR-0006-2 (planned) will codify this.
-NOTE_SCHEMA_VERSION = 1
+#
+# v1 (pre-2026-05-10) — no `status` field.
+# v2 (2026-05-10, ADR-0023 §7) — adds `status` (NoteStatus enum). v1
+#   notes default to `active` on read; on the next write they're
+#   re-stamped as v2 (lazy migration per ADR-0018 §1).
+#
+# Migration policy: code at schema_version = N must be able to read
+# notes written by N-1 without manual intervention. Newer-than-known
+# raises (we never silently truncate user data).
+NOTE_SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -72,6 +91,10 @@ class Note:
     source: str | None = None
     path: Path | None = None
     schema_version: int = NOTE_SCHEMA_VERSION
+    # Phase 2 E Slice 4.C — Note lifecycle status. v1 notes default
+    # to "active" on read; the field is always emitted on write so
+    # the frontmatter stays self-describing.
+    status: NoteStatus = DEFAULT_NOTE_STATUS
     # When the note is in `notes/.trash/`, this captures the folder
     # (relative to `notes/`) it was sitting in before deletion. `None`
     # when the note is live or when the trash entry pre-dates this
@@ -100,11 +123,15 @@ class Note:
         return h.hexdigest()
 
     def to_markdown(self) -> str:
+        # Always stamp with the current schema_version on write — that
+        # gives lazy migration of v1 files (next edit upgrades them
+        # to v2) per ADR-0018 §1.
         meta: dict[str, object] = {
-            "schema_version": self.schema_version,
+            "schema_version": NOTE_SCHEMA_VERSION,
             "id": self.id,
             "title": self.title,
             "tags": list(self.tags),
+            "status": self.status,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -123,11 +150,31 @@ class Note:
             post = frontmatter.load(f)
         meta = post.metadata
         # Pre-versioned notes default to v1 — same shape, just unmarked.
-        # When v2 lands, code here will branch on schema_version.
         try:
             schema_version = int(meta.get("schema_version") or 1)
         except (TypeError, ValueError):
             schema_version = 1
+        # Status: present on v2+; default "active" on v1 / missing /
+        # invalid value (forward-compat per ADR-0018 §1). We don't
+        # silently coerce a typo into a valid enum — invalid values
+        # log + degrade to default; the next write re-stamps a clean
+        # value.
+        status_raw = meta.get("status")
+        if status_raw in NOTE_STATUSES:
+            status: NoteStatus = status_raw
+        else:
+            if status_raw is not None and schema_version >= 2:
+                # Schema claims v2 but status is bogus — surface for
+                # the doctor command without raising.
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "note %s has invalid status %r; defaulting to %s",
+                    path.name,
+                    status_raw,
+                    DEFAULT_NOTE_STATUS,
+                )
+            status = DEFAULT_NOTE_STATUS
         trashed_from_raw = meta.get("trashed_from")
         trashed_from = str(trashed_from_raw) if trashed_from_raw is not None else None
         return cls(
@@ -141,5 +188,6 @@ class Note:
             source=meta.get("source"),
             path=path,
             schema_version=schema_version,
+            status=status,
             trashed_from=trashed_from,
         )
