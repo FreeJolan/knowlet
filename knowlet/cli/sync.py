@@ -152,22 +152,137 @@ def sync_connect(
         raise typer.Exit(code=1) from exc
 
 
+@app.command("pull")
+def sync_pull(
+    reset_token: Annotated[
+        bool,
+        typer.Option(
+            "--reset-token",
+            help="Discard the cached startPageToken and re-bootstrap from now. "
+            "Use after a long offline period if you only want to "
+            "resume tracking from this moment forward, not replay history.",
+        ),
+    ] = False,
+) -> None:
+    """Phase 2 E Slice 5.B — read-only Drive Changes API pull.
+
+    Reports what's changed in your Drive since the last pull. No
+    local file is touched; this is the foundation that 5.C+ build
+    the actual sync logic on top of.
+
+    First run on a fresh vault calls ``changes.getStartPageToken``
+    to bootstrap the cursor (so we don't replay the user's whole
+    Drive history); subsequent runs pull only what's changed since.
+    """
+    vault = resolve_vault_or_die()
+    cfg = load_config_or_default(vault)
+    _, tok_path = _resolve_paths(vault.root, cfg.sync)
+    from knowlet.core.sync.credentials import load_credentials
+
+    creds = load_credentials(tok_path)
+    if creds is None:
+        err_console.print(
+            "[red]Not connected.[/red] Run "
+            "[bold]knowlet sync connect[/bold] first."
+        )
+        raise typer.Exit(code=2)
+
+    try:
+        from knowlet.core.sync import (
+            SyncDependenciesMissingError,
+            require_google_libs,
+        )
+        from knowlet.core.sync.changes import (
+            get_initial_start_page_token,
+            list_all_changes,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.state import SyncStateStore
+
+        require_google_libs()
+        client = DriveClient(creds)
+        state = SyncStateStore(vault.root)
+        try:
+            device_id = state.device_id()
+            device_label = state.device_label()
+            console.print(
+                f"[dim]device_id={device_id}  label={device_label}[/dim]"
+            )
+
+            cached_token = state.start_page_token()
+            if reset_token or cached_token is None:
+                token = get_initial_start_page_token(client)
+                state.set_start_page_token(token)
+                if cached_token is None:
+                    console.print(
+                        f"[green]Bootstrapped[/green] startPageToken={token}. "
+                        "First sync — no history replayed; future pulls will "
+                        "report changes from now on."
+                    )
+                else:
+                    console.print(
+                        f"[yellow]Reset[/yellow] startPageToken={token}."
+                    )
+                return
+
+            changes, new_token = list_all_changes(
+                client, page_token=cached_token
+            )
+            state.set_start_page_token(new_token)
+            console.print(
+                f"[green]Pulled[/green] {len(changes)} change(s); "
+                f"new token cached."
+            )
+            for c in changes[:20]:
+                marker = (
+                    "[red]REMOVED[/red]"
+                    if c.removed
+                    else "[yellow]TRASHED[/yellow]"
+                    if c.trashed
+                    else "[green]UPDATED[/green]"
+                )
+                name = (c.file or {}).get("name") or "(no metadata)"
+                console.print(f"  {marker}  {c.file_id}  {name}")
+            if len(changes) > 20:
+                console.print(f"  [dim]… {len(changes) - 20} more[/dim]")
+        finally:
+            state.close()
+    except SyncDependenciesMissingError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=3) from exc
+
+
 @app.command("disconnect")
 def sync_disconnect() -> None:
-    """Delete the local tokens. Does NOT revoke server-side access —
-    the user must visit Google's account permissions page if they
-    want to fully revoke. We print the link so it's one click away."""
+    """Delete the local tokens + reset sync state. Does NOT revoke
+    server-side access — the user must visit Google's account
+    permissions page if they want to fully revoke. We print the
+    link so it's one click away.
+
+    The local device_id is preserved in sync_state.sqlite so a
+    later reconnect from the same machine doesn't masquerade as
+    a "new device" to the auto-detection path (ADR-0027 §4)."""
     vault = resolve_vault_or_die()
     cfg = load_config_or_default(vault)
     _, tok_path = _resolve_paths(vault.root, cfg.sync)
     from knowlet.core.sync.credentials import delete_credentials
+    from knowlet.core.sync.state import SyncStateStore
 
     removed = delete_credentials(tok_path)
+    state = SyncStateStore(vault.root)
+    try:
+        state.clear()
+    finally:
+        state.close()
     if removed:
-        console.print(f"[green]Disconnected.[/green] Removed {tok_path}.")
+        console.print(
+            f"[green]Disconnected.[/green] Removed {tok_path} and "
+            "cleared sync_state.sqlite (device_id preserved)."
+        )
     else:
         console.print(
-            "[yellow]Not connected — nothing to remove.[/yellow]"
+            "[yellow]No local tokens to remove[/yellow] — sync state "
+            "still cleared."
         )
     console.print(
         "Server-side revoke (manual): "

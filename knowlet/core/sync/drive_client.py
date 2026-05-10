@@ -40,7 +40,12 @@ class DriveClient:
         self._credentials = credentials
         self._service: Any | None = None
 
-    def _build_service(self) -> Any:
+    def service(self) -> Any:
+        """Return the underlying googleapiclient discovery resource.
+        Lazy-built on first call. Other modules in the sync package
+        (changes, future writes) accept the service object directly
+        — keeps each Drive-API call typed at one seam (the wrapper)
+        without that seam having to enumerate every endpoint."""
         if self._service is not None:
             return self._service
         try:
@@ -64,7 +69,7 @@ class DriveClient:
         """Round-trip Drive's ``about().get`` to confirm the token
         still works AND the captured email is fresh. Used by ``sync
         status --verify`` (future) and as a smoke test in 5.A."""
-        service = self._build_service()
+        service = self.service()
         about = (
             service.about()
             .get(fields="user(emailAddress,displayName)")
