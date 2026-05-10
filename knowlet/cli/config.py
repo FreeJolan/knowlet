@@ -91,10 +91,21 @@ def config_set(
     vault = resolve_vault_or_die()
     cfg = load_config_or_default(vault)
     parts = key.split(".")
-    if len(parts) != 2 or parts[0] not in {"general", "llm", "embedding", "retrieval"}:
+    # Slice 5.A added sync; web_search has been here since M7. The
+    # gate exists so a typo'd section doesn't auto-vivify a new one
+    # via setattr — every legitimate section needs to be listed.
+    allowed_sections = {
+        "general",
+        "llm",
+        "embedding",
+        "retrieval",
+        "web_search",
+        "sync",
+    }
+    if len(parts) != 2 or parts[0] not in allowed_sections:
         err_console.print(
             f"[red]invalid key {key!r}; expected <section>.<field> "
-            f"where section is general | llm | embedding | retrieval[/red]"
+            f"where section is one of {sorted(allowed_sections)}[/red]"
         )
         raise typer.Exit(code=2)
     section_name, field = parts

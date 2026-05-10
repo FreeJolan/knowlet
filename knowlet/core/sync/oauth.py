@@ -32,11 +32,16 @@ from knowlet.core.sync.credentials import (
 # OAuth scope: read + write the application-created files in the
 # user's Drive. We deliberately AVOID drive.readonly / drive (full
 # access) — knowlet should only ever see the files it created.
+#
+# We deliberately do NOT also request email / profile / openid:
+# Google internally expands those into the full
+# `https://www.googleapis.com/auth/userinfo.*` URLs, oauthlib's
+# strict-scope-match check sees the literal mismatch, and the flow
+# raises mid-handshake. Drive's own ``about().get`` returns user
+# emailAddress + displayName under any drive scope, so we don't
+# need the OpenID identity scopes for what 5.A captures.
 SCOPES: tuple[str, ...] = (
     "https://www.googleapis.com/auth/drive.file",
-    "openid",
-    "email",
-    "profile",
 )
 
 
