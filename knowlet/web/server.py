@@ -1899,6 +1899,93 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "device_count": device_count,
         }
 
+    # ---------------- first-push helpers (#113) ---------------------
+    # Notes created before Drive auth was set up have no sync_state
+    # row, so the drainer ignores them. The Settings UI exposes a
+    # "Push all unpushed" button that calls these endpoints to bring
+    # those notes into the sync_state, after which the drainer
+    # handles them on its next tick (push_note's first-push path).
+
+    @app.get("/api/sync/unpushed-status")
+    def unpushed_status() -> dict[str, Any]:
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.state import SyncStateStore
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            return {"count": 0, "authenticated": False}
+        runtime = state.runtime
+        if runtime is None:
+            return {"count": 0, "authenticated": True}
+        store = SyncStateStore(vault.root)
+        try:
+            synced_ids = {
+                fs.entity_id
+                for fs in store.list_all_files()
+                if fs.entity_type == "note" and fs.drive_file_id
+            }
+        finally:
+            store.close()
+        all_notes = runtime.index.list_notes()
+        count = sum(1 for n in all_notes if n["id"] not in synced_ids)
+        return {"count": count, "authenticated": True}
+
+    @app.post("/api/sync/push-all-unpushed")
+    def push_all_unpushed() -> dict[str, Any]:
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.state import FileState, SyncStateStore
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="not authenticated to Drive",
+            )
+        runtime = state.runtime
+        if runtime is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="runtime not ready",
+            )
+        store = SyncStateStore(vault.root)
+        queued = 0
+        try:
+            synced_ids = {
+                fs.entity_id
+                for fs in store.list_all_files()
+                if fs.entity_type == "note" and fs.drive_file_id
+            }
+            for n in runtime.index.list_notes():
+                if n["id"] in synced_ids:
+                    continue
+                # Queue for first-push: drive_file_id=None tells
+                # push_note to take the upload_new_file path.
+                store.upsert_file_state(
+                    FileState(
+                        entity_type="note",
+                        entity_id=n["id"],
+                        drive_file_id=None,
+                        last_known_etag=None,
+                        last_synced_at=None,
+                        dirty=True,
+                    )
+                )
+                queued += 1
+        finally:
+            store.close()
+        # Don't tick_once() here — that would block this HTTP request
+        # while the drainer uploads possibly hundreds of notes
+        # sequentially. The daemon thread picks them up on its
+        # normal 5s cadence; user sees the chip's "Drive activity"
+        # over the next minute or two.
+        return {"queued": queued}
+
     # ---------------- background push drainer (S4 / #112) -----------
     # Wires the helper closures defined above (note lookup, conflict
     # surfacer, synced clearer) into a daemon-thread drainer that

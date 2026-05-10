@@ -142,6 +142,19 @@ export const getSyncMode = (): Promise<SyncModeResponse> =>
 export const setSyncMode = (mode: SyncMode): Promise<SyncModeResponse> =>
   request("PUT", "/api/sync/mode", { mode });
 
+// ---------- first-push (#113) ----------
+
+export interface UnpushedStatus {
+  count: number;
+  authenticated: boolean;
+}
+
+export const getUnpushedStatus = (): Promise<UnpushedStatus> =>
+  request("GET", "/api/sync/unpushed-status");
+
+export const pushAllUnpushed = (): Promise<{ queued: number }> =>
+  request("POST", "/api/sync/push-all-unpushed");
+
 export const moveNote = (id: string, targetFolder: string): Promise<NoteFull> =>
   request("POST", `/api/notes/${encodeURIComponent(id)}/move`, {
     target_folder: targetFolder,

@@ -341,6 +341,16 @@
     "blockingNoun_other": "冲突",
     "blockingHint": "点击列表项进入 merge。所有冲突解决后应用自动解锁。"
   },
+  "firstPush": {
+    "label": "推送所有未同步",
+    "summary_one": "{{count}} 篇笔记还没推到 Drive。",
+    "summary_other": "{{count}} 篇笔记还没推到 Drive。",
+    "summary_zero": "所有笔记都已在 Drive 跟踪中。",
+    "queuing": "排队中…",
+    "queuedToast_one": "已排队 {{count}} 篇。drainer 会陆续推送。",
+    "queuedToast_other": "已排队 {{count}} 篇。drainer 会陆续推送。",
+    "failed": "排队失败 — {{detail}}"
+  },
   "syncInbox": {
     "chipLabel_one": "{{count}} 处同步冲突",
     "chipLabel_other": "{{count}} 处同步冲突",

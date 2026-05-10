@@ -342,6 +342,16 @@
     "blockingNoun_other": "conflicts",
     "blockingHint": "Click a row to merge. The app unlocks once all are resolved."
   },
+  "firstPush": {
+    "label": "Push all unpushed",
+    "summary_one": "{{count}} note hasn't been pushed to Drive yet.",
+    "summary_other": "{{count}} notes haven't been pushed to Drive yet.",
+    "summary_zero": "All notes are tracked by Drive.",
+    "queuing": "Queuing…",
+    "queuedToast_one": "Queued {{count}} note. Drainer will push them shortly.",
+    "queuedToast_other": "Queued {{count}} notes. Drainer will push them shortly.",
+    "failed": "Couldn't queue — {{detail}}"
+  },
   "syncInbox": {
     "chipLabel_one": "{{count}} sync conflict",
     "chipLabel_other": "{{count}} sync conflicts",
