@@ -30,6 +30,7 @@ import { buildBuiltinCommands } from "@/components/Palette/commands";
 import { RightRail } from "@/components/RightRail/RightRail";
 import { SearchFocusMode } from "@/components/Search/SearchFocusMode";
 import { SettingsDialog } from "@/components/Settings/SettingsDialog";
+import { SyncBanner } from "@/components/SyncBanner/SyncBanner";
 import { NewDocDialog } from "@/components/NewDoc/NewDocDialog";
 import { QuickActionsManager } from "@/components/QuickActions/QuickActionsManager";
 import { TabStrip } from "@/components/TabStrip/TabStrip";
@@ -607,6 +608,7 @@ export function AppShell() {
             </Button>
           </div>
         </header>
+        <SyncBanner activeNoteId={selectedNoteId} />
         <div className="min-h-0 flex-1">
           <ResizablePanelGroup direction="horizontal">
             <ResizablePanel

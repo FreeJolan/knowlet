@@ -849,8 +849,20 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # Without this, a vault with thousands of notes would block uvicorn
         # for minutes on first launch and look like the server crashed.
         state.start_bootstrap_async()
-        yield
-        state.close()
+        # Phase 2 E Slice 5.D — start the Drive Changes poller. It's
+        # a no-op until the user connects (no creds → loop just sleeps).
+        # Storing the instance on app.state keeps it reachable from
+        # endpoint handlers.
+        from knowlet.core.sync.poller import SyncPoller
+
+        poller = SyncPoller(vault.root)
+        app.state.sync_poller = poller
+        await poller.start()
+        try:
+            yield
+        finally:
+            await poller.stop()
+            state.close()
 
     app = FastAPI(title="knowlet", version=__version__, lifespan=lifespan)
     app.state.web_state = state
@@ -955,6 +967,40 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             }
         finally:
             store.close()
+
+    # ---------------- sync notifications (Slice 5.D) ----------------
+    # Edit-period banner data: which notes did the poller see change
+    # on Drive since the user last looked? Polled by the frontend
+    # every ~10s. ADR-0027 §UX requires "立即" notification, not
+    # save-time surprise.
+    @app.get("/api/sync/notifications")
+    def list_sync_notifications() -> dict[str, Any]:
+        poller = getattr(app.state, "sync_poller", None)
+        if poller is None:
+            return {"running": False, "notifications": [], "health": {}}
+        return {
+            "running": True,
+            "health": poller.health(),
+            "notifications": [
+                {
+                    "note_id": n.note_id,
+                    "drive_file_id": n.drive_file_id,
+                    "detected_at": n.detected_at,
+                    "new_revision": n.new_revision,
+                    "drive_file_name": n.drive_file_name,
+                    "removed": n.removed,
+                }
+                for n in poller.pending_notifications()
+            ],
+        }
+
+    @app.post("/api/sync/notifications/{note_id}/dismiss")
+    def dismiss_sync_notification(note_id: str) -> dict[str, Any]:
+        poller = getattr(app.state, "sync_poller", None)
+        if poller is None:
+            return {"cleared": False, "reason": "poller not running"}
+        cleared = poller.clear(note_id)
+        return {"cleared": cleared}
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:

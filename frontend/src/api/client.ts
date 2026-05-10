@@ -153,6 +153,40 @@ export const deleteQuickAction = (id: string): Promise<{ ok: boolean }> =>
 export const runQuickAction = (id: string): Promise<NoteFull> =>
   request("POST", `/api/quick-actions/${encodeURIComponent(id)}/run`);
 
+// ---------- sync notifications (Phase 2 E Slice 5.D, ADR-0027) ----------
+
+export interface SyncNotification {
+  note_id: string;
+  drive_file_id: string;
+  detected_at: string;
+  new_revision: string | null;
+  drive_file_name: string | null;
+  removed: boolean;
+}
+
+export interface SyncNotificationsResponse {
+  running: boolean;
+  notifications: SyncNotification[];
+  health?: {
+    running?: boolean;
+    interval_s?: number;
+    last_success_at?: string | null;
+    last_error?: string | null;
+    pending_count?: number;
+  };
+}
+
+export const listSyncNotifications = (): Promise<SyncNotificationsResponse> =>
+  request("GET", "/api/sync/notifications");
+
+export const dismissSyncNotification = (
+  noteId: string,
+): Promise<{ cleared: boolean }> =>
+  request(
+    "POST",
+    `/api/sync/notifications/${encodeURIComponent(noteId)}/dismiss`,
+  );
+
 // ---------- search (Phase 1 D slice 2) ----------
 
 export const searchVault = (

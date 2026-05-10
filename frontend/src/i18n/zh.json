@@ -314,5 +314,15 @@
       "connections_other": "{{count}} 条关联",
       "current": "当前笔记"
     }
+  },
+  "sync": {
+    "bannerCurrent": "这篇笔记被另一台设备修改过。保存前请用 knowlet sync resolve 处理。",
+    "bannerRemoved": "这篇笔记在另一台设备上被删除了。",
+    "bannerSummary_one": "另一台设备改了 1 篇笔记:",
+    "bannerSummary_other": "另一台设备改了 {{count}} 篇笔记:",
+    "bannerMore_one": "… 还有 1 篇",
+    "bannerMore_other": "… 还有 {{count}} 篇",
+    "removed": "远端已删除",
+    "dismissAria": "忽略此通知"
   }
 }

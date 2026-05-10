@@ -315,5 +315,15 @@
       "connections_other": "{{count}} connections",
       "current": "current note"
     }
+  },
+  "sync": {
+    "bannerCurrent": "This note was modified on another device. Resolve via knowlet sync resolve before saving.",
+    "bannerRemoved": "This note was deleted on another device.",
+    "bannerSummary_one": "1 note changed on another device:",
+    "bannerSummary_other": "{{count}} notes changed on another device:",
+    "bannerMore_one": "… and 1 more",
+    "bannerMore_other": "… and {{count}} more",
+    "removed": "deleted on remote",
+    "dismissAria": "Dismiss this notification"
   }
 }

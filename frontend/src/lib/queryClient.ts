@@ -30,4 +30,5 @@ export const QK = {
   graph: ["graph"] as const,
   search: (q: string) => ["search", q] as const,
   quickActions: ["quick-actions"] as const,
+  syncNotifications: ["sync-notifications"] as const,
 };
