@@ -35,13 +35,18 @@ def resolve_vault_or_die() -> Vault:
     except VaultNotFoundError as exc:
         err_console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=2) from exc
-    # Phase 2 E Slice 4.B — every vault gets an audit log attached.
-    # Producer methods (write_note / trash_note / restore_note) emit
-    # through it on each call. Local import dodges a circular import
-    # cycle (audit_log → note → ...).
+    # Phase 2 E — every vault gets the audit log (Slice 4.B) and
+    # backup store (Slice 4.E) attached. Producer methods emit
+    # through them automatically. Local imports dodge a circular
+    # import cycle (audit_log / backups → note → ...).
     from knowlet.core.audit_log import AuditEventStore
+    from knowlet.core.backups import BackupStore
 
-    return Vault(root, audit_log=AuditEventStore(root))
+    return Vault(
+        root,
+        audit_log=AuditEventStore(root),
+        backups=BackupStore(root),
+    )
 
 
 def load_config_or_default(vault: Vault) -> KnowletConfig:

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from knowlet.config import VAULT_MARKER_DIR
 from knowlet.core.audit_log import AuditEvent, AuditEventStore
+from knowlet.core.backups import BackupStore
 from knowlet.core.note import Note, now_iso
 
 NOTES_DIR = "notes"
@@ -29,6 +30,7 @@ class Vault:
         root: Path,
         *,
         audit_log: AuditEventStore | None = None,
+        backups: BackupStore | None = None,
     ):
         self.root = root.resolve()
         # Optional audit log. When set, Note write/trash/restore emit
@@ -36,6 +38,11 @@ class Vault:
         # in tests / scripts that don't care about the audit trail —
         # the producer methods are no-ops in that case.
         self.audit_log = audit_log
+        # Phase 2 E Slice 4.E — per-file overwrite-time backup
+        # (ADR-0018 §4). When set, Note overwrites copy the prior
+        # bytes into .knowlet/backups/note/<id>.<ts>.md before the
+        # rename. None = no backup taken (tests / migration tools).
+        self.backups = backups
 
     def _emit(
         self,
@@ -241,6 +248,23 @@ class Vault:
         # existence at this moment is the only signal. After the
         # rename below the answer is always "yes, exists".
         is_create = not target.exists()
+        # Backup the current bytes BEFORE the atomic rename overwrites
+        # them. New writes (is_create) skip — there's no prior state
+        # to preserve. Per ADR-0018 §4 this is best-effort: BackupStore
+        # already swallows its own internal exceptions, but we ALSO
+        # wrap here so a misbehaving store impl (or a custom subclass)
+        # can never block the user's actual save.
+        if not is_create and self.backups is not None:
+            try:
+                self.backups.backup_before_overwrite("note", note.id, target)
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "backup_before_overwrite raised for note %s",
+                    note.id,
+                    exc_info=True,
+                )
         note.path = target
         note.updated_at = now_iso()
         tmp = target.with_suffix(target.suffix + ".tmp")

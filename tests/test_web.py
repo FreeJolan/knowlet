@@ -34,14 +34,17 @@ class StubLLM:
 
 
 def _ready_vault(tmp_path: Path) -> tuple[Vault, KnowletConfig]:
-    # Phase 2 E Slice 4.B — every test vault gets an audit log so
-    # producer hooks (write_note / trash_note / restore_note) emit
-    # events. Tests that don't care about audit see no behavior change;
-    # tests that DO care (test_audit_log.py) get the same shape they'd
-    # get in real CLI / web runs.
+    # Phase 2 E — every test vault gets the audit log (4.B) and the
+    # backup store (4.E) so producer hooks behave the same way they
+    # would in a real CLI / web run.
     from knowlet.core.audit_log import AuditEventStore
+    from knowlet.core.backups import BackupStore
 
-    v = Vault(tmp_path, audit_log=AuditEventStore(tmp_path))
+    v = Vault(
+        tmp_path,
+        audit_log=AuditEventStore(tmp_path),
+        backups=BackupStore(tmp_path),
+    )
     v.init_layout()
     cfg = KnowletConfig()
     cfg.embedding.backend = "dummy"

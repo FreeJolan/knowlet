@@ -3127,11 +3127,17 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:  # pragma: no cove
     import uvicorn
 
     vault_root = find_vault()
-    # Phase 2 E Slice 4.B — wire the audit log so the live web server
-    # records note.created / .updated / .deleted / .restored.
+    # Phase 2 E — wire audit log (4.B) + backup store (4.E) so the
+    # live web server records events AND keeps prior bytes around
+    # before each Note overwrite.
     from knowlet.core.audit_log import AuditEventStore
+    from knowlet.core.backups import BackupStore
 
-    vault = Vault(vault_root, audit_log=AuditEventStore(vault_root))
+    vault = Vault(
+        vault_root,
+        audit_log=AuditEventStore(vault_root),
+        backups=BackupStore(vault_root),
+    )
     cfg = load_config(vault.root)
     if not cfg.llm.api_key:
         raise SystemExit(

@@ -187,6 +187,25 @@ class QuickActionStore:
         return out
 
     def save(self, actions: list[QuickAction]) -> None:
+        # Phase 2 E Slice 4.E — back up the current toml before the
+        # atomic rename overwrites it (per ADR-0018 §4). The backup
+        # is a single-id stream (entity_id="quick-actions") because
+        # there's only one canonical quick-actions.toml per vault;
+        # LRU 5 keeps the last five known-good states. Best-effort:
+        # a backup failure must not block the actual save.
+        if self.path.exists():
+            try:
+                from knowlet.core.backups import BackupStore
+
+                BackupStore(self.vault_root).backup_before_overwrite(
+                    "quick-actions", "quick-actions", self.path
+                )
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "quick-actions backup failed", exc_info=True
+                )
         _atomic_write(self.path, _serialize(actions))
 
     def upsert(self, action: QuickAction) -> QuickAction:

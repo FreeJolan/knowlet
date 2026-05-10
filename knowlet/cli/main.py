@@ -18,6 +18,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from knowlet import __version__
+from knowlet.cli import backups as backups_cli
 from knowlet.cli import cards as cards_cli
 from knowlet.cli import config as config_cli
 from knowlet.cli import drafts as drafts_cli
@@ -68,6 +69,7 @@ app.add_typer(quiz_cli.app, name="quiz")
 app.add_typer(tags_cli.app, name="tags")
 app.add_typer(graph_cli.app, name="graph")
 app.add_typer(events_cli.app, name="events")
+app.add_typer(backups_cli.app, name="backups")
 
 
 # ------------------------------------------------------------------ root
@@ -280,11 +282,16 @@ def _ensure_ready_or_wizard() -> tuple[Vault, KnowletConfig]:
         vault_root = vault.root
         console.print(f"[green]{t('vault.created', root=str(vault.root))}[/green]\n")
 
-    # Phase 2 E Slice 4.B — chat → sediment → note write goes through
-    # this Vault, so attach the audit log here too.
+    # Phase 2 E — chat → sediment → note write goes through this
+    # Vault, so attach both audit log (4.B) and backup store (4.E).
     from knowlet.core.audit_log import AuditEventStore
+    from knowlet.core.backups import BackupStore
 
-    vault = Vault(vault_root, audit_log=AuditEventStore(vault_root))
+    vault = Vault(
+        vault_root,
+        audit_log=AuditEventStore(vault_root),
+        backups=BackupStore(vault_root),
+    )
     cfg = load_config_or_default(vault)
     if not cfg.llm.api_key:
         console.print(
