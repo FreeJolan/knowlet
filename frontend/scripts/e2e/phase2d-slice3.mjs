@@ -137,6 +137,47 @@ try {
     assert(closeBtns === 1, "× button restored on unpin");
   });
 
+  await runTest(
+    "After unpin, tab stays at the boundary (does not jump to insertion pos)",
+    async () => {
+      // Setup: only ref-doc + task-a remain (from prior tests). To make
+      // the boundary-stay assertion meaningful we need an ordering
+      // where ref-doc was pinned out-of-order from its insertion.
+      // Pin task-a; then it should sit leftmost, ref-doc next.
+      const taskA = page
+        .locator('[data-testid="tab"]', { hasText: "task-a" })
+        .first();
+      await taskA.click({ button: "right" });
+      await page.locator('[data-testid="tab-context-pin"]').click();
+      await page.waitForTimeout(200);
+      // Display order should now be [task-a (pinned), ref-doc].
+      const orderBefore = (
+        await page.locator('[data-testid="tab"]').allInnerTexts()
+      ).join("|");
+      assert(
+        /task-a.*ref-doc/.test(orderBefore),
+        `setup: pinned task-a should be left of ref-doc — got "${orderBefore}"`,
+      );
+      // Unpin task-a via the inline pin button.
+      const unpinBtn = page
+        .locator('[data-testid="tab"]', { hasText: "task-a" })
+        .first()
+        .locator('[data-testid="tab-unpin"]');
+      await unpinBtn.click();
+      await page.waitForTimeout(250);
+      // task-a must STAY leftmost (boundary position), NOT jump back
+      // to its insertion order. ref-doc was inserted before task-a;
+      // an insertion-order revert would put ref-doc first.
+      const orderAfter = (
+        await page.locator('[data-testid="tab"]').allInnerTexts()
+      ).join("|");
+      assert(
+        /task-a.*ref-doc/.test(orderAfter),
+        `unpin must keep task-a at boundary; insertion-order revert would flip it. Got "${orderAfter}"`,
+      );
+    },
+  );
+
   await runTest("Inline pin button on pinned tab unpins (one-click)", async () => {
     // Re-pin ref-doc via right click.
     const refTab = page.locator('[data-testid="tab"]', { hasText: "ref-doc" }).first();

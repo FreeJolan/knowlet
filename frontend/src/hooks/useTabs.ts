@@ -206,10 +206,28 @@ export function useTabs(): TabsApi {
       if (!prev.tabs.includes(id)) return prev;
       const isPinned = prev.pinned.includes(id);
       if (isPinned) {
-        // Unpin: drop from pinned list. tabs unchanged.
-        return { ...prev, pinned: prev.pinned.filter((p) => p !== id) };
+        // Unpin: keep the visual position the tab had while pinned.
+        // The tab was at the right edge of the pinned section; after
+        // unpin it should be the leftmost unpinned (= just past the
+        // remaining pinned tabs). Move it within `tabs` so the
+        // displayTabs computation places it at the boundary. Without
+        // this, the tab would snap back to its original insertion
+        // position and the user's mental model of "where is my tab"
+        // breaks (VS Code parity).
+        const nextPinned = prev.pinned.filter((p) => p !== id);
+        const without = prev.tabs.filter((t) => t !== id);
+        const pinnedSet = new Set(nextPinned);
+        let boundary = without.findIndex((t) => !pinnedSet.has(t));
+        if (boundary < 0) boundary = without.length;
+        return {
+          ...prev,
+          tabs: [...without.slice(0, boundary), id, ...without.slice(boundary)],
+          pinned: nextPinned,
+        };
       }
-      // Pin: append to pinned list (end of the pinned section).
+      // Pin: append to pinned list (end of the pinned section). The
+      // pinned-array order drives the leading display section, so we
+      // don't need to reorder `tabs` itself.
       return { ...prev, pinned: [...prev.pinned, id] };
     });
   }, []);
