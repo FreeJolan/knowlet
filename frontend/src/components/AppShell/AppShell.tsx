@@ -236,6 +236,8 @@ export function AppShell() {
           count: tabsApi.tabs.length,
           activeIsPinned:
             tabsApi.activeId !== null && pinnedSet.has(tabsApi.activeId),
+          canMoveActiveLeft: tabsApi.canMoveActiveLeft,
+          canMoveActiveRight: tabsApi.canMoveActiveRight,
           closeActive: () => {
             const id = tabsApi.activeId;
             if (id) tabsApi.closeTab(id);
@@ -249,6 +251,8 @@ export function AppShell() {
             const id = tabsApi.activeId;
             if (id) tabsApi.togglePin(id);
           },
+          moveActiveLeft: () => tabsApi.moveActiveLeft(),
+          moveActiveRight: () => tabsApi.moveActiveRight(),
         },
       }),
     [
@@ -256,10 +260,14 @@ export function AppShell() {
       openNewDocDialog,
       tabsApi.activeId,
       tabsApi.tabs.length,
+      tabsApi.canMoveActiveLeft,
+      tabsApi.canMoveActiveRight,
       tabsApi.closeTab,
       tabsApi.closeOthers,
       tabsApi.closeUnpinned,
       tabsApi.togglePin,
+      tabsApi.moveActiveLeft,
+      tabsApi.moveActiveRight,
       pinnedSet,
     ],
   );
@@ -678,6 +686,7 @@ export function AppShell() {
                   onCloseOthers={tabsApi.closeOthers}
                   onCloseAll={tabsApi.closeUnpinned}
                   onTogglePin={tabsApi.togglePin}
+                  onReorder={tabsApi.reorder}
                 />
                 <div className="min-h-0 flex-1">
                   <NoteView

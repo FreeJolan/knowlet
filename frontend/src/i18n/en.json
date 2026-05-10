@@ -212,6 +212,8 @@
     "closeAllTabs": "Close all tabs",
     "pinTab": "Pin tab",
     "unpinTab": "Unpin tab",
+    "moveTabLeft": "Move tab left",
+    "moveTabRight": "Move tab right",
     "theme": {
       "light": "light",
       "dark": "dark",

@@ -53,10 +53,14 @@ export interface BuildBuiltinsArgs {
     activeId: string | null;
     count: number;
     activeIsPinned: boolean;
+    canMoveActiveLeft: boolean;
+    canMoveActiveRight: boolean;
     closeActive: () => void;
     closeOthers: () => void;
     closeAll: () => void;
     togglePinActive: () => void;
+    moveActiveLeft: () => void;
+    moveActiveRight: () => void;
   };
 }
 
@@ -136,6 +140,26 @@ export function buildBuiltinCommands(
     // no point listing "Close tab" when no tab is open, "Close others"
     // when only one tab exists, etc. The palette never offers actions
     // that wouldn't change anything.
+    ...(args.tabs.canMoveActiveLeft
+      ? [
+          {
+            id: "builtin.tab-move-left",
+            name: t("commands.moveTabLeft"),
+            keywords: ["move", "tab", "left", "reorder", "移动", "左"],
+            run: () => args.tabs.moveActiveLeft(),
+          },
+        ]
+      : []),
+    ...(args.tabs.canMoveActiveRight
+      ? [
+          {
+            id: "builtin.tab-move-right",
+            name: t("commands.moveTabRight"),
+            keywords: ["move", "tab", "right", "reorder", "移动", "右"],
+            run: () => args.tabs.moveActiveRight(),
+          },
+        ]
+      : []),
     ...(args.tabs.activeId !== null
       ? [
           {

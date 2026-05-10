@@ -107,6 +107,25 @@ export interface TabsApi {
   togglePin: (id: string) => void;
   /** True iff `id` is in `pinned`. */
   isPinned: (id: string) => boolean;
+  /** Reorder a tab within its current section (pinned or unpinned).
+   *  `sourceId` is dropped `position` of `targetId`. No-op if the
+   *  source and target are in different sections (prevents implicit
+   *  pin/unpin from drag-and-drop) or if source === target. */
+  reorder: (
+    sourceId: string,
+    targetId: string,
+    position: "before" | "after",
+  ) => void;
+  /** Move the active tab one slot left within its section. No-op if
+   *  it's already at the section's left edge. Powers the palette
+   *  "Move tab left" command (keyboard / accessibility path). */
+  moveActiveLeft: () => void;
+  /** Mirror of `moveActiveLeft`. */
+  moveActiveRight: () => void;
+  /** True iff the active tab can move left within its section. */
+  canMoveActiveLeft: boolean;
+  /** Mirror of `canMoveActiveLeft`. */
+  canMoveActiveRight: boolean;
 }
 
 export function useTabs(): TabsApi {
@@ -232,6 +251,52 @@ export function useTabs(): TabsApi {
     });
   }, []);
 
+  const reorder = useCallback(
+    (sourceId: string, targetId: string, position: "before" | "after") => {
+      setState((prev) => {
+        if (sourceId === targetId) return prev;
+        if (
+          !prev.tabs.includes(sourceId) ||
+          !prev.tabs.includes(targetId)
+        ) {
+          return prev;
+        }
+        const pinnedSet = new Set(prev.pinned);
+        const srcPinned = pinnedSet.has(sourceId);
+        const tgtPinned = pinnedSet.has(targetId);
+        // Cross-boundary drops are no-ops. Crossing pinned↔unpinned
+        // would amount to an implicit pin/unpin that conflicts with
+        // the explicit Pin/Unpin affordances; we keep DnD as a
+        // pure reorder-within-section.
+        if (srcPinned !== tgtPinned) return prev;
+        if (srcPinned) {
+          const without = prev.pinned.filter((p) => p !== sourceId);
+          const tgtIdx = without.indexOf(targetId);
+          const insertIdx = position === "after" ? tgtIdx + 1 : tgtIdx;
+          const nextPinned = [
+            ...without.slice(0, insertIdx),
+            sourceId,
+            ...without.slice(insertIdx),
+          ];
+          return { ...prev, pinned: nextPinned };
+        }
+        // Unpinned: reorder `tabs`. The unpinned section's display
+        // order is filtered from `tabs` (preserves order), so moving
+        // sourceId within `tabs` is enough.
+        const without = prev.tabs.filter((t) => t !== sourceId);
+        const tgtIdx = without.indexOf(targetId);
+        const insertIdx = position === "after" ? tgtIdx + 1 : tgtIdx;
+        const nextTabs = [
+          ...without.slice(0, insertIdx),
+          sourceId,
+          ...without.slice(insertIdx),
+        ];
+        return { ...prev, tabs: nextTabs };
+      });
+    },
+    [],
+  );
+
   // Computed display order: pinned tabs first (in pin order), then
   // unpinned (in original insertion order). Memoizing here avoids
   // every TabStrip render recomputing — and also gives consumers a
@@ -249,6 +314,72 @@ export function useTabs(): TabsApi {
     [state.pinned],
   );
 
+  // Active-tab movement helpers — palette uses these so keyboard /
+  // accessibility users have a path equivalent to dragging.
+  const moveActiveBy = useCallback((delta: -1 | 1) => {
+    setState((prev) => {
+      const id = prev.activeId;
+      if (!id) return prev;
+      const pinnedSet = new Set(prev.pinned);
+      const srcPinned = pinnedSet.has(id);
+      // Section-scoped index. Compute display order inline so we
+      // don't re-derive `displayTabs` here (this lives outside
+      // useMemo).
+      const display = [
+        ...prev.pinned,
+        ...prev.tabs.filter((t) => !pinnedSet.has(t)),
+      ];
+      const sectionStart = srcPinned ? 0 : prev.pinned.length;
+      const sectionEnd = srcPinned ? prev.pinned.length : display.length;
+      const idx = display.indexOf(id);
+      const next = idx + delta;
+      if (next < sectionStart || next >= sectionEnd) return prev;
+      // Swap with the neighbor in the appropriate underlying array.
+      // Bounds checked above guarantee neighborId is defined; we
+      // narrow with an explicit guard so the compiler agrees.
+      const neighborId = display[next];
+      if (!neighborId) return prev;
+      if (srcPinned) {
+        const a = prev.pinned.indexOf(id);
+        const b = prev.pinned.indexOf(neighborId);
+        const nextPinned = [...prev.pinned];
+        const tmp = nextPinned[a]!;
+        nextPinned[a] = nextPinned[b]!;
+        nextPinned[b] = tmp;
+        return { ...prev, pinned: nextPinned };
+      }
+      const a = prev.tabs.indexOf(id);
+      const b = prev.tabs.indexOf(neighborId);
+      const nextTabs = [...prev.tabs];
+      const tmp = nextTabs[a]!;
+      nextTabs[a] = nextTabs[b]!;
+      nextTabs[b] = tmp;
+      return { ...prev, tabs: nextTabs };
+    });
+  }, []);
+
+  const moveActiveLeft = useCallback(() => moveActiveBy(-1), [moveActiveBy]);
+  const moveActiveRight = useCallback(() => moveActiveBy(1), [moveActiveBy]);
+
+  const { canMoveActiveLeft, canMoveActiveRight } = useMemo(() => {
+    const id = state.activeId;
+    if (!id)
+      return { canMoveActiveLeft: false, canMoveActiveRight: false };
+    const pinnedSet = new Set(state.pinned);
+    const srcPinned = pinnedSet.has(id);
+    const display = [
+      ...state.pinned,
+      ...state.tabs.filter((t) => !pinnedSet.has(t)),
+    ];
+    const sectionStart = srcPinned ? 0 : state.pinned.length;
+    const sectionEnd = srcPinned ? state.pinned.length : display.length;
+    const idx = display.indexOf(id);
+    return {
+      canMoveActiveLeft: idx > sectionStart,
+      canMoveActiveRight: idx < sectionEnd - 1,
+    };
+  }, [state.activeId, state.tabs, state.pinned]);
+
   return {
     tabs: state.tabs,
     activeId: state.activeId,
@@ -262,5 +393,10 @@ export function useTabs(): TabsApi {
     closeOthers,
     togglePin,
     isPinned,
+    reorder,
+    moveActiveLeft,
+    moveActiveRight,
+    canMoveActiveLeft,
+    canMoveActiveRight,
   };
 }

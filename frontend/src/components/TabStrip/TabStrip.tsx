@@ -16,6 +16,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Pin, PinOff, X } from "lucide-react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { getTree } from "@/api/client";
@@ -46,6 +47,22 @@ interface Props {
   onCloseAll: () => void;
   /** Toggle pin state of `id`. */
   onTogglePin: (id: string) => void;
+  /** Drop-and-reorder. Owner enforces the same-section invariant. */
+  onReorder: (
+    sourceId: string,
+    targetId: string,
+    position: "before" | "after",
+  ) => void;
+}
+
+interface DragState {
+  sourceId: string;
+  targetId: string | null;
+  side: "before" | "after" | null;
+  /** True if source and target are in different sections — DnD will
+   *  reject. We keep the state alive (so the indicator can render
+   *  with a "no-drop" tone) but skip the actual reorder on drop. */
+  invalid: boolean;
 }
 
 /** Walk the tree once to produce a `noteId → title` map. The tree
@@ -71,10 +88,21 @@ export function TabStrip({
   onCloseOthers,
   onCloseAll,
   onTogglePin,
+  onReorder,
 }: Props) {
   const { t } = useTranslation();
   const tree = useQuery<TreeFolder>({ queryKey: QK.tree, queryFn: getTree });
   const titles = indexTreeTitles(tree.data);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  // useRef mirror so onDragOver / onDrop can read the source id
+  // synchronously — setState lag means consecutive native events
+  // (in tests, or rapid real drags) can fire before React has
+  // committed the state update from onDragStart.
+  const dragRef = useRef<DragState | null>(null);
+  const writeDrag = (next: DragState | null) => {
+    dragRef.current = next;
+    setDrag(next);
+  };
 
   if (tabs.length === 0) return null;
 
@@ -82,6 +110,13 @@ export function TabStrip({
   // separator between pinned and unpinned tabs.
   const pinnedCount = tabs.filter((id) => pinnedSet.has(id)).length;
   const onlyOne = tabs.length === 1;
+
+  const computeSide = (
+    e: React.DragEvent<HTMLDivElement>,
+  ): "before" | "after" => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return e.clientX < rect.left + rect.width / 2 ? "before" : "after";
+  };
 
   return (
     <div
@@ -107,6 +142,60 @@ export function TabStrip({
                 data-note-id={id}
                 data-active={active}
                 data-pinned={isPinned}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", id);
+                  writeDrag({
+                    sourceId: id,
+                    targetId: null,
+                    side: null,
+                    invalid: false,
+                  });
+                }}
+                onDragOver={(e) => {
+                  const cur = dragRef.current;
+                  if (!cur) return;
+                  e.preventDefault();
+                  const sameSection =
+                    pinnedSet.has(cur.sourceId) === pinnedSet.has(id);
+                  const isSelf = cur.sourceId === id;
+                  e.dataTransfer.dropEffect =
+                    sameSection && !isSelf ? "move" : "none";
+                  const side = computeSide(e);
+                  writeDrag({
+                    sourceId: cur.sourceId,
+                    targetId: id,
+                    side,
+                    invalid: !sameSection || isSelf,
+                  });
+                }}
+                onDragLeave={(e) => {
+                  // Only blank the indicator if the cursor truly left
+                  // *this* tab — relatedTarget is the next element to
+                  // receive enter, and Radix-managed children can fire
+                  // spurious leaves on the parent.
+                  const next = e.relatedTarget as Node | null;
+                  if (next && e.currentTarget.contains(next)) return;
+                  const cur = dragRef.current;
+                  if (cur?.targetId === id) {
+                    writeDrag({
+                      ...cur,
+                      targetId: null,
+                      side: null,
+                      invalid: false,
+                    });
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const cur = dragRef.current;
+                  if (cur && cur.targetId === id && !cur.invalid && cur.side) {
+                    onReorder(cur.sourceId, id, cur.side);
+                  }
+                  writeDrag(null);
+                }}
+                onDragEnd={() => writeDrag(null)}
                 onClick={() => onActivate(id)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
@@ -115,11 +204,9 @@ export function TabStrip({
                   }
                 }}
                 tabIndex={0}
-                className="group flex min-w-0 cursor-pointer items-center gap-2 px-3 py-1.5 text-[12px] transition-colors"
+                className="group relative flex min-w-0 cursor-pointer items-center gap-2 px-3 py-1.5 text-[12px] transition-colors"
                 style={{
                   maxWidth: 200,
-                  // Stronger separator after the last pinned tab so
-                  // the strip reads as "[pinned] | [unpinned]".
                   borderRight: isLastPinned
                     ? "1px solid var(--line)"
                     : "1px solid var(--line-soft)",
@@ -129,9 +216,30 @@ export function TabStrip({
                   borderTop: active
                     ? "2px solid var(--accent)"
                     : "2px solid transparent",
+                  // Source-of-the-drag is dimmed slightly so the user
+                  // sees what they're dragging.
+                  opacity: drag?.sourceId === id ? 0.5 : 1,
                 }}
                 title={title}
               >
+                {/* Drop indicator — vertical bar on the side the
+                 *  cursor is on. Hidden when the drop would be a
+                 *  no-op (cross-section or self). */}
+                {drag &&
+                  drag.targetId === id &&
+                  !drag.invalid &&
+                  drag.side && (
+                    <div
+                      data-testid="tab-drop-indicator"
+                      className="absolute top-0 bottom-0 w-[2px]"
+                      style={{
+                        background: "var(--accent)",
+                        left: drag.side === "before" ? -1 : undefined,
+                        right: drag.side === "after" ? -1 : undefined,
+                      }}
+                      aria-hidden="true"
+                    />
+                  )}
                 <span
                   className="min-w-0 truncate"
                   style={{ flex: 1, lineHeight: 1.2 }}

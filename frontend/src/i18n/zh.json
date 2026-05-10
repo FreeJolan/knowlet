@@ -212,6 +212,8 @@
     "closeAllTabs": "关闭所有 tab",
     "pinTab": "固定当前 tab",
     "unpinTab": "取消固定",
+    "moveTabLeft": "tab 左移一位",
+    "moveTabRight": "tab 右移一位",
     "theme": {
       "light": "浅色",
       "dark": "深色",
