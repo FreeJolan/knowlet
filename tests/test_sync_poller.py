@@ -1,10 +1,10 @@
-"""Phase 2 E Slice 5.D — background Drive Changes poller (ADR-0027).
+"""Phase 2 E Slice 5.D.3.A — state-reconciliation poller (ADR-0027).
 
-The poller is the surface that turns "remote changed mid-edit" from
-a surprise (hits at save time) into a banner-able event. The tests
-mock all Drive calls; lifecycle (start/stop), the loop's resilience
-to errors, and the in-memory pending dict are the load-bearing
-contracts.
+Replaces 5.D's transient-event tests with state-comparison ones. The
+poller no longer caches "what just happened on Drive"; it reconciles
+sync_state.file_state against a bulk fetch of current Drive metadata
+each cycle. Mutations (resolve / snooze / accept) update sync_state
+and the next tick reflects them automatically.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from unittest.mock import patch
 import pytest
 
 from knowlet.core.note import new_id
-from knowlet.core.sync.changes import DriveChange
 from knowlet.core.sync.credentials import (
     SyncCredentials,
     save_credentials,
@@ -27,8 +26,6 @@ from knowlet.core.sync.state import FileState, SyncStateStore
 
 
 def _seed_creds(vault_root: Path) -> SyncCredentials:
-    """Write a minimal creds file with the build's required scopes
-    so verify_scope passes."""
     from knowlet.core.sync.credentials import credentials_path
 
     creds = SyncCredentials(
@@ -47,110 +44,87 @@ def _seed_creds(vault_root: Path) -> SyncCredentials:
     return creds
 
 
-# ----------------------------------------------------- _tick
+def _patch_drive(revs: dict[str, str | None]):
+    """Patches DriveClient + list_appdata_revisions so _tick runs
+    without touching Google."""
+    from contextlib import ExitStack
+    from unittest.mock import MagicMock
+
+    stack = ExitStack()
+    fake_service = MagicMock()
+    fake_client = MagicMock()
+    fake_client.service.return_value = fake_service
+    # Patch at the source modules — _tick imports these lazily, so
+    # patching `knowlet.core.sync.poller.X` doesn't work (X never
+    # appears as an attribute on the poller module).
+    stack.enter_context(
+        patch(
+            "knowlet.core.sync.drive_client.DriveClient",
+            return_value=fake_client,
+        )
+    )
+    stack.enter_context(
+        patch(
+            "knowlet.core.sync.files.list_appdata_revisions",
+            return_value=revs,
+        )
+    )
+    return stack
+
+
+# ----------------------------------------------------- gates
 
 
 def test_tick_skips_when_not_connected(tmp_path: Path) -> None:
-    """No creds file → tick returns False (False = "didn't actually
-    poll"), in-memory state stays empty, no error stored."""
     poller = SyncPoller(tmp_path)
-    assert poller._tick() is False  # noqa: SLF001
+    # No creds file → tick returns False, cache empty.
+    with patch(
+        "knowlet.core.sync.files.list_appdata_revisions"
+    ) as drive_call:
+        assert poller._tick() is False  # noqa: SLF001
+    drive_call.assert_not_called()
     assert poller.pending_notifications() == []
-    assert poller.health()["last_error"] is None
 
 
-def test_tick_first_run_bootstraps_cursor(tmp_path: Path) -> None:
-    _seed_creds(tmp_path)
-    state = SyncStateStore(tmp_path)
-    try:
-        # No start_page_token yet.
-        assert state.start_page_token() is None
-    finally:
-        state.close()
+def test_tick_skips_with_stale_scope(tmp_path: Path) -> None:
+    """Token has wrong scope → tick exits cleanly + records the
+    error for /api/sync/health, doesn't call Drive."""
+    from knowlet.core.sync.credentials import credentials_path
+
+    save_credentials(
+        credentials_path(tmp_path),
+        SyncCredentials(
+            token={"scopes": ["https://www.googleapis.com/auth/drive.file"]}
+        ),
+    )
     poller = SyncPoller(tmp_path)
     with patch(
-        "knowlet.core.sync.changes.get_initial_start_page_token",
-        return_value="BOOTSTRAP-TOKEN",
-    ):
+        "knowlet.core.sync.files.list_appdata_revisions"
+    ) as drive_call:
         ok = poller._tick()  # noqa: SLF001
-    assert ok is True
-    state2 = SyncStateStore(tmp_path)
-    try:
-        assert state2.start_page_token() == "BOOTSTRAP-TOKEN"
-    finally:
-        state2.close()
+    assert ok is False
+    drive_call.assert_not_called()
+    assert "scope upgrade" in (poller._last_error or "")  # noqa: SLF001
 
 
-def test_tick_records_pending_notifications(tmp_path: Path) -> None:
-    """After bootstrap, the next tick lists Drive changes and
-    attributes them to local notes via sync_state.file_state."""
+# ----------------------------------------------------- in-sync
+
+
+def test_tick_emits_no_pending_when_local_matches_drive(
+    tmp_path: Path,
+) -> None:
+    """The whole point of state-reconciliation: if last_known equals
+    current, no conflict. Even if there were Drive Changes events
+    in the past for this file, we don't surface them."""
     _seed_creds(tmp_path)
     note_id = new_id()
-    drive_id = "DRIVE-FID-1"
     state = SyncStateStore(tmp_path)
     try:
-        state.set_start_page_token("OLD-TOKEN")
         state.upsert_file_state(
             FileState(
                 entity_type="note",
                 entity_id=note_id,
-                drive_file_id=drive_id,
-                last_known_etag="rev-1",
-                last_synced_at="2026-05-10T00:00:00Z",
-                dirty=False,
-            )
-        )
-    finally:
-        state.close()
-
-    poller = SyncPoller(tmp_path)
-    fake_changes = [
-        DriveChange(
-            file_id=drive_id,
-            removed=False,
-            trashed=False,
-            file={"name": "alpha.md", "headRevisionId": "rev-NEW"},
-        ),
-        # An untracked Drive file → must be ignored, not crash.
-        DriveChange(
-            file_id="UNTRACKED-FID",
-            removed=False,
-            trashed=False,
-            file={"name": "stranger.md"},
-        ),
-    ]
-    with patch(
-        "knowlet.core.sync.changes.list_all_changes",
-        return_value=(fake_changes, "NEW-TOKEN"),
-    ):
-        ok = poller._tick()  # noqa: SLF001
-    assert ok is True
-    pending = poller.pending_notifications()
-    assert len(pending) == 1
-    assert pending[0].note_id == note_id
-    assert pending[0].drive_file_id == drive_id
-    assert pending[0].new_revision == "rev-NEW"
-    assert pending[0].drive_file_name == "alpha.md"
-    assert pending[0].removed is False
-
-
-def test_tick_filters_out_self_induced_changes(tmp_path: Path) -> None:
-    """If Drive's reported headRevisionId equals our locally-cached
-    last_known_etag for the same file, we ARE the writer. Don't
-    surface that as a "remote modified" banner — the user just
-    pushed it themselves. Otherwise the user sees their own work
-    bounce back as a conflict."""
-    _seed_creds(tmp_path)
-    note_id = new_id()
-    drive_id = "DRIVE-FID-SELF"
-    state = SyncStateStore(tmp_path)
-    try:
-        state.set_start_page_token("OLD-TOKEN")
-        state.upsert_file_state(
-            FileState(
-                entity_type="note",
-                entity_id=note_id,
-                drive_file_id=drive_id,
+                drive_file_id="DRIVE-FID-1",
                 last_known_etag="rev-MINE",
                 last_synced_at="2026-05-10T00:00:00Z",
                 dirty=False,
@@ -159,26 +133,48 @@ def test_tick_filters_out_self_induced_changes(tmp_path: Path) -> None:
     finally:
         state.close()
     poller = SyncPoller(tmp_path)
-    self_change = DriveChange(
-        file_id=drive_id,
-        removed=False,
-        trashed=False,
-        file={"name": "alpha.md", "headRevisionId": "rev-MINE"},
-    )
-    with patch(
-        "knowlet.core.sync.changes.list_all_changes",
-        return_value=([self_change], "NEW-TOKEN"),
-    ):
-        poller._tick()  # noqa: SLF001
+    with _patch_drive({"DRIVE-FID-1": "rev-MINE"}):
+        assert poller._tick() is True  # noqa: SLF001
     assert poller.pending_notifications() == []
 
 
-def test_tick_marks_removed_changes(tmp_path: Path) -> None:
+# ----------------------------------------------------- divergence
+
+
+def test_tick_records_diverged_files(tmp_path: Path) -> None:
     _seed_creds(tmp_path)
     note_id = new_id()
     state = SyncStateStore(tmp_path)
     try:
-        state.set_start_page_token("OLD-TOKEN")
+        state.upsert_file_state(
+            FileState(
+                entity_type="note",
+                entity_id=note_id,
+                drive_file_id="DRIVE-FID-1",
+                last_known_etag="rev-MINE",
+                last_synced_at="2026-05-10T00:00:00Z",
+                dirty=False,
+            )
+        )
+    finally:
+        state.close()
+    poller = SyncPoller(tmp_path)
+    with _patch_drive({"DRIVE-FID-1": "rev-NEW"}):
+        assert poller._tick() is True  # noqa: SLF001
+    pending = poller.pending_notifications()
+    assert len(pending) == 1
+    assert pending[0].note_id == note_id
+    assert pending[0].new_revision == "rev-NEW"
+    assert pending[0].removed is False
+
+
+def test_tick_marks_files_removed_from_drive(tmp_path: Path) -> None:
+    """Tracked file isn't in Drive's listing → treated as removed
+    (user / other device deleted it on remote)."""
+    _seed_creds(tmp_path)
+    note_id = new_id()
+    state = SyncStateStore(tmp_path)
+    try:
         state.upsert_file_state(
             FileState(
                 entity_type="note",
@@ -192,78 +188,76 @@ def test_tick_marks_removed_changes(tmp_path: Path) -> None:
     finally:
         state.close()
     poller = SyncPoller(tmp_path)
-    with patch(
-        "knowlet.core.sync.changes.list_all_changes",
-        return_value=(
-            [DriveChange(file_id="GONE", removed=True, trashed=False, file=None)],
-            "NEW-TOKEN",
-        ),
-    ):
+    # Drive's listing returns {} — our file isn't there anymore.
+    with _patch_drive({}):
         poller._tick()  # noqa: SLF001
     pending = poller.pending_notifications()
     assert len(pending) == 1
     assert pending[0].removed is True
 
 
-def test_clear_drops_notification(tmp_path: Path) -> None:
+# ----------------------------------------------------- snooze
+
+
+def test_tick_filters_snoozed_conflicts(tmp_path: Path) -> None:
+    """If file_state.dismissed_until is in the future, the conflict
+    is hidden until then. ADR-0027 §UX: dismiss is snooze, not
+    permanent silence — but during the snooze window we DO honor
+    the user's wish for quiet."""
     _seed_creds(tmp_path)
     note_id = new_id()
     state = SyncStateStore(tmp_path)
     try:
-        state.set_start_page_token("X")
         state.upsert_file_state(
             FileState(
                 entity_type="note",
                 entity_id=note_id,
-                drive_file_id="DRIVE",
-                last_known_etag="r",
+                drive_file_id="DRIVE-FID-1",
+                last_known_etag="rev-MINE",
                 last_synced_at="x",
                 dirty=False,
+                dismissed_until="2099-01-01T00:00:00Z",  # far future
             )
         )
     finally:
         state.close()
     poller = SyncPoller(tmp_path)
-    with patch(
-        "knowlet.core.sync.changes.list_all_changes",
-        return_value=(
-            [DriveChange(file_id="DRIVE", removed=False, trashed=False, file={})],
-            "NEW",
-        ),
-    ):
+    with _patch_drive({"DRIVE-FID-1": "rev-NEW"}):
+        poller._tick()  # noqa: SLF001
+    assert poller.pending_notifications() == []
+
+
+def test_tick_resurfaces_conflict_after_snooze_expires(tmp_path: Path) -> None:
+    """Past-due dismissed_until = snooze expired = conflict is back.
+    This is the central data-safety property of 5.D.3.A: dismissals
+    are temporary, not permanent."""
+    _seed_creds(tmp_path)
+    note_id = new_id()
+    state = SyncStateStore(tmp_path)
+    try:
+        state.upsert_file_state(
+            FileState(
+                entity_type="note",
+                entity_id=note_id,
+                drive_file_id="DRIVE-FID-1",
+                last_known_etag="rev-MINE",
+                last_synced_at="x",
+                dirty=False,
+                dismissed_until="1970-01-01T00:00:00Z",  # past
+            )
+        )
+    finally:
+        state.close()
+    poller = SyncPoller(tmp_path)
+    with _patch_drive({"DRIVE-FID-1": "rev-NEW"}):
         poller._tick()  # noqa: SLF001
     assert len(poller.pending_notifications()) == 1
-    assert poller.clear(note_id) is True
-    assert poller.pending_notifications() == []
-    # Idempotent.
-    assert poller.clear(note_id) is False
-
-
-def test_tick_skips_with_stale_scope(tmp_path: Path) -> None:
-    """Token has wrong scope (drive.file instead of drive.appdata)
-    → tick exits cleanly + records the error for /api/sync/health."""
-    from knowlet.core.sync.credentials import credentials_path
-
-    save_credentials(
-        credentials_path(tmp_path),
-        SyncCredentials(
-            token={"scopes": ["https://www.googleapis.com/auth/drive.file"]}
-        ),
-    )
-    poller = SyncPoller(tmp_path)
-    ok = poller._tick()  # noqa: SLF001
-    assert ok is False
-    assert "scope upgrade" in (poller._last_error or "")  # noqa: SLF001
 
 
 # ----------------------------------------------------- async lifecycle
 
 
 def test_start_and_stop_cleanly(tmp_path: Path) -> None:
-    """The loop must spin up + tear down without hanging the
-    FastAPI lifespan. We use a 0.05s interval to make the test
-    snappy; real runs use 30s."""
-
     async def go() -> None:
         poller = SyncPoller(tmp_path, interval_s=0.05)
         await poller.start()
@@ -276,10 +270,6 @@ def test_start_and_stop_cleanly(tmp_path: Path) -> None:
 
 
 def test_loop_keeps_going_when_tick_errors(tmp_path: Path) -> None:
-    """A broken tick must not kill the loop — we keep retrying with
-    backoff. ADR-0027 says the user must always know if polling is
-    failing; we never silently die."""
-
     async def go() -> None:
         poller = SyncPoller(tmp_path, interval_s=0.05, max_backoff_s=0.1)
         with patch.object(poller, "_tick", side_effect=RuntimeError("boom")):

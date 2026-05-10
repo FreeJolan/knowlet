@@ -179,13 +179,60 @@ export interface SyncNotificationsResponse {
 export const listSyncNotifications = (): Promise<SyncNotificationsResponse> =>
   request("GET", "/api/sync/notifications");
 
+export interface SnoozeResult {
+  snoozed: boolean;
+  until: string;
+}
+
+// 5.D.3.A: dismiss is now a 24h snooze, not a permanent clear.
+// Conflicts re-surface after the snooze window. To permanently
+// silence a conflict use `acceptCurrentAsSynced` instead.
 export const dismissSyncNotification = (
   noteId: string,
-): Promise<{ cleared: boolean }> =>
+  hours = 24,
+): Promise<SnoozeResult> =>
   request(
     "POST",
-    `/api/sync/notifications/${encodeURIComponent(noteId)}/dismiss`,
+    `/api/sync/notifications/${encodeURIComponent(noteId)}/dismiss?hours=${hours}`,
   );
+
+export interface AcceptCurrentResult {
+  ok: boolean;
+  new_revision: string;
+}
+
+export const acceptCurrentAsSynced = (
+  noteId: string,
+): Promise<AcceptCurrentResult> =>
+  request(
+    "POST",
+    `/api/sync/conflicts/${encodeURIComponent(noteId)}/accept-current`,
+  );
+
+export type BulkResolveStrategy =
+  | "mine"
+  | "remote"
+  | "both"
+  | "accept-current"
+  | "snooze";
+
+export interface BulkResolveResult {
+  ok: boolean;
+  succeeded: number;
+  failed: number;
+  results: Array<{ note_id: string; ok: boolean; detail?: string }>;
+}
+
+export const bulkResolveSyncConflicts = (
+  noteIds: string[],
+  strategy: BulkResolveStrategy,
+  snoozeHours = 24,
+): Promise<BulkResolveResult> =>
+  request("POST", `/api/sync/conflicts/bulk-resolve`, {
+    note_ids: noteIds,
+    strategy,
+    snooze_hours: snoozeHours,
+  });
 
 export interface SyncConflictPayload {
   conflict: boolean;

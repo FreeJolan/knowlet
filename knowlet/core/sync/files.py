@@ -200,6 +200,36 @@ def get_file_metadata(service: Any, file_id: str) -> DriveFile:
     return _file_resource_to_drive_file(res)
 
 
+def list_appdata_revisions(service: Any) -> dict[str, str | None]:
+    """Slice 5.D.3.A — bulk fetch ``file_id → headRevisionId`` for
+    every file in the appDataFolder. One paginated round-trip
+    regardless of file count, so the conflict-detection path stays
+    cheap as a vault grows.
+
+    Drive caps page size at 1000; few users will have >1000 synced
+    notes, so the loop usually exits after the first call. Tracked
+    files no longer present on Drive map to ``None`` — caller treats
+    that as a "remote was deleted/trashed" conflict signal.
+    """
+    out: dict[str, str | None] = {}
+    page_token: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {
+            "spaces": "appDataFolder",
+            "fields": "nextPageToken, files(id,headRevisionId)",
+            "pageSize": 1000,
+        }
+        if page_token:
+            kwargs["pageToken"] = page_token
+        resp = service.files().list(**kwargs).execute()
+        for f in resp.get("files", []):
+            out[str(f.get("id"))] = f.get("headRevisionId")
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return out
+
+
 # ----------------------------------------------------- forced overwrite
 
 

@@ -332,9 +332,20 @@
   },
   "syncInbox": {
     "title": "Sync conflicts",
-    "description": "Notes that changed on another device since your last sync. Click one to review and resolve.",
+    "description": "Notes that diverged from Drive since your last sync. Select multiple to act in bulk, or click one to review and resolve.",
     "empty": "No pending sync conflicts. You're all caught up.",
-    "detectedAt": "detected {{ts}}"
+    "detectedAt": "detected {{ts}}",
+    "selectAll": "Select all",
+    "selectedCount_one": "1 selected",
+    "selectedCount_other": "{{count}} selected",
+    "bulkMine": "Use mine",
+    "bulkRemote": "Use remote",
+    "bulkAccept": "Accept as in-sync",
+    "bulkAcceptHint": "Mark Drive's current revision as your new baseline. Doesn't move any data — just stops the conflict from re-appearing.",
+    "bulkSnooze": "Snooze 24h",
+    "rowAccept": "✓ Accept",
+    "rowSnooze": "Snooze",
+    "snoozeHint": "Hide this conflict for 24h. It'll come back if you don't resolve it before then."
   },
   "conflict": {
     "title": "Resolve sync conflict",

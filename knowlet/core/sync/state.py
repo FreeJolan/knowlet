@@ -32,10 +32,16 @@ import sqlite3
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from knowlet.core.note import new_id
 
-SYNC_STATE_SCHEMA_VERSION = 1
+# v1 → v2 (Slice 5.D.3.A): file_state gains `dismissed_until` for
+# the user-visible "Snooze 24h" semantics. Conflict detection now
+# computes from state-vs-Drive comparison (per ADR-0027 §UX); the
+# in-memory transient-event approach was losing notifications when
+# the cursor advanced past unresolved conflicts.
+SYNC_STATE_SCHEMA_VERSION = 2
 
 
 def sync_state_db_path(vault_root: Path) -> Path:
@@ -52,6 +58,11 @@ class FileState:
     last_known_etag: str | None
     last_synced_at: str | None  # ISO; None = never synced
     dirty: bool
+    # Slice 5.D.3.A — user-driven snooze. None = no active snooze;
+    # ISO timestamp = ignore conflict reports until this moment.
+    # "Accept current as synced" advances last_known_etag instead
+    # of using this field (semantically distinct from snooze).
+    dismissed_until: str | None = None
 
 
 class SyncStateStore:
@@ -99,6 +110,17 @@ class SyncStateStore:
             "CREATE INDEX IF NOT EXISTS file_state_drive_id_idx "
             "ON file_state(drive_file_id)"
         )
+        # Lazy column add (Slice 5.D.3.A v1→v2 migration). CREATE
+        # TABLE IF NOT EXISTS is a no-op on existing tables, so we
+        # need explicit ALTER for any new column. Cheap: SQLite
+        # ADD COLUMN is metadata-only.
+        existing_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(file_state)")
+        }
+        if "dismissed_until" not in existing_cols:
+            conn.execute(
+                "ALTER TABLE file_state ADD COLUMN dismissed_until TEXT"
+            )
         # Schema version handshake.
         row = conn.execute(
             "SELECT value FROM meta WHERE key='schema_version'"
@@ -116,6 +138,13 @@ class SyncStateStore:
                     f"sync_state.sqlite schema_version {stored} "
                     f"is newer than this build supports "
                     f"({SYNC_STATE_SCHEMA_VERSION}). Upgrade knowlet."
+                )
+            if stored < SYNC_STATE_SCHEMA_VERSION:
+                # We added the column above; just stamp the new
+                # version so future opens skip the ALTER attempt.
+                conn.execute(
+                    "UPDATE meta SET value=? WHERE key='schema_version'",
+                    (str(SYNC_STATE_SCHEMA_VERSION),),
                 )
         self._conn = conn
         return conn
@@ -180,19 +209,8 @@ class SyncStateStore:
 
     # --------------------------------------------------- file_state
 
-    def get_file_state(
-        self, entity_type: str, entity_id: str
-    ) -> FileState | None:
-        conn = self._connect()
-        with self._lock:
-            row = conn.execute(
-                "SELECT entity_type, entity_id, drive_file_id, "
-                "last_known_etag, last_synced_at, dirty "
-                "FROM file_state WHERE entity_type=? AND entity_id=?",
-                (entity_type, entity_id),
-            ).fetchone()
-        if row is None:
-            return None
+    @staticmethod
+    def _row_to_file_state(row: tuple[Any, ...]) -> FileState:
         return FileState(
             entity_type=row[0],
             entity_id=row[1],
@@ -200,25 +218,50 @@ class SyncStateStore:
             last_known_etag=row[3],
             last_synced_at=row[4],
             dirty=bool(row[5]),
+            dismissed_until=row[6],
         )
+
+    _COLS = (
+        "entity_type, entity_id, drive_file_id, last_known_etag, "
+        "last_synced_at, dirty, dismissed_until"
+    )
+
+    def get_file_state(
+        self, entity_type: str, entity_id: str
+    ) -> FileState | None:
+        conn = self._connect()
+        with self._lock:
+            row = conn.execute(
+                f"SELECT {self._COLS} "
+                "FROM file_state WHERE entity_type=? AND entity_id=?",
+                (entity_type, entity_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_file_state(row)
 
     def upsert_file_state(self, state: FileState) -> None:
         """Insert or update the per-entity sync record. Used by 5.C+
         when a write succeeds (etag updates) or a remote-newer is
-        detected (dirty=1)."""
+        detected (dirty=1). Note: ``dismissed_until`` is preserved
+        across upserts unless the caller explicitly changes it —
+        a successful resolve should clear the snooze (callers can
+        pass `dismissed_until=None` to do that). 5.C's resolve_*
+        already builds FileState without setting this field, which
+        defaults to None, so the snooze is auto-cleared on resolve.
+        """
         conn = self._connect()
         with self._lock:
             conn.execute(
-                """
-                INSERT INTO file_state(entity_type, entity_id,
-                                       drive_file_id, last_known_etag,
-                                       last_synced_at, dirty)
-                VALUES (?, ?, ?, ?, ?, ?)
+                f"""
+                INSERT INTO file_state({self._COLS})
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(entity_type, entity_id) DO UPDATE SET
-                    drive_file_id   = excluded.drive_file_id,
-                    last_known_etag = excluded.last_known_etag,
-                    last_synced_at  = excluded.last_synced_at,
-                    dirty           = excluded.dirty
+                    drive_file_id    = excluded.drive_file_id,
+                    last_known_etag  = excluded.last_known_etag,
+                    last_synced_at   = excluded.last_synced_at,
+                    dirty            = excluded.dirty,
+                    dismissed_until  = excluded.dismissed_until
                 """,
                 (
                     state.entity_type,
@@ -227,29 +270,48 @@ class SyncStateStore:
                     state.last_known_etag,
                     state.last_synced_at,
                     1 if state.dirty else 0,
+                    state.dismissed_until,
                 ),
             )
             conn.commit()
+
+    def set_dismissed_until(
+        self,
+        entity_type: str,
+        entity_id: str,
+        until: str | None,
+    ) -> bool:
+        """Set or clear the snooze timestamp without affecting other
+        fields. ``until`` is an ISO-UTC string; pass None to unsnooze.
+        Returns True if the row exists and was updated."""
+        conn = self._connect()
+        with self._lock:
+            cur = conn.execute(
+                "UPDATE file_state SET dismissed_until=? "
+                "WHERE entity_type=? AND entity_id=?",
+                (until, entity_type, entity_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
 
     def list_dirty(self) -> list[FileState]:
         conn = self._connect()
         with self._lock:
             rows = conn.execute(
-                "SELECT entity_type, entity_id, drive_file_id, "
-                "last_known_etag, last_synced_at, dirty "
-                "FROM file_state WHERE dirty=1"
+                f"SELECT {self._COLS} FROM file_state WHERE dirty=1"
             ).fetchall()
-        return [
-            FileState(
-                entity_type=r[0],
-                entity_id=r[1],
-                drive_file_id=r[2],
-                last_known_etag=r[3],
-                last_synced_at=r[4],
-                dirty=bool(r[5]),
-            )
-            for r in rows
-        ]
+        return [self._row_to_file_state(r) for r in rows]
+
+    def list_all_files(self) -> list[FileState]:
+        """Every file_state row. Used by the conflict computation
+        path — Slice 5.D.3.A — which walks all tracked files to
+        compare last_known_etag against current Drive metadata."""
+        conn = self._connect()
+        with self._lock:
+            rows = conn.execute(
+                f"SELECT {self._COLS} FROM file_state"
+            ).fetchall()
+        return [self._row_to_file_state(r) for r in rows]
 
     def count_files(self) -> int:
         conn = self._connect()

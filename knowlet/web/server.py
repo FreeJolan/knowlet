@@ -116,6 +116,22 @@ class ResolveConflictRequest(BaseModel):
     strategy: str
 
 
+class BulkResolveRequest(BaseModel):
+    """Phase 2 E Slice 5.D.3.A — body for /api/sync/conflicts/bulk-resolve.
+
+    Strategy values: "mine" / "remote" / "both" (delegate to
+    individual resolve), "accept-current" (advance last_known to
+    Drive's current rev), "snooze" (24h snooze by default; override
+    via ``snooze_hours``). FastAPI auto-pulls models defined inside
+    create_app() as query params instead of body, so this lives at
+    module level for the same reason ResolveConflictRequest does.
+    """
+
+    note_ids: list[str]
+    strategy: str
+    snooze_hours: int = 24
+
+
 class QuoteRefPayload(BaseModel):
     """M7.1 / M7.2: one capsule. `source = "note"` (M7.1 default) →
     the backend fetches the Note body via note_id and runs the enclosing-
@@ -1007,12 +1023,135 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         }
 
     @app.post("/api/sync/notifications/{note_id}/dismiss")
-    def dismiss_sync_notification(note_id: str) -> dict[str, Any]:
+    def dismiss_sync_notification(
+        note_id: str,
+        hours: int = 24,
+    ) -> dict[str, Any]:
+        """Slice 5.D.3.A — dismiss is now a 24h snooze, not a permanent
+        clear. The conflict re-surfaces tomorrow if not resolved or
+        explicitly accepted via the accept-current endpoint. Closes
+        the "user dismissed without resolving and conflict vanished
+        forever" hole that 5.D's transient-event design had.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from knowlet.core.sync.state import SyncStateStore
+
+        until_dt = datetime.now(UTC) + timedelta(hours=max(1, hours))
+        until_iso = until_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        state = SyncStateStore(vault.root)
+        try:
+            ok = state.set_dismissed_until("note", note_id, until_iso)
+        finally:
+            state.close()
         poller = getattr(app.state, "sync_poller", None)
-        if poller is None:
-            return {"cleared": False, "reason": "poller not running"}
-        cleared = poller.clear(note_id)
-        return {"cleared": cleared}
+        if poller is not None:
+            poller.force_recompute_sync()
+        return {"snoozed": ok, "until": until_iso}
+
+    @app.post("/api/sync/conflicts/{note_id}/accept-current")
+    def accept_current_as_synced(note_id: str) -> dict[str, Any]:
+        """Slice 5.D.3.A — "I've decided this Drive version is the
+        new baseline; stop nagging me." Updates sync_state.last_known_etag
+        to the current Drive headRevisionId without modifying any
+        local files. Distinct from dismiss/snooze (which are
+        temporary) and from resolve (which actually moves data)."""
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.files import get_file_metadata
+        from knowlet.core.sync.oauth import (
+            ScopeUpgradeRequiredError,
+            verify_scope,
+        )
+        from knowlet.core.sync.state import FileState, SyncStateStore
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            raise HTTPException(409, detail="not connected")
+        try:
+            verify_scope(creds)
+        except ScopeUpgradeRequiredError as exc:
+            raise HTTPException(409, detail=str(exc)) from exc
+
+        state = SyncStateStore(vault.root)
+        try:
+            record = state.get_file_state("note", note_id)
+            if record is None or not record.drive_file_id:
+                raise HTTPException(
+                    404, detail=f"note {note_id} has no Drive mapping"
+                )
+            client = DriveClient(creds)
+            current = get_file_metadata(client.service(), record.drive_file_id)
+            state.upsert_file_state(
+                FileState(
+                    entity_type="note",
+                    entity_id=note_id,
+                    drive_file_id=record.drive_file_id,
+                    last_known_etag=current.head_revision_id,
+                    last_synced_at=record.last_synced_at,
+                    dirty=False,
+                    dismissed_until=None,
+                )
+            )
+        finally:
+            state.close()
+
+        poller = getattr(app.state, "sync_poller", None)
+        if poller is not None:
+            poller.force_recompute_sync()
+        return {"ok": True, "new_revision": current.head_revision_id}
+
+    @app.post("/api/sync/conflicts/bulk-resolve")
+    def post_sync_conflicts_bulk_resolve(
+        req: BulkResolveRequest,
+    ) -> dict[str, Any]:
+        """Slice 5.D.3.A — apply one strategy to many conflicts. Used
+        by the inbox's multi-select toolbar. Reports per-id success
+        or failure; does NOT atomically roll back on partial failure
+        — most "bulk" UX is "do as many as I can, tell me which
+        failed". 30 sequential resolves is fine for the user's quota
+        and the wall-clock cost is acceptable for the rare
+        long-away-from-knowlet case."""
+        if req.strategy not in {"mine", "remote", "both", "accept-current", "snooze"}:
+            raise HTTPException(
+                400,
+                detail=(
+                    "strategy must be one of mine|remote|both|accept-current|snooze; "
+                    f"got {req.strategy!r}"
+                ),
+            )
+        results: list[dict[str, Any]] = []
+        for nid in req.note_ids:
+            try:
+                if req.strategy == "snooze":
+                    out = dismiss_sync_notification(nid, hours=req.snooze_hours)
+                    results.append({"note_id": nid, "ok": True, **out})
+                elif req.strategy == "accept-current":
+                    out = accept_current_as_synced(nid)
+                    results.append({"note_id": nid, "ok": True, **out})
+                else:
+                    out = post_sync_conflict_resolve(
+                        nid, ResolveConflictRequest(strategy=req.strategy)
+                    )
+                    results.append({"note_id": nid, "ok": True, **out})
+            except HTTPException as exc:
+                results.append(
+                    {"note_id": nid, "ok": False, "detail": str(exc.detail)}
+                )
+            except Exception as exc:  # noqa: BLE001
+                results.append(
+                    {"note_id": nid, "ok": False, "detail": repr(exc)}
+                )
+        ok_count = sum(1 for r in results if r["ok"])
+        return {
+            "ok": ok_count == len(req.note_ids),
+            "succeeded": ok_count,
+            "failed": len(req.note_ids) - ok_count,
+            "results": results,
+        }
 
     # ---------------- conflict resolve (Slice 5.D.1) ----------------
     # The banner now opens a modal that shows local + remote text.
@@ -1191,11 +1330,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         finally:
             state.close()
 
-        # Clear the in-memory poller pending so the banner clears
-        # immediately (frontend's next poll picks it up).
+        # Trigger an immediate poller recompute so the state-based
+        # cache reflects the resolution; otherwise the badge could
+        # show stale "still pending" for up to interval_s.
         poller = getattr(app.state, "sync_poller", None)
         if poller is not None:
-            poller.clear(note_id)
+            poller.force_recompute_sync()
         return {"ok": True, **action_payload}
 
     @app.get("/api/health")

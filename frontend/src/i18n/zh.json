@@ -331,9 +331,20 @@
   },
   "syncInbox": {
     "title": "同步冲突",
-    "description": "上次同步以来在另一台设备上修改过的笔记。点击查看并处理。",
+    "description": "本地与 Drive 出现分叉的笔记。多选可批量处理,点击单条进入详细对比。",
     "empty": "没有待处理的同步冲突,一切就绪。",
-    "detectedAt": "检测于 {{ts}}"
+    "detectedAt": "检测于 {{ts}}",
+    "selectAll": "全选",
+    "selectedCount_one": "已选 1 条",
+    "selectedCount_other": "已选 {{count}} 条",
+    "bulkMine": "用我的",
+    "bulkRemote": "用远端",
+    "bulkAccept": "标记为已同步",
+    "bulkAcceptHint": "将 Drive 当前版本作为新基准。不移动任何数据,只是让冲突不再出现。",
+    "bulkSnooze": "稍后处理 24h",
+    "rowAccept": "✓ 已同步",
+    "rowSnooze": "稍后",
+    "snoozeHint": "隐藏 24 小时。如果到时仍未解决,会重新出现在列表里。"
   },
   "conflict": {
     "title": "解决同步冲突",
