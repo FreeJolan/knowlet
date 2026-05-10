@@ -30,9 +30,6 @@ import { buildBuiltinCommands } from "@/components/Palette/commands";
 import { RightRail } from "@/components/RightRail/RightRail";
 import { SearchFocusMode } from "@/components/Search/SearchFocusMode";
 import { SettingsDialog } from "@/components/Settings/SettingsDialog";
-import { NoteConflictNotice } from "@/components/Sync/NoteConflictNotice";
-import { SyncBadge } from "@/components/Sync/SyncBadge";
-import { SyncConflictsInbox } from "@/components/Sync/SyncConflictsInbox";
 import { NewDocDialog } from "@/components/NewDoc/NewDocDialog";
 import { QuickActionsManager } from "@/components/QuickActions/QuickActionsManager";
 import { TabStrip } from "@/components/TabStrip/TabStrip";
@@ -106,10 +103,10 @@ export function AppShell() {
   const [paletteInitialMode, setPaletteInitialMode] = useState<
     "files" | "commands"
   >("files");
-  // Phase 2 E Slice 5.D.2 — Sync Conflicts Inbox open state. Reachable
-  // via the header SyncBadge (when count > 0); also reachable via
-  // command palette in a future slice.
-  const [syncInboxOpen, setSyncInboxOpen] = useState(false);
+  // S0 (2026-05-10): the sync inbox / badge / banner / per-note
+  // notice are all torn out. Sync redesign restarts at S1 with
+  // per-note status indicator. For now: sync runs in the background
+  // and surfaces only via CLI (`knowlet sync push|pull|status`).
   // Phase 2 D Slice 2c.2 — `templatesOpen` was the on/off for the
   // legacy manager dialog. Removed in favor of Templates tab. State
   // dropped entirely.
@@ -580,7 +577,6 @@ export function AppShell() {
             >
               <Network className="size-4" />
             </Button>
-            <SyncBadge onOpen={() => setSyncInboxOpen(true)} />
             <Button
               variant="ghost"
               size="icon"
@@ -696,12 +692,6 @@ export function AppShell() {
                   onTogglePin={tabsApi.togglePin}
                   onReorder={tabsApi.reorder}
                 />
-                {/* Slice 5.D.2 — inline conflict notice for the
-                 *  currently-active note. Sits between the tab strip
-                 *  and the editor so its scope reads unambiguously
-                 *  ("about THIS note"); returns null when no
-                 *  conflict, taking zero pixels. */}
-                <NoteConflictNotice noteId={selectedNoteId} />
                 <div className="min-h-0 flex-1">
                   <NoteView
                     noteId={selectedNoteId}
@@ -761,10 +751,6 @@ export function AppShell() {
         open={trashOpen}
         onClose={() => setTrashOpen(false)}
         onRestored={(restoredId) => setSelectedNoteId(restoredId)}
-      />
-      <SyncConflictsInbox
-        open={syncInboxOpen}
-        onClose={() => setSyncInboxOpen(false)}
       />
       <CommandPalette
         open={paletteOpen}
