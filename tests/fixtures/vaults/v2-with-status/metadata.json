@@ -1,0 +1,11 @@
+{
+  "name": "v2-with-status",
+  "added": "2026-05-10",
+  "covers": [
+    "Note v2 with status=active",
+    "Note v2 with status=needs-update (linter-flagged path)",
+    "Note v2 in nested folder (daily/) with status=stub"
+  ],
+  "covered_by_test": "tests/test_vault_fixtures.py",
+  "regression_target": "ADR-0023 §7 — Note status field round-trips intact for all four NoteStatus values; nested folders still resolve correctly."
+}

@@ -1,0 +1,11 @@
+{
+  "name": "v1-minimal",
+  "added": "2026-05-10",
+  "covers": [
+    "Note v1 (no schema_version field on disk)",
+    "Note v1 with explicit schema_version: 1",
+    "Note v1 with aliases + source + multiple tags"
+  ],
+  "covered_by_test": "tests/test_vault_fixtures.py",
+  "regression_target": "ADR-0018 §1 — code at v2 must read v1 transparently (1-major-backward compat) and lazy-migrate on next write."
+}

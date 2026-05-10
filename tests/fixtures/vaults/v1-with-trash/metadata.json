@@ -1,0 +1,10 @@
+{
+  "name": "v1-with-trash",
+  "added": "2026-05-10",
+  "covers": [
+    "Note v1 — live in notes/",
+    "Note v1 — trashed in notes/.trash/ with trashed_from field"
+  ],
+  "covered_by_test": "tests/test_vault_fixtures.py",
+  "regression_target": "ADR-0018 §1 + the trash subsystem — v1 trash entries with the trashed_from frontmatter field round-trip correctly under v2 code, and restore puts the file back in the right folder."
+}
