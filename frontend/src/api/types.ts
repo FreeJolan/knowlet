@@ -26,6 +26,12 @@ export interface NoteSummary {
 
 export interface NoteFull extends NoteSummary {
   body: string;
+  /** Task #108 — surfaces the lenient-read flag so NoteView can
+   *  render a warning chip + auto-repair affordance. Default
+   *  "valid" matches the backend so old payloads (pre-task-#108
+   *  servers) parse without breaking. */
+  frontmatter_status?: "valid" | "auto_filled" | "corrupted";
+  frontmatter_corruption?: string | null;
 }
 
 // ---------- Quick actions (Phase 2 D Slice 2c, ADR-0025) ----------

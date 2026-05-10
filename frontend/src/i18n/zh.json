@@ -324,6 +324,16 @@
     "syncing": "同步中…",
     "editing": "编辑中"
   },
+  "frontmatterCorrupted": {
+    "headline": "这篇笔记的 frontmatter 看起来损坏了。",
+    "detailLabel": "原因:",
+    "viewDetails": "查看详情",
+    "autoRepair": "尝试自动修复",
+    "useAsIs": "继续按原样使用",
+    "repairing": "修复中…",
+    "repairFailed": "自动修复失败: {{detail}}",
+    "fallbackHint": "原始文件已先备份到 .knowlet/backups/。"
+  },
   "merge": {
     "title": "处理冲突 — {{title}}",
     "subtitle": "逐段选择保留哪一侧,或两侧都保留。合并结果会在中间栏实时拼出。",

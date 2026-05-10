@@ -17,7 +17,7 @@ import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
@@ -205,6 +205,12 @@ class NoteSummary(BaseModel):
 
 class NoteFull(NoteSummary):
     body: str
+    # Task #108 — surfaces the lenient-read flag to the UI so the
+    # NoteView can render a warning chip + auto-repair affordance.
+    # Default "valid" keeps the field optional in JSON for clients
+    # that haven't been updated yet.
+    frontmatter_status: Literal["valid", "auto_filled", "corrupted"] = "valid"
+    frontmatter_corruption: str | None = None
 
 
 class BacklinkRow(BaseModel):
@@ -2180,8 +2186,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_410_GONE,
                 detail=f"note file missing on disk: {path}",
             ) from exc
+        # The URL id is the canonical handle (it's whatever the
+        # index stamped this path with). For corrupted notes, the
+        # in-memory ``note.id`` is freshly synthesized on each
+        # ``Note.from_file`` call (the file's id field is
+        # unreadable), so always trust the URL id over the file's.
         return NoteFull(
-            id=note.id,
+            id=note_id,
             title=note.title,
             path=str(path),
             tags=note.tags,
@@ -2190,6 +2201,77 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             created_at=note.created_at,
             updated_at=note.updated_at,
             body=note.body,
+            frontmatter_status=note.frontmatter_status,
+            frontmatter_corruption=note.frontmatter_corruption,
+        )
+
+    # ---------------- frontmatter repair (Task #108) ---------------
+    # The user clicks "auto-repair" on the warning chip. We re-read
+    # the file (which is still corrupted), keep the synthesized id /
+    # title / timestamps Note.from_file derived, and write_note —
+    # which atomically replaces the file via tmp+rename and backs up
+    # the original via .knowlet/backups/ (ADR-0018). The repair is
+    # therefore reversible: the user can fish the original out of
+    # backups if the auto-repair guessed wrong.
+    @app.post("/api/notes/{note_id}/repair-frontmatter", response_model=NoteFull)
+    def repair_frontmatter(
+        note_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> NoteFull:
+        meta = runtime.index.get_note_meta(note_id)
+        if meta is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note not found: {note_id}",
+            )
+        path = Path(meta["path"])
+        if not path.is_absolute():
+            path = runtime.vault.notes_dir / path.name
+        # Re-read directly — bypass Vault.read_note's auto-fill
+        # path because that would silently materialize before we
+        # see the corruption; we want the corrupted handle so we
+        # can persist its synthesized fields explicitly.
+        n = Note.from_file(path)
+        if n.frontmatter_status != "corrupted":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"nothing to repair — note's frontmatter status is "
+                    f"'{n.frontmatter_status}'"
+                ),
+            )
+        # Drop the corruption marker; write_note will emit a clean
+        # frontmatter on top of the salvaged body. Force the index's
+        # canonical id back onto the in-memory Note — Note.from_file
+        # synthesizes a fresh ULID for corrupted notes (the file's
+        # id field is unreadable) so without this override the
+        # repaired file would be written with a different id than
+        # the one the user clicked through.
+        n.id = note_id
+        n.frontmatter_status = "valid"
+        n.frontmatter_corruption = None
+        runtime.vault.write_note(n)
+        # Re-read from disk to confirm the canonical version + invalidate
+        # any prior coupling. After repair the index row is stale —
+        # refresh it so search / backlinks see the new title.
+        canonical = runtime.vault.read_note(path)
+        runtime.index.upsert_note(
+            canonical,
+            chunk_size=runtime.config.retrieval.chunk_size,
+            chunk_overlap=runtime.config.retrieval.chunk_overlap,
+        )
+        return NoteFull(
+            id=note_id,
+            title=canonical.title,
+            path=str(path),
+            tags=canonical.tags,
+            aliases=list(canonical.aliases),
+            source=canonical.source,
+            created_at=canonical.created_at,
+            updated_at=canonical.updated_at,
+            body=canonical.body,
+            frontmatter_status=canonical.frontmatter_status,
+            frontmatter_corruption=canonical.frontmatter_corruption,
         )
 
     @app.delete("/api/notes/{note_id}")

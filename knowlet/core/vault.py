@@ -221,7 +221,28 @@ class Vault:
         return "/".join(rel.parts[:-1])
 
     def read_note(self, path: Path) -> Note:
-        return Note.from_file(path)
+        """Load a Note from disk. If the file has no frontmatter at
+        all (an external markdown import — task #108 case A), this
+        method materializes synthesized defaults to disk on the spot
+        so the next read sees a canonical ULID-stamped file. The
+        in-memory note is re-loaded from the post-write file so
+        parallel callers converge on the same canonical version
+        rather than each holding a stale freshly-minted ULID."""
+        note = Note.from_file(path)
+        if note.frontmatter_status == "auto_filled":
+            # Persist the synthesized frontmatter atomically. After
+            # the write, the file is canonical and a fresh
+            # ``from_file`` call returns a "valid" Note. We re-read
+            # so our return value reflects exactly what landed on
+            # disk (also handles the rare two-callers-race case:
+            # whichever lost the rename still gets the winner's id
+            # by reading the freshly-canonical file).
+            self.write_note(note)
+            return Note.from_file(note.path or path)
+        # Corrupted notes are returned as-is. The UI shows a warning
+        # chip + auto-repair affordance; we don't auto-mutate the
+        # user's content unprompted.
+        return note
 
     def write_note(self, note: Note, *, folder: str | None = None) -> Path:
         """Atomically write a Note. Returns the final path.

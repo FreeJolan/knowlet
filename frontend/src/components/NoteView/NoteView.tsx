@@ -29,6 +29,8 @@ import { MarkdownPreview } from "@/components/Editor/MarkdownPreview";
 import { InlineEditInput } from "@/components/InlineEdit/InlineEditInput";
 import { ConflictMergeView } from "@/components/Sync/ConflictMergeView";
 import { SyncStatusBadge } from "@/components/Sync/SyncStatusBadge";
+
+import { FrontmatterCorruptedNotice } from "./FrontmatterCorruptedNotice";
 import { noteTitleClashesIn } from "@/lib/findCollision";
 import { normalizeNoteTitle } from "@/lib/noteTitle";
 import { QK } from "@/lib/queryClient";
@@ -684,6 +686,12 @@ export function NoteView({
 
   return (
     <div className="kn-paper flex h-full flex-col">
+      {note.data.frontmatter_status === "corrupted" && (
+        <FrontmatterCorruptedNotice
+          noteId={note.data.id}
+          corruption={note.data.frontmatter_corruption}
+        />
+      )}
       <header className="shrink-0 px-10 pt-6 pb-3">
         <div className="flex items-baseline justify-between gap-4">
           {editingTitle ? (

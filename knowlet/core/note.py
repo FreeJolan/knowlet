@@ -9,6 +9,23 @@ Syncthing fans out as a delete + create event and races into
 `(conflict)` copies on peers that hadn't pulled yet (2026-05-02
 critique #5). The title still lives in frontmatter, so Finder / Obsidian
 users can read it, and the chat / web UI display it directly.
+
+Two robustness scenarios this module handles (task #108):
+
+- **Auto-fill** — file has no frontmatter at all (a markdown file
+  imported from outside knowlet). ``from_file`` synthesizes
+  reasonable defaults from filename / first heading / file
+  timestamps and tags the note ``frontmatter_status="auto_filled"``.
+  ``Vault.read_note`` then atomically writes the note back so the
+  next read sees canonical frontmatter — and so the indexer hands
+  out a stable ULID instead of a fresh one each call.
+
+- **Corrupted** — file has frontmatter-shaped content but it's
+  broken (missing opening ``---``, missing closing ``---``, or YAML
+  parse error). We DON'T crash; we return a Note with body=full raw
+  text and ``frontmatter_status="corrupted"`` so the UI can render
+  a warning + auto-repair affordance. The user still sees their
+  content.
 """
 
 from __future__ import annotations
@@ -19,9 +36,10 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Any, Literal, get_args
 
 import frontmatter
+import yaml
 from ulid import ULID
 
 # Phase 2 E Slice 4.C — Note frontmatter v2 status (ADR-0023 §7).
@@ -102,6 +120,23 @@ class Note:
     # if the user opens it from Finder, they can still tell where it
     # came from. Stripped from the frontmatter on restore.
     trashed_from: str | None = None
+    # Task #108 — frontmatter robustness. Transient field (NOT
+    # persisted by ``to_markdown``); set by ``from_file`` to signal
+    # to the API + UI which path produced this Note:
+    #   - "valid"        — file had well-formed frontmatter; default.
+    #   - "auto_filled"  — file had NO frontmatter at all (external
+    #                      markdown import). We synthesized defaults
+    #                      from filename + first heading + file
+    #                      timestamps. Vault.read_note will persist
+    #                      the synthesized frontmatter back so this
+    #                      becomes "valid" on the next read; the UI
+    #                      should never see this state in practice.
+    #   - "corrupted"    — file has frontmatter-shaped content but
+    #                      it's broken. ``frontmatter_corruption``
+    #                      carries a human-readable reason. The UI
+    #                      shows a warning chip + auto-repair button.
+    frontmatter_status: Literal["valid", "auto_filled", "corrupted"] = "valid"
+    frontmatter_corruption: str | None = None
 
     @property
     def slug(self) -> str:
@@ -146,9 +181,31 @@ class Note:
 
     @classmethod
     def from_file(cls, path: Path) -> Note:
-        with path.open("r", encoding="utf-8") as f:
-            post = frontmatter.load(f)
-        meta = post.metadata
+        raw_text = path.read_text(encoding="utf-8")
+        fm_status, meta, body, corruption = _classify_frontmatter(raw_text)
+
+        if fm_status != "valid":
+            # Auto-fill / corrupted path. Synthesize the canonical
+            # fields from whatever signals we have: filename (ULID
+            # if it looks like one), first heading, file mtime/ctime.
+            return cls(
+                id=_id_from_filename(path),
+                title=_first_heading(body) or path.stem,
+                body=body,
+                tags=[],
+                aliases=[],
+                created_at=_iso_from_path_ctime(path),
+                updated_at=_iso_from_path_mtime(path),
+                source=None,
+                path=path,
+                schema_version=NOTE_SCHEMA_VERSION,
+                status=DEFAULT_NOTE_STATUS,
+                trashed_from=None,
+                frontmatter_status=fm_status,
+                frontmatter_corruption=corruption,
+            )
+
+        # Valid frontmatter path — original logic.
         # Pre-versioned notes default to v1 — same shape, just unmarked.
         try:
             schema_version = int(meta.get("schema_version") or 1)
@@ -180,7 +237,7 @@ class Note:
         return cls(
             id=str(meta.get("id") or new_id()),
             title=str(meta.get("title") or path.stem),
-            body=post.content,
+            body=body,
             tags=list(meta.get("tags") or []),
             aliases=[str(a) for a in (meta.get("aliases") or [])],
             created_at=str(meta.get("created_at") or now_iso()),
@@ -191,3 +248,151 @@ class Note:
             status=status,
             trashed_from=trashed_from,
         )
+
+
+# --------------------------------------------------- frontmatter classifier
+
+
+_ULID_PATTERN = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+_YAML_KEY_PATTERN = re.compile(r"^[A-Za-z_][\w\-]*:\s*\S")
+_FIRST_HEADING_PATTERN = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", re.MULTILINE)
+_FmStatus = Literal["valid", "auto_filled", "corrupted"]
+
+
+def _classify_frontmatter(
+    raw_text: str,
+) -> tuple[_FmStatus, dict[str, Any], str, str | None]:
+    """Decide what state ``raw_text``'s frontmatter is in.
+
+    Returns ``(status, metadata, body, corruption_detail)``:
+
+    - ``status="valid"``: file has a well-formed ``---...---`` block;
+      ``metadata`` is the parsed dict, ``body`` is the markdown after
+      the closing marker, ``corruption_detail`` is ``None``.
+    - ``status="auto_filled"``: file has no frontmatter markers and
+      doesn't look like a damaged version of one; ``metadata={}``,
+      ``body=raw_text``, ``corruption_detail=None``. The caller is
+      expected to materialize defaults.
+    - ``status="corrupted"``: file has frontmatter-shaped content
+      but it's broken (missing opening ``---``, missing closing
+      ``---``, or YAML parse error). ``body`` is everything after
+      the broken block when we can identify it, otherwise the full
+      file. ``corruption_detail`` carries a human-readable reason
+      for the warning chip.
+    """
+    lines = raw_text.split("\n") if raw_text else []
+    # Skip leading blank lines so a file with whitespace before
+    # ``---`` still counts as having an opening marker.
+    leading_blank = 0
+    for line in lines:
+        if line.strip():
+            break
+        leading_blank += 1
+
+    if leading_blank >= len(lines):
+        # Empty / whitespace-only file. No frontmatter; treat as
+        # auto-fill (the user just dragged in a blank markdown).
+        return ("auto_filled", {}, raw_text, None)
+
+    first_content_line = lines[leading_blank].strip()
+
+    if first_content_line == "---":
+        # Has opening marker. Find the closing marker.
+        close_idx: int | None = None
+        for j in range(leading_blank + 1, len(lines)):
+            if lines[j].strip() == "---":
+                close_idx = j
+                break
+        if close_idx is None:
+            return (
+                "corrupted",
+                {},
+                raw_text,
+                "frontmatter opens with '---' but never closes — "
+                "knowlet can't tell where the metadata ends.",
+            )
+        yaml_text = "\n".join(lines[leading_blank + 1 : close_idx])
+        try:
+            parsed = yaml.safe_load(yaml_text)
+        except yaml.YAMLError as exc:
+            body = "\n".join(lines[close_idx + 1 :]).lstrip("\n")
+            return (
+                "corrupted",
+                {},
+                body,
+                f"YAML parse error in frontmatter: {exc}",
+            )
+        if parsed is None:
+            parsed = {}
+        if not isinstance(parsed, dict):
+            body = "\n".join(lines[close_idx + 1 :]).lstrip("\n")
+            return (
+                "corrupted",
+                {},
+                body,
+                f"frontmatter is not a YAML mapping (got "
+                f"{type(parsed).__name__}); knowlet expects key:value pairs.",
+            )
+        body = "\n".join(lines[close_idx + 1 :]).lstrip("\n")
+        return ("valid", parsed, body, None)
+
+    # No opening marker. Could be (a) damaged frontmatter where the
+    # user deleted the opening ``---`` but left fields + closing
+    # marker, or (b) a clean external markdown that just happens to
+    # start with non-``---`` content.
+    if _YAML_KEY_PATTERN.match(first_content_line):
+        # First content line looks like a YAML key. Scan a window
+        # for a stray ``---`` that would suggest damaged frontmatter.
+        scan_until = min(leading_blank + 50, len(lines))
+        for j in range(leading_blank + 1, scan_until):
+            if lines[j].strip() == "---":
+                body = "\n".join(lines[j + 1 :]).lstrip("\n")
+                return (
+                    "corrupted",
+                    {},
+                    body,
+                    "frontmatter looks damaged — the opening '---' "
+                    "marker is missing but a closing '---' was found.",
+                )
+
+    # Otherwise: pure body, no frontmatter intended. Auto-fill path.
+    return ("auto_filled", {}, raw_text, None)
+
+
+def _id_from_filename(path: Path) -> str:
+    """If the filename is already a ULID, reuse it; otherwise mint a
+    fresh one. Lets ``foo-bar.md`` become a brand-new note while
+    ``01ABC...XYZ.md`` (e.g. a knowlet-style file whose frontmatter
+    got torched) keeps its original handle."""
+    stem = path.stem
+    if _ULID_PATTERN.match(stem):
+        return stem
+    return new_id()
+
+
+def _first_heading(body: str) -> str | None:
+    """Return the text of the first ``# heading`` in ``body``, or
+    None if there isn't one. Used to seed ``title`` for auto-filled
+    notes."""
+    if not body:
+        return None
+    m = _FIRST_HEADING_PATTERN.search(body)
+    return m.group(1).strip() if m else None
+
+
+def _iso_from_path_mtime(path: Path) -> str:
+    try:
+        ts = path.stat().st_mtime
+    except OSError:
+        return now_iso()
+    return datetime.fromtimestamp(ts, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _iso_from_path_ctime(path: Path) -> str:
+    try:
+        # st_birthtime when available (macOS), else st_ctime.
+        st = path.stat()
+        ts = getattr(st, "st_birthtime", None) or st.st_ctime
+    except OSError:
+        return now_iso()
+    return datetime.fromtimestamp(ts, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

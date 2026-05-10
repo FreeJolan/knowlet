@@ -325,6 +325,16 @@
     "syncing": "syncing…",
     "editing": "editing"
   },
+  "frontmatterCorrupted": {
+    "headline": "This note's frontmatter looks damaged.",
+    "detailLabel": "What we found:",
+    "viewDetails": "View details",
+    "autoRepair": "Try auto-repair",
+    "useAsIs": "Use as-is",
+    "repairing": "Repairing…",
+    "repairFailed": "Auto-repair failed: {{detail}}",
+    "fallbackHint": "Original file backed up under .knowlet/backups/ before any change."
+  },
   "merge": {
     "title": "Resolve conflict — {{title}}",
     "subtitle": "Pick a side per change, or take both. The merged result builds in the middle column.",

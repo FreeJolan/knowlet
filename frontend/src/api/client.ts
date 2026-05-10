@@ -74,6 +74,15 @@ export const deleteFolder = (path: string): Promise<{ trashed_count: number }> =
 export const getNote = (id: string): Promise<NoteFull> =>
   request("GET", `/api/notes/${encodeURIComponent(id)}`);
 
+// Task #108 — auto-repair the warning-chip's "尝试自动修复" button.
+// Backend backs up the corrupted file to .knowlet/backups/ before
+// rewriting it (ADR-0018), so this is reversible.
+export const repairFrontmatter = (id: string): Promise<NoteFull> =>
+  request(
+    "POST",
+    `/api/notes/${encodeURIComponent(id)}/repair-frontmatter`,
+  );
+
 export const moveNote = (id: string, targetFolder: string): Promise<NoteFull> =>
   request("POST", `/api/notes/${encodeURIComponent(id)}/move`, {
     target_folder: targetFolder,

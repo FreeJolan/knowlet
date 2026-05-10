@@ -165,8 +165,15 @@ def _check_vault_integrity(vault: Vault) -> list[tuple[str, int, list[str]]]:
     note_failed: list[str] = []
     for p in note_paths:
         try:
-            Note.from_file(p)
+            n = Note.from_file(p)
         except Exception:
+            note_failed.append(p.name)
+            continue
+        # Task #108: Note.from_file no longer raises on corrupted
+        # frontmatter — it returns a Note with frontmatter_status
+        # set. The doctor still wants to flag those as integrity
+        # issues even though they're now lenient at the read path.
+        if n.frontmatter_status == "corrupted":
             note_failed.append(p.name)
     out.append(("notes", len(note_paths), note_failed))
 
