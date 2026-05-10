@@ -324,5 +324,27 @@
     "unauthenticated": "drive not connected",
     "syncing": "syncing…",
     "editing": "editing"
+  },
+  "merge": {
+    "title": "Resolve conflict — {{title}}",
+    "subtitle": "Pick a side per change, or take both. The merged result builds at the bottom.",
+    "loading": "Loading both versions…",
+    "error": "Couldn't load the conflict — {{detail}}",
+    "leftPane": "Mine",
+    "rightPane": "Theirs",
+    "mergedPane": "Merged result",
+    "leftRevision": "based on rev {{rev}}",
+    "rightRevision": "drive rev {{rev}}",
+    "takeMine": "Take mine",
+    "takeTheirs": "Take theirs",
+    "takeBoth": "Take both",
+    "hunkLabel": "change {{i}} of {{n}}",
+    "noConflicts": "No differing lines — both sides are identical.",
+    "save": "Save merged",
+    "saving": "Saving…",
+    "saveError": "Save failed — {{detail}}",
+    "cancel": "Cancel",
+    "openButton": "Open merge editor",
+    "fallbackHint": "Drive's version history (last 30 days) keeps both pre-merge versions recoverable from drive.google.com if you need to back out."
   }
 }

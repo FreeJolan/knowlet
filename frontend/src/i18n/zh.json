@@ -323,5 +323,27 @@
     "unauthenticated": "未连接 Drive",
     "syncing": "同步中…",
     "editing": "编辑中"
+  },
+  "merge": {
+    "title": "处理冲突 — {{title}}",
+    "subtitle": "逐段选择保留哪一侧,或两侧都保留。合并结果会在下方实时拼出。",
+    "loading": "正在加载两侧版本…",
+    "error": "无法加载冲突 — {{detail}}",
+    "leftPane": "我的版本",
+    "rightPane": "云端版本",
+    "mergedPane": "合并结果",
+    "leftRevision": "基于版本 {{rev}}",
+    "rightRevision": "Drive 版本 {{rev}}",
+    "takeMine": "用我的",
+    "takeTheirs": "用云端",
+    "takeBoth": "都保留",
+    "hunkLabel": "差异 {{i}}/{{n}}",
+    "noConflicts": "两侧完全一致,没有差异。",
+    "save": "保存合并",
+    "saving": "保存中…",
+    "saveError": "保存失败 — {{detail}}",
+    "cancel": "取消",
+    "openButton": "打开合并编辑器",
+    "fallbackHint": "如果合并结果有问题,Drive 的版本历史(最近 30 天)在 drive.google.com 上仍能找回两侧的原始版本。"
   }
 }

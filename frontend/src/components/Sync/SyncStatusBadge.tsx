@@ -73,6 +73,7 @@ export function SyncStatusBadge({
   noteId,
   isSaving = false,
   hasUnsavedEdits = false,
+  onConflictClick,
 }: {
   noteId: string | null;
   /** Frontend overlay state: a save mutation is in flight. */
@@ -80,6 +81,10 @@ export function SyncStatusBadge({
   /** Frontend overlay state: editor has unsaved changes (autosave
    *  hasn't fired yet). Surfaces as 'editing' over the base state. */
   hasUnsavedEdits?: boolean;
+  /** Slice S5 — when state=conflict, the badge becomes clickable
+   *  and fires this callback. The parent owns the merge dialog so
+   *  it can stay mounted across re-renders without flicker. */
+  onConflictClick?: () => void;
 }): ReactNode {
   const { t } = useTranslation();
   const q = useQuery<NoteSyncStatus>({
@@ -129,12 +134,36 @@ export function SyncStatusBadge({
     ? `${t(labelKey)} · ${q.data.detail}`
     : t(labelKey);
 
+  const baseClass =
+    "inline-flex items-center gap-1 font-mono text-[11px] uppercase tracking-wider";
+  const isConflict = displayState === "conflict";
+
+  if (isConflict && onConflictClick) {
+    // Click opens the merge editor. We use a real <button> so the
+    // affordance is keyboard-reachable and screen readers announce
+    // it as actionable.
+    return (
+      <button
+        type="button"
+        data-testid="sync-status-badge"
+        data-state={displayState}
+        title={tooltip}
+        onClick={onConflictClick}
+        className={`${baseClass} cursor-pointer underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none`}
+        style={{ color }}
+      >
+        {iconNode}
+        <span>{t(labelKey)}</span>
+      </button>
+    );
+  }
+
   return (
     <span
       data-testid="sync-status-badge"
       data-state={displayState}
       title={tooltip}
-      className="inline-flex items-center gap-1 font-mono text-[11px] uppercase tracking-wider"
+      className={baseClass}
       style={{ color }}
     >
       {iconNode}

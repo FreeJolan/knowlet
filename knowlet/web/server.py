@@ -106,7 +106,17 @@ class RenameSessionRequest(BaseModel):
 
 # S0 (2026-05-10): sync resolve / bulk-resolve request models lived
 # here. All sync UI endpoints torn out; redesign restarts at S1. New
-# models will land alongside the new endpoints when each slice ships.
+# models land alongside the new endpoints when each slice ships.
+
+
+class ResolveMergeRequest(BaseModel):
+    """S5 — body for ``POST /api/sync/resolve-merge/<note_id>``.
+    Frontend sends the user's hand-merged text; backend writes it
+    locally + force-pushes to Drive. Defined module-level so FastAPI
+    treats it as a body model rather than a query-string class
+    (closure-defined BaseModels regress to that, learned in 5.D)."""
+
+    merged_text: str
 
 
 class QuoteRefPayload(BaseModel):
@@ -1131,6 +1141,137 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 note_id,
                 exc_info=True,
             )
+
+    # ---------------- merge editor (Slice S5) -----------------------
+    # The conflict-bundle endpoint hands the frontend everything it
+    # needs to render the side-by-side merge UI: local text, remote
+    # text, and the revisions involved. resolve-merge accepts the
+    # user's hand-merged result, force-pushes it, and writes locally.
+    # Drive's version history (30 days) keeps both pre-merge versions
+    # recoverable if the merge needs unwinding.
+
+    @app.get("/api/sync/conflict-bundle/{note_id}")
+    def get_conflict_bundle(note_id: str) -> dict[str, Any]:
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.files import (
+            download_file,
+            get_file_metadata,
+        )
+        from knowlet.core.sync.state import SyncStateStore
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="not authenticated to Drive",
+            )
+        local_path = _resolve_note_local_path(note_id)
+        if local_path is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note not found: {note_id}",
+            )
+        store = SyncStateStore(vault.root)
+        try:
+            record = store.get_file_state("note", note_id)
+        finally:
+            store.close()
+        if record is None or not record.drive_file_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"no Drive id tracked for note {note_id}",
+            )
+
+        service = DriveClient(creds).service()
+        try:
+            remote_meta = get_file_metadata(service, record.drive_file_id)
+            remote_bytes = download_file(service, record.drive_file_id)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Drive fetch failed: {exc!r}",
+            ) from exc
+
+        try:
+            local_text = local_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail=f"local file read failed: {exc!r}",
+            ) from exc
+        try:
+            remote_text = remote_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=f"remote bytes are not utf-8: {exc!r}",
+            ) from exc
+
+        return {
+            "note_id": note_id,
+            "drive_file_id": record.drive_file_id,
+            "local_text": local_text,
+            "remote_text": remote_text,
+            "current_drive_revision": remote_meta.head_revision_id,
+            "last_known_revision": record.last_known_etag,
+        }
+
+    @app.post("/api/sync/resolve-merge/{note_id}")
+    def resolve_merge_endpoint(
+        note_id: str, body: ResolveMergeRequest
+    ) -> dict[str, Any]:
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.push import resolve_with_merge
+        from knowlet.core.sync.state import SyncStateStore
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="not authenticated to Drive",
+            )
+        local_path = _resolve_note_local_path(note_id)
+        if local_path is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note not found: {note_id}",
+            )
+        store = SyncStateStore(vault.root)
+        try:
+            record = store.get_file_state("note", note_id)
+            if record is None or not record.drive_file_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"no Drive id tracked for note {note_id}",
+                )
+            try:
+                result = resolve_with_merge(
+                    service=DriveClient(creds).service(),
+                    state=store,
+                    note_id=note_id,
+                    drive_file_id=record.drive_file_id,
+                    local_path=local_path,
+                    merged_bytes=body.merged_text.encode("utf-8"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"merge push failed: {exc!r}",
+                ) from exc
+        finally:
+            store.close()
+        return {
+            "drive_file_id": result.drive_file.id,
+            "new_revision": result.drive_file.head_revision_id,
+        }
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:

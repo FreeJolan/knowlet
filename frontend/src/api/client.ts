@@ -176,6 +176,33 @@ export const getNoteSyncStatus = (
 ): Promise<NoteSyncStatus> =>
   request("GET", `/api/sync/note-status/${encodeURIComponent(noteId)}`);
 
+// ---------- merge editor (Slice S5) ----------
+
+export interface ConflictBundle {
+  note_id: string;
+  drive_file_id: string;
+  local_text: string;
+  remote_text: string;
+  current_drive_revision: string | null;
+  last_known_revision: string | null;
+}
+
+export const getConflictBundle = (noteId: string): Promise<ConflictBundle> =>
+  request("GET", `/api/sync/conflict-bundle/${encodeURIComponent(noteId)}`);
+
+export interface ResolveMergeResponse {
+  drive_file_id: string;
+  new_revision: string | null;
+}
+
+export const resolveMerge = (
+  noteId: string,
+  mergedText: string,
+): Promise<ResolveMergeResponse> =>
+  request("POST", `/api/sync/resolve-merge/${encodeURIComponent(noteId)}`, {
+    merged_text: mergedText,
+  });
+
 // ---------- search (Phase 1 D slice 2) ----------
 
 export const searchVault = (

@@ -27,6 +27,7 @@ import { EditorView } from "@codemirror/view";
 import { MarkdownEditor } from "@/components/Editor/MarkdownEditor";
 import { MarkdownPreview } from "@/components/Editor/MarkdownPreview";
 import { InlineEditInput } from "@/components/InlineEdit/InlineEditInput";
+import { ConflictMergeView } from "@/components/Sync/ConflictMergeView";
 import { SyncStatusBadge } from "@/components/Sync/SyncStatusBadge";
 import { noteTitleClashesIn } from "@/lib/findCollision";
 import { normalizeNoteTitle } from "@/lib/noteTitle";
@@ -142,6 +143,11 @@ export function NoteView({
   // we change modes / when the user clicks back into the editor pane after
   // editing in split. In split-mode it tracks the editor live.
   const [previewBody, setPreviewBody] = useState("");
+  // S5: merge editor visibility. Lives here (rather than inside the
+  // badge) so the dialog stays mounted across badge re-renders +
+  // can be reopened without losing the user's hunk choices via
+  // React Query's bundle cache.
+  const [mergeOpen, setMergeOpen] = useState(false);
 
   const saveMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: NoteFull }) =>
@@ -755,6 +761,13 @@ export function NoteView({
               noteId={note.data?.id ?? null}
               isSaving={savingState === "saving"}
               hasUnsavedEdits={dirtyRef.current}
+              onConflictClick={() => setMergeOpen(true)}
+            />
+            <ConflictMergeView
+              noteId={note.data?.id ?? null}
+              noteTitle={note.data?.title ?? ""}
+              open={mergeOpen}
+              onOpenChange={setMergeOpen}
             />
             <ViewModeToggle value={viewMode} onChange={setViewMode} t={t} />
           </div>

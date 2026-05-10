@@ -240,6 +240,80 @@ def resolve_use_remote(
     )
 
 
+def resolve_with_merge(
+    *,
+    service: Any,
+    state: SyncStateStore,
+    note_id: str,
+    drive_file_id: str,
+    local_path: Path,
+    merged_bytes: bytes,
+) -> PushResult:
+    """User manually merged local + remote in the merge editor (S5).
+    Write the merged bytes atomically to ``local_path`` and force-push
+    them to Drive — both halves of the conflict are now obsolete, the
+    merge IS the new truth.
+
+    "Force" because we've already shown the user both versions; this
+    is the explicit "I have looked at both and chosen this synthesis"
+    exit, equivalent to ``resolve_use_mine`` after the user composed
+    a hybrid. Drive's native version history (30 days) keeps both
+    pre-merge versions recoverable if the merge needs unwinding.
+
+    Local mtime is pinned to ``last_synced_at`` exactly (mirroring
+    ``pull_note_to_local``) so the post-merge note shows up as
+    ``synced`` on the next status poll without flickering through
+    ``conflict``.
+    """
+    import os
+
+    df = force_overwrite(
+        service,
+        file_id=drive_file_id,
+        content=merged_bytes,
+    )
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = local_path.with_suffix(local_path.suffix + ".tmp")
+    tmp.write_bytes(merged_bytes)
+    tmp.replace(local_path)
+
+    synced_iso = now_iso()
+    synced_epoch = _iso_seconds_to_epoch(synced_iso)
+    try:
+        os.utime(local_path, (synced_epoch, synced_epoch))
+    except OSError:
+        pass
+
+    state.upsert_file_state(
+        FileState(
+            entity_type="note",
+            entity_id=note_id,
+            drive_file_id=df.id,
+            last_known_etag=df.head_revision_id,
+            last_synced_at=synced_iso,
+            dirty=False,
+        )
+    )
+    return PushResult(
+        entity_type="note",
+        entity_id=note_id,
+        drive_file=df,
+        created=False,
+    )
+
+
+def _iso_seconds_to_epoch(iso: str) -> float:
+    """Internal: parse the second-precision ISO emitted by
+    ``now_iso()``. Duplicated from status/pull to avoid a tangle of
+    cross-imports between push.py and the read-side modules."""
+    from datetime import datetime as _dt
+
+    s = iso.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    return _dt.fromisoformat(s).timestamp()
+
+
 def resolve_keep_both(
     *,
     state: SyncStateStore,
