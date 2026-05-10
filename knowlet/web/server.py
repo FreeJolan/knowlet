@@ -968,12 +968,18 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         finally:
             store.close()
 
-    # ---------------- per-note sync status (Slice S1) ----------------
+    # ---------------- per-note sync status (Slice S1 + S2) ----------------
     # Single seam the UI binds the per-note SyncStatusBadge to.
     # Returns one of {unauthenticated, offline, synced, dirty,
     # conflict} plus tooltip metadata. ~150ms per request when
     # connected (one Drive files.get round trip); the frontend
     # polls every 10s for the active note.
+    #
+    # S2 — silent auto-pull when safe. compute returns a sixth
+    # internal state ``stale`` (revs differ + local clean). The
+    # endpoint catches it, downloads remote, recomputes, and returns
+    # ``synced`` — the UI never sees ``stale``. Real conflicts
+    # (local dirty + remote moved) still surface as ``conflict``.
     @app.get("/api/sync/note-status/{note_id}")
     def get_note_sync_status(note_id: str) -> dict[str, Any]:
         from knowlet.core.sync.state import SyncStateStore
@@ -981,21 +987,150 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
         store = SyncStateStore(vault.root)
         try:
+            local_path = _resolve_note_local_path(note_id)
             status = compute_note_sync_status(
                 vault_root=vault.root,
                 note_id=note_id,
                 state_store=store,
+                local_path=local_path,
             )
+            if status.state == "stale" and local_path is not None:
+                # Safe to auto-pull: revs differ + local clean. Do
+                # it inline so the frontend never has to. Worst case
+                # (Drive errors mid-pull), the recompute below
+                # returns the now-offline state and we degrade to
+                # the badge showing offline.
+                _auto_pull_stale(store, note_id, local_path)
+                status = compute_note_sync_status(
+                    vault_root=vault.root,
+                    note_id=note_id,
+                    state_store=store,
+                    local_path=local_path,
+                )
         finally:
             store.close()
+        # Wire contract: only the five UI-visible states leave this
+        # endpoint. ``stale`` is internal — if it survives the
+        # auto-pull attempt above (couldn't resolve local_path, or
+        # pull silently no-op'd), surface it as ``conflict`` so the
+        # user at least sees a "something needs attention" signal
+        # rather than a phantom state the frontend can't render.
+        wire_state = status.state if status.state != "stale" else "conflict"
         return {
-            "state": status.state,
+            "state": wire_state,
             "last_synced_at": status.last_synced_at,
             "drive_file_id": status.drive_file_id,
             "last_known_revision": status.last_known_revision,
             "current_drive_revision": status.current_drive_revision,
             "detail": status.detail,
         }
+
+    # ---------------- explicit pull (Slice S2 primitive) -----------------
+    # Surfaces ``pull_note_to_local`` as a callable — needed for
+    # S3's open-time orchestrator (pull-many) and for any UI
+    # affordance that wants a manual "fetch now" button. The
+    # status endpoint already auto-pulls during routine polling;
+    # this is the explicit handle.
+    @app.post("/api/sync/note-pull/{note_id}")
+    def pull_note_endpoint(note_id: str) -> dict[str, Any]:
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.pull import (
+            PullStateMissingError,
+            pull_note_to_local,
+        )
+        from knowlet.core.sync.state import SyncStateStore
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="not authenticated to Drive",
+            )
+        local_path = _resolve_note_local_path(note_id)
+        if local_path is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note not found: {note_id}",
+            )
+        store = SyncStateStore(vault.root)
+        try:
+            try:
+                result = pull_note_to_local(
+                    service=DriveClient(creds).service(),
+                    state=store,
+                    note_id=note_id,
+                    local_path=local_path,
+                )
+            except PullStateMissingError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=str(exc),
+                ) from exc
+        finally:
+            store.close()
+        return {
+            "drive_file_id": result.drive_file_id,
+            "new_revision": result.new_revision,
+            "bytes": len(result.new_bytes),
+        }
+
+    def _resolve_note_local_path(note_id: str) -> Path | None:
+        """Look up a note's on-disk path via the index. Returns
+        ``None`` if the note isn't tracked or the resolved path
+        doesn't exist — callers treat this as "no local file to
+        compare against"."""
+        try:
+            runtime = state.runtime
+        except Exception:  # noqa: BLE001
+            return None
+        if runtime is None:
+            return None
+        meta = runtime.index.get_note_meta(note_id)
+        if meta is None:
+            return None
+        path = Path(meta["path"])
+        if not path.is_absolute():
+            path = runtime.vault.notes_dir / path.name
+        return path if path.exists() else None
+
+    def _auto_pull_stale(
+        store: Any,  # SyncStateStore — kept loose to avoid a top-level import
+        note_id: str,
+        local_path: Path,
+    ) -> None:
+        """Best-effort auto-pull invoked from the status endpoint
+        when state==stale. Failures are swallowed: the recompute
+        afterwards will surface them as offline / conflict /
+        unchanged-stale, whichever the new state actually is."""
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.pull import pull_note_to_local
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            return
+        try:
+            pull_note_to_local(
+                service=DriveClient(creds).service(),
+                state=store,
+                note_id=note_id,
+                local_path=local_path,
+            )
+        except Exception:  # noqa: BLE001
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "auto-pull failed for note %s",
+                note_id,
+                exc_info=True,
+            )
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
