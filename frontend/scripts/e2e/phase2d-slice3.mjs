@@ -137,6 +137,32 @@ try {
     assert(closeBtns === 1, "× button restored on unpin");
   });
 
+  await runTest("Inline pin button on pinned tab unpins (one-click)", async () => {
+    // Re-pin ref-doc via right click.
+    const refTab = page.locator('[data-testid="tab"]', { hasText: "ref-doc" }).first();
+    await refTab.click({ button: "right" });
+    await page.locator('[data-testid="tab-context-pin"]').click();
+    await page.waitForTimeout(250);
+    // Pinned now — there's an inline tab-unpin button (replaces ×).
+    const inline = page
+      .locator('[data-testid="tab"]', { hasText: "ref-doc" })
+      .first()
+      .locator('[data-testid="tab-unpin"]');
+    await inline.waitFor({ state: "visible", timeout: 1500 });
+    await inline.click();
+    await page.waitForTimeout(250);
+    // After click: NOT pinned, × button visible. (Tab itself stays
+    // open — this is the one-click-unpin contract.)
+    const stillThere = await page
+      .locator('[data-testid="tab"]', { hasText: "ref-doc" })
+      .count();
+    assert(stillThere === 1, "tab must stay open after a single unpin click");
+    const pinnedNow = await page
+      .locator('[data-testid="tab"][data-pinned="true"]')
+      .count();
+    assert(pinnedNow === 0, `inline unpin should drop pin — got ${pinnedNow} still pinned`);
+  });
+
   await runTest("Palette toggles 'Pin tab' ↔ 'Unpin tab' via active state", async () => {
     // ref-doc currently active (we just unpinned it). Palette should
     // show "Pin tab".

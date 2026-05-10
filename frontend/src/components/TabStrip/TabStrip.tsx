@@ -132,29 +132,37 @@ export function TabStrip({
                 }}
                 title={title}
               >
-                {isPinned && (
-                  <Pin
-                    className="size-3 shrink-0 rotate-45"
-                    style={{ color: "var(--accent)", opacity: 0.85 }}
-                    aria-label="pinned"
-                  />
-                )}
                 <span
                   className="min-w-0 truncate"
                   style={{ flex: 1, lineHeight: 1.2 }}
                 >
                   {title}
                 </span>
+                {/* Right-side button — VS Code parity. For unpinned
+                 *  tabs it's × → close. For pinned tabs it's a pin
+                 *  icon → unpin (one extra click before the × that
+                 *  appears post-unpin can close it). Same slot, same
+                 *  affordance position; only the icon + behavior
+                 *  changes. */}
                 {isPinned ? (
-                  // Pinned tabs hide × so the user can't accidentally
-                  // close them with a click. Right-click → Unpin first
-                  // (or click the pin icon area itself — falls through
-                  // to the tab activate; that's fine, unpin is a
-                  // deliberate action).
-                  <span
-                    className="size-4 shrink-0"
-                    aria-hidden="true"
-                  />
+                  <button
+                    type="button"
+                    data-testid="tab-unpin"
+                    data-note-id={id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onTogglePin(id);
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    aria-label={`Unpin ${title}`}
+                    className="flex size-4 shrink-0 items-center justify-center rounded-sm transition-opacity hover:bg-accent/30"
+                    style={{ color: "var(--accent)" }}
+                  >
+                    <Pin size={11} className="rotate-45 fill-current" />
+                  </button>
                 ) : (
                   <button
                     type="button"
