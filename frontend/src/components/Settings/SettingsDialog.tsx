@@ -10,13 +10,26 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CloudOff, Monitor, Moon, ShieldAlert, Sun, Zap } from "lucide-react";
+import {
+  Cloud,
+  CloudOff,
+  Loader2,
+  Monitor,
+  Moon,
+  ShieldAlert,
+  Sun,
+  Zap,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  disconnect as apiDisconnect,
+  getAuthStatus,
   getSyncMode,
   setSyncMode as apiSetSyncMode,
+  startConnect,
+  type SyncAuthStatus,
   type SyncModeResponse,
 } from "@/api/client";
 import {
@@ -102,11 +115,118 @@ export function SettingsDialog({ open, onClose }: Props) {
           )}
 
           <div className="mt-6">
+            <DriveAuthPanel />
+          </div>
+
+          <div className="mt-6">
             <SyncModePicker />
           </div>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function DriveAuthPanel(): React.ReactNode {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const q = useQuery<SyncAuthStatus>({
+    queryKey: QK.syncAuth,
+    queryFn: getAuthStatus,
+    // While connecting we want a fast poll so the spinner gives way
+    // to the connected state within ~2s of the user finishing OAuth.
+    refetchInterval: (query) =>
+      query.state.data?.connecting ? 2000 : false,
+    staleTime: 30_000,
+  });
+  const connect = useMutation({
+    mutationFn: startConnect,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QK.syncAuth });
+    },
+  });
+  const disconnectMut = useMutation({
+    mutationFn: apiDisconnect,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QK.syncAuth });
+      // Disconnect wipes sync_state — chip / conflicts caches need
+      // to forget what they thought they knew.
+      void qc.invalidateQueries({ queryKey: QK.syncConflicts });
+      void qc.invalidateQueries({ queryKey: QK.syncUnpushed });
+      void qc.invalidateQueries({ queryKey: QK.syncMode });
+    },
+  });
+  const data = q.data;
+  return (
+    <Section title={t("driveAuth.label")}>
+      <div className="text-muted-foreground w-full text-xs">
+        {t("driveAuth.blurb")}
+      </div>
+      {data?.connected ? (
+        <div className="mt-2 flex w-full items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs">
+            <Cloud className="size-4 text-emerald-600 dark:text-emerald-400" />
+            <span>
+              {data.user_display_name
+                ? t("driveAuth.connectedAsNamed", {
+                    email: data.user_email,
+                    name: data.user_display_name,
+                  })
+                : t("driveAuth.connectedAs", { email: data.user_email })}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => disconnectMut.mutate()}
+            data-testid="drive-disconnect"
+            disabled={disconnectMut.isPending}
+            className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors hover:bg-accent/30"
+            style={{ borderColor: "var(--line)" }}
+            title={t("driveAuth.disconnectConfirm")}
+          >
+            {t("driveAuth.disconnect")}
+          </button>
+        </div>
+      ) : data?.connecting ? (
+        <div className="mt-2 flex w-full items-center gap-2 text-xs">
+          <Loader2 className="size-4 animate-spin" />
+          <div>
+            <div>{t("driveAuth.connecting")}</div>
+            <div className="text-muted-foreground">
+              {t("driveAuth.connectingHint")}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-2 flex w-full flex-col gap-2">
+          <div className="flex items-center gap-2 text-xs">
+            <CloudOff className="size-4 text-muted-foreground" />
+            <span>{t("driveAuth.notConnected")}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => connect.mutate()}
+            data-testid="drive-connect"
+            disabled={connect.isPending}
+            className="inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors"
+            style={{
+              background: "var(--accent-soft, rgba(91, 122, 156, 0.18))",
+              color: "var(--accent-2, #34495e)",
+              borderColor: "var(--accent, #5b7a9c)",
+              fontWeight: 500,
+            }}
+          >
+            <Cloud className="size-3" />
+            {t("driveAuth.connect")}
+          </button>
+        </div>
+      )}
+      {data?.last_error && !data.connected && !data.connecting && (
+        <div className="text-destructive mt-2 w-full text-xs">
+          {t("driveAuth.lastError", { detail: data.last_error })}
+        </div>
+      )}
+    </Section>
   );
 }
 

@@ -238,7 +238,11 @@ def list_appdata_revisions(service: Any) -> dict[str, DriveFileBrief]:
     """
     out: dict[str, DriveFileBrief] = {}
     page_token: str | None = None
-    while True:
+    # Hard cap pages so a misbehaving service (or a unit-test
+    # MagicMock that truthy-loops on ``nextPageToken``) can't hang
+    # the scan. 1000 entries per page × 10 pages = 10k files,
+    # well past any single-user vault.
+    for _ in range(10):
         kwargs: dict[str, Any] = {
             "spaces": "appDataFolder",
             "fields": "nextPageToken, files(id,name,headRevisionId)",
@@ -247,14 +251,22 @@ def list_appdata_revisions(service: Any) -> dict[str, DriveFileBrief]:
         if page_token:
             kwargs["pageToken"] = page_token
         resp = service.files().list(**kwargs).execute()
-        for f in resp.get("files", []):
+        if not isinstance(resp, dict):
+            break
+        files = resp.get("files", [])
+        if not isinstance(files, list):
+            break
+        for f in files:
+            if not isinstance(f, dict):
+                continue
             out[str(f.get("id"))] = DriveFileBrief(
                 head_revision_id=f.get("headRevisionId"),
                 name=f.get("name"),
             )
-        page_token = resp.get("nextPageToken")
-        if not page_token:
+        next_token = resp.get("nextPageToken")
+        if not isinstance(next_token, str) or not next_token:
             break
+        page_token = next_token
     return out
 
 

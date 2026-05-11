@@ -120,6 +120,12 @@ class Note:
     # if the user opens it from Finder, they can still tell where it
     # came from. Stripped from the frontmatter on restore.
     trashed_from: str | None = None
+    # #120 — folder hint persisted into frontmatter so cross-device
+    # sync can restore folder layout from a flat Drive appData. None
+    # means "root". Drainer sets this from ``vault.folder_of(path)``
+    # before pushing; bootstrap reads it when materializing pulled
+    # notes into the local vault.
+    folder: str | None = None
     # Task #108 — frontmatter robustness. Transient field (NOT
     # persisted by ``to_markdown``); set by ``from_file`` to signal
     # to the API + UI which path produced this Note:
@@ -176,6 +182,10 @@ class Note:
             meta["source"] = self.source
         if self.trashed_from is not None:
             meta["trashed_from"] = self.trashed_from
+        # #120 — only emit folder when explicitly set. Avoids
+        # cluttering frontmatter on root-level notes.
+        if self.folder is not None:
+            meta["folder"] = self.folder
         post = frontmatter.Post(self.body, **meta)
         return str(frontmatter.dumps(post))
 
@@ -247,6 +257,8 @@ class Note:
             status = DEFAULT_NOTE_STATUS
         trashed_from_raw = meta.get("trashed_from")
         trashed_from = str(trashed_from_raw) if trashed_from_raw is not None else None
+        folder_raw = meta.get("folder")
+        folder = str(folder_raw) if folder_raw is not None else None
         fallback_title = path.stem if path else "Untitled"
         return cls(
             id=str(meta.get("id") or new_id()),
@@ -261,6 +273,7 @@ class Note:
             schema_version=schema_version,
             status=status,
             trashed_from=trashed_from,
+            folder=folder,
         )
 
 

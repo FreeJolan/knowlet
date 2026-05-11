@@ -35,7 +35,7 @@ What this module does NOT do:
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +49,14 @@ from knowlet.core.sync.status import (
 NoteMetaLookup = Callable[[str], dict[str, Any] | None]
 NotePathLookup = Callable[[str], Path | None]
 ServiceFactory = Callable[[], Any | None]
+# #119 — callbacks for the bidirectional sync pass.
+# ``MaterializeCallback`` receives a Drive file_id + the brief
+# metadata from list_appdata; returns the note_id we ended up
+# storing under (or None on failure — caller logs and continues).
+# ``TrashLocalCallback`` receives a note_id whose Drive file
+# disappeared since last preflight; impl moves local to trash.
+MaterializeCallback = Callable[[str, Any], str | None]
+TrashLocalCallback = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -88,7 +96,12 @@ class PreflightReport:
     installations seen on this vault's Drive appData within the
     heartbeat TTL. Auto mode reads ``len(alive_devices)`` to
     decide whether to promote to Strict; the chip / settings UI
-    surface the count back to the user."""
+    surface the count back to the user.
+
+    #119 — ``cloned_from_drive_ids`` lists notes the scan
+    materialized from Drive (first-connect bootstrap + remote-only
+    new notes); ``trashed_for_drive_delete_ids`` lists notes the
+    scan moved to local trash because Drive removed them."""
 
     conflicts: list[PreflightConflict]
     offline: list[PreflightOffline]
@@ -98,6 +111,8 @@ class PreflightReport:
     scanned: int
     unauthenticated: bool
     alive_devices: list[dict[str, str]]  # [{device_id, last_seen_at}]
+    cloned_from_drive_ids: list[str] = field(default_factory=list)
+    trashed_for_drive_delete_ids: list[str] = field(default_factory=list)
 
 
 def preflight_scan(
@@ -107,6 +122,8 @@ def preflight_scan(
     note_meta_lookup: NoteMetaLookup,
     note_path_lookup: NotePathLookup,
     auto_pull_service_factory: ServiceFactory,
+    materialize_drive_file: MaterializeCallback | None = None,
+    trash_local_for_drive_deleted: TrashLocalCallback | None = None,
 ) -> PreflightReport:
     """Run one pass over every tracked file.
 
@@ -125,20 +142,10 @@ def preflight_scan(
       rather than per-note.
     """
     rows: list[FileState] = state_store.list_all_files()
-    if not rows:
-        # Vault is fresh — no tracked files, no heartbeat work needed
-        # either (we only care about devices that have actually touched
-        # the vault).
-        return PreflightReport(
-            conflicts=[],
-            offline=[],
-            auto_pulled_ids=[],
-            synced_count=0,
-            dirty_count=0,
-            scanned=0,
-            unauthenticated=False,
-            alive_devices=[],
-        )
+    # #119 — even with empty sync_state, we still want to:
+    #   - run heartbeat (so this device shows up in alive_devices)
+    #   - scan Drive (first-connect case: local empty, Drive has notes)
+    # So don't short-circuit on empty rows like before.
 
     conflicts: list[PreflightConflict] = []
     offline: list[PreflightOffline] = []
@@ -148,6 +155,8 @@ def preflight_scan(
     unauthenticated = False
     drive_service: Any = None
     alive_devices: list[dict[str, str]] = []
+    cloned_from_drive: list[str] = []
+    trashed_for_drive_delete: list[str] = []
 
     # #111 — heartbeat write + scan happens BEFORE the per-note
     # loop so the alive_devices count is populated even if every
@@ -159,6 +168,25 @@ def preflight_scan(
         service_factory=auto_pull_service_factory,
         alive_devices_out=alive_devices,
     )
+
+    # #119 — list Drive appData files ONCE per scan. Used twice
+    # below: to detect Drive-side deletions (sync_state has the
+    # file_id but Drive doesn't) and Drive-side additions (Drive
+    # has the file but no sync_state row tracks it).
+    drive_files: dict[str, Any] = {}
+    if drive_service is not None:
+        try:
+            from knowlet.core.sync.files import list_appdata_revisions
+
+            drive_files = list_appdata_revisions(drive_service)
+        except Exception:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "preflight: Drive list failed; bidirectional sync "
+                "skipped this tick",
+                exc_info=True,
+            )
 
     for row in rows:
         if row.entity_type != "note":
@@ -231,6 +259,73 @@ def preflight_scan(
         # surfaces somewhere rather than silently disappearing.
         offline.append(_offline_row(row, status, note_meta_lookup))
 
+    # #119 bidirectional sync passes — only when we have a Drive
+    # service (auth + reachable). The per-note loop above already
+    # set ``unauthenticated`` if creds are missing.
+    if (
+        not unauthenticated
+        and drive_service is not None
+    ):
+        # Pass A: Drive-side deletions. Any sync_state row whose
+        # drive_file_id is missing from the current Drive list
+        # gets its local file moved to trash. Skip dev-seeded rows
+        # (no real Drive backing) and rows with pending delete
+        # intent (those are OUR deletes, drainer handles them).
+        if trash_local_for_drive_deleted is not None:
+            from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
+
+            for row in rows:
+                if row.entity_type != "note":
+                    continue
+                if not row.drive_file_id:
+                    continue
+                if row.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
+                    continue
+                if row.delete_intent is not None:
+                    continue
+                if row.drive_file_id in drive_files:
+                    continue
+                try:
+                    trash_local_for_drive_deleted(row.entity_id)
+                    trashed_for_drive_delete.append(row.entity_id)
+                except Exception:  # noqa: BLE001
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "preflight: trash-local failed for %s",
+                        row.entity_id,
+                        exc_info=True,
+                    )
+
+        # Pass B: Drive-side additions. Any file_id in Drive's
+        # appData not currently tracked in sync_state gets pulled
+        # down. Skip heartbeat files (those aren't notes).
+        if materialize_drive_file is not None:
+            from knowlet.core.sync.heartbeat import HEARTBEAT_SUFFIX
+
+            known_drive_ids = {
+                row.drive_file_id
+                for row in rows
+                if row.drive_file_id
+            }
+            for file_id, brief in drive_files.items():
+                if file_id in known_drive_ids:
+                    continue
+                if brief.name and brief.name.endswith(HEARTBEAT_SUFFIX):
+                    continue
+                try:
+                    materialized_id = materialize_drive_file(file_id, brief)
+                    if materialized_id:
+                        cloned_from_drive.append(materialized_id)
+                except Exception:  # noqa: BLE001
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "preflight: materialize-from-Drive failed for %s",
+                        file_id,
+                        exc_info=True,
+                    )
+
     return PreflightReport(
         conflicts=conflicts,
         offline=offline,
@@ -240,6 +335,8 @@ def preflight_scan(
         scanned=len(rows),
         unauthenticated=unauthenticated,
         alive_devices=alive_devices,
+        cloned_from_drive_ids=cloned_from_drive,
+        trashed_for_drive_delete_ids=trashed_for_drive_delete,
     )
 
 

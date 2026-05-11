@@ -155,6 +155,38 @@ export const getUnpushedStatus = (): Promise<UnpushedStatus> =>
 export const pushAllUnpushed = (): Promise<{ queued: number }> =>
   request("POST", "/api/sync/push-all-unpushed");
 
+// ---------- Drive auth (#116) ----------
+
+export interface SyncAuthStatus {
+  connected: boolean;
+  user_email: string | null;
+  user_display_name: string | null;
+  connecting: boolean;
+  last_error: string | null;
+}
+
+export const getAuthStatus = (): Promise<SyncAuthStatus> =>
+  request("GET", "/api/sync/auth-status");
+
+export const startConnect = (): Promise<{ started: boolean; reason?: string }> =>
+  request("POST", "/api/sync/connect");
+
+export const disconnect = (): Promise<{ removed_token_file: boolean }> =>
+  request("POST", "/api/sync/disconnect");
+
+// ---------- push failures (#122) ----------
+
+export interface PushError {
+  note_id: string;
+  note_title: string | null;
+  count: number;
+  last_error: string | null;
+  last_attempt_at: string | null;
+}
+
+export const getPushErrors = (): Promise<{ errors: PushError[] }> =>
+  request("GET", "/api/sync/push-errors");
+
 export const moveNote = (id: string, targetFolder: string): Promise<NoteFull> =>
   request("POST", `/api/notes/${encodeURIComponent(id)}/move`, {
     target_folder: targetFolder,

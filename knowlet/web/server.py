@@ -666,6 +666,17 @@ class WebState:
         # Drive. Instantiated by ``create_app`` after the helper
         # closures are defined; started by ``lifespan``.
         self.push_drainer: Any | None = None
+        # #116 — in-flight OAuth state. ``state`` is one of:
+        #   "idle"       — no flow has run this session
+        #   "running"    — browser is open, waiting for user consent
+        #   "connected"  — last flow completed; tokens on disk
+        #   "error"      — last flow failed; ``oauth_last_error`` is set
+        # The actual creds live on disk (.knowlet/sync_credentials.json);
+        # this struct is just the in-memory snapshot of the most
+        # recent attempt so the UI can show a spinner.
+        self.oauth_flow_state: str = "idle"
+        self.oauth_last_error: str | None = None
+        self._oauth_thread: threading.Thread | None = None
 
     def start_bootstrap_async(self) -> None:
         """Kick off bootstrap on a daemon thread. Called from lifespan.
@@ -1534,20 +1545,30 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     @app.post("/api/sync/dev-simulate-remote-edit/{note_id}")
     def dev_simulate_remote_edit(note_id: str) -> dict[str, Any]:
-        """Pretend another device edited this note on Drive. Uses
-        the user's real OAuth token to force-overwrite the note's
-        Drive file with synthetic content — Drive's
-        ``headRevisionId`` bumps just like a real concurrent edit.
-        Next time knowlet's preflight runs (or the user saves
-        locally → drainer pushes → 412), the conflict surfaces
-        through the normal flow."""
+        """Carol-persona conflict in a single endpoint.
+
+        Bumps the Drive copy with a "remote-side" marker AND appends
+        a "local-side" marker to the local file + flips sync_state
+        dirty. Without the local-side change, S2's auto-pull would
+        silently merge the remote edit into the clean local file
+        (its job!) and the user never sees a conflict — the dev
+        simulator has to fake BOTH sides moving concurrently to
+        exercise the merge editor.
+
+        The ``last_known_etag`` stays pointed at the pre-simulate
+        revision, so the next drainer tick's push hits 412 → real
+        ConflictReport → chip lights up + merge dialog opens.
+        """
+        import os
+
+        from knowlet.core.note import now_iso
         from knowlet.core.sync.credentials import (
             credentials_path,
             load_credentials,
         )
         from knowlet.core.sync.drive_client import DriveClient
         from knowlet.core.sync.files import download_file, force_overwrite
-        from knowlet.core.sync.state import SyncStateStore
+        from knowlet.core.sync.state import FileState, SyncStateStore
 
         creds = load_credentials(credentials_path(vault.root))
         if creds is None:
@@ -1565,32 +1586,84 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="note has never been pushed to Drive",
             )
+        local_path = _resolve_note_local_path(note_id)
+        if local_path is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="local file not found",
+            )
         service = DriveClient(creds).service()
         current = download_file(service, rec.drive_file_id).decode(
             "utf-8", errors="replace"
         )
-        # Inject a marker so the merge editor's diff shows something
-        # visibly "remote-side": append a paragraph the local file
-        # can't possibly have. The user will see it as a hunk on the
-        # right-hand pane.
-        from knowlet.core.note import now_iso
+        ts = now_iso()
 
-        injected = (
+        # Side 1 — remote-side edit
+        remote_injected = (
             current.rstrip()
             + "\n\n[remote-side edit simulated at "
-            + now_iso()
+            + ts
             + " — pretend a coworker added this paragraph from another device]\n"
         )
         df = force_overwrite(
             service,
             file_id=rec.drive_file_id,
-            content=injected.encode("utf-8"),
+            content=remote_injected.encode("utf-8"),
         )
+
+        # Side 2 — local-side edit. Read the on-disk file (which
+        # might be the same as ``current`` if local hadn't been
+        # touched, OR might have user edits we want to preserve).
+        # Append a distinguishable marker so the merge editor's
+        # left pane shows something the right pane doesn't.
+        try:
+            local_text = local_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail=f"local file read failed: {exc!r}",
+            ) from exc
+        local_injected = (
+            local_text.rstrip()
+            + "\n\n[local-side edit simulated at "
+            + ts
+            + " — pretend you wrote this paragraph on the local device]\n"
+        )
+        # Atomic write to mirror what Vault.write_note does.
+        tmp = local_path.with_suffix(local_path.suffix + ".tmp")
+        tmp.write_text(local_injected, encoding="utf-8")
+        tmp.replace(local_path)
+        # Bump mtime so ``_is_local_dirty`` reads True — kills any
+        # chance of S2 misclassifying this as ``stale``.
+        os.utime(local_path, None)
+
+        # Mark dirty so the drainer tries to push; KEEP
+        # ``last_known_etag`` at its pre-simulate value so that push
+        # hits 412 against the bumped Drive revision.
+        store = SyncStateStore(vault.root)
+        try:
+            store.upsert_file_state(
+                FileState(
+                    entity_type="note",
+                    entity_id=note_id,
+                    drive_file_id=rec.drive_file_id,
+                    last_known_etag=rec.last_known_etag,  # stale on purpose
+                    last_synced_at=rec.last_synced_at,
+                    dirty=True,
+                )
+            )
+        finally:
+            store.close()
+
         _invalidate_preflight_cache()
         return {
             "drive_file_id": df.id,
-            "new_revision": df.head_revision_id,
-            "bytes": len(injected),
+            "remote_new_revision": df.head_revision_id,
+            "local_bytes": len(local_injected),
+            "hint": (
+                "next drainer tick (≤5s) or POST /api/sync/drain-now → "
+                "412 → chip should light up amber"
+            ),
         }
 
     @app.post("/api/sync/dev-cleanup-orphan-sync-rows")
@@ -1798,6 +1871,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 note_meta_lookup=note_meta,
                 note_path_lookup=note_path,
                 auto_pull_service_factory=service_factory,
+                materialize_drive_file=_materialize_drive_file,
+                trash_local_for_drive_deleted=_trash_local_for_drive_deleted,
             )
         finally:
             store.close()
@@ -1822,6 +1897,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 "dirty_count": 0,
                 "unauthenticated": False,
                 "alive_devices": [],
+                "cloned_from_drive_ids": [],
+                "trashed_for_drive_delete_ids": [],
             }
         return _serialize_preflight(report, state.preflight_ran_at)
 
@@ -1855,6 +1932,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "dirty_count": report.dirty_count,
             "unauthenticated": report.unauthenticated,
             "alive_devices": list(report.alive_devices),
+            "cloned_from_drive_ids": list(report.cloned_from_drive_ids),
+            "trashed_for_drive_delete_ids": list(
+                report.trashed_for_drive_delete_ids
+            ),
         }
 
     def _invalidate_preflight_cache() -> None:
@@ -1866,25 +1947,125 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         state.preflight_report = None
         state.preflight_ran_at = None
 
+    def _mark_note_delete_intent(note_id: str, kind: str) -> None:
+        """#118 — flag a note's sync_state row for Drive-side deletion
+        by the drainer. ``kind`` must be ``"soft"`` (Drive trash,
+        30-day grace) or ``"hard"`` (permanent). No-op if there's
+        no Drive backing (never-pushed note → no Drive file to
+        clean up).
+
+        Doesn't go through ``upsert_file_state`` so we preserve the
+        existing drive_file_id / etag the drainer needs at delete
+        time."""
+        from knowlet.core.sync.state import FileState, SyncStateStore
+        from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
+
+        if kind not in ("soft", "hard"):
+            raise ValueError(f"delete intent must be soft|hard, got {kind!r}")
+        store = SyncStateStore(vault.root)
+        try:
+            rec = store.get_file_state("note", note_id)
+            if rec is None or not rec.drive_file_id:
+                # Never pushed → nothing for the drainer to clean.
+                # Drop the row entirely if it exists (orphan).
+                if rec is not None:
+                    store.remove_file_state("note", note_id)
+                return
+            if rec.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
+                # Dev seed — pretend nothing to delete on Drive.
+                store.remove_file_state("note", note_id)
+                return
+            store.upsert_file_state(
+                FileState(
+                    entity_type=rec.entity_type,
+                    entity_id=rec.entity_id,
+                    drive_file_id=rec.drive_file_id,
+                    last_known_etag=rec.last_known_etag,
+                    last_synced_at=rec.last_synced_at,
+                    dirty=False,  # not a push — Drive delete instead
+                    dismissed_until=rec.dismissed_until,
+                    delete_intent=kind,
+                )
+            )
+        finally:
+            store.close()
+        _invalidate_preflight_cache()
+
+    def _unmark_note_delete_intent(note_id: str) -> None:
+        """#118 — user restored a trashed note before the drainer
+        propagated the trash to Drive. Clear the delete_intent
+        flag; we'll keep the local file + Drive copy in sync via
+        normal push."""
+        from knowlet.core.sync.state import FileState, SyncStateStore
+
+        store = SyncStateStore(vault.root)
+        try:
+            rec = store.get_file_state("note", note_id)
+            if rec is None or rec.delete_intent is None:
+                return
+            store.upsert_file_state(
+                FileState(
+                    entity_type=rec.entity_type,
+                    entity_id=rec.entity_id,
+                    drive_file_id=rec.drive_file_id,
+                    last_known_etag=rec.last_known_etag,
+                    last_synced_at=rec.last_synced_at,
+                    dirty=True,  # restore = something changed locally
+                    dismissed_until=rec.dismissed_until,
+                    delete_intent=None,
+                )
+            )
+        finally:
+            store.close()
+
     def _mark_note_dirty_for_push(note_id: str) -> None:
-        """S4 — call after Vault.write_note. Marks the note's
+        """S4 + #117 — call after Vault.write_note. Marks the note's
         sync_state row dirty=True so the background drainer picks
-        it up on the next tick. No-op for notes that:
-          - have never been pushed (no sync_state row yet) — first
-            push happens via a separate "sync now" path, not the
-            drainer
-          - are dev-seeded (DEV_FAKE_CONFLICT) — those have no real
-            Drive backing
-        Cheap (one SQLite UPDATE); safe to call from every save."""
+        it up on the next tick.
+
+        Three cases:
+          - Existing row with drive_file_id → flip dirty=True
+            (update path; drainer's update_file_conditional runs).
+          - No row yet AND Drive auth present → CREATE row with
+            drive_file_id=None, dirty=True (first-push path; drainer's
+            upload_new_file runs). Fixes the "new notes never
+            auto-push" bug.
+          - No row + no Drive auth → no-op (sync not configured;
+            saving notes locally is the local-only path).
+          - Dev-seeded (DEV_FAKE_CONFLICT) → skip (no real Drive
+            backing).
+
+        Cheap (one SQLite UPDATE or INSERT); safe to call from
+        every save."""
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
         from knowlet.core.sync.state import FileState, SyncStateStore
         from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
 
         store = SyncStateStore(vault.root)
         try:
             rec = store.get_file_state("note", note_id)
-            if rec is None or not rec.drive_file_id:
+            if rec is not None and rec.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
                 return
-            if rec.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
+            if rec is None:
+                # #117 — new note. Only auto-track if Drive auth
+                # exists (otherwise we'd pile up dirty rows that
+                # never get a chance to push).
+                creds = load_credentials(credentials_path(vault.root))
+                if creds is None:
+                    return
+                store.upsert_file_state(
+                    FileState(
+                        entity_type="note",
+                        entity_id=note_id,
+                        drive_file_id=None,
+                        last_known_etag=None,
+                        last_synced_at=None,
+                        dirty=True,
+                    )
+                )
                 return
             if rec.dirty:
                 return  # already queued
@@ -1998,6 +2179,132 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             unauthenticated=rep.unauthenticated,
             alive_devices=rep.alive_devices,
         )
+
+    # ---------------- Drive auth (connect / disconnect / status, #116)
+
+    @app.get("/api/sync/auth-status")
+    def auth_status() -> dict[str, Any]:
+        """One snapshot of "is Drive connected, and if so as whom".
+        The chip / Settings panel polls this so the user never has
+        to drop to terminal to know the state."""
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            return {
+                "connected": False,
+                "user_email": None,
+                "user_display_name": None,
+                "connecting": state.oauth_flow_state == "running",
+                "last_error": state.oauth_last_error,
+            }
+        return {
+            "connected": True,
+            "user_email": creds.user_email,
+            "user_display_name": creds.user_display_name,
+            "connecting": False,
+            "last_error": None,
+        }
+
+    @app.post("/api/sync/connect")
+    def connect_endpoint() -> dict[str, Any]:
+        """Kick off the OAuth flow on a daemon thread. Returns
+        immediately with state="running"; the UI polls
+        ``/api/sync/auth-status`` until ``connecting=false``. The
+        OAuth library opens the user's browser to Google's consent
+        page; the local loopback HTTP server in the thread blocks
+        until the callback arrives.
+
+        Per #115 the embedded OAuth client is used unless
+        ``sync.client_secrets_path`` is set + points at a real
+        file (advanced-user escape hatch). No client config is
+        required for the common case."""
+        from knowlet.core.sync.credentials import credentials_path
+
+        if state.oauth_flow_state == "running":
+            return {"started": False, "reason": "already running"}
+
+        cs_path, tok_path = _resolve_paths_for_oauth()
+
+        def _runner() -> None:
+            from knowlet.core.sync.oauth import (
+                OAuthFlowError,
+                run_connect_flow,
+            )
+
+            try:
+                run_connect_flow(
+                    client_secrets_path=cs_path,
+                    save_to=tok_path,
+                    port=0,
+                )
+                state.oauth_flow_state = "connected"
+                state.oauth_last_error = None
+            except OAuthFlowError as exc:
+                state.oauth_flow_state = "error"
+                state.oauth_last_error = str(exc)
+            except Exception as exc:  # noqa: BLE001
+                state.oauth_flow_state = "error"
+                state.oauth_last_error = repr(exc)
+
+        state.oauth_flow_state = "running"
+        state.oauth_last_error = None
+        thread = threading.Thread(
+            target=_runner, daemon=True, name="knowlet-oauth-flow"
+        )
+        thread.start()
+        state._oauth_thread = thread
+        return {"started": True}
+
+    @app.post("/api/sync/disconnect")
+    def disconnect_endpoint() -> dict[str, Any]:
+        """Clear the local tokens + reset sync_state. Per ADR-0027
+        the local device_id is preserved so reconnecting from the
+        same machine doesn't look like a new device."""
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            delete_credentials,
+        )
+        from knowlet.core.sync.state import SyncStateStore
+
+        _, tok_path = _resolve_paths_for_oauth()
+        removed = delete_credentials(tok_path)
+        store = SyncStateStore(vault.root)
+        try:
+            store.clear()
+        finally:
+            store.close()
+        state.oauth_flow_state = "idle"
+        state.oauth_last_error = None
+        _invalidate_preflight_cache()
+        return {"removed_token_file": removed}
+
+    def _resolve_paths_for_oauth() -> tuple[Path | None, Path]:
+        """Same resolution as the CLI uses (knowlet/cli/sync.py
+        ``_resolve_paths``). Kept local to the endpoint so the
+        sync module doesn't need to depend on the CLI module."""
+        from knowlet.core.sync.credentials import credentials_path
+
+        cs = (
+            getattr(config.sync, "client_secrets_path", "") or ""
+        )
+        cs_path: Path | None
+        if cs:
+            cs_path = Path(cs).expanduser()
+            if not cs_path.is_absolute():
+                cs_path = vault.root / cs_path
+            if not cs_path.exists():
+                cs_path = None
+        else:
+            cs_path = None
+        tok_path = credentials_path(
+            vault.root,
+            getattr(config.sync, "token_path", "") or None,
+        )
+        return cs_path, tok_path
 
     # ---------------- sync mode (#107b) ---------------------------
     # User-selected behavior: auto / strict / lax. Strict mode shows
@@ -2170,12 +2477,151 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         if path is None:
             return None
         try:
-            return runtime.vault.read_note(path)
+            note = runtime.vault.read_note(path)
         except Exception:  # noqa: BLE001
             return None
+        # #120 — stamp the current vault folder so it round-trips
+        # via Drive frontmatter. Empty string from ``folder_of``
+        # maps to None (root).
+        folder = runtime.vault.folder_of(path)
+        note.folder = folder or None
+        return note
 
     def _drainer_on_conflict(note_id: str, _report: Any) -> None:
         _add_conflict_to_preflight(note_id, _report.drive_file_id)
+
+    def _materialize_drive_file(
+        drive_file_id: str, brief: Any
+    ) -> str | None:
+        """#119 — pull a Drive file we've never seen, place it in
+        the local vault, write the sync_state row + index. Returns
+        the note id on success, None if anything broke (caller
+        logs)."""
+        from knowlet.core.note import Note, now_iso
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.files import download_file
+        from knowlet.core.sync.state import FileState, SyncStateStore
+
+        runtime = state.runtime
+        if runtime is None:
+            return None
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            return None
+        service = DriveClient(creds).service()
+        body = download_file(service, drive_file_id)
+        try:
+            raw = body.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        note = Note.from_text(raw)
+        # If the Drive file's frontmatter was empty / corrupted, the
+        # synthesized note.id won't be stable; for first-clone
+        # purposes prefer the file's own name (Drive stores it as
+        # ``<id>.md``).
+        if (
+            note.frontmatter_status != "valid"
+            and brief.name
+            and brief.name.endswith(".md")
+        ):
+            stem = brief.name[:-3]
+            if stem:
+                note.id = stem
+        # Place into the vault honoring the ``folder`` frontmatter
+        # field (#120). None → root.
+        folder = note.folder
+        try:
+            written = runtime.vault.write_note(note, folder=folder)
+        except ValueError:
+            # Folder escaped vault root or similar — fall back to root.
+            note.folder = None
+            written = runtime.vault.write_note(note)
+        # Update sync_state so future preflights treat this as
+        # tracked. last_known_etag from the brief (cheap; we just
+        # fetched the file so we know its head).
+        store = SyncStateStore(vault.root)
+        try:
+            store.upsert_file_state(
+                FileState(
+                    entity_type="note",
+                    entity_id=note.id,
+                    drive_file_id=drive_file_id,
+                    last_known_etag=brief.head_revision_id,
+                    last_synced_at=now_iso(),
+                    dirty=False,
+                )
+            )
+        finally:
+            store.close()
+        runtime.index.upsert_note(
+            note,
+            chunk_size=runtime.config.retrieval.chunk_size,
+            chunk_overlap=runtime.config.retrieval.chunk_overlap,
+        )
+        # Note: written is the path on disk; not needed to return.
+        del written
+        return note.id
+
+    def _trash_local_for_drive_deleted(note_id: str) -> None:
+        """#119 — Drive removed this note (another device deleted +
+        synced before us). Move our local copy to trash + drop the
+        sync_state row + index entry. We do NOT also mark
+        delete_intent — Drive's already done that side."""
+        from knowlet.core.sync.state import SyncStateStore
+
+        runtime = state.runtime
+        if runtime is None:
+            return
+        meta = runtime.index.get_note_meta(note_id)
+        if meta is None:
+            return
+        path = Path(meta["path"])
+        if not path.is_absolute():
+            path = runtime.vault.notes_dir / path.name
+        try:
+            runtime.vault.trash_note(path)
+        except (FileNotFoundError, ValueError):
+            pass
+        try:
+            runtime.index.delete_note(note_id)
+        except Exception:  # noqa: BLE001
+            pass
+        store = SyncStateStore(vault.root)
+        try:
+            store.remove_file_state("note", note_id)
+        finally:
+            store.close()
+
+    @app.get("/api/sync/push-errors")
+    def push_errors_endpoint() -> dict[str, Any]:
+        """#122 — list notes whose recent push attempts have failed.
+        The chip surfaces a red badge when this is non-empty so
+        the user knows sync is silently broken (drainer would
+        otherwise just keep retrying forever)."""
+        if state.push_drainer is None:
+            return {"errors": []}
+        runtime = state.runtime
+        errors = []
+        for nid, info in state.push_drainer.failures.items():
+            title = None
+            if runtime is not None:
+                meta = runtime.index.get_note_meta(nid)
+                if meta is not None:
+                    title = meta.get("title")
+            errors.append(
+                {
+                    "note_id": nid,
+                    "note_title": title,
+                    "count": info.get("count", 0),
+                    "last_error": info.get("last_error"),
+                    "last_attempt_at": info.get("last_attempt_at"),
+                }
+            )
+        return {"errors": errors}
 
     @app.post("/api/sync/drain-now")
     def drain_now_endpoint() -> dict[str, Any]:
@@ -2967,6 +3413,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         n.frontmatter_status = "valid"
         n.frontmatter_corruption = None
         runtime.vault.write_note(n)
+        _mark_note_dirty_for_push(note_id)
         # Re-read from disk to confirm the canonical version + invalidate
         # any prior coupling. After repair the index row is stale —
         # refresh it so search / backlinks see the new title.
@@ -3020,6 +3467,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail=f"note file missing on disk: {path}",
             ) from exc
         runtime.index.delete_note(note_id)
+        # #118 — propagate the trash to Drive on the next drainer
+        # tick. soft = Drive's own 30-day trash (recoverable from
+        # Drive web UI even if we lose track locally).
+        _mark_note_delete_intent(note_id, "soft")
         return {
             "ok": True,
             "id": note_id,
@@ -3258,6 +3709,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             path = runtime.vault.write_note(note, folder=req.folder or None)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        _mark_note_dirty_for_push(note.id)
         runtime.index.upsert_note(
             note,
             chunk_size=runtime.config.retrieval.chunk_size,
@@ -3434,6 +3886,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         merged_tags = merge_with_inline_tags([], body)
         note = _Note(id=new_id(), title=title, body=body, tags=merged_tags)
         path = runtime.vault.write_note(note, folder=target_folder or None)
+        _mark_note_dirty_for_push(note.id)
         runtime.index.upsert_note(
             note,
             chunk_size=runtime.config.retrieval.chunk_size,
@@ -3550,6 +4003,11 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             chunk_size=runtime.config.retrieval.chunk_size,
             chunk_overlap=runtime.config.retrieval.chunk_overlap,
         )
+        # #118 — if the note was soft-deleted but the drainer hasn't
+        # propagated yet, cancel the deletion. Otherwise re-push so
+        # Drive matches the now-live local file.
+        _unmark_note_delete_intent(note.id)
+        _mark_note_dirty_for_push(note.id)
         return NoteFull(
             id=note.id,
             title=note.title,
@@ -3581,6 +4039,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     chunk_size=runtime.config.retrieval.chunk_size,
                     chunk_overlap=runtime.config.retrieval.chunk_overlap,
                 )
+                _unmark_note_delete_intent(note.id)
+                _mark_note_dirty_for_push(note.id)
                 restored += 1
             except FileExistsError:
                 skipped.append(trashed_path.name)
@@ -3595,12 +4055,19 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     ) -> dict[str, Any]:
         """Permanently delete one entry from trash. Index entry is already
         gone (`delete_note` runs at trash-time), so this is a pure file op."""
+        # #118 — grab the note id from the trashed file's frontmatter
+        # BEFORE we delete the file, so we can upgrade the sync_state
+        # row from soft → hard delete (Drive-delete instead of
+        # Drive-trash on the next drainer tick).
+        purged_note_id = _note_id_in_trash(runtime, name)
         try:
             runtime.vault.purge_trashed(name)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except FileNotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        if purged_note_id:
+            _mark_note_delete_intent(purged_note_id, "hard")
         return {"ok": True, "name": name}
 
     @app.delete("/api/trash")
@@ -3608,12 +4075,30 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         """Permanent-delete every entry in trash. No body needed."""
         purged = 0
         for path in list(runtime.vault.iter_trashed_paths()):
+            purged_note_id = _note_id_in_trash(runtime, path.name)
             try:
                 runtime.vault.purge_trashed(path.name)
                 purged += 1
+                if purged_note_id:
+                    _mark_note_delete_intent(purged_note_id, "hard")
             except (ValueError, FileNotFoundError):
                 continue
         return {"ok": True, "purged_count": purged}
+
+    def _note_id_in_trash(runtime: "ChatRuntime", name: str) -> str | None:
+        """Read the trashed file's frontmatter to recover the note id
+        (so the sync delete tombstone has the right key). Returns
+        None if the file can't be read — caller carries on without
+        Drive-side cleanup; the orphan row gets caught by the
+        cleanup endpoint."""
+        try:
+            trash_path = runtime.vault.trash_dir / name
+            if not trash_path.exists():
+                return None
+            note = Note.from_file(trash_path)
+            return note.id
+        except Exception:  # noqa: BLE001
+            return None
 
     # ---------------- attachments (M7.0.3) ----------------
 
@@ -4354,6 +4839,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         note = d.to_note()
         path = runtime.vault.write_note(note)
         note.path = path
+        _mark_note_dirty_for_push(note.id)
         runtime.index.upsert_note(
             note,
             chunk_size=runtime.config.retrieval.chunk_size,

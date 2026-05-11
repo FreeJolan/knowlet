@@ -41,7 +41,10 @@ from knowlet.core.note import new_id
 # computes from state-vs-Drive comparison (per ADR-0027 §UX); the
 # in-memory transient-event approach was losing notifications when
 # the cursor advanced past unresolved conflicts.
-SYNC_STATE_SCHEMA_VERSION = 2
+# v2 → v3 (#118): file_state gains `delete_intent` for tombstones
+# pending Drive-side deletion. Values: None (alive), "soft" (will
+# be Drive-trashed by drainer), "hard" (will be Drive-deleted).
+SYNC_STATE_SCHEMA_VERSION = 3
 
 
 def sync_state_db_path(vault_root: Path) -> Path:
@@ -63,6 +66,10 @@ class FileState:
     # "Accept current as synced" advances last_known_etag instead
     # of using this field (semantically distinct from snooze).
     dismissed_until: str | None = None
+    # #118 — Drive-side deletion tombstone. None = alive; "soft" =
+    # drainer will Drive-trash next tick (30-day grace via Drive's
+    # own trash); "hard" = drainer will Drive-permanently-delete.
+    delete_intent: str | None = None
 
 
 class SyncStateStore:
@@ -120,6 +127,10 @@ class SyncStateStore:
         if "dismissed_until" not in existing_cols:
             conn.execute(
                 "ALTER TABLE file_state ADD COLUMN dismissed_until TEXT"
+            )
+        if "delete_intent" not in existing_cols:
+            conn.execute(
+                "ALTER TABLE file_state ADD COLUMN delete_intent TEXT"
             )
         # Schema version handshake.
         row = conn.execute(
@@ -236,11 +247,12 @@ class SyncStateStore:
             last_synced_at=row[4],
             dirty=bool(row[5]),
             dismissed_until=row[6],
+            delete_intent=row[7],
         )
 
     _COLS = (
         "entity_type, entity_id, drive_file_id, last_known_etag, "
-        "last_synced_at, dirty, dismissed_until"
+        "last_synced_at, dirty, dismissed_until, delete_intent"
     )
 
     def get_file_state(
@@ -272,13 +284,14 @@ class SyncStateStore:
             conn.execute(
                 f"""
                 INSERT INTO file_state({self._COLS})
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(entity_type, entity_id) DO UPDATE SET
                     drive_file_id    = excluded.drive_file_id,
                     last_known_etag  = excluded.last_known_etag,
                     last_synced_at   = excluded.last_synced_at,
                     dirty            = excluded.dirty,
-                    dismissed_until  = excluded.dismissed_until
+                    dismissed_until  = excluded.dismissed_until,
+                    delete_intent    = excluded.delete_intent
                 """,
                 (
                     state.entity_type,
@@ -288,6 +301,7 @@ class SyncStateStore:
                     state.last_synced_at,
                     1 if state.dirty else 0,
                     state.dismissed_until,
+                    state.delete_intent,
                 ),
             )
             conn.commit()
@@ -318,6 +332,33 @@ class SyncStateStore:
                 f"SELECT {self._COLS} FROM file_state WHERE dirty=1"
             ).fetchall()
         return [self._row_to_file_state(r) for r in rows]
+
+    def list_deletion_pending(self) -> list[FileState]:
+        """#118 — rows the drainer needs to delete on Drive
+        (soft = trash; hard = permanent)."""
+        conn = self._connect()
+        with self._lock:
+            rows = conn.execute(
+                f"SELECT {self._COLS} FROM file_state "
+                "WHERE delete_intent IS NOT NULL"
+            ).fetchall()
+        return [self._row_to_file_state(r) for r in rows]
+
+    def remove_file_state(
+        self, entity_type: str, entity_id: str
+    ) -> bool:
+        """Hard-delete a sync_state row. Used after the drainer
+        successfully completes a Drive deletion + after orphan
+        cleanup. Returns True iff a row was removed."""
+        conn = self._connect()
+        with self._lock:
+            cur = conn.execute(
+                "DELETE FROM file_state "
+                "WHERE entity_type=? AND entity_id=?",
+                (entity_type, entity_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
 
     def list_all_files(self) -> list[FileState]:
         """Every file_state row. Used by the conflict computation

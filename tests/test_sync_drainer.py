@@ -303,10 +303,11 @@ def test_save_endpoint_marks_dirty_for_pushed_notes(tmp_path: Path) -> None:
     assert rec.dirty is True
 
 
-def test_save_endpoint_skips_never_pushed(tmp_path: Path) -> None:
-    """A note that's never been pushed has no sync_state row; the
-    save hook must be a no-op for it (first push goes through a
-    different path, not the drainer)."""
+def test_save_endpoint_skips_never_pushed_without_creds(tmp_path: Path) -> None:
+    """Without Drive creds, the save hook stays a no-op even on a
+    never-pushed note — we don't want to pile up dirty rows that
+    can never push. (#117 — with creds, the same scenario DOES
+    auto-track; covered by test_save_endpoint_auto_tracks_new_note.)"""
     from tests.test_web import StubLLM, _client_with_stub
 
     client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
@@ -319,7 +320,7 @@ def test_save_endpoint_skips_never_pushed(tmp_path: Path) -> None:
         chunk_size=runtime.config.retrieval.chunk_size,
         chunk_overlap=runtime.config.retrieval.chunk_overlap,
     )
-    # No sync_state seed.
+    # No sync_state seed AND no Drive creds.
     r = client.put(
         f"/api/notes/{note.id}",
         json={"title": "alpha", "body": "edited", "tags": []},
@@ -330,7 +331,41 @@ def test_save_endpoint_skips_never_pushed(tmp_path: Path) -> None:
         rec = store.get_file_state("note", note.id)
     finally:
         store.close()
-    assert rec is None  # no row materialized; first-push happens elsewhere
+    assert rec is None  # no row materialized; user hasn't connected Drive
+
+
+def test_save_endpoint_auto_tracks_new_note(tmp_path: Path) -> None:
+    """#117 — with Drive creds present, saving a never-pushed note
+    creates a dirty sync_state row with drive_file_id=None so the
+    drainer's first-push path picks it up next tick. Closes the
+    "new notes never auto-push" silent bug."""
+    from tests.test_sync_status import _seed_creds
+    from tests.test_web import StubLLM, _client_with_stub
+
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime  # type: ignore[attr-defined]
+    assert runtime is not None
+    _seed_creds(tmp_path)
+    note = Note(id=new_id(), title="alpha", body="initial")
+    runtime.vault.write_note(note)
+    runtime.index.upsert_note(
+        note,
+        chunk_size=runtime.config.retrieval.chunk_size,
+        chunk_overlap=runtime.config.retrieval.chunk_overlap,
+    )
+    r = client.put(
+        f"/api/notes/{note.id}",
+        json={"title": "alpha", "body": "edited", "tags": []},
+    )
+    assert r.status_code == 200
+    store = SyncStateStore(tmp_path)
+    try:
+        rec = store.get_file_state("note", note.id)
+    finally:
+        store.close()
+    assert rec is not None
+    assert rec.drive_file_id is None  # first-push pending
+    assert rec.dirty is True
 
 
 def test_drainer_skips_dev_fake_rows(tmp_path: Path) -> None:

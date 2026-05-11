@@ -80,6 +80,13 @@ class PushDrainer:
         self.poll_interval = poll_interval
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        # #122 — in-memory map of currently-failing pushes. Note id
+        # → {"count", "last_error", "last_attempt_at"}. Cleared
+        # whenever a push succeeds (or returns ConflictReport,
+        # which is a "the other side moved", not a failure). The
+        # ``GET /api/sync/push-errors`` endpoint reads this; the
+        # chip surfaces a red badge when it's non-empty.
+        self.failures: dict[str, dict[str, Any]] = {}
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -126,10 +133,15 @@ class PushDrainer:
             return
         store = SyncStateStore(self.vault_root)
         try:
+            service: Any = None
+            # #118 — delete tombstones first. Cheap to process; gets
+            # them out of the way so the chip stops counting them as
+            # "unpushed" (the dirty list below excludes deleted=True
+            # rows because we don't set dirty on them).
+            service = self._process_deletions(store, creds, service)
             dirty = store.list_dirty()
             if not dirty:
                 return
-            service: Any = None
             for row in dirty:
                 if row.entity_type != "note":
                     continue
@@ -167,6 +179,7 @@ class PushDrainer:
                     # The note was deleted locally between save and
                     # push. Just drop the dirty flag; deletion sync
                     # is handled separately.
+                    self._clear_failure(row.entity_id)
                     continue
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
@@ -174,10 +187,79 @@ class PushDrainer:
                         row.entity_id,
                         exc,
                     )
+                    self._record_failure(row.entity_id, exc)
                     continue
                 if isinstance(result, ConflictReport):
                     self.on_conflict(row.entity_id, result)
+                    # Conflict ≠ failure; clear so chip doesn't
+                    # double-count.
+                    self._clear_failure(row.entity_id)
                 else:
                     self.on_synced(row.entity_id)
+                    self._clear_failure(row.entity_id)
         finally:
             store.close()
+
+    def _record_failure(self, note_id: str, exc: BaseException) -> None:
+        from knowlet.core.note import now_iso
+
+        prev = self.failures.get(note_id, {})
+        self.failures[note_id] = {
+            "count": int(prev.get("count", 0)) + 1,
+            "last_error": repr(exc)[:500],
+            "last_attempt_at": now_iso(),
+        }
+
+    def _clear_failure(self, note_id: str) -> None:
+        self.failures.pop(note_id, None)
+
+    def _process_deletions(
+        self, store: SyncStateStore, creds: Any, service: Any
+    ) -> Any:
+        """Drain ``delete_intent`` rows. ``soft`` calls Drive's
+        ``files.update`` with ``trashed=True`` (30-day grace via
+        Drive's own trash); ``hard`` calls ``files.delete`` for
+        permanent removal. On success, drop the sync_state row
+        entirely so the chip / preflight forget about it.
+
+        Failures are swallowed (logged) — the row stays in
+        ``delete_intent`` state and the next tick retries. Returns
+        the Drive service handle so the caller can reuse it
+        without re-authenticating."""
+        deletions = store.list_deletion_pending()
+        for row in deletions:
+            if row.entity_type != "note":
+                continue
+            if row.drive_file_id is None or row.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
+                # Never pushed → no Drive cleanup needed; just drop
+                # the local row. Or dev-seeded fake → same treatment.
+                store.remove_file_state(row.entity_type, row.entity_id)
+                self.on_synced(row.entity_id)
+                continue
+            if service is None:
+                service = DriveClient(creds).service()
+            try:
+                if row.delete_intent == "hard":
+                    service.files().delete(
+                        fileId=row.drive_file_id
+                    ).execute()
+                else:
+                    # default to soft trash for any other value
+                    service.files().update(
+                        fileId=row.drive_file_id,
+                        body={"trashed": True},
+                    ).execute()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "drainer: Drive %s-delete failed for %s: %r — "
+                    "will retry",
+                    row.delete_intent,
+                    row.entity_id,
+                    exc,
+                )
+                self._record_failure(row.entity_id, exc)
+                continue
+            store.remove_file_state(row.entity_type, row.entity_id)
+            self.on_synced(row.entity_id)
+            self._clear_failure(row.entity_id)
+        return service

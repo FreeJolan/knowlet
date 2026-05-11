@@ -325,6 +325,19 @@
     "syncing": "syncing…",
     "editing": "editing"
   },
+  "driveAuth": {
+    "label": "Drive sync",
+    "notConnected": "Not connected.",
+    "blurb": "knowlet syncs your vault via Google Drive's appData folder (invisible to your normal Drive UI).",
+    "connect": "Connect to Drive",
+    "connecting": "Opening browser…",
+    "connectingHint": "Complete the Google sign-in in your browser. This window will refresh automatically.",
+    "connectedAs": "Connected as {{email}}",
+    "connectedAsNamed": "Connected as {{email}} ({{name}})",
+    "disconnect": "Disconnect",
+    "disconnectConfirm": "Tokens will be deleted locally. Drive itself keeps everything you've pushed.",
+    "lastError": "Last attempt failed: {{detail}}"
+  },
   "syncMode": {
     "label": "Sync mode",
     "description": "How knowlet handles unresolved conflicts.",
@@ -379,7 +392,11 @@
     "noteRowEditedBy": "edited remotely · {{when}}",
     "noteRowEditedByWho": "by {{who}} · {{when}}",
     "openNote": "Open merge editor",
-    "close": "Close"
+    "close": "Close",
+    "chipPushFailing_one": "{{count}} push failing",
+    "chipPushFailing_other": "{{count}} pushes failing",
+    "failuresHeading": "Push failures",
+    "failureRowRetry": "{{count}} retries · {{detail}}"
   },
   "frontmatterCorrupted": {
     "headline": "This note's frontmatter looks damaged.",

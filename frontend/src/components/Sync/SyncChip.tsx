@@ -28,10 +28,12 @@ import { useTranslation } from "react-i18next";
 
 import {
   getConflicts,
+  getPushErrors,
   getSyncMode,
   getUnpushedStatus,
   type PreflightConflict,
   type PreflightReport,
+  type PushError,
   pushAllUnpushed,
   runPreflight,
   type SyncModeResponse,
@@ -77,6 +79,12 @@ export function SyncChip({
     queryFn: getSyncMode,
     staleTime: 5 * 60_000,
   });
+  const pushErrors = useQuery<{ errors: PushError[] }>({
+    queryKey: QK.syncPushErrors,
+    queryFn: getPushErrors,
+    refetchInterval: POLL_MS,
+    refetchOnWindowFocus: false,
+  });
 
   const refresh = useMutation({
     mutationFn: runPreflight,
@@ -103,9 +111,15 @@ export function SyncChip({
   const conflictCount = conflicts.data.conflicts.length;
   const offlineCount = conflicts.data.offline.length;
   const unpushedCount = unpushed.data?.count ?? 0;
+  const pushFailingCount = pushErrors.data?.errors.length ?? 0;
   const effectiveMode = mode.data?.effective_mode ?? "auto";
 
-  if (conflictCount === 0 && offlineCount === 0 && unpushedCount === 0) {
+  if (
+    conflictCount === 0 &&
+    offlineCount === 0 &&
+    unpushedCount === 0 &&
+    pushFailingCount === 0
+  ) {
     return null;
   }
 
@@ -123,23 +137,29 @@ export function SyncChip({
     );
   }
 
-  // Chip palette + label: conflicts dominate when present (amber);
-  // unpushed-only is blue (action available, no urgency); offline-only
-  // is muted (informational).
+  // Chip palette + label: failures dominate (red, urgent); then
+  // conflicts (amber); then unpushed-only (blue, action available);
+  // then offline-only (muted, informational).
+  const hasFailing = pushFailingCount > 0;
   const hasConflict = conflictCount > 0;
   const hasUnpushed = unpushedCount > 0;
-  const Icon = hasConflict
+  const Icon = hasFailing
     ? AlertTriangle
-    : hasUnpushed
-      ? ArrowUpFromLine
-      : CloudOff;
-  const tone = hasConflict
-    ? "bg-amber-100 text-amber-900 ring-amber-300 dark:bg-amber-950/40 dark:text-amber-100"
-    : hasUnpushed
-      ? "bg-blue-100 text-blue-900 ring-blue-300 dark:bg-blue-950/40 dark:text-blue-100"
-      : "bg-muted text-muted-foreground ring-foreground/10";
-  const label =
-    hasConflict && hasUnpushed
+    : hasConflict
+      ? AlertTriangle
+      : hasUnpushed
+        ? ArrowUpFromLine
+        : CloudOff;
+  const tone = hasFailing
+    ? "bg-red-100 text-red-900 ring-red-300 dark:bg-red-950/40 dark:text-red-100"
+    : hasConflict
+      ? "bg-amber-100 text-amber-900 ring-amber-300 dark:bg-amber-950/40 dark:text-amber-100"
+      : hasUnpushed
+        ? "bg-blue-100 text-blue-900 ring-blue-300 dark:bg-blue-950/40 dark:text-blue-100"
+        : "bg-muted text-muted-foreground ring-foreground/10";
+  const label = hasFailing
+    ? t("syncInbox.chipPushFailing", { count: pushFailingCount })
+    : hasConflict && hasUnpushed
       ? t("syncInbox.chipBoth", {
           conflicts: conflictCount,
           unpushed: unpushedCount,
@@ -176,6 +196,7 @@ export function SyncChip({
         <InboxPanel
           report={conflicts.data}
           unpushedCount={unpushedCount}
+          pushErrors={pushErrors.data?.errors ?? []}
           onOpenNote={(id) => {
             setOpen(false);
             onOpenNote(id);
@@ -192,12 +213,14 @@ export function SyncChip({
 function InboxPanel({
   report,
   unpushedCount,
+  pushErrors,
   onOpenNote,
   onRefresh,
   refreshing,
 }: {
   report: PreflightReport;
   unpushedCount: number;
+  pushErrors: PushError[];
   onOpenNote: (noteId: string) => void;
   onRefresh: () => void;
   refreshing: boolean;
@@ -217,8 +240,13 @@ function InboxPanel({
   const hasConflicts = report.conflicts.length > 0;
   const hasOffline = report.offline.length > 0;
   const hasUnpushed = unpushedCount > 0;
+  const hasFailures = pushErrors.length > 0;
   const isEmpty =
-    !hasConflicts && !hasOffline && !hasUnpushed && !refreshing;
+    !hasConflicts &&
+    !hasOffline &&
+    !hasUnpushed &&
+    !hasFailures &&
+    !refreshing;
 
   return (
     <div className="flex flex-col">
@@ -255,6 +283,35 @@ function InboxPanel({
         <div className="text-muted-foreground px-3 py-6 text-center text-sm">
           {t("syncInbox.empty")}
         </div>
+      )}
+
+      {hasFailures && (
+        <section
+          data-testid="sync-inbox-failures"
+          className="border-b bg-red-50 dark:bg-red-950/20"
+        >
+          <header className="text-red-900 dark:text-red-100 px-3 pt-2 pb-1 text-[10px] font-medium uppercase tracking-wide">
+            {t("syncInbox.failuresHeading")}
+          </header>
+          <ul className="max-h-[30vh] overflow-y-auto">
+            {pushErrors.map((e) => (
+              <li
+                key={e.note_id}
+                className="px-3 py-2 text-xs"
+              >
+                <div className="font-medium text-red-900 dark:text-red-100">
+                  {e.note_title || t("syncInbox.untitledNote")}
+                </div>
+                <div className="mt-0.5 truncate text-red-800 dark:text-red-200 opacity-80">
+                  {t("syncInbox.failureRowRetry", {
+                    count: e.count,
+                    detail: e.last_error || "",
+                  })}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {hasConflicts && (
