@@ -4,15 +4,17 @@
 
 Knowlet 按 Wedge 战略分阶段演进。能力同源、相互增强;叙事按阶段聚焦。详见 [ADR-0003](../decisions/0003-wedge-pivot-ai-memory-layer.md)(及其 2026-05-04 amendment)。
 
-## ⚡ 当前状态(2026-05-08)
+## ⚡ 当前状态(2026-05-11)
 
 **产品阶段** = 开发期(per [ADR-0022](../decisions/0022-product-lifecycle-phases.md))。无外部用户,允许激进迭代。
 
-**项目状态** = **Phase 1 ABCD 完成 + tag m1d**(2026-05-09)。Phase 1 ABC = 知识库基线;Phase 1 D = 6 项 Obsidian-baseline UX 缺口。下一步 = Phase 2(D + E,该有可推)或直接 Phase 3 AI 重做,看用户优先级。详见 ADR-0019 / 0020 / 0021 / 0022。
+**项目状态** = **Phase 1 ABCD ✅ + ADR-0027 sync(Slice 5.A-5.G + 2026-05-11 dogfood 关闭的 #113-#122 + 三个 OAuth/push 缺口)单设备闭环 ✅**。Sync 主线 + 关键 dogfood 缺口已闭环;剩余 sync 收尾 = 附件 delete-sync(orphan GC)+ 多设备真实场景验证 + conflict UI 视觉收敛(详 [ADR-0027 § 状态(2026-05-11)](../decisions/0027-sync-via-drive-api.md))。
+
+**用户 2026-05-11 产品策略**:**Phase 3 AI 重做的硬前置 = knowlet 必须先成为能力十分完善的笔记软件**。Phase 2 D(Daily notes / Quick switcher / 收藏)+ Phase 2 E 数据耐久(ADR-0018)+ 上述 sync 收尾**都**要在启动 Phase 3 之前完成。不主动跳到 AI。
 
 - **前端**:Alpine 弃用,改 React 19 + Vite + TypeScript + shadcn/ui + AI SDK + CodeMirror 6 + react-arborist + Tanstack Query
 - **后端**:不重写,加 mypy strict + ruff + pre-commit + CI(per ADR-0020)
-- **顺序**:Phase 0 (脚手架 + 后端硬化) ✅ → Phase 1 ABC (知识库基线) ✅ → Phase 1 D (Obsidian-baseline UX 补齐) → Phase 2 (该有但可推) → Phase 3 (AI 能力重做) → Phase 4 (灰度准备)
+- **顺序**:Phase 0 ✅ → Phase 1 ABC ✅ → Phase 1 D ✅ → **ADR-0027 sync 主线 ✅(剩 3 项收尾)→ Phase 2 D(待启动)→ Phase 2 E 数据耐久 + sync 收尾 → Phase 3 AI 重做 → Phase 4 灰度准备**
 - **预估时间**:**10-14 周**到 Phase 4(灰度入口前)— 原 8-12 周加 Phase 1 D 后修正
 
 ```
@@ -106,7 +108,7 @@ Phase 4   整体 dogfood + 灰度准备                       1-2 周
 
 - **Plugin 生态**:开放接口让用户/社区写自定义 tool,扩展原子能力层
 - **移动端原生**:PWA 不够,音频 / OCR / 通知等场景需要原生能力
-- **多设备同步**:[ADR-0027](../decisions/0027-sync-via-drive-api.md) 已起草 Google Drive API as remote authority(opt-in,远端权威 + ETag OCC)。CRDT 路径已显式排除(memory 记录用户经验)。Slice 5.A-5.G 实施序列待 sequence
+- **多设备同步**:[ADR-0027](../decisions/0027-sync-via-drive-api.md) Google Drive API as remote authority(opt-in,远端权威 + revisionId OCC)。Slice 5.A-5.G 单设备闭环已落 + 2026-05-11 dogfood pass 关闭 #115-#122 + 三个 OAuth/push 缺口;CRDT 路径已显式排除(memory)。**剩余**:附件 delete-sync(orphan GC)+ 多设备真实场景验证 + conflict UI 视觉收敛。详 ADR-0027 § 状态(2026-05-11)。
 - **完整加密路径**:高隐私需求出现时(参见 [ADR-0006](../decisions/0006-storage-and-sync.md))
 - **Fallback 抓取后端**:支持不带原生 web_search 的 LLM(部分已 ship 在 ADR-0017)
 

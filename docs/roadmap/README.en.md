@@ -4,15 +4,17 @@
 
 Knowlet evolves in stages per the Wedge strategy. Capabilities share a common foundation; narrative tightens by stage. See [ADR-0003](../decisions/0003-wedge-pivot-ai-memory-layer.en.md) (and its 2026-05-04 amendment).
 
-## ⚡ Current state (2026-05-08)
+## ⚡ Current state (2026-05-11)
 
 **Product phase** = development (per [ADR-0022](../decisions/0022-product-lifecycle-phases.en.md)). No external users; aggressive iteration allowed.
 
-**Project status** = **Phase 1 ABC complete + tag m1c** (2026-05-08). Next is **Phase 1 D** (added 2026-05-08 after dogfood, closes 6 Obsidian-baseline UX gaps). See ADR-0019 / 0020 / 0021.
+**Project status** = **Phase 1 ABCD ✅ + ADR-0027 sync (Slice 5.A-5.G + 2026-05-11 dogfood-pass closure of #113-#122 + three OAuth/push gaps) single-device closed-loop ✅**. Sync main line + key dogfood gaps closed; remaining sync polish = attachment delete-sync (orphan GC) + real-multi-device scenario validation + conflict UI visual cleanup (see [ADR-0027 § Status (2026-05-11)](../decisions/0027-sync-via-drive-api.md)).
+
+**User product policy (2026-05-11)**: **Phase 3 AI rework is hard-gated on knowlet being a fully-capable note-taking app first**. Phase 2 D (Daily notes / Quick switcher / favorites) + Phase 2 E data durability (ADR-0018) + the sync polish above **must all** land before Phase 3 starts. Don't unilaterally jump to AI.
 
 - **Frontend**: Alpine deprecated; switching to React 19 + Vite + TypeScript + shadcn/ui + Vercel AI SDK + CodeMirror 6 + react-arborist + Tanstack Query
 - **Backend**: not rewritten; adding mypy strict + ruff + pre-commit + CI (per ADR-0020)
-- **Order**: Phase 0 (scaffold + backend hardening) ✅ → Phase 1 ABC (knowledge-base baseline) ✅ → Phase 1 D (Obsidian-baseline UX) → Phase 2 (should-have, deferrable) → Phase 3 (AI features re-done) → Phase 4 (gray-release prep)
+- **Order**: Phase 0 ✅ → Phase 1 ABC ✅ → Phase 1 D ✅ → **ADR-0027 sync main line ✅ (3 polish items remaining) → Phase 2 D (not started) → Phase 2 E data durability + sync polish → Phase 3 AI rework → Phase 4 gray-release prep**
 - **Estimated**: **10-14 weeks** to Phase 4 (gray entrance) — revised from 8-12 after adding Phase 1 D
 
 ```

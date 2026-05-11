@@ -214,11 +214,70 @@ Auto 实现:每个 device 有唯一 `device_id`(本地生成 ULID,持久化在 `
 
 **最终选择 = Drive API 专用,因为它是 ETag OCC 最稳的免费路径,且 Google 用户基数最大。**
 
-## 实施位置(待 Slice 5 起步时填充)
+## 实施位置(2026-05-11 更新 — Slice 5 全套已落地)
 
-- `knowlet/core/sync/` 新模块树(client + state + conflict + UI 状态机)
-- `knowlet/cli/sync.py` 平价 CLI
-- `frontend/src/components/SyncStatus/`(header 状态指示器 + 冲突 modal)
-- `frontend/src/api/sync.ts` (前端调 sync 控制 API)
-- `docs/decisions/0027-sync-via-drive-api.md` ← 本文档
-- 配置项加进 `KnowletConfig.sync.*`
+后端 sync 模块树 `knowlet/core/sync/`:
+- `oauth.py` — Slice 5.A,embedded OAuth client(#115)+ flow runner
+- `credentials.py` — token 存取
+- `state.py` — `sync_state.sqlite` schema + `FileState` 行 + `delete_intent` tombstone(#118)
+- `drive_client.py`、`files.py` — Drive Files API wrapper (5.C / 5.C.1 切到 drive.appdata)
+- `push.py` — `push_note` 主体 + 5.C 的 OCC + 5.5 的合并解析 + `push_attachment`(#121,immutable)
+- `pull.py` — 拉取路径 + 单笔记 force-pull
+- `changes.py` — Slice 5.B + 5.D 的 Drive Changes API poller
+- `heartbeat.py` — #107c 多设备心跳 + `alive_devices` 派生
+- `preflight.py` — vault-wide scan(#107a / S2 / #119 双向克隆 + Drive-delete trash-local)
+- `drainer.py` — S4 后台 push 队列(#117 auto-track / #118 deletions / #122 失败可见 / #121 attachment dispatch + untracked sweep)
+- `status.py` — 单 note 状态计算
+
+CLI 平价 `knowlet/cli/sync.py`:`status` / `connect` / `pull` / `push` / `resolve` / `disconnect`。
+
+前端 sync UI:
+- `frontend/src/components/Sync/SyncChip.tsx` — 统一 chip(#114),覆盖 conflicts / unpushed / offline / push-failing / strict-blocking modal
+- `frontend/src/components/Settings/SettingsDialog.tsx` `DriveAuthPanel` — connect / disconnect / cancel(#116 + dogfood-found OAuth cancel)
+- `frontend/src/components/Sync/MergeEditor.tsx` — S5 内联合并编辑器(三栏 + gutter take-mine/take-remote 按钮)
+- `frontend/src/api/client.ts` § Drive auth + 状态 API
+
+配置项 `KnowletConfig.sync.*`:`client_secrets_path`(可选 escape hatch,#115 后通常空)、`token_path`、`mode`(auto/strict/lax,#107b)。
+
+本文档 `docs/decisions/0027-sync-via-drive-api.md` ← 当前文件。
+
+## 状态(2026-05-11)
+
+**Slice 5.A → 5.G 全部已实现并通过单设备 dogfood**:
+
+| Slice | 状态 | 备注 |
+|---|---|---|
+| 5.A OAuth + Drive client foundation | ✅ | `078d2f1` + #115 embedded client |
+| 5.B sync_state schema + Changes API pull | ✅ | `e5aaffb` |
+| 5.C 写路径 PUT-with-revisionId + 412 冲突 | ✅ | `bf49f9e`(etag → headRevisionId 在 v3 上的等价物) |
+| 5.C.1 drive.file → drive.appdata 切换 | ✅ | `a1ab9ae` |
+| 5.D 编辑期 Changes poller + banner | ✅ | `fe854f9` + 5.D.1/5.D.2/5.D.3.A 合并解析 / 状态收敛 / snooze / bulk |
+| 5.E Auto/Strict/Lax 三档 + 设备数自检测 | ✅ | #107b + #107c heartbeat 多设备 Auto→Strict |
+| 5.F 离线 / token 失效 UX | ✅ | DriveAuthPanel(#116)+ SyncChip 失败计数器(#122)+ OAuth cancel + timeout(2026-05-11 dogfood 修复) |
+| 5.G CLI 平价 | ✅ | `knowlet sync {status,connect,pull,push,resolve,disconnect}` |
+
+**2026-05-11 dogfood pass 关闭的额外缺口**(#115-#122 + 三个 OAuth/push 修复):
+
+| ID | 内容 |
+|---|---|
+| #113 | "Push all unpushed" for never-synced notes |
+| #114 | 统一 SyncChip(conflicts + unpushed + offline + failing 单一 surface) |
+| #115 | Embed 官方 OAuth client(`client_secrets_path` 变可选 escape hatch) |
+| #116 | Settings 里 Drive connect/disconnect/status UI |
+| #117 | 新建笔记 auto-track 进 push 队列 |
+| #118 | 删除同步 — 本地 trash → Drive trash;purge → Drive hard delete |
+| #119 | 双向 pull:首次接入克隆 + Drive 端新笔记自动下载 |
+| #120 | 文件夹层级 via frontmatter `folder` 字段 |
+| #121 | 附件(`_attachments/`)纳入 sync 闭环(push + pull + untracked sweep + live-paste auto-track) |
+| #122 | Push 失败可见性:drainer error counter + chip 红色警示 |
+| OAuth cancel/timeout | `run_local_server(timeout_seconds=300)` + session counter + cancel endpoint |
+| Connect 后立刻刷新 | DriveAuthPanel 监听 connecting→connected 主动 invalidate sync queries |
+| Untracked sweep | 首次连接 / 进程重启时,drainer 自动把磁盘上但 sync_state 里没行的 note + attachment 排进 dirty 队列 |
+
+**仍未完全闭环(留作后续 dogfood-driven 增量)**:
+
+- **附件 delete-sync**:本地删除一张 paste,Drive 上副本不会自动清。Orphan GC 需要附件引用计数 + tombstone。**触发**:dogfood 撞到"Drive 端越积越多废图"再做。
+- **多设备真实场景验证**:#107c heartbeat 已实现,但单设备 dogfood 无法验证 Auto→Strict 自动促升 / 跨设备 banner 触发。**触发**:用户开始用第二台设备 OR 主动配置一份 second-device fixture。
+- **Conflict UI 视觉收敛**:S5 merge editor 落地基础版,但仍有"合并完得手动 push"等小动作。**触发**:用户在真实场景里撞到冲突。
+
+**结论**:Slice 5 主线 + 关键 dogfood 缺口已闭环。剩余项不阻塞当前推进;但按用户 2026-05-11 策略(AI 重做硬前置 = 笔记软件能力完整),Phase 2 D 和这些 sync 收尾**都**要在 Phase 3 之前完成。
