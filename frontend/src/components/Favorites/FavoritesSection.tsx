@@ -73,7 +73,17 @@ export function FavoritesSection({
   return (
     <section
       data-testid="favorites-section"
-      className="border-b text-sm"
+      // Footer-style tray pinned to the bottom of the left rail
+      // (placement adjusted 2026-05-12: above-the-tree felt
+      // visually heavy; below feels like a dock / shortcut bar).
+      // ``border-t`` separates from the tree above; ``shrink-0``
+      // keeps the tree's flex-1 fill behavior intact.
+      // ``min-w-0 overflow-hidden`` — long favorite titles must not
+      // push the section's min-content above its allocated width;
+      // otherwise the whole left rail's flex chain would refuse to
+      // shrink, and the sidebar panel would overflow into the
+      // editor (see the 2026-05-12 dogfood root-cause analysis).
+      className="min-w-0 shrink-0 overflow-hidden border-t text-sm"
       style={{ borderColor: "var(--line)" }}
     >
       <button
@@ -96,7 +106,18 @@ export function FavoritesSection({
         )}
       </button>
       {!collapsed && (
-        <ul data-testid="favorites-list">
+        // Cap the expanded height so a long favorites list can't
+        // eat the file tree's vertical real estate. 40% of viewport
+        // is the typical breakpoint where scrolling starts feeling
+        // necessary; below that it stays inline with no chrome.
+        // ``data-fade-bottom`` triggers a bottom gradient (CSS in
+        // index.css) so the user sees "there's more below" without
+        // needing to discover the scroll affordance themselves.
+        <ul
+          data-testid="favorites-list"
+          data-fade-bottom={favorites.length > 4 ? "true" : undefined}
+          className="max-h-[40vh] overflow-y-auto"
+        >
           {favorites.length === 0 ? (
             <li className="text-muted-foreground px-3 pb-2 text-xs italic">
               {t("favorites.empty")}

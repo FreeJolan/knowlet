@@ -15,6 +15,8 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  Plus,
+  Star,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -42,6 +44,11 @@ import {
   updateNote,
 } from "@/api/client";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -232,6 +239,11 @@ export function FileTree({
     // has to close + reopen the dialog (or hard-refresh) to see
     // the just-deleted note land there.
     void qc.invalidateQueries({ queryKey: QK.trash });
+    // Phase 2 D B1 — a delete may orphan a favorite row. The
+    // backend prunes dangling ids on next list call; this just
+    // forces the UI to re-fetch so the row disappears without
+    // waiting out the staleTime window.
+    void qc.invalidateQueries({ queryKey: QK.favorites });
   };
   const startBusy = () => onMutating?.(true);
   const settled = () => {
@@ -692,33 +704,41 @@ export function FileTree({
   }
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Header — VS Code-style bold uppercase title; left padding lines up
-          with the row's chevron column (px-2 row + 8px row inner gap). */}
+    // ``min-w-0`` — see AppShell row note. Without it this flex child
+    // would refuse to shrink below its inner min-content width, and
+    // ResizablePanel would silently overflow into the editor panel.
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {/* Header — VS Code-style bold uppercase title; left padding
+          lines up with the row's chevron column (px-2 row + 8px row
+          inner gap). One ``+`` button opens a popover with "新建
+          笔记 / 新建文件夹". Single fixed-width button = the layout
+          is bulletproof at any rail width; no JS measurement, no
+          responsive branching. */}
       <div
-        className="flex shrink-0 items-center justify-between border-b py-1.5 pr-1 pl-3"
+        className="flex shrink-0 items-center justify-between gap-2 border-b py-1.5 pr-1 pl-3"
         style={{ borderColor: "var(--line)" }}
       >
         <span
           data-testid="file-tree-heading"
-          className="text-[11px] font-semibold uppercase tracking-wide text-foreground/80"
+          className="min-w-0 truncate text-[11px] font-semibold uppercase tracking-wide text-foreground/80"
         >
           {rootFolderPath === "_templates"
             ? t("tree.tabTemplates")
             : t("tree.vault")}
         </span>
-        <div className="flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon"
+        {/* Two icons clustered on the right; heading on the left.
+            Both buttons are ``shrink-0`` (fixed 24 px); heading is
+            ``min-w-0 truncate`` so it ellipsizes first when the
+            panel narrows. The min-w-0 chain fix at AppShell + FileTree
+            outer level means the panel can now shrink past
+            min-content, so the buttons can no longer be pushed
+            outside the panel even at extreme widths. */}
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button
+            type="button"
             aria-label={t("tree.newNote")}
+            title={t("tree.newNoteHint")}
             onClick={(e) => {
-              // Phase 2 D Slice 2 — click opens NewDocDialog (with the
-              // template / placement chooser); Shift+click keeps the
-              // legacy inline-create path for fast "blank-note-here"
-              // workflow. Right-click (context menu on the icon's
-              // wrapping element) doesn't apply since the button itself
-              // doesn't carry a menu — that lives on tree rows.
               if (e.shiftKey) onNewRootNote();
               else
                 window.dispatchEvent(
@@ -727,23 +747,44 @@ export function FileTree({
                   }),
                 );
             }}
-            title={t("tree.newNoteHint")}
-            className="size-6"
+            className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
           >
             <FilePlus className="size-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
+          </button>
+          <button
+            type="button"
             aria-label={t("tree.newFolder")}
+            title={t("tree.newFolder")}
             onClick={onNewRootFolder}
-            className="size-6"
+            className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
           >
             <FolderPlus className="size-3.5" />
-          </Button>
+          </button>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-hidden">
+      {/* Scrollable viewport. ``min-h-0 flex-1`` lets it claim the
+          flex-remaining height inside the rail; ``overflow-y-auto``
+          puts the scrollbar HERE, on the wrapper. react-arborist's
+          internal virtualizer is fed the natural content height
+          (``contentHeight`` below) so it renders every node and the
+          wrapper does the actual scrolling — no measurement needed.
+          For typical knowlet vaults (<<1000 notes) the lost
+          virtualization-in-viewport optimization is negligible. */}
+      <div
+        // ``scrollbar-gutter: stable`` reserves a permanent slot for
+        // the scrollbar so the wrapper's content width stays constant
+        // whether or not the scrollbar is currently rendered. Without
+        // this, expanding the Favorites tray could shrink the tree
+        // vertically → trigger overflow → make the scrollbar appear →
+        // steal ~15 px of width → cause the header's railWidth
+        // measurement to drop under the breakpoint and collapse the
+        // ``+ Folder`` button. Inline style instead of a Tailwind
+        // arbitrary class so we don't gamble on JIT compilation
+        // quirks for an arbitrary CSS property the user is relying on.
+        data-fade-bottom={data.length > 12 ? "true" : undefined}
+        className="min-h-0 flex-1 overflow-y-auto"
+        style={{ scrollbarGutter: "stable" }}
+      >
         {data.length === 0 ? (
           <div className="px-3 py-6 text-sm text-muted-foreground">
             {t("tree.empty")}
@@ -754,7 +795,10 @@ export function FileTree({
             data={data}
             openByDefault={true}
             width="100%"
-            height={5000}
+            // Content-height tells react-arborist's react-window to
+            // render every visible row. The wrapper does the
+            // scrolling; the Tree is just a static-height block.
+            height={data.length * 26 + 8}
             rowHeight={26}
             indent={14}
             paddingTop={4}
@@ -762,13 +806,10 @@ export function FileTree({
             onMove={onMove}
             onDelete={onDelete}
             selection={selectedNoteId ? `note:${selectedNoteId}` : undefined}
-            // Row's handleClick calls node.activate() on note rows; this is
-            // the upstream callback that gets fired. Strip the `note:`
-            // prefix that toArborist injected so the AppShell's selectedNoteId
-            // matches the bare note id used everywhere else.
             onActivate={(node) => {
               const raw = node.id;
-              if (raw.startsWith("note:")) onSelectNote(raw.slice("note:".length));
+              if (raw.startsWith("note:"))
+                onSelectNote(raw.slice("note:".length));
             }}
             onToggle={(id) => {
               setOpenMap((m) => ({ ...m, [id]: !isNodeOpen(id) }));
@@ -783,7 +824,9 @@ export function FileTree({
                 onClickRow={setLastClickedId}
                 ghostHotDepths={ghost.hotMap.get(props.node.id) ?? EMPTY_SET}
                 isGhostTarget={ghost.targetId === props.node.id}
-                onCreateChildFolder={(parentPath) => startCreate("folder", parentPath)}
+                onCreateChildFolder={(parentPath) =>
+                  startCreate("folder", parentPath)
+                }
                 onCommitPending={commitPending}
                 onCancelPending={cancelPending}
                 onDeleteFolder={(folderPath, name) => {
@@ -1003,7 +1046,41 @@ function Row({
         )}
         {isFolder ? (
           <Folder className="size-4 shrink-0 text-muted-foreground" />
+        ) : noteId !== null ? (
+          // Phase 2 D B1 — the note icon doubles as a star toggle.
+          // ``FileText`` → click to star, swaps to filled ``Star``;
+          // filled star → click to unstar, swaps back. Symmetric on
+          // both states (dogfood 2026-05-12: users expected the
+          // icon to be the toggle on the un-starred side too).
+          // We stopPropagation so the click doesn't fire the row's
+          // open-note handler.
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleStar(noteId, isStarred);
+            }}
+            data-testid={
+              isStarred
+                ? `tree-star-${noteId}`
+                : `tree-unstar-${noteId}`
+            }
+            aria-label={
+              isStarred ? t("favorites.unstar") : t("favorites.star")
+            }
+            title={
+              isStarred ? t("favorites.unstar") : t("favorites.star")
+            }
+            className="shrink-0 rounded-sm transition-colors hover:text-amber-500"
+          >
+            {isStarred ? (
+              <Star className="size-4 fill-current text-amber-500" />
+            ) : (
+              <FileText className="size-4 text-muted-foreground" />
+            )}
+          </button>
         ) : (
+          // Pending row (no noteId yet) — no toggle, just placeholder.
           <FileText className="size-4 shrink-0 text-muted-foreground" />
         )}
         {node.isEditing || isPending ? (

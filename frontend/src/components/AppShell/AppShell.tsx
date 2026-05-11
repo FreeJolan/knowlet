@@ -639,31 +639,30 @@ export function AppShell() {
               minSize={sidebarSizes.minSize}
               maxSize={MAX_SIDEBAR_PERCENT}
             >
-              <div className="flex h-full min-h-0">
+              {/* ``min-w-0`` is the critical flex-child default override:
+               *  without it, the row's min-width defaults to its
+               *  min-content (the wider of FileTree's header or
+               *  FavoritesSection rows), and ResizablePanel can't
+               *  shrink the column below that. Result: panel
+               *  silently overflows its own flex allocation into the
+               *  next panel, occluding content. With ``min-w-0`` we
+               *  hand the panel real control over its width. Same
+               *  fix on the content column below — every link in the
+               *  flex chain has to permit shrinking. */}
+              <div className="flex h-full min-h-0 min-w-0">
                 {/* Activity bar — vertical icon strip (VS Code style).
                  *  Replaces the horizontal tab row that was eating
                  *  ~30px of vertical room. Icons-only with hover
                  *  tooltips; selected view's icon gets accent left
-                 *  border + accent-tint bg. ⌘1/2/3 keyboard direct.
-                 *  Per 2026-05-10 design discussion: scales better as
-                 *  more views land (Pinned / Search / Knowledge Map). */}
+                 *  border + accent-tint bg. ⌘1/2/3 keyboard direct. */}
                 <ActivityBar
                   active={leftTab}
                   onSelect={setLeftTab}
                   t={t}
                 />
-                <div className="flex min-h-0 flex-1 flex-col">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                   {leftTab === "files" ? (
                     <>
-                      <FavoritesSection
-                        selectedNoteId={selectedNoteId}
-                        onSelectNote={(id) => {
-                          setSelectedNoteId(id);
-                          setPendingHash(null);
-                          setPendingLine(null);
-                          setPendingPreserveMode(false);
-                        }}
-                      />
                       <FileTree
                         selectedNoteId={selectedNoteId}
                         onSelectNote={(id) => {
@@ -674,6 +673,15 @@ export function AppShell() {
                         }}
                         onMutating={setTreeBusy}
                         ghostFolder={newDocOpen ? newDocSeedFolder : undefined}
+                      />
+                      <FavoritesSection
+                        selectedNoteId={selectedNoteId}
+                        onSelectNote={(id) => {
+                          setSelectedNoteId(id);
+                          setPendingHash(null);
+                          setPendingLine(null);
+                          setPendingPreserveMode(false);
+                        }}
                       />
                     </>
                   ) : leftTab === "templates" ? (

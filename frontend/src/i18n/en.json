@@ -37,6 +37,7 @@
     "vault": "Vault",
     "newFolder": "New folder",
     "newNote": "New note",
+    "newItem": "New…",
     "loading": "Loading…",
     "loadFailed": "Failed to load tree.",
     "retry": "Retry",

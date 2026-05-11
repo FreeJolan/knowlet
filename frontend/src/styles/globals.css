@@ -399,3 +399,31 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
+
+/* Phase 2 D B1 — scroll-affordance gradient.
+ *
+ * Apply ``data-fade-bottom="true"`` to any scrollable element that
+ * a user might miss the scrollbar on (narrow lists, small panels,
+ * mobile). The bottom ~64 px fades out, with the inner half already
+ * dimmed to ~60 % so the cue lands at a glance instead of looking
+ * like an artifact (24 px + linear fade looked imperceptible in
+ * dogfood 2026-05-12).
+ *
+ * Browser support: mask-image is widely supported (Chromium 120+,
+ * Safari 17+, Firefox 53+); a missing implementation just shows
+ * the regular scroll surface — no regression.
+ */
+[data-fade-bottom="true"] {
+  mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 1) calc(100% - 64px),
+    rgba(0, 0, 0, 0.6) calc(100% - 32px),
+    rgba(0, 0, 0, 0) 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 1) calc(100% - 64px),
+    rgba(0, 0, 0, 0.6) calc(100% - 32px),
+    rgba(0, 0, 0, 0) 100%
+  );
+}

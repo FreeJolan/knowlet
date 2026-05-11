@@ -111,6 +111,7 @@
     "vault": "笔记库",
     "newFolder": "新建文件夹",
     "newNote": "新建笔记",
+    "newItem": "新建…",
     "loading": "加载中…",
     "loadFailed": "树加载失败。",
     "retry": "重试",

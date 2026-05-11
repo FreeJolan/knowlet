@@ -231,6 +231,10 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
       <DialogContent
         data-testid="new-document-dialog"
         className="p-0"
+        // We render our own ESC chip + × button in the dialog
+        // header; the shadcn default × in the corner would be a
+        // visual duplicate.
+        showCloseButton={false}
         style={{
           width: 560,
           maxWidth: "94vw",
