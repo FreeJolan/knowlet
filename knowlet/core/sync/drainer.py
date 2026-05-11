@@ -59,6 +59,11 @@ logger = logging.getLogger(__name__)
 NoteLookup = Callable[[str], Note | None]
 ConflictCallback = Callable[[str, ConflictReport], None]
 SyncedCallback = Callable[[str], None]
+# Returns the ids of notes that exist on disk but have no
+# ``sync_state`` row yet — these are the "I created notes before
+# connecting Drive" backlog. The drainer calls this on its first
+# creds-available tick to queue them.
+UntrackedSweep = Callable[[], list[str]]
 
 
 class PushDrainer:
@@ -69,6 +74,7 @@ class PushDrainer:
         note_lookup: NoteLookup,
         on_conflict: ConflictCallback | None = None,
         on_synced: SyncedCallback | None = None,
+        untracked_sweep: UntrackedSweep | None = None,
         poll_interval: float = 5.0,
     ) -> None:
         self.vault_root = vault_root
@@ -77,6 +83,9 @@ class PushDrainer:
             lambda _id, _rep: None
         )
         self.on_synced: SyncedCallback = on_synced or (lambda _id: None)
+        self.untracked_sweep: UntrackedSweep = untracked_sweep or (
+            lambda: []
+        )
         self.poll_interval = poll_interval
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -87,6 +96,10 @@ class PushDrainer:
         # ``GET /api/sync/push-errors`` endpoint reads this; the
         # chip surfaces a red badge when it's non-empty.
         self.failures: dict[str, dict[str, Any]] = {}
+        # Whether we've already run the untracked-sweep since creds
+        # became available. Reset to False whenever we observe a
+        # no-creds tick, so a disconnect → reconnect cycle re-sweeps.
+        self._untracked_sweep_done: bool = False
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -130,7 +143,31 @@ class PushDrainer:
     def _tick(self) -> None:
         creds = load_credentials(credentials_path(self.vault_root))
         if creds is None:
+            # Reset the sweep latch so a reconnect re-runs it. Cheap.
+            self._untracked_sweep_done = False
             return
+        # First creds-positive tick after a connect (or after a
+        # process restart): sweep notes that exist on disk but have
+        # no sync_state row yet, and queue them as dirty so the
+        # rest of this tick picks them up. Without this, notes
+        # created before Drive was connected would sit in "N to
+        # push" forever — the drainer's dirty-only filter never sees
+        # them, and the user has to manually click "Push all".
+        if not self._untracked_sweep_done:
+            try:
+                untracked = self.untracked_sweep()
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "untracked-sweep callback raised", exc_info=True
+                )
+                untracked = []
+            if untracked:
+                logger.info(
+                    "drainer: queueing %d untracked note(s) for first push",
+                    len(untracked),
+                )
+                self._queue_untracked(untracked)
+            self._untracked_sweep_done = True
         store = SyncStateStore(self.vault_root)
         try:
             service: Any = None
@@ -212,6 +249,35 @@ class PushDrainer:
 
     def _clear_failure(self, note_id: str) -> None:
         self.failures.pop(note_id, None)
+
+    def _queue_untracked(self, note_ids: list[str]) -> None:
+        """Insert dirty first-push rows (drive_file_id=None) for
+        notes that have never been tracked. Skips ids that already
+        have a row — idempotent against the sweep firing twice."""
+        from knowlet.core.sync.state import FileState
+
+        store = SyncStateStore(self.vault_root)
+        try:
+            existing = {
+                fs.entity_id
+                for fs in store.list_all_files()
+                if fs.entity_type == "note"
+            }
+            for note_id in note_ids:
+                if note_id in existing:
+                    continue
+                store.upsert_file_state(
+                    FileState(
+                        entity_type="note",
+                        entity_id=note_id,
+                        drive_file_id=None,
+                        last_known_etag=None,
+                        last_synced_at=None,
+                        dirty=True,
+                    )
+                )
+        finally:
+            store.close()
 
     def _process_deletions(
         self, store: SyncStateStore, creds: Any, service: Any

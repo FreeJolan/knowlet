@@ -335,6 +335,7 @@
     "connectedAsNamed": "已连接:{{email}} ({{name}})",
     "disconnect": "断开",
     "disconnectConfirm": "本地 token 将被删除。Drive 上已推送的内容仍保留。",
+    "cancel": "取消",
     "lastError": "上次连接失败:{{detail}}"
   },
   "syncMode": {

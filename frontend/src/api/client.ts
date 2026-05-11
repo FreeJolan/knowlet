@@ -174,6 +174,9 @@ export const startConnect = (): Promise<{ started: boolean; reason?: string }> =
 export const disconnect = (): Promise<{ removed_token_file: boolean }> =>
   request("POST", "/api/sync/disconnect");
 
+export const cancelConnect = (): Promise<{ cancelled: boolean }> =>
+  request("POST", "/api/sync/cancel-connect");
+
 // ---------- push failures (#122) ----------
 
 export interface PushError {

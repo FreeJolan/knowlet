@@ -336,6 +336,7 @@
     "connectedAsNamed": "Connected as {{email}} ({{name}})",
     "disconnect": "Disconnect",
     "disconnectConfirm": "Tokens will be deleted locally. Drive itself keeps everything you've pushed.",
+    "cancel": "Cancel",
     "lastError": "Last attempt failed: {{detail}}"
   },
   "syncMode": {

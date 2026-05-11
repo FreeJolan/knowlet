@@ -83,7 +83,7 @@ EMBEDDED_OAUTH_CLIENT: dict[str, dict[str, object]] = {
 
 
 def resolve_client_config(
-    client_secrets_path: "Path | None" = None,
+    client_secrets_path: Path | None = None,
 ) -> dict[str, dict[str, object]]:
     """Resolve the OAuth client config payload to hand to
     ``InstalledAppFlow.from_client_config``. Three sources, first
@@ -177,6 +177,7 @@ def run_connect_flow(
     client_secrets_path: Path | None = None,
     save_to: Path,
     port: int = 0,
+    timeout_seconds: int = 300,
 ) -> ConnectResult:
     """Block until the user finishes consent in the browser, then
     persist tokens and return the captured identity.
@@ -215,7 +216,15 @@ def run_connect_flow(
         # server on the chosen loopback port, blocks until the
         # callback arrives, then exchanges the code for tokens.
         # `open_browser=True` is its default; we keep it explicit.
-        creds = flow.run_local_server(port=port, open_browser=True)
+        # ``timeout_seconds`` makes the loopback server abort if the
+        # user never finishes consent (typically closes the tab) —
+        # without this the call blocks the background thread forever
+        # and the UI shows a perpetual "Opening browser…" spinner.
+        creds = flow.run_local_server(
+            port=port,
+            open_browser=True,
+            timeout_seconds=timeout_seconds,
+        )
     except Exception as exc:
         raise OAuthFlowError(f"OAuth flow failed: {exc}") from exc
 

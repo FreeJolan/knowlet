@@ -17,7 +17,7 @@ import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
@@ -677,6 +677,13 @@ class WebState:
         self.oauth_flow_state: str = "idle"
         self.oauth_last_error: str | None = None
         self._oauth_thread: threading.Thread | None = None
+        # #116 fix — monotonic counter so a cancelled OAuth thread
+        # (which we can't actually kill — google_auth_oauthlib's
+        # ``run_local_server`` doesn't expose a stop hook) can't
+        # later overwrite the state of a newer attempt. Each
+        # ``POST /api/sync/connect`` increments this; thread checks
+        # before writing.
+        self.oauth_session: int = 0
 
     def start_bootstrap_async(self) -> None:
         """Kick off bootstrap on a daemon thread. Called from lifespan.
@@ -1148,7 +1155,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         compare against"."""
         try:
             runtime = state.runtime
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
         if runtime is None:
             return None
@@ -1186,7 +1193,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 note_id=note_id,
                 local_path=local_path,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             import logging as _logging
 
             _logging.getLogger(__name__).warning(
@@ -1291,7 +1298,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 service, record.drive_file_id
             )
             remote_bytes = download_file(service, record.drive_file_id)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Drive fetch failed: {exc!r}",
@@ -1425,7 +1432,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             service = DriveClient(creds).service()
             try:
                 remote_bytes = download_file(service, record.drive_file_id)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail=f"Drive fetch failed: {exc!r}",
@@ -1454,7 +1461,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     local_path=local_path,
                     merged_bytes=merged_bytes,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail=f"merge push failed: {exc!r}",
@@ -1708,14 +1715,14 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                             fileId=fs.drive_file_id
                         ).execute()
                         deleted_drive += 1
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         drive_errors.append(
                             f"{fs.entity_id}: {exc!r}"
                         )
                 # Drop the sync_state row. SyncStateStore doesn't
                 # expose a row delete, so we use raw SQL on the
                 # underlying connection.
-                conn = store._connect()  # noqa: SLF001 — intentional
+                conn = store._connect()
                 conn.execute(
                     "DELETE FROM file_state "
                     "WHERE entity_type=? AND entity_id=?",
@@ -2222,12 +2229,21 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         ``sync.client_secrets_path`` is set + points at a real
         file (advanced-user escape hatch). No client config is
         required for the common case."""
-        from knowlet.core.sync.credentials import credentials_path
 
         if state.oauth_flow_state == "running":
             return {"started": False, "reason": "already running"}
 
         cs_path, tok_path = _resolve_paths_for_oauth()
+
+        # Capture the session counter at the moment we kick the
+        # thread off. The thread only writes state back if it's
+        # still the current attempt — protects against a stuck
+        # zombie thread (e.g. user closed the browser tab; this
+        # thread is now blocked on the loopback server forever)
+        # overwriting a newer attempt's result when it eventually
+        # times out.
+        my_session = state.oauth_session + 1
+        state.oauth_session = my_session
 
         def _runner() -> None:
             from knowlet.core.sync.oauth import (
@@ -2241,14 +2257,21 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     save_to=tok_path,
                     port=0,
                 )
-                state.oauth_flow_state = "connected"
-                state.oauth_last_error = None
+                if state.oauth_session == my_session:
+                    # The drainer's untracked-sweep handles the
+                    # "I had notes before connecting" backlog on its
+                    # next tick (≤5s). No work needed here beyond
+                    # flipping state to connected.
+                    state.oauth_flow_state = "connected"
+                    state.oauth_last_error = None
             except OAuthFlowError as exc:
-                state.oauth_flow_state = "error"
-                state.oauth_last_error = str(exc)
-            except Exception as exc:  # noqa: BLE001
-                state.oauth_flow_state = "error"
-                state.oauth_last_error = repr(exc)
+                if state.oauth_session == my_session:
+                    state.oauth_flow_state = "error"
+                    state.oauth_last_error = str(exc)
+            except Exception as exc:
+                if state.oauth_session == my_session:
+                    state.oauth_flow_state = "error"
+                    state.oauth_last_error = repr(exc)
 
         state.oauth_flow_state = "running"
         state.oauth_last_error = None
@@ -2265,7 +2288,6 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         the local device_id is preserved so reconnecting from the
         same machine doesn't look like a new device."""
         from knowlet.core.sync.credentials import (
-            credentials_path,
             delete_credentials,
         )
         from knowlet.core.sync.state import SyncStateStore
@@ -2281,6 +2303,24 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         state.oauth_last_error = None
         _invalidate_preflight_cache()
         return {"removed_token_file": removed}
+
+    @app.post("/api/sync/cancel-connect")
+    def cancel_connect_endpoint() -> dict[str, Any]:
+        """User aborted the in-progress OAuth flow (typically by
+        closing the browser tab). We can't actually kill the
+        background thread — ``google_auth_oauthlib``'s
+        ``run_local_server`` has no stop hook — so we bump the
+        session counter and reset state. The stuck thread's eventual
+        writes are guarded by a session check, so they become
+        harmless no-ops if/when it ever unblocks (or after the
+        300-second timeout we set in ``run_connect_flow``).
+        """
+        if state.oauth_flow_state != "running":
+            return {"cancelled": False}
+        state.oauth_session += 1
+        state.oauth_flow_state = "idle"
+        state.oauth_last_error = None
+        return {"cancelled": True}
 
     def _resolve_paths_for_oauth() -> tuple[Path | None, Path]:
         """Same resolution as the CLI uses (knowlet/cli/sync.py
@@ -2478,7 +2518,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             return None
         try:
             note = runtime.vault.read_note(path)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
         # #120 — stamp the current vault folder so it round-trips
         # via Drive frontmatter. Empty string from ``folder_of``
@@ -2588,7 +2628,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             pass
         try:
             runtime.index.delete_note(note_id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         store = SyncStateStore(vault.root)
         try:
@@ -2640,11 +2680,39 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     # whole closure scope.
     from knowlet.core.sync.drainer import PushDrainer
 
+    def _drainer_untracked_sweep() -> list[str]:
+        """Tell the drainer about local notes that exist on disk but
+        have no sync_state row yet (the "I added these before
+        connecting Drive" backlog). Drainer fires this once after
+        creds first become available and queues them for first push.
+        Returns [] when the runtime isn't ready — the drainer will
+        retry on the next reconnect cycle."""
+        from knowlet.core.sync.state import SyncStateStore
+
+        runtime = state.runtime
+        if runtime is None:
+            return []
+        store = SyncStateStore(vault.root)
+        try:
+            tracked = {
+                fs.entity_id
+                for fs in store.list_all_files()
+                if fs.entity_type == "note"
+            }
+        finally:
+            store.close()
+        return [
+            n["id"]
+            for n in runtime.index.list_notes()
+            if n["id"] not in tracked
+        ]
+
     state.push_drainer = PushDrainer(
         vault_root=vault.root,
         note_lookup=_drainer_note_lookup,
         on_conflict=_drainer_on_conflict,
         on_synced=_drop_from_preflight,
+        untracked_sweep=_drainer_untracked_sweep,
         poll_interval=5.0,
     )
 
@@ -4085,7 +4153,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 continue
         return {"ok": True, "purged_count": purged}
 
-    def _note_id_in_trash(runtime: "ChatRuntime", name: str) -> str | None:
+    def _note_id_in_trash(runtime: ChatRuntime, name: str) -> str | None:
         """Read the trashed file's frontmatter to recover the note id
         (so the sync delete tombstone has the right key). Returns
         None if the file can't be read — caller carries on without
@@ -4097,7 +4165,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 return None
             note = Note.from_file(trash_path)
             return note.id
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
 
     # ---------------- attachments (M7.0.3) ----------------

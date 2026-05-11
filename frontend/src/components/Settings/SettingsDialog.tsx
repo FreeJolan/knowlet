@@ -20,10 +20,11 @@ import {
   Sun,
   Zap,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  cancelConnect,
   disconnect as apiDisconnect,
   getAuthStatus,
   getSyncMode,
@@ -139,6 +140,27 @@ function DriveAuthPanel(): React.ReactNode {
       query.state.data?.connecting ? 2000 : false,
     staleTime: 30_000,
   });
+  // When OAuth finishes successfully, the SyncChip's caches are
+  // still stale (it polls every 60s) and would show "offline" until
+  // the next tick. Invalidate the relevant queries on the
+  // connecting → connected transition so the chip flips to "synced"
+  // within ~2s of the browser callback returning.
+  const wasConnecting = useRef(false);
+  useEffect(() => {
+    const connecting = q.data?.connecting ?? false;
+    const connected = q.data?.connected ?? false;
+    if (wasConnecting.current && connected && !connecting) {
+      void qc.invalidateQueries({ queryKey: QK.syncConflicts });
+      void qc.invalidateQueries({ queryKey: QK.syncUnpushed });
+      void qc.invalidateQueries({ queryKey: QK.syncMode });
+      void qc.invalidateQueries({ queryKey: QK.syncPushErrors });
+      // Per-note badges (each note has its own status query) —
+      // wildcard-invalidate so any open notes flip out of the
+      // "offline / unauthenticated" pill immediately too.
+      void qc.invalidateQueries({ queryKey: ["note-sync-status"] });
+    }
+    wasConnecting.current = connecting;
+  }, [q.data?.connecting, q.data?.connected, qc]);
   const connect = useMutation({
     mutationFn: startConnect,
     onSuccess: () => {
@@ -154,6 +176,12 @@ function DriveAuthPanel(): React.ReactNode {
       void qc.invalidateQueries({ queryKey: QK.syncConflicts });
       void qc.invalidateQueries({ queryKey: QK.syncUnpushed });
       void qc.invalidateQueries({ queryKey: QK.syncMode });
+    },
+  });
+  const cancelMut = useMutation({
+    mutationFn: cancelConnect,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QK.syncAuth });
     },
   });
   const data = q.data;
@@ -188,14 +216,26 @@ function DriveAuthPanel(): React.ReactNode {
           </button>
         </div>
       ) : data?.connecting ? (
-        <div className="mt-2 flex w-full items-center gap-2 text-xs">
-          <Loader2 className="size-4 animate-spin" />
-          <div>
-            <div>{t("driveAuth.connecting")}</div>
-            <div className="text-muted-foreground">
-              {t("driveAuth.connectingHint")}
+        <div className="mt-2 flex w-full items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs">
+            <Loader2 className="size-4 animate-spin" />
+            <div>
+              <div>{t("driveAuth.connecting")}</div>
+              <div className="text-muted-foreground">
+                {t("driveAuth.connectingHint")}
+              </div>
             </div>
           </div>
+          <button
+            type="button"
+            onClick={() => cancelMut.mutate()}
+            data-testid="drive-cancel-connect"
+            disabled={cancelMut.isPending}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors hover:bg-accent/30"
+            style={{ borderColor: "var(--line)" }}
+          >
+            {t("driveAuth.cancel")}
+          </button>
         </div>
       ) : (
         <div className="mt-2 flex w-full flex-col gap-2">
