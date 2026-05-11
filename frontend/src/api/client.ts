@@ -361,6 +361,26 @@ export const purgeTrashed = (name: string): Promise<{ name: string }> =>
 export const emptyTrash = (): Promise<{ purged_count: number }> =>
   request("DELETE", "/api/trash");
 
+// ---------- favorites (Phase 2 D B1) ----------
+
+export interface FavoriteSummary {
+  id: string;
+  title: string | null;
+}
+
+export const listFavorites = (): Promise<{ favorites: FavoriteSummary[] }> =>
+  request("GET", "/api/favorites");
+
+export const addFavorite = (
+  noteId: string,
+): Promise<{ favorites: FavoriteSummary[] }> =>
+  request("POST", `/api/favorites/${encodeURIComponent(noteId)}`);
+
+export const removeFavorite = (
+  noteId: string,
+): Promise<{ favorites: FavoriteSummary[] }> =>
+  request("DELETE", `/api/favorites/${encodeURIComponent(noteId)}`);
+
 // ---------- attachments (Phase 1 B slice 4) ----------
 
 /**

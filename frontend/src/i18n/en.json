@@ -168,6 +168,14 @@
     "titlePlaceholder": "Untitled",
     "editTitleHint": "Click to rename"
   },
+  "favorites": {
+    "heading": "Starred",
+    "empty": "No favorites yet. Right-click a note to star it.",
+    "untitled": "Untitled",
+    "unstar": "Unstar",
+    "star": "Star",
+    "starred": "Starred"
+  },
   "trash": {
     "title": "Trash",
     "loading": "Loading…",
@@ -187,7 +195,10 @@
     "commandsTitle": "Command palette",
     "commandsLabel": "COMMANDS",
     "filesLabel": "FILES",
-    "commandsHint": "(type > or ⌘⇧P for commands)",
+    "commandsHint": "(type > or ⌘⇧P for commands · @ for starred)",
+    "favoritesLabel": "STARRED",
+    "starredHeading_one": "Starred · 1 note",
+    "starredHeading_other": "Starred · {{count}} notes",
     "switchToFiles": "Switch back to files (Backspace)",
     "backspaceHint": "(⌫ to leave)",
     "footerFiles": "Esc to close",

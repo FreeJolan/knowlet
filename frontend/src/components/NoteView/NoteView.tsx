@@ -15,11 +15,18 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import GithubSlugger from "github-slugger";
-import { Columns2, Eye, Pen } from "lucide-react";
+import { Columns2, Eye, Pen, Star } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { getNote, listTemplates, updateNote } from "@/api/client";
+import {
+  addFavorite,
+  getNote,
+  listFavorites,
+  listTemplates,
+  removeFavorite,
+  updateNote,
+} from "@/api/client";
 import type { TemplateSummary } from "@/api/client";
 import type { NoteFull, TreeFolder } from "@/api/types";
 import { EditorView } from "@codemirror/view";
@@ -826,6 +833,7 @@ export function NoteView({
                 </span>
               )}
             </span>
+            <StarToggle noteId={note.data.id} />
             <SyncStatusBadge
               noteId={note.data?.id ?? null}
               isSaving={savingState === "saving"}
@@ -1045,6 +1053,44 @@ type ToggleProps = {
 /** Tiny `·` separator inside the kicker row. Same color register as
  *  the surrounding mono text but `--ink-faint` so the dots recede
  *  visually below the words they separate. */
+function StarToggle({ noteId }: { noteId: string }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const favs = useQuery({
+    queryKey: QK.favorites,
+    queryFn: listFavorites,
+    staleTime: 30_000,
+  });
+  const isStarred = (favs.data?.favorites ?? []).some((f) => f.id === noteId);
+  const onSuccess = (res: { favorites: { id: string; title: string | null }[] }) =>
+    qc.setQueryData(QK.favorites, res);
+  const addMut = useMutation({ mutationFn: addFavorite, onSuccess });
+  const removeMut = useMutation({ mutationFn: removeFavorite, onSuccess });
+  const busy = addMut.isPending || removeMut.isPending;
+  return (
+    <button
+      type="button"
+      data-testid="note-star-toggle"
+      data-starred={isStarred ? "true" : "false"}
+      aria-label={isStarred ? t("favorites.unstar") : t("favorites.star")}
+      title={isStarred ? t("favorites.starred") : t("favorites.star")}
+      disabled={busy}
+      onClick={() => {
+        if (isStarred) removeMut.mutate(noteId);
+        else addMut.mutate(noteId);
+      }}
+      className="flex size-7 items-center justify-center rounded-sm transition-colors hover:bg-accent/30"
+      style={{
+        color: isStarred ? "rgb(245 158 11)" : "var(--ink-mute)",
+      }}
+    >
+      <Star
+        className={`size-4 ${isStarred ? "fill-current" : ""}`}
+      />
+    </button>
+  );
+}
+
 function KickerSep() {
   return (
     <span

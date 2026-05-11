@@ -13,11 +13,16 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, FileText, Zap } from "lucide-react";
+import { ChevronRight, FileText, Star, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { getTree, listQuickActions, runQuickAction } from "@/api/client";
+import {
+  getTree,
+  listFavorites,
+  listQuickActions,
+  runQuickAction,
+} from "@/api/client";
 import {
   Command,
   CommandEmpty,
@@ -75,6 +80,11 @@ export function CommandPalette({
   const qc = useQueryClient();
   const [mode, setMode] = useState<PaletteMode>(initialMode);
   const [query, setQuery] = useState("");
+  // Phase 2 D B1 — sticky "favorites only" filter within files mode.
+  // Activated by typing ``@`` as the first char (mirroring ``>`` for
+  // commands). Cleared by Backspace at empty input. Persists across
+  // subsequent keystrokes so the user can refine without retyping @.
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
 
   const tree = useQuery({
     queryKey: QK.tree,
@@ -95,11 +105,38 @@ export function CommandPalette({
     [tree.data],
   );
 
+  // Phase 2 D B1 — favorites integration. Loaded once when the
+  // palette opens in files mode; used for (a) the always-on
+  // "Starred" group at the top of the empty-input state, and
+  // (b) the ``@`` prefix filter that scopes the search to favorites.
+  const favs = useQuery({
+    queryKey: QK.favorites,
+    queryFn: listFavorites,
+    enabled: open && mode === "files",
+    staleTime: 30_000,
+  });
+  const starredIds = useMemo(
+    () => new Set((favs.data?.favorites ?? []).map((f) => f.id)),
+    [favs.data],
+  );
+  const starredNotes = useMemo(
+    () => notes.filter((n) => starredIds.has(n.id)),
+    [notes, starredIds],
+  );
+  // When the favorites filter is on, narrow files-mode results to
+  // starred notes only. Otherwise show every note (cmdk fuzz-matches
+  // by the user's query).
+  const filesGroup = useMemo(
+    () => (favoritesOnly ? starredNotes : notes),
+    [favoritesOnly, starredNotes, notes],
+  );
+
   // Reset state on every open so the dialog is "clean" each time.
   useEffect(() => {
     if (open) {
       setMode(initialMode);
       setQuery("");
+      setFavoritesOnly(false);
     }
   }, [open, initialMode]);
 
@@ -125,22 +162,35 @@ export function CommandPalette({
       setQuery(next.slice(1).trimStart());
       return;
     }
+    // Files-mode "`@`" prefix → activate favorites-only filter (sticky).
+    // Symmetric with `>`. Once active, the prefix is consumed and the
+    // pill at the top of the dialog shows the user we're filtered.
+    if (mode === "files" && !favoritesOnly && next.startsWith("@")) {
+      setFavoritesOnly(true);
+      setQuery(next.slice(1).trimStart());
+      return;
+    }
     setQuery(next);
   };
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    // Backspace at empty input in commands mode → back to files mode.
-    // (Pressing Esc still closes the dialog at the cmdk level.)
     if (
-      mode === "commands" &&
-      e.key === "Backspace" &&
-      query.length === 0 &&
-      !e.metaKey &&
-      !e.ctrlKey &&
-      !e.altKey
+      e.key !== "Backspace" ||
+      query.length !== 0 ||
+      e.metaKey ||
+      e.ctrlKey ||
+      e.altKey
     ) {
+      return;
+    }
+    // Backspace at empty input — peel back one layer of state.
+    // (Pressing Esc still closes the dialog at the cmdk level.)
+    if (mode === "commands") {
       e.preventDefault();
       setMode("files");
+    } else if (favoritesOnly) {
+      e.preventDefault();
+      setFavoritesOnly(false);
     }
   };
 
@@ -208,6 +258,20 @@ export function CommandPalette({
             >
               <ChevronRight className="size-3" />
               <span>{t("palette.commandsLabel")}</span>
+              <span className="ml-1 text-[10px] opacity-70">
+                {t("palette.backspaceHint")}
+              </span>
+            </button>
+          ) : favoritesOnly ? (
+            <button
+              type="button"
+              onClick={() => setFavoritesOnly(false)}
+              className="flex items-center gap-1 px-3 pt-2 text-left font-mono text-[11px] text-amber-700 transition-colors hover:text-foreground dark:text-amber-400"
+              title={t("palette.switchToFiles")}
+              data-testid="palette-favorites-pill"
+            >
+              <Star className="size-3 fill-current" />
+              <span>{t("palette.favoritesLabel")}</span>
               <span className="ml-1 text-[10px] opacity-70">
                 {t("palette.backspaceHint")}
               </span>
@@ -292,32 +356,69 @@ export function CommandPalette({
                 })}
               </CommandGroup>
             ) : (
-              <CommandGroup
-                heading={t("palette.notesCount", { count: notes.length })}
-              >
-                {notes.map((n) => (
-                  <CommandItem
-                    key={n.id}
-                    // Compact row: tighter vertical padding overrides the
-                    // shadcn default `py-1.5` so a long list isn't a wall
-                    // of evenly-spaced "cards". Folder context renders
-                    // INLINE on the right (gray + small) so two notes
-                    // with the same title but different folders are
-                    // distinguishable at a glance.
-                    className="!py-1.5"
-                    value={`${n.title} ${n.folderPath}`}
-                    onSelect={() => onSelectNote(n.id)}
+              <>
+                {/* When input is empty AND we're not already in
+                    favorites-only mode, surface a "Starred" group at the
+                    top so the user's most-used notes are one keystroke
+                    away. Hidden once they start typing (cmdk handles
+                    the global filter from filesGroup) or once they
+                    explicitly entered favorites-only mode. */}
+                {!favoritesOnly && query.length === 0 && starredNotes.length > 0 && (
+                  <CommandGroup
+                    heading={t("palette.starredHeading", {
+                      count: starredNotes.length,
+                    })}
                   >
-                    <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{n.title}</span>
-                    {n.folderPath && (
-                      <span className="ml-auto shrink-0 truncate pl-3 font-mono text-[11px] text-muted-foreground">
-                        {n.folderPath}
-                      </span>
-                    )}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
+                    {starredNotes.map((n) => (
+                      <CommandItem
+                        key={`starred:${n.id}`}
+                        className="!py-1.5"
+                        value={`★ ${n.title} ${n.folderPath}`}
+                        onSelect={() => onSelectNote(n.id)}
+                        data-testid={`palette-starred-${n.id}`}
+                      >
+                        <Star className="size-3.5 shrink-0 fill-current text-amber-500" />
+                        <span className="truncate">{n.title}</span>
+                        {n.folderPath && (
+                          <span className="ml-auto shrink-0 truncate pl-3 font-mono text-[11px] text-muted-foreground">
+                            {n.folderPath}
+                          </span>
+                        )}
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                )}
+                <CommandGroup
+                  heading={
+                    favoritesOnly
+                      ? t("palette.starredHeading", {
+                          count: filesGroup.length,
+                        })
+                      : t("palette.notesCount", { count: filesGroup.length })
+                  }
+                >
+                  {filesGroup.map((n) => (
+                    <CommandItem
+                      key={n.id}
+                      className="!py-1.5"
+                      value={`${n.title} ${n.folderPath}`}
+                      onSelect={() => onSelectNote(n.id)}
+                    >
+                      {starredIds.has(n.id) ? (
+                        <Star className="size-3.5 shrink-0 fill-current text-amber-500" />
+                      ) : (
+                        <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="truncate">{n.title}</span>
+                      {n.folderPath && (
+                        <span className="ml-auto shrink-0 truncate pl-3 font-mono text-[11px] text-muted-foreground">
+                          {n.folderPath}
+                        </span>
+                      )}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </>
             )}
           </CommandList>
           {/* Footer — quiet hint about the alternate mode. */}

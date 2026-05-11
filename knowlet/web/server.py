@@ -5024,6 +5024,56 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             )
         return {"ok": True}
 
+    # ---------------- favorites (Phase 2 D B1) ----------------
+
+    def _list_favorites_enriched(
+        runtime: ChatRuntime,
+    ) -> list[dict[str, Any]]:
+        """Return favorites with title metadata. Prunes ids that no
+        longer point at a real note (silent self-cleanup)."""
+        from knowlet.core.favorites import FavoritesStore
+
+        store = FavoritesStore(vault_root=vault.root)
+        existing = {n["id"] for n in runtime.index.list_notes()}
+        valid_ids = store.list(existing_ids=existing)
+        out: list[dict[str, Any]] = []
+        for nid in valid_ids:
+            meta = runtime.index.get_note_meta(nid)
+            title = meta.get("title") if meta else None
+            out.append({"id": nid, "title": title})
+        return out
+
+    @app.get("/api/favorites")
+    def list_favorites(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        return {"favorites": _list_favorites_enriched(runtime)}
+
+    @app.post("/api/favorites/{note_id}")
+    def add_favorite(
+        note_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        from knowlet.core.favorites import FavoritesStore
+
+        if runtime.index.get_note_meta(note_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note {note_id} not found",
+            )
+        FavoritesStore(vault_root=vault.root).add(note_id)
+        return {"favorites": _list_favorites_enriched(runtime)}
+
+    @app.delete("/api/favorites/{note_id}")
+    def remove_favorite(
+        note_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        from knowlet.core.favorites import FavoritesStore
+
+        FavoritesStore(vault_root=vault.root).remove(note_id)
+        return {"favorites": _list_favorites_enriched(runtime)}
+
     # ---------------- profile ----------------
 
     @app.get("/api/profile")

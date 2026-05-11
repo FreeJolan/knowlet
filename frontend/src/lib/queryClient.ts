@@ -36,4 +36,5 @@ export const QK = {
   syncUnpushed: ["sync-unpushed"] as const,
   syncAuth: ["sync-auth"] as const,
   syncPushErrors: ["sync-push-errors"] as const,
+  favorites: ["favorites"] as const,
 };

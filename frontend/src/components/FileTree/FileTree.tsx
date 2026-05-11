@@ -27,14 +27,17 @@ import {
 } from "react-arborist";
 
 import {
+  addFavorite,
   createBlankNote,
   createFolder,
   deleteFolder,
   deleteNote,
   getNote,
   getTree,
+  listFavorites,
   moveFolder,
   moveNote,
+  removeFavorite,
   renameFolder,
   updateNote,
 } from "@/api/client";
@@ -171,6 +174,32 @@ export function FileTree({
   const [lastClickedId, setLastClickedId] = useState<string | null>(null);
 
   const tree = useQuery({ queryKey: QK.tree, queryFn: getTree });
+
+  // Phase 2 D B1 — favorites for context-menu star/unstar.
+  const favs = useQuery({
+    queryKey: QK.favorites,
+    queryFn: listFavorites,
+    staleTime: 30_000,
+  });
+  const starredIds = useMemo(
+    () => new Set((favs.data?.favorites ?? []).map((f) => f.id)),
+    [favs.data],
+  );
+  const addFavM = useMutation({
+    mutationFn: addFavorite,
+    onSuccess: (res) => qc.setQueryData(QK.favorites, res),
+  });
+  const removeFavM = useMutation({
+    mutationFn: removeFavorite,
+    onSuccess: (res) => qc.setQueryData(QK.favorites, res),
+  });
+  const toggleStar = useCallback(
+    (noteId: string, currentlyStarred: boolean) => {
+      if (currentlyStarred) removeFavM.mutate(noteId);
+      else addFavM.mutate(noteId);
+    },
+    [addFavM, removeFavM],
+  );
 
   // F2 = rename the focused row. Matches VS Code / Finder. We listen at
   // the window level so the user doesn't have to first click into the
@@ -767,6 +796,8 @@ export function FileTree({
                     deleteNoteM.mutate(noteId);
                   }
                 }}
+                starredIds={starredIds}
+                onToggleStar={toggleStar}
               />
             )}
           </Tree>
@@ -820,6 +851,11 @@ interface RowProps extends NodeRendererProps<TreeNodeData> {
   /** True when this row is the dialog's currently-selected target
    *  folder. Adds a left-edge accent border + accent-tint bg. */
   isGhostTarget: boolean;
+  /** Phase 2 D B1 — set of starred note ids. Lets the row decide
+   *  whether to render "Star" or "Unstar" without per-row queries. */
+  starredIds: Set<string>;
+  /** Phase 2 D B1 — toggle a note's starred state. */
+  onToggleStar: (noteId: string, currentlyStarred: boolean) => void;
 }
 
 /** Phase 2 D Slice 2b — passive indent guide + dialog-driven ghost
@@ -845,12 +881,16 @@ function Row({
   onDeleteNote,
   ghostHotDepths,
   isGhostTarget,
+  starredIds,
+  onToggleStar,
 }: RowProps) {
   const { t } = useTranslation();
   const isPending =
     node.id === PENDING_NOTE_ID || node.id === PENDING_FOLDER_ID;
   const isFolder =
     node.data.kind === "folder" || node.data.kind === "pending-folder";
+  const noteId = !isFolder ? node.data.noteId : null;
+  const isStarred = noteId !== null && starredIds.has(noteId);
   // Read from our controlled openMap; default = open (matches openByDefault).
   const isOpen = openMap[node.id] === undefined ? true : openMap[node.id];
 
@@ -1058,6 +1098,14 @@ function Row({
         <ContextMenuItem onSelect={() => node.edit()}>
           {t("menu.rename")}
         </ContextMenuItem>
+        {!isFolder && noteId !== null && (
+          <ContextMenuItem
+            onSelect={() => onToggleStar(noteId, isStarred)}
+            data-testid={`menu-toggle-star-${noteId}`}
+          >
+            {isStarred ? t("favorites.unstar") : t("favorites.star")}
+          </ContextMenuItem>
+        )}
         <ContextMenuSeparator />
         <ContextMenuItem
           variant="destructive"

@@ -22,6 +22,7 @@ import { useTranslation } from "react-i18next";
 
 import { getTree } from "@/api/client";
 import type { TreeFolder, TreeNote } from "@/api/types";
+import { FavoritesSection } from "@/components/Favorites/FavoritesSection";
 import { FileTree } from "@/components/FileTree/FileTree";
 import { GraphFocusMode } from "@/components/Graph/GraphFocusMode";
 import { NoteView } from "@/components/NoteView/NoteView";
@@ -653,17 +654,28 @@ export function AppShell() {
                 />
                 <div className="flex min-h-0 flex-1 flex-col">
                   {leftTab === "files" ? (
-                    <FileTree
-                      selectedNoteId={selectedNoteId}
-                      onSelectNote={(id) => {
-                        setSelectedNoteId(id);
-                        setPendingHash(null);
-                        setPendingLine(null);
-                        setPendingPreserveMode(false);
-                      }}
-                      onMutating={setTreeBusy}
-                      ghostFolder={newDocOpen ? newDocSeedFolder : undefined}
-                    />
+                    <>
+                      <FavoritesSection
+                        selectedNoteId={selectedNoteId}
+                        onSelectNote={(id) => {
+                          setSelectedNoteId(id);
+                          setPendingHash(null);
+                          setPendingLine(null);
+                          setPendingPreserveMode(false);
+                        }}
+                      />
+                      <FileTree
+                        selectedNoteId={selectedNoteId}
+                        onSelectNote={(id) => {
+                          setSelectedNoteId(id);
+                          setPendingHash(null);
+                          setPendingLine(null);
+                          setPendingPreserveMode(false);
+                        }}
+                        onMutating={setTreeBusy}
+                        ghostFolder={newDocOpen ? newDocSeedFolder : undefined}
+                      />
+                    </>
                   ) : leftTab === "templates" ? (
                     <FileTree
                       selectedNoteId={selectedNoteId}

@@ -168,6 +168,14 @@
     "titlePlaceholder": "无标题",
     "editTitleHint": "点击重命名"
   },
+  "favorites": {
+    "heading": "收藏",
+    "empty": "还没有收藏。在笔记上右键 → 添加到收藏。",
+    "untitled": "无标题",
+    "unstar": "取消收藏",
+    "star": "添加到收藏",
+    "starred": "已收藏"
+  },
   "trash": {
     "title": "垃圾桶",
     "loading": "加载中…",
@@ -187,7 +195,10 @@
     "commandsTitle": "命令面板",
     "commandsLabel": "命令",
     "filesLabel": "文件",
-    "commandsHint": "(输入 > 或 ⌘⇧P 进入命令)",
+    "commandsHint": "(输入 > 或 ⌘⇧P 进入命令 · @ 过滤收藏)",
+    "favoritesLabel": "收藏",
+    "starredHeading_one": "收藏 · 1 条",
+    "starredHeading_other": "收藏 · {{count}} 条",
     "switchToFiles": "返回文件搜索 (Backspace)",
     "backspaceHint": "(⌫ 退出)",
     "footerFiles": "Esc 关闭",
