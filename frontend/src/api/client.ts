@@ -381,6 +381,48 @@ export const removeFavorite = (
 ): Promise<{ favorites: FavoriteSummary[] }> =>
   request("DELETE", `/api/favorites/${encodeURIComponent(noteId)}`);
 
+// ---------- vault portability (Phase 2 E) ----------
+
+export interface ImportReportPayload {
+  mode: "restore" | "merge";
+  target_path: string;
+  notes_created: number;
+  notes_skipped: number;
+  notes_renamed: number;
+  attachments_copied: number;
+  dry_run: boolean;
+  items: { source: string; action: string; final: string | null }[];
+  manifest: {
+    knowlet_version: string;
+    exported_at: string;
+    note_count: number;
+    attachment_count: number;
+  } | null;
+}
+
+/** URL only — caller opens this in a new tab or triggers an
+ *  ``<a download>`` so the browser streams the zip. We don't use
+ *  fetch + Blob because that needlessly buffers a large file in JS
+ *  memory before re-emitting it as a download. */
+export const exportVaultUrl = (): string => "/api/vault/export";
+
+async function postFile<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append("file", file);
+  const r = await fetch(path, { method: "POST", body: form });
+  if (!r.ok) {
+    const detail = await r.text().catch(() => "");
+    throw new Error(`${r.status} ${r.statusText}${detail ? ` — ${detail}` : ""}`);
+  }
+  return (await r.json()) as T;
+}
+
+export const previewImport = (file: File): Promise<ImportReportPayload> =>
+  postFile("/api/vault/import-preview", file);
+
+export const commitImport = (file: File): Promise<ImportReportPayload> =>
+  postFile("/api/vault/import", file);
+
 // ---------- attachments (Phase 1 B slice 4) ----------
 
 /**

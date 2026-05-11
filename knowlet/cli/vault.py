@@ -357,3 +357,211 @@ def vault_restore_snapshot(
 
     console.print(f"[green]restored from {src_root.name}[/green]")
     console.print("[dim]· run `knowlet reindex` to rebuild the search index[/dim]")
+
+
+# ---------------- Phase 2 E — export / import (portability) ----------
+
+
+@app.command("export")
+def vault_export(
+    output: Annotated[
+        Path | None,
+        typer.Argument(
+            help=(
+                "Output zip path. Defaults to "
+                "knowlet-vault-<YYYY-MM-DD>.zip in the current directory."
+            ),
+        ),
+    ] = None,
+) -> None:
+    """Export the current vault to a portable `.zip` (ADR-0018).
+
+    The archive contains notes/ + a curated subset of .knowlet/
+    (config.toml, quick-actions.toml, favorites.json, events.sqlite)
+    plus a MANIFEST.json. The index, sync credentials, on-disk
+    snapshots, and per-file backups are NOT included (regeneratable
+    / sensitive / recursive).
+    """
+    from datetime import datetime as _dt
+
+    from knowlet.core.portability import build_export_archive
+
+    vault = resolve_vault_or_die()
+    if output is None:
+        stamp = _dt.now().strftime("%Y-%m-%d")
+        output = Path.cwd() / f"knowlet-vault-{stamp}.zip"
+    result = build_export_archive(vault_root=vault.root, output_path=output)
+    m = result.manifest
+    console.print(
+        f"[green]exported[/green] {m.note_count} note(s) + "
+        f"{m.attachment_count} attachment(s) → "
+        f"[bold]{result.archive_path}[/bold]"
+    )
+
+
+@app.command("import")
+def vault_import(
+    source: Annotated[
+        Path,
+        typer.Argument(
+            help=(
+                "Source archive (.zip) or directory of markdown files. "
+                "The mode is auto-detected: archives with MANIFEST.json "
+                "+ .knowlet/ at the root restore as a sibling vault; "
+                "anything else merges into the current vault under "
+                "imported/YYYY-MM-DD/."
+            ),
+        ),
+    ],
+    target: Annotated[
+        Path | None,
+        typer.Option(
+            "--target",
+            help=(
+                "Restore destination (restore mode only). Defaults to a "
+                "sibling directory named after the source."
+            ),
+        ),
+    ] = None,
+    mode: Annotated[
+        str | None,
+        typer.Option(
+            "--mode",
+            help=(
+                "Force a mode: 'restore' or 'merge'. Default: auto-"
+                "detect via MANIFEST.json presence."
+            ),
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Don't write anything; just print what would happen.",
+        ),
+    ] = False,
+) -> None:
+    """Import a `.zip` archive or directory of markdown into knowlet."""
+    import tempfile
+
+    from knowlet.core.portability import (
+        detect_archive_mode,
+        merge_directory,
+        restore_archive,
+    )
+
+    if not source.exists():
+        err_console.print(f"[red]not found:[/red] {source}")
+        raise typer.Exit(code=2)
+
+    detected = mode or detect_archive_mode(source)
+    if detected not in ("restore", "merge"):
+        err_console.print(f"[red]unknown mode:[/red] {detected!r}")
+        raise typer.Exit(code=2)
+
+    if detected == "restore":
+        if not source.is_file() or source.suffix.lower() != ".zip":
+            err_console.print(
+                "[red]restore mode requires a .zip archive[/red]"
+            )
+            raise typer.Exit(code=2)
+        dest = target or (source.parent / source.stem)
+        if dest.exists() and any(dest.iterdir()):
+            err_console.print(
+                f"[red]target exists and is non-empty:[/red] {dest}"
+            )
+            raise typer.Exit(code=2)
+        report = restore_archive(
+            archive_path=source, target_dir=dest, dry_run=dry_run
+        )
+        verb = "would restore" if dry_run else "restored"
+        console.print(
+            f"[green]{verb}[/green] {report.notes_created} note(s) + "
+            f"{report.attachments_copied} attachment(s) → "
+            f"[bold]{report.target_path}[/bold]"
+        )
+        if not dry_run:
+            console.print(
+                "[dim]· run `knowlet --vault {0} reindex` to build "
+                "the index for the restored vault[/dim]".format(
+                    report.target_path
+                ),
+            )
+        return
+
+    # ---- merge ----
+    vault = resolve_vault_or_die()
+    # Unzip the source if it's an archive, so the rest of the path is
+    # uniform.
+    if source.is_file() and source.suffix.lower() == ".zip":
+        import zipfile
+
+        tmpdir = Path(tempfile.mkdtemp(prefix="knowlet-import-"))
+        try:
+            with zipfile.ZipFile(source, "r") as zf:
+                zf.extractall(tmpdir)
+            walk_root = tmpdir
+        except Exception as exc:
+            err_console.print(f"[red]failed to unzip:[/red] {exc!r}")
+            shutil_rmtree_safe(tmpdir)
+            raise typer.Exit(code=2) from exc
+    elif source.is_dir():
+        tmpdir = None
+        walk_root = source
+    else:
+        err_console.print(
+            "[red]merge mode requires a .zip or a directory[/red]"
+        )
+        raise typer.Exit(code=2)
+
+    existing_titles = _existing_titles(vault.root)
+    try:
+        report = merge_directory(
+            source_dir=walk_root,
+            vault_root=vault.root,
+            existing_titles=existing_titles,
+            dry_run=dry_run,
+        )
+    finally:
+        if tmpdir is not None:
+            shutil_rmtree_safe(tmpdir)
+
+    verb = "would import" if dry_run else "imported"
+    console.print(
+        f"[green]{verb}[/green] {report.notes_created} note(s) "
+        f"([dim]{report.notes_renamed} renamed, "
+        f"{report.notes_skipped} skipped[/dim]) + "
+        f"{report.attachments_copied} attachment(s) → "
+        f"[bold]{report.target_path}[/bold]"
+    )
+    if not dry_run:
+        console.print(
+            "[dim]· run `knowlet reindex` to surface the new notes "
+            "in search[/dim]"
+        )
+
+
+def _existing_titles(vault_root: Path) -> list[str]:
+    """Cheap title scan over notes/ without instantiating the full
+    runtime — just enough for merge-time collision detection."""
+    out: list[str] = []
+    notes_dir = vault_root / "notes"
+    if not notes_dir.exists():
+        return out
+    for p in notes_dir.rglob("*.md"):
+        try:
+            note = Note.from_file(p)
+        except Exception:  # noqa: BLE001
+            continue
+        if note.title:
+            out.append(note.title)
+    return out
+
+
+def shutil_rmtree_safe(path: Path) -> None:
+    import shutil
+
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        pass

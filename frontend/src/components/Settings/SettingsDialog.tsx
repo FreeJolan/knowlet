@@ -13,11 +13,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Cloud,
   CloudOff,
+  Download,
   Loader2,
   Monitor,
   Moon,
   ShieldAlert,
   Sun,
+  Upload,
   Zap,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -25,11 +27,15 @@ import { useTranslation } from "react-i18next";
 
 import {
   cancelConnect,
+  commitImport,
   disconnect as apiDisconnect,
+  exportVaultUrl,
   getAuthStatus,
   getSyncMode,
+  previewImport,
   setSyncMode as apiSetSyncMode,
   startConnect,
+  type ImportReportPayload,
   type SyncAuthStatus,
   type SyncModeResponse,
 } from "@/api/client";
@@ -121,6 +127,10 @@ export function SettingsDialog({ open, onClose }: Props) {
 
           <div className="mt-6">
             <SyncModePicker />
+          </div>
+
+          <div className="mt-6">
+            <VaultPortabilityPanel />
           </div>
         </div>
       </DialogContent>
@@ -392,6 +402,181 @@ function Section({
       </div>
       <div className="flex flex-wrap gap-2">{children}</div>
     </div>
+  );
+}
+
+function VaultPortabilityPanel(): React.ReactNode {
+  const { t } = useTranslation();
+  const [importing, setImporting] = useState(false);
+  const [preview, setPreview] = useState<ImportReportPayload | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [resultText, setResultText] = useState<string | null>(null);
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const reset = () => {
+    setPreview(null);
+    setPendingFile(null);
+    setErrorText(null);
+    setResultText(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handlePick = async (file: File | null) => {
+    if (!file) return;
+    setErrorText(null);
+    setResultText(null);
+    setImporting(true);
+    try {
+      const r = await previewImport(file);
+      setPreview(r);
+      setPendingFile(file);
+    } catch (err) {
+      setErrorText(err instanceof Error ? err.message : String(err));
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (!pendingFile) return;
+    setImporting(true);
+    setErrorText(null);
+    try {
+      const r = await commitImport(pendingFile);
+      const label = r.mode === "restore"
+        ? t("vaultPortability.restoreDoneShort", {
+            count: r.notes_created,
+            target: r.target_path,
+          })
+        : t("vaultPortability.mergeDoneShort", {
+            count: r.notes_created,
+            renamed: r.notes_renamed,
+          });
+      setResultText(label);
+      setPreview(null);
+      setPendingFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch (err) {
+      setErrorText(err instanceof Error ? err.message : String(err));
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <Section title={t("vaultPortability.label")}>
+      <div className="text-muted-foreground w-full text-xs">
+        {t("vaultPortability.blurb")}
+      </div>
+      <div className="mt-2 flex w-full flex-wrap gap-2">
+        <a
+          href={exportVaultUrl()}
+          download
+          data-testid="vault-export-link"
+          className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors hover:bg-accent/30"
+          style={{ borderColor: "var(--line)" }}
+        >
+          <Download className="size-3" />
+          {t("vaultPortability.exportButton")}
+        </a>
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={importing}
+          data-testid="vault-import-trigger"
+          className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors hover:bg-accent/30 disabled:opacity-50"
+          style={{ borderColor: "var(--line)" }}
+        >
+          <Upload className="size-3" />
+          {t("vaultPortability.importButton")}
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".zip"
+          hidden
+          onChange={(e) => void handlePick(e.target.files?.[0] ?? null)}
+        />
+      </div>
+      {importing && !preview && (
+        <div className="mt-2 flex w-full items-center gap-2 text-xs">
+          <Loader2 className="size-3 animate-spin" />
+          <span>{t("vaultPortability.previewing")}</span>
+        </div>
+      )}
+      {preview && (
+        <div className="mt-3 w-full rounded border p-3 text-xs" style={{ borderColor: "var(--line)" }}>
+          <div className="font-medium">
+            {preview.mode === "restore"
+              ? t("vaultPortability.previewRestoreTitle")
+              : t("vaultPortability.previewMergeTitle")}
+          </div>
+          {preview.mode === "restore" ? (
+            <ul className="mt-1 list-disc pl-5 text-muted-foreground">
+              <li>{t("vaultPortability.previewRestoreNotes", { count: preview.notes_created })}</li>
+              <li>{t("vaultPortability.previewRestoreAtt", { count: preview.attachments_copied })}</li>
+              {preview.manifest && (
+                <li>
+                  {t("vaultPortability.previewRestoreFrom", {
+                    version: preview.manifest.knowlet_version,
+                    at: preview.manifest.exported_at,
+                  })}
+                </li>
+              )}
+            </ul>
+          ) : (
+            <ul className="mt-1 list-disc pl-5 text-muted-foreground">
+              <li>{t("vaultPortability.previewMergeCreate", { count: preview.notes_created })}</li>
+              {preview.notes_renamed > 0 && (
+                <li>{t("vaultPortability.previewMergeRename", { count: preview.notes_renamed })}</li>
+              )}
+              {preview.notes_skipped > 0 && (
+                <li>{t("vaultPortability.previewMergeSkip", { count: preview.notes_skipped })}</li>
+              )}
+              {preview.attachments_copied > 0 && (
+                <li>{t("vaultPortability.previewMergeAtt", { count: preview.attachments_copied })}</li>
+              )}
+            </ul>
+          )}
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => void handleConfirm()}
+              disabled={importing}
+              data-testid="vault-import-confirm"
+              className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs hover:bg-accent/30 disabled:opacity-50"
+              style={{
+                background: "var(--accent-soft, rgba(91,122,156,0.18))",
+                color: "var(--accent-2, #34495e)",
+                borderColor: "var(--accent, #5b7a9c)",
+              }}
+            >
+              {importing ? <Loader2 className="size-3 animate-spin" /> : null}
+              {t("vaultPortability.confirmButton")}
+            </button>
+            <button
+              type="button"
+              onClick={reset}
+              className="inline-flex items-center rounded border px-2 py-1 text-xs hover:bg-accent/30"
+              style={{ borderColor: "var(--line)" }}
+            >
+              {t("vaultPortability.cancelButton")}
+            </button>
+          </div>
+        </div>
+      )}
+      {errorText && (
+        <div className="text-destructive mt-2 w-full text-xs">
+          {t("vaultPortability.errorPrefix", { detail: errorText })}
+        </div>
+      )}
+      {resultText && (
+        <div className="mt-2 w-full text-xs" style={{ color: "var(--ok, #198754)" }}>
+          {resultText}
+        </div>
+      )}
+    </Section>
   );
 }
 

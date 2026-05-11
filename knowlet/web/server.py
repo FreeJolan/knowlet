@@ -5074,6 +5074,220 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         FavoritesStore(vault_root=vault.root).remove(note_id)
         return {"favorites": _list_favorites_enriched(runtime)}
 
+    # ---------------- vault portability (Phase 2 E) ----------------
+
+    @app.get("/api/vault/export")
+    def vault_export_endpoint() -> FileResponse:
+        """Generate a portable `.zip` of the vault and stream it back
+        to the browser. Mirrors ``knowlet vault export`` (ADR-0018)."""
+        import tempfile
+        from datetime import datetime as _dt
+
+        from knowlet.core.portability import build_export_archive
+
+        stamp = _dt.now().strftime("%Y-%m-%d")
+        filename = f"knowlet-vault-{stamp}.zip"
+        # Stage the archive in a tempfile so we don't pollute the
+        # vault directory with one-off export artifacts. FileResponse
+        # streams it back to the client; we leave cleanup to OS temp
+        # rotation (small enough to be fine — non-issue per dogfood
+        # scale).
+        tmp = Path(tempfile.mkstemp(suffix=".zip", prefix="kn-export-")[1])
+        try:
+            build_export_archive(vault_root=vault.root, output_path=tmp)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
+        return FileResponse(
+            path=tmp,
+            media_type="application/zip",
+            filename=filename,
+        )
+
+    @app.post("/api/vault/import-preview")
+    async def vault_import_preview(
+        file: UploadFile = File(...),
+    ) -> dict[str, Any]:
+        """Dry-run a `.zip` import: detect mode, surface counts +
+        per-note actions so the user sees the plan before committing.
+        """
+        import tempfile
+
+        from knowlet.core.portability import (
+            detect_archive_mode,
+            merge_directory,
+            restore_archive,
+        )
+
+        tmp_path = Path(
+            tempfile.mkstemp(suffix=".zip", prefix="kn-import-")[1]
+        )
+        tmp_path.write_bytes(await file.read())
+        try:
+            mode = detect_archive_mode(tmp_path)
+            if mode == "restore":
+                # We never actually unpack here; just read the manifest.
+                report = restore_archive(
+                    archive_path=tmp_path,
+                    target_dir=vault.root.parent / "__dry_run_unused__",
+                    dry_run=True,
+                )
+                return _import_report_to_json(report)
+            # merge: unzip to temp, run merge dry-run
+            import zipfile
+
+            walk_root = Path(
+                tempfile.mkdtemp(prefix="kn-import-merge-")
+            )
+            with zipfile.ZipFile(tmp_path, "r") as zf:
+                zf.extractall(walk_root)
+            existing_titles = _existing_note_titles(vault.root)
+            try:
+                report = merge_directory(
+                    source_dir=walk_root,
+                    vault_root=vault.root,
+                    existing_titles=existing_titles,
+                    dry_run=True,
+                )
+            finally:
+                shutil_rmtree_safe(walk_root)
+            return _import_report_to_json(report)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    @app.post("/api/vault/import")
+    async def vault_import_endpoint(
+        file: UploadFile = File(...),
+    ) -> dict[str, Any]:
+        """Commit a `.zip` import. Mirrors the CLI: restore creates a
+        sibling vault directory; merge unpacks into the current vault
+        under ``imported/YYYY-MM-DD/``. Returns the same report shape
+        as the preview endpoint, with ``dry_run`` = False."""
+        import tempfile
+
+        from knowlet.core.portability import (
+            detect_archive_mode,
+            merge_directory,
+            restore_archive,
+        )
+
+        tmp_path = Path(
+            tempfile.mkstemp(suffix=".zip", prefix="kn-import-")[1]
+        )
+        tmp_path.write_bytes(await file.read())
+        try:
+            mode = detect_archive_mode(tmp_path)
+            if mode == "restore":
+                # Pick a sibling target directory. Use the uploaded
+                # filename (sans .zip) under the current vault's
+                # parent, with a "-restore" suffix if the user uploaded
+                # an archive whose name collides with an existing dir.
+                base = (file.filename or "knowlet-vault").rsplit(
+                    ".", 1
+                )[0]
+                target = vault.root.parent / base
+                suffix = 1
+                while target.exists() and any(target.iterdir()):
+                    suffix += 1
+                    target = vault.root.parent / f"{base}-{suffix}"
+                report = restore_archive(
+                    archive_path=tmp_path,
+                    target_dir=target,
+                    dry_run=False,
+                )
+                return _import_report_to_json(report)
+            # merge
+            import zipfile
+
+            walk_root = Path(
+                tempfile.mkdtemp(prefix="kn-import-merge-")
+            )
+            with zipfile.ZipFile(tmp_path, "r") as zf:
+                zf.extractall(walk_root)
+            existing_titles = _existing_note_titles(vault.root)
+            try:
+                report = merge_directory(
+                    source_dir=walk_root,
+                    vault_root=vault.root,
+                    existing_titles=existing_titles,
+                    dry_run=False,
+                )
+            finally:
+                shutil_rmtree_safe(walk_root)
+            # Re-index so the new notes show up in tree / search.
+            runtime = state.runtime
+            if runtime is not None:
+                from knowlet.core.embedding import make_backend
+                from knowlet.core.index import Index, reindex_vault
+
+                cfg = runtime.config
+                backend = make_backend(
+                    cfg.embedding.backend,
+                    cfg.embedding.model,
+                    cfg.embedding.dim,
+                )
+                reindex_vault(
+                    runtime.vault.root,
+                    runtime.vault.db_path,
+                    backend,
+                    chunk_size=cfg.retrieval.chunk_size,
+                    chunk_overlap=cfg.retrieval.chunk_overlap,
+                    note_paths=list(runtime.vault.iter_note_paths()),
+                )
+                runtime.index = Index(runtime.vault.db_path, backend)
+            return _import_report_to_json(report)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def _existing_note_titles(vault_root: Path) -> list[str]:
+        out: list[str] = []
+        notes_dir = vault_root / "notes"
+        if not notes_dir.exists():
+            return out
+        from knowlet.core.note import Note as _Note
+
+        for p in notes_dir.rglob("*.md"):
+            try:
+                note = _Note.from_file(p)
+            except Exception:  # noqa: BLE001
+                continue
+            if note.title:
+                out.append(note.title)
+        return out
+
+    def shutil_rmtree_safe(p: Path) -> None:
+        import shutil as _shutil
+
+        try:
+            _shutil.rmtree(p)
+        except FileNotFoundError:
+            pass
+
+    def _import_report_to_json(report: Any) -> dict[str, Any]:
+        return {
+            "mode": report.mode,
+            "target_path": str(report.target_path),
+            "notes_created": report.notes_created,
+            "notes_skipped": report.notes_skipped,
+            "notes_renamed": report.notes_renamed,
+            "attachments_copied": report.attachments_copied,
+            "dry_run": report.dry_run,
+            "items": [
+                {"source": s, "action": a, "final": f}
+                for (s, a, f) in (report.items or [])
+            ],
+            "manifest": (
+                {
+                    "knowlet_version": report.manifest.knowlet_version,
+                    "exported_at": report.manifest.exported_at,
+                    "note_count": report.manifest.note_count,
+                    "attachment_count": report.manifest.attachment_count,
+                }
+                if report.manifest is not None
+                else None
+            ),
+        }
+
     # ---------------- profile ----------------
 
     @app.get("/api/profile")
