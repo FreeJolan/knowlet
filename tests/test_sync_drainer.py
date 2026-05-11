@@ -368,6 +368,146 @@ def test_save_endpoint_auto_tracks_new_note(tmp_path: Path) -> None:
     assert rec.dirty is True
 
 
+# ----------------------------------------------------- #121 attachments
+
+
+def test_drainer_pushes_dirty_attachment_via_push_attachment(
+    tmp_path: Path,
+) -> None:
+    """An attachment dirty row dispatches to ``push_attachment`` (not
+    ``push_note``) and clears on success."""
+    _seed_creds(tmp_path)
+    att_dir = tmp_path / "_attachments"
+    att_dir.mkdir()
+    att_path = att_dir / "01HABC.png"
+    att_path.write_bytes(b"PNG")
+
+    state = SyncStateStore(tmp_path)
+    try:
+        state.upsert_file_state(
+            FileState(
+                entity_type="attachment",
+                entity_id="01HABC.png",
+                drive_file_id=None,
+                last_known_etag=None,
+                last_synced_at=None,
+                dirty=True,
+            )
+        )
+    finally:
+        state.close()
+
+    synced_seen: list[str] = []
+    drainer = PushDrainer(
+        vault_root=tmp_path,
+        note_lookup=lambda _id: None,
+        attachment_lookup=lambda name: att_path if name == "01HABC.png" else None,
+        on_synced=synced_seen.append,
+    )
+
+    push_result = PushResult(
+        entity_type="attachment",
+        entity_id="01HABC.png",
+        drive_file=_drive_file("rev-NEW"),
+        created=True,
+    )
+    with (
+        patch(
+            "knowlet.core.sync.drive_client.DriveClient.service",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "knowlet.core.sync.drainer.push_attachment",
+            return_value=push_result,
+        ) as att_push,
+        patch("knowlet.core.sync.drainer.push_note") as note_push,
+    ):
+        drainer.tick_once()
+
+    note_push.assert_not_called()
+    assert att_push.call_count == 1
+    assert synced_seen == ["01HABC.png"]
+
+
+def test_drainer_drops_attachment_row_when_file_vanishes(
+    tmp_path: Path,
+) -> None:
+    """If the on-disk file is gone, the drainer drops the row instead
+    of looping on it forever."""
+    _seed_creds(tmp_path)
+    state = SyncStateStore(tmp_path)
+    try:
+        state.upsert_file_state(
+            FileState(
+                entity_type="attachment",
+                entity_id="01HGONE.png",
+                drive_file_id=None,
+                last_known_etag=None,
+                last_synced_at=None,
+                dirty=True,
+            )
+        )
+    finally:
+        state.close()
+
+    drainer = PushDrainer(
+        vault_root=tmp_path,
+        note_lookup=lambda _id: None,
+        attachment_lookup=lambda _name: None,
+    )
+    with (
+        patch(
+            "knowlet.core.sync.drive_client.DriveClient.service",
+            return_value=MagicMock(),
+        ),
+        patch("knowlet.core.sync.drainer.push_attachment") as att_push,
+    ):
+        drainer.tick_once()
+    att_push.assert_not_called()
+    state2 = SyncStateStore(tmp_path)
+    try:
+        assert state2.get_file_state("attachment", "01HGONE.png") is None
+    finally:
+        state2.close()
+
+
+def test_drainer_untracked_sweep_queues_notes_and_attachments(
+    tmp_path: Path,
+) -> None:
+    """The untracked sweep callback returns ``(entity_type, id)``
+    tuples; the drainer must insert dirty first-push rows for each
+    on its first creds-positive tick."""
+    _seed_creds(tmp_path)
+
+    drainer = PushDrainer(
+        vault_root=tmp_path,
+        note_lookup=lambda _id: None,
+        attachment_lookup=lambda _name: None,
+        untracked_sweep=lambda: [
+            ("note", "NID-1"),
+            ("attachment", "01HABC.png"),
+        ],
+    )
+    # No real Drive work happens because the rows we just queued
+    # have no on-disk source (the note_lookup returns None and the
+    # attachment_lookup returns None) — but the sync_state rows
+    # should still get created.
+    with patch(
+        "knowlet.core.sync.drive_client.DriveClient.service",
+        return_value=MagicMock(),
+    ):
+        drainer.tick_once()
+
+    state = SyncStateStore(tmp_path)
+    try:
+        assert state.get_file_state("note", "NID-1") is not None
+        assert state.get_file_state("attachment", "01HABC.png") is None
+        # ^ removed by the vanish-handling branch in
+        # _push_attachment_row, since attachment_lookup returned None.
+    finally:
+        state.close()
+
+
 def test_drainer_skips_dev_fake_rows(tmp_path: Path) -> None:
     """DEV_FAKE_CONFLICT rows are dev-seeded conflicts with no real
     Drive backing; pushing them would 404. Drainer must skip them

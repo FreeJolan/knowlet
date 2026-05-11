@@ -13,8 +13,11 @@ from unittest.mock import patch
 from knowlet.core.note import Note, new_id
 from knowlet.core.sync.files import DriveFile
 from knowlet.core.sync.push import (
+    ATTACHMENT_ENTITY_TYPE,
+    AttachmentFileMissingError,
     ConflictReport,
     PushResult,
+    push_attachment,
     push_note,
     resolve_keep_both,
     resolve_use_mine,
@@ -237,6 +240,129 @@ def test_resolve_use_remote_overwrites_local_and_advances_etag(
 
 
 # ----------------------------------------------------- resolve: both
+
+
+# ----------------------------------------------------- attachments (#121)
+
+
+def _attachment_drive_file(*, name: str = "01HX.png") -> DriveFile:
+    return DriveFile(
+        id="FID-ATT-1",
+        name=name,
+        mime_type="image/png",
+        modified_time="2026-05-11T12:00:00Z",
+        head_revision_id="att-rev-1",
+    )
+
+
+def test_push_attachment_uploads_with_correct_mime_and_records(
+    tmp_path: Path,
+) -> None:
+    att_path = tmp_path / "01HX.png"
+    att_path.write_bytes(b"\x89PNG fake bytes")
+    state = SyncStateStore(tmp_path)
+    try:
+        with patch(
+            "knowlet.core.sync.push.upload_new_file",
+            return_value=_attachment_drive_file(),
+        ) as up:
+            result = push_attachment(
+                service=object(),
+                state=state,
+                filename="01HX.png",
+                path=att_path,
+            )
+        assert isinstance(result, PushResult)
+        assert result.entity_type == ATTACHMENT_ENTITY_TYPE
+        assert result.entity_id == "01HX.png"
+        assert result.created is True
+        kwargs = up.call_args.kwargs
+        assert kwargs["name"] == "01HX.png"
+        assert kwargs["content"] == b"\x89PNG fake bytes"
+        assert kwargs["mime_type"] == "image/png"
+        assert kwargs["parent_folder_id"] == "appDataFolder"
+        rec = state.get_file_state(ATTACHMENT_ENTITY_TYPE, "01HX.png")
+        assert rec is not None
+        assert rec.drive_file_id == "FID-ATT-1"
+        assert rec.dirty is False
+    finally:
+        state.close()
+
+
+def test_push_attachment_is_idempotent_when_already_pushed(
+    tmp_path: Path,
+) -> None:
+    att_path = tmp_path / "01HX.png"
+    att_path.write_bytes(b"PNG")
+    state = SyncStateStore(tmp_path)
+    try:
+        state.upsert_file_state(
+            FileState(
+                entity_type=ATTACHMENT_ENTITY_TYPE,
+                entity_id="01HX.png",
+                drive_file_id="FID-ATT-1",
+                last_known_etag="att-rev-1",
+                last_synced_at="2026-05-11T12:00:00Z",
+                dirty=False,
+            )
+        )
+        with patch(
+            "knowlet.core.sync.push.upload_new_file",
+        ) as up:
+            result = push_attachment(
+                service=object(),
+                state=state,
+                filename="01HX.png",
+                path=att_path,
+            )
+        assert up.call_count == 0
+        assert result.created is False
+        assert result.drive_file.id == "FID-ATT-1"
+    finally:
+        state.close()
+
+
+def test_push_attachment_raises_when_file_missing(tmp_path: Path) -> None:
+    state = SyncStateStore(tmp_path)
+    try:
+        gone = tmp_path / "missing.png"
+        try:
+            push_attachment(
+                service=object(),
+                state=state,
+                filename="missing.png",
+                path=gone,
+            )
+        except AttachmentFileMissingError:
+            pass
+        else:
+            raise AssertionError("expected AttachmentFileMissingError")
+    finally:
+        state.close()
+
+
+def test_push_attachment_falls_back_to_octet_stream_for_unknown_ext(
+    tmp_path: Path,
+) -> None:
+    """Drive doesn't strictly care about mime, but we should not crash
+    on an unknown extension (e.g. ``.bin``)."""
+    att_path = tmp_path / "01HX.weirdext"
+    att_path.write_bytes(b"opaque")
+    state = SyncStateStore(tmp_path)
+    try:
+        with patch(
+            "knowlet.core.sync.push.upload_new_file",
+            return_value=_attachment_drive_file(name="01HX.weirdext"),
+        ) as up:
+            push_attachment(
+                service=object(),
+                state=state,
+                filename="01HX.weirdext",
+                path=att_path,
+            )
+        assert up.call_args.kwargs["mime_type"] == "application/octet-stream"
+    finally:
+        state.close()
 
 
 def test_resolve_keep_both_writes_sibling_and_keeps_local_dirty(

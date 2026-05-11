@@ -25,7 +25,6 @@ from knowlet.core.sync.credentials import SyncCredentials, load_credentials
 from knowlet.core.sync.oauth import (
     APPDATA_FOLDER,
     SCOPES,
-    ClientSecretsMissingError,
     ScopeUpgradeRequiredError,
     run_connect_flow,
     verify_scope,
@@ -139,7 +138,7 @@ def test_run_connect_flow_persists_creds_and_identity(tmp_path: Path) -> None:
 
     with (
         patch(
-            "google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file",
+            "google_auth_oauthlib.flow.InstalledAppFlow.from_client_config",
             return_value=fake_flow,
         ),
         patch(
@@ -164,16 +163,49 @@ def test_run_connect_flow_persists_creds_and_identity(tmp_path: Path) -> None:
 # ----------------------------------------------------- missing client_secret
 
 
-def test_run_connect_flow_raises_when_client_secrets_missing(
+def test_run_connect_flow_falls_through_to_embedded_when_path_missing(
     tmp_path: Path,
 ) -> None:
+    """#115 — with the embedded OAuth client, a non-existent
+    client_secrets_path no longer raises; it falls through to
+    EMBEDDED_OAUTH_CLIENT. The flow should still attempt to run."""
     save_to = tmp_path / ".knowlet" / "sync_credentials.json"
-    with pytest.raises(ClientSecretsMissingError):
-        run_connect_flow(
+    fake_creds = MagicMock()
+    fake_creds.to_json.return_value = json.dumps(
+        {
+            "token": "ACCESS",
+            "refresh_token": "REFRESH",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": "x.apps.googleusercontent.com",
+            "client_secret": "secret",
+            "scopes": list(SCOPES),
+        }
+    )
+    fake_flow = MagicMock()
+    fake_flow.run_local_server.return_value = fake_creds
+    fake_drive = MagicMock()
+    fake_drive.about.return_value.get.return_value.execute.return_value = {
+        "user": {"emailAddress": "bob@example.com", "displayName": "Bob"}
+    }
+    with (
+        patch(
+            "google_auth_oauthlib.flow.InstalledAppFlow.from_client_config",
+            return_value=fake_flow,
+        ) as from_cfg,
+        patch(
+            "googleapiclient.discovery.build", return_value=fake_drive
+        ),
+    ):
+        result = run_connect_flow(
             client_secrets_path=tmp_path / "nope.json",
             save_to=save_to,
             port=0,
         )
+    assert result.user_email == "bob@example.com"
+    # Should have been called with the embedded client config.
+    cfg_arg = from_cfg.call_args.args[0]
+    assert "installed" in cfg_arg
+    assert cfg_arg["installed"]["client_id"].startswith("50097533807-")
 
 
 # ----------------------------------------------------- DriveClient

@@ -71,6 +71,18 @@ class NoteFileMissingError(FileNotFoundError):
     sync_state. Surface explicitly."""
 
 
+class AttachmentFileMissingError(FileNotFoundError):
+    """An attachment row pointed at a vault path that no longer exists.
+    Means the binary was deleted locally between sweep and push."""
+
+
+# Attachments are immutable: the filename is a ULID assigned at
+# creation, the bytes never change. So we only need first-push (no
+# update / conflict path). Two devices can't collide on a filename
+# because ULIDs are time + random.
+ATTACHMENT_ENTITY_TYPE = "attachment"
+
+
 # ----------------------------------------------------- core ops
 
 
@@ -170,6 +182,82 @@ def push_note(
         entity_id=note.id,
         drive_file=df,
         created=False,
+    )
+
+
+# ----------------------------------------------------- attachments (#121)
+
+
+def push_attachment(
+    *,
+    service: Any,
+    state: SyncStateStore,
+    filename: str,
+    path: Path,
+) -> PushResult:
+    """Push one attachment binary to Drive's appData folder.
+
+    Attachments are immutable (ULID filename + never-edited bytes),
+    so there's no update or conflict path — only first-push. If
+    sync_state already has a drive_file_id for this filename, this
+    is a no-op (returns a PushResult with ``created=False`` and the
+    existing record). Otherwise it uploads and records.
+    """
+    import mimetypes
+
+    from knowlet.core.sync.oauth import APPDATA_FOLDER
+
+    if not path.exists():
+        raise AttachmentFileMissingError(
+            f"Attachment {filename} missing at {path}"
+        )
+    record = state.get_file_state(ATTACHMENT_ENTITY_TYPE, filename)
+    if record is not None and record.drive_file_id:
+        # Already pushed — idempotent return. Build a minimal
+        # DriveFile shell so the caller's surface matches the
+        # first-push path; we don't have the full metadata cached
+        # but the drainer just needs the id.
+        df = DriveFile(
+            id=record.drive_file_id,
+            name=filename,
+            mime_type="",
+            modified_time=None,
+            head_revision_id=record.last_known_etag,
+        )
+        return PushResult(
+            entity_type=ATTACHMENT_ENTITY_TYPE,
+            entity_id=filename,
+            drive_file=df,
+            created=False,
+        )
+    content = path.read_bytes()
+    # Best-effort mime detection from filename. Drive doesn't strictly
+    # care (it stores bytes either way), but a correct mime makes the
+    # files browsable in Drive's web UI if a future scope upgrade ever
+    # surfaces them.
+    mime, _ = mimetypes.guess_type(filename)
+    df = upload_new_file(
+        service,
+        name=filename,
+        content=content,
+        mime_type=mime or "application/octet-stream",
+        parent_folder_id=APPDATA_FOLDER,
+    )
+    state.upsert_file_state(
+        FileState(
+            entity_type=ATTACHMENT_ENTITY_TYPE,
+            entity_id=filename,
+            drive_file_id=df.id,
+            last_known_etag=df.head_revision_id,
+            last_synced_at=now_iso(),
+            dirty=False,
+        )
+    )
+    return PushResult(
+        entity_type=ATTACHMENT_ENTITY_TYPE,
+        entity_id=filename,
+        drive_file=df,
+        created=True,
     )
 
 

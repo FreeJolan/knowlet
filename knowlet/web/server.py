@@ -2090,6 +2090,42 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         finally:
             store.close()
 
+    def _mark_attachment_dirty_for_push(filename: str) -> None:
+        """#121 — call after a fresh attachment lands on disk so the
+        drainer picks it up on the next tick. Only registers when
+        Drive auth is present (otherwise the row would pile up with
+        no consumer). Attachments are immutable so the only state we
+        ever write is the first-push row."""
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.push import ATTACHMENT_ENTITY_TYPE
+        from knowlet.core.sync.state import FileState, SyncStateStore
+
+        creds = load_credentials(credentials_path(vault.root))
+        if creds is None:
+            return
+        store = SyncStateStore(vault.root)
+        try:
+            existing = store.get_file_state(
+                ATTACHMENT_ENTITY_TYPE, filename
+            )
+            if existing is not None:
+                return  # already tracked; nothing to do
+            store.upsert_file_state(
+                FileState(
+                    entity_type=ATTACHMENT_ENTITY_TYPE,
+                    entity_id=filename,
+                    drive_file_id=None,
+                    last_known_etag=None,
+                    last_synced_at=None,
+                    dirty=True,
+                )
+            )
+        finally:
+            store.close()
+
     def _add_conflict_to_preflight(
         note_id: str, drive_file_id: str | None
     ) -> None:
@@ -2535,8 +2571,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     ) -> str | None:
         """#119 — pull a Drive file we've never seen, place it in
         the local vault, write the sync_state row + index. Returns
-        the note id on success, None if anything broke (caller
-        logs)."""
+        the note id (or attachment filename, #121) on success, None
+        if anything broke (caller logs)."""
         from knowlet.core.note import Note, now_iso
         from knowlet.core.sync.credentials import (
             credentials_path,
@@ -2544,6 +2580,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         )
         from knowlet.core.sync.drive_client import DriveClient
         from knowlet.core.sync.files import download_file
+        from knowlet.core.sync.push import ATTACHMENT_ENTITY_TYPE
         from knowlet.core.sync.state import FileState, SyncStateStore
 
         runtime = state.runtime
@@ -2554,6 +2591,32 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             return None
         service = DriveClient(creds).service()
         body = download_file(service, drive_file_id)
+        # #121 — non-markdown files are attachments. Recognized by
+        # filename extension since the appData folder is flat and
+        # filenames are authoritative (notes are always ``<id>.md``;
+        # attachments are ``<ulid>.<png|jpg|...>``).
+        if brief.name and not brief.name.endswith(".md"):
+            att_dir = runtime.vault.attachments_dir
+            att_dir.mkdir(parents=True, exist_ok=True)
+            target = att_dir / brief.name
+            tmp = target.with_suffix(target.suffix + ".tmp")
+            tmp.write_bytes(body)
+            tmp.replace(target)
+            store = SyncStateStore(vault.root)
+            try:
+                store.upsert_file_state(
+                    FileState(
+                        entity_type=ATTACHMENT_ENTITY_TYPE,
+                        entity_id=brief.name,
+                        drive_file_id=drive_file_id,
+                        last_known_etag=brief.head_revision_id,
+                        last_synced_at=now_iso(),
+                        dirty=False,
+                    )
+                )
+            finally:
+                store.close()
+            return brief.name
         try:
             raw = body.decode("utf-8")
         except UnicodeDecodeError:
@@ -2680,13 +2743,14 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     # whole closure scope.
     from knowlet.core.sync.drainer import PushDrainer
 
-    def _drainer_untracked_sweep() -> list[str]:
-        """Tell the drainer about local notes that exist on disk but
-        have no sync_state row yet (the "I added these before
-        connecting Drive" backlog). Drainer fires this once after
-        creds first become available and queues them for first push.
-        Returns [] when the runtime isn't ready — the drainer will
-        retry on the next reconnect cycle."""
+    def _drainer_untracked_sweep() -> list[tuple[str, str]]:
+        """Tell the drainer about notes AND attachments that exist on
+        disk but have no sync_state row yet (the "I added these
+        before connecting Drive" backlog). Drainer fires this once
+        after creds first become available and queues them for first
+        push. Returns [] when the runtime isn't ready — the drainer
+        will retry on the next reconnect cycle."""
+        from knowlet.core.sync.push import ATTACHMENT_ENTITY_TYPE
         from knowlet.core.sync.state import SyncStateStore
 
         runtime = state.runtime
@@ -2695,21 +2759,48 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         store = SyncStateStore(vault.root)
         try:
             tracked = {
-                fs.entity_id
+                (fs.entity_type, fs.entity_id)
                 for fs in store.list_all_files()
-                if fs.entity_type == "note"
             }
         finally:
             store.close()
-        return [
-            n["id"]
+        out: list[tuple[str, str]] = [
+            ("note", n["id"])
             for n in runtime.index.list_notes()
-            if n["id"] not in tracked
+            if ("note", n["id"]) not in tracked
         ]
+        # #121 — attachments living in ``notes/_attachments/``.
+        # Filename is the entity_id (ULID + ext). We don't recurse;
+        # the directory is flat by design.
+        att_dir = runtime.vault.attachments_dir
+        if att_dir.exists():
+            for entry in att_dir.iterdir():
+                if not entry.is_file():
+                    continue
+                if entry.name.startswith("."):
+                    # Skip OS metadata (.DS_Store, etc).
+                    continue
+                key = (ATTACHMENT_ENTITY_TYPE, entry.name)
+                if key in tracked:
+                    continue
+                out.append(key)
+        return out
+
+    def _drainer_attachment_lookup(filename: str) -> Path | None:
+        """Resolve an attachment id (filename) to its on-disk path.
+        Returns None if the file is gone (drainer drops the row)."""
+        runtime = state.runtime
+        if runtime is None:
+            return None
+        candidate = runtime.vault.attachments_dir / filename
+        if not candidate.exists():
+            return None
+        return candidate
 
     state.push_drainer = PushDrainer(
         vault_root=vault.root,
         note_lookup=_drainer_note_lookup,
+        attachment_lookup=_drainer_attachment_lookup,
         on_conflict=_drainer_on_conflict,
         on_synced=_drop_from_preflight,
         untracked_sweep=_drainer_untracked_sweep,
@@ -4206,6 +4297,11 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail="attachment exceeds 20 MB limit",
             )
         path = runtime.vault.write_attachment(data, ext)
+        # #121 — register the new attachment in sync_state as dirty
+        # so the drainer pushes it on its next tick. Same pattern as
+        # _mark_note_dirty_for_push: no-op if Drive isn't connected
+        # (drainer will see this row when creds appear).
+        _mark_attachment_dirty_for_push(path.name)
         return {
             "path": runtime.vault.attachment_relpath(path),
             "bytes": len(data),

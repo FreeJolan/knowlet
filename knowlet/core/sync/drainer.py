@@ -46,8 +46,11 @@ from knowlet.core.sync.credentials import (
 )
 from knowlet.core.sync.drive_client import DriveClient
 from knowlet.core.sync.push import (
+    ATTACHMENT_ENTITY_TYPE,
+    AttachmentFileMissingError,
     ConflictReport,
     NoteFileMissingError,
+    push_attachment,
     push_note,
 )
 from knowlet.core.sync.state import SyncStateStore
@@ -57,13 +60,16 @@ logger = logging.getLogger(__name__)
 
 
 NoteLookup = Callable[[str], Note | None]
+# Resolves an attachment filename (e.g. ``01HX....png``) to its
+# absolute path on disk, or None if it's missing.
+AttachmentLookup = Callable[[str], Path | None]
 ConflictCallback = Callable[[str, ConflictReport], None]
 SyncedCallback = Callable[[str], None]
-# Returns the ids of notes that exist on disk but have no
-# ``sync_state`` row yet — these are the "I created notes before
-# connecting Drive" backlog. The drainer calls this on its first
-# creds-available tick to queue them.
-UntrackedSweep = Callable[[], list[str]]
+# Returns ``(entity_type, entity_id)`` pairs for items that exist on
+# disk but have no ``sync_state`` row yet — the "I created stuff
+# before connecting Drive" backlog. Includes both notes and
+# attachments. Drainer calls this once per creds-available session.
+UntrackedSweep = Callable[[], list[tuple[str, str]]]
 
 
 class PushDrainer:
@@ -72,6 +78,7 @@ class PushDrainer:
         *,
         vault_root: Path,
         note_lookup: NoteLookup,
+        attachment_lookup: AttachmentLookup | None = None,
         on_conflict: ConflictCallback | None = None,
         on_synced: SyncedCallback | None = None,
         untracked_sweep: UntrackedSweep | None = None,
@@ -79,6 +86,9 @@ class PushDrainer:
     ) -> None:
         self.vault_root = vault_root
         self.note_lookup = note_lookup
+        self.attachment_lookup: AttachmentLookup = attachment_lookup or (
+            lambda _id: None
+        )
         self.on_conflict: ConflictCallback = on_conflict or (
             lambda _id, _rep: None
         )
@@ -163,7 +173,7 @@ class PushDrainer:
                 untracked = []
             if untracked:
                 logger.info(
-                    "drainer: queueing %d untracked note(s) for first push",
+                    "drainer: queueing %d untracked item(s) for first push",
                     len(untracked),
                 )
                 self._queue_untracked(untracked)
@@ -180,10 +190,17 @@ class PushDrainer:
             if not dirty:
                 return
             for row in dirty:
-                if row.entity_type != "note":
-                    continue
                 if row.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
                     # Dev seed — no real Drive file behind it; ignore.
+                    continue
+                if row.entity_type == ATTACHMENT_ENTITY_TYPE:
+                    if service is None:
+                        service = DriveClient(creds).service()
+                    self._push_attachment_row(store, service, row)
+                    continue
+                if row.entity_type != "note":
+                    # Unknown type — leave it alone so a future
+                    # slice handling it doesn't have to back-fill.
                     continue
                 note = self.note_lookup(row.entity_id)
                 if note is None:
@@ -250,26 +267,27 @@ class PushDrainer:
     def _clear_failure(self, note_id: str) -> None:
         self.failures.pop(note_id, None)
 
-    def _queue_untracked(self, note_ids: list[str]) -> None:
+    def _queue_untracked(
+        self, items: list[tuple[str, str]]
+    ) -> None:
         """Insert dirty first-push rows (drive_file_id=None) for
-        notes that have never been tracked. Skips ids that already
-        have a row — idempotent against the sweep firing twice."""
+        entities that have never been tracked. Idempotent against
+        the sweep firing twice."""
         from knowlet.core.sync.state import FileState
 
         store = SyncStateStore(self.vault_root)
         try:
             existing = {
-                fs.entity_id
+                (fs.entity_type, fs.entity_id)
                 for fs in store.list_all_files()
-                if fs.entity_type == "note"
             }
-            for note_id in note_ids:
-                if note_id in existing:
+            for entity_type, entity_id in items:
+                if (entity_type, entity_id) in existing:
                     continue
                 store.upsert_file_state(
                     FileState(
-                        entity_type="note",
-                        entity_id=note_id,
+                        entity_type=entity_type,
+                        entity_id=entity_id,
                         drive_file_id=None,
                         last_known_etag=None,
                         last_synced_at=None,
@@ -278,6 +296,53 @@ class PushDrainer:
                 )
         finally:
             store.close()
+
+    def _push_attachment_row(
+        self, store: SyncStateStore, service: Any, row: Any
+    ) -> None:
+        """Push a single attachment row. Attachments have no update /
+        conflict path — they're immutable once written — so the
+        outcome is success or transient failure (logged + retried
+        next tick)."""
+        path = self.attachment_lookup(row.entity_id)
+        if path is None or not path.exists():
+            logger.warning(
+                "drainer: attachment %s missing on disk; dropping row",
+                row.entity_id,
+            )
+            store.remove_file_state(
+                ATTACHMENT_ENTITY_TYPE, row.entity_id
+            )
+            self._clear_failure(row.entity_id)
+            return
+        try:
+            push_attachment(
+                service=service,
+                state=store,
+                filename=row.entity_id,
+                path=path,
+            )
+        except AttachmentFileMissingError:
+            logger.warning(
+                "drainer: attachment %s vanished between sweep "
+                "and push; clearing row",
+                row.entity_id,
+            )
+            store.remove_file_state(
+                ATTACHMENT_ENTITY_TYPE, row.entity_id
+            )
+            self._clear_failure(row.entity_id)
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "drainer: attachment push failed for %s: %r — will retry",
+                row.entity_id,
+                exc,
+            )
+            self._record_failure(row.entity_id, exc)
+            return
+        self.on_synced(row.entity_id)
+        self._clear_failure(row.entity_id)
 
     def _process_deletions(
         self, store: SyncStateStore, creds: Any, service: Any
