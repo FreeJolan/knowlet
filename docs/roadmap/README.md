@@ -14,8 +14,8 @@ Knowlet 按 Wedge 战略分阶段演进。能力同源、相互增强;叙事按�
 
 - **前端**:Alpine 弃用,改 React 19 + Vite + TypeScript + shadcn/ui + AI SDK + CodeMirror 6 + react-arborist + Tanstack Query
 - **后端**:不重写,加 mypy strict + ruff + pre-commit + CI(per ADR-0020)
-- **顺序**:Phase 0 ✅ → Phase 1 ABC ✅ → Phase 1 D ✅ → **ADR-0027 sync 主线 ✅(剩 3 项收尾)→ Phase 2 D(待启动)→ Phase 2 E 数据耐久 + sync 收尾 → Phase 3 AI 重做 → Phase 4 灰度准备**
-- **预估时间**:**10-14 周**到 Phase 4(灰度入口前)— 原 8-12 周加 Phase 1 D 后修正
+- **顺序**:Phase 0 ✅ → Phase 1 ABC ✅ → Phase 1 D ✅ → ADR-0027 sync 主线 ✅(剩 3 项收尾)→ **Phase 2 D ✅ → Phase 2 E 数据耐久 ✅ → Phase 3 AI 重做(下一站)→ Phase 3.5 桌面端 → Phase 4 灰度 + v1.0.0 → Phase 5 移动端(读/复习导向)**
+- **预估时间**:**12-17 周**到 Phase 4(灰度入口前)— 2026-05-12 修订,加 Phase 3.5 桌面端 2-3 周
 
 ```
 🟢 已 ship 但**待重做** 的后端能力(0 改动,直接复用)
@@ -53,19 +53,27 @@ Phase 1 D Obsidian-baseline UX 补齐(2026-05-08 dogfood 后追加)        ✅ �
    D4. 暗色模式 toggle:token 在 Phase 0 已就位,补 header sun/moon 按钮 + localStorage + 系统偏好 fallback  ✅ Slice 1 完成 (2026-05-08)
    D5. Outline 大纲面板:right rail 第三个 tab(Backlinks / Graph / Outline),解析 h1-h6 + 点击跳行  ✅ Slice 1 完成 (2026-05-08)
    D6. Hover preview 链接:[[Title]] 鼠标悬停 → 浮出 note 标题 + 首段  ✅ Slice 1 完成 (2026-05-08)
-Phase 2   D + E(该有可推)                             1-2 周(可推到 Phase 4)
-   D. 入口:Daily notes / Quick switcher 强化 / 收藏
-   E. 数据耐久:ADR-0018 落地 / Note version / Import-Export
+Phase 2   D + E(该有可推)                             1-2 周(可推到 Phase 4)  ✅ 完成 (2026-05-12)
+   D. 入口:Daily notes / Quick switcher 强化 / 收藏 ✅
+   E. 数据耐久:ADR-0018 落地 / Note version / Import-Export ✅
 Phase 3   AI 能力重做                                  3-4 周
    Chat (Vercel AI SDK) / 胶囊 / Sediment / Quiz / Mining UI / Web search trace / Cards
    per ADR-0024 envelope:7 个 AI role / 7 层 prompt 分层 / mech-hybrid-creative 入闸
-Phase 4   整体 dogfood + 灰度准备                       1-2 周
-   Playwright e2e 测试 / 文档 / 灰度入口准备
+Phase 3.5 桌面端客户端(2026-05-12 新增)                 2-3 周
+   不是套壳。"打开任意文件夹作 vault" + git 风格的 `.knowlet/` vault 合法性检测 +
+   系统级集成(右键菜单 / Spotlight / Quick Look)。Tauri / Electron / Wails 选型待定。
+   per memory `project_desktop_client_after_ai_before_gray`
+Phase 4   整体 dogfood + 灰度准备 + v1.0.0-rc.1         1-2 周
+   Playwright e2e 测试 / 文档 / 灰度入口准备 / 版本号 bump(ADR-0018 §4.G)
+Phase 5   移动端(灰度后,按真实反馈启动)
+   核心定位:碎片时间的"读 / 复习",不是桌面能力复刻。
+   优先级:SRS 复习 UI > 笔记浏览 > 快速捕获;编辑器 / 文件树管理 deferred。
+   per memory `project_mobile_read_centric_not_port`
 ```
 
-**Phase 4 之后** = 进入灰度期(per [ADR-0022](../decisions/0022-product-lifecycle-phases.md))。
+**Phase 4 之后** = 进入灰度期(per [ADR-0022](../decisions/0022-product-lifecycle-phases.md))。**Phase 5 移动端**在灰度有真实用户反馈后再启动。
 
-**预估时间(2026-05-08 修订)**: 加入 Phase 1 D 后 Phase 4 入口前合计 10-14 周(原 8-12)。
+**预估时间(2026-05-12 修订)**: Phase 4 入口前合计 **12-17 周**(加 Phase 3.5 桌面端 2-3 周)。
 
 ## 阶段一(MVP / V1)— 战略层
 

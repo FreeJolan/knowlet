@@ -14,8 +14,8 @@ Knowlet evolves in stages per the Wedge strategy. Capabilities share a common fo
 
 - **Frontend**: Alpine deprecated; switching to React 19 + Vite + TypeScript + shadcn/ui + Vercel AI SDK + CodeMirror 6 + react-arborist + Tanstack Query
 - **Backend**: not rewritten; adding mypy strict + ruff + pre-commit + CI (per ADR-0020)
-- **Order**: Phase 0 ✅ → Phase 1 ABC ✅ → Phase 1 D ✅ → **ADR-0027 sync main line ✅ (3 polish items remaining) → Phase 2 D (not started) → Phase 2 E data durability + sync polish → Phase 3 AI rework → Phase 4 gray-release prep**
-- **Estimated**: **10-14 weeks** to Phase 4 (gray entrance) — revised from 8-12 after adding Phase 1 D
+- **Order**: Phase 0 ✅ → Phase 1 ABC ✅ → Phase 1 D ✅ → ADR-0027 sync main line ✅ → **Phase 2 D ✅ → Phase 2 E data durability ✅ → Phase 3 AI rework (next) → Phase 3.5 desktop client → Phase 4 gray-release + v1.0.0 → Phase 5 mobile (read/review-centric)**
+- **Estimated**: **12-17 weeks** to Phase 4 (gray entrance) — 2026-05-12 revision, added Phase 3.5 desktop 2-3 weeks
 
 ```
 🟢 Already shipped backend, **kept** (zero change, reused as-is)
