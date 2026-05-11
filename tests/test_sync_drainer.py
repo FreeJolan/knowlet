@@ -508,6 +508,145 @@ def test_drainer_untracked_sweep_queues_notes_and_attachments(
         state.close()
 
 
+def test_drainer_marks_orphan_attachment_for_hard_delete(
+    tmp_path: Path,
+) -> None:
+    """A1 — when a tracked attachment's local file is gone, the
+    drainer sets delete_intent=hard on its sync_state row so the
+    next _process_deletions tick tells Drive to clean up."""
+    _seed_creds(tmp_path)
+    # Pre-push state: row says it's on Drive, but file is missing.
+    state = SyncStateStore(tmp_path)
+    try:
+        state.upsert_file_state(
+            FileState(
+                entity_type="attachment",
+                entity_id="01HORPHAN.png",
+                drive_file_id="DRIVE-ORPHAN",
+                last_known_etag="rev-1",
+                last_synced_at="2026-05-11T12:00:00Z",
+                dirty=False,
+            )
+        )
+    finally:
+        state.close()
+
+    fake_service = MagicMock()
+    fake_service.files().delete().execute.return_value = {}
+
+    drainer = PushDrainer(
+        vault_root=tmp_path,
+        note_lookup=lambda _id: None,
+        attachment_lookup=lambda _name: None,  # file is gone
+    )
+    with patch(
+        "knowlet.core.sync.drive_client.DriveClient.service",
+        return_value=fake_service,
+    ):
+        drainer.tick_once()
+
+    # Drive's hard-delete API was called with the correct file id.
+    call_args = [
+        c.kwargs for c in fake_service.files().delete.call_args_list
+    ]
+    fileIds = [c.get("fileId") for c in call_args]
+    assert "DRIVE-ORPHAN" in fileIds, (
+        f"expected hard-delete call for DRIVE-ORPHAN, got {fileIds}"
+    )
+    # Row was removed after successful delete.
+    state2 = SyncStateStore(tmp_path)
+    try:
+        assert state2.get_file_state("attachment", "01HORPHAN.png") is None
+    finally:
+        state2.close()
+
+
+def test_drainer_drops_orphan_row_when_never_pushed(tmp_path: Path) -> None:
+    """If an attachment row never made it to Drive (drive_file_id is
+    None) and the local file is gone, just drop the row — no Drive
+    work to do."""
+    _seed_creds(tmp_path)
+    state = SyncStateStore(tmp_path)
+    try:
+        state.upsert_file_state(
+            FileState(
+                entity_type="attachment",
+                entity_id="01HONEVER.png",
+                drive_file_id=None,
+                last_known_etag=None,
+                last_synced_at=None,
+                dirty=False,
+            )
+        )
+    finally:
+        state.close()
+
+    drainer = PushDrainer(
+        vault_root=tmp_path,
+        note_lookup=lambda _id: None,
+        attachment_lookup=lambda _name: None,
+    )
+    with patch(
+        "knowlet.core.sync.drive_client.DriveClient.service",
+        return_value=MagicMock(),
+    ):
+        drainer.tick_once()
+
+    state2 = SyncStateStore(tmp_path)
+    try:
+        assert state2.get_file_state("attachment", "01HONEVER.png") is None
+    finally:
+        state2.close()
+
+
+def test_drainer_keeps_alive_attachment_when_file_present(
+    tmp_path: Path,
+) -> None:
+    """Orphan sweep must not touch attachment rows whose file is
+    still on disk. Negative-control for the false-positive case."""
+    _seed_creds(tmp_path)
+    att_dir = tmp_path / "_attachments"
+    att_dir.mkdir()
+    att = att_dir / "01HALIVE.png"
+    att.write_bytes(b"alive")
+    state = SyncStateStore(tmp_path)
+    try:
+        state.upsert_file_state(
+            FileState(
+                entity_type="attachment",
+                entity_id="01HALIVE.png",
+                drive_file_id="DRIVE-ALIVE",
+                last_known_etag="rev-1",
+                last_synced_at="2026-05-11T12:00:00Z",
+                dirty=False,
+            )
+        )
+    finally:
+        state.close()
+
+    drainer = PushDrainer(
+        vault_root=tmp_path,
+        note_lookup=lambda _id: None,
+        attachment_lookup=lambda name: att if name == "01HALIVE.png" else None,
+    )
+    fake_service = MagicMock()
+    with patch(
+        "knowlet.core.sync.drive_client.DriveClient.service",
+        return_value=fake_service,
+    ):
+        drainer.tick_once()
+
+    # No Drive delete called, row still alive.
+    assert fake_service.files().delete.call_count == 0
+    state2 = SyncStateStore(tmp_path)
+    try:
+        rec = state2.get_file_state("attachment", "01HALIVE.png")
+        assert rec is not None
+        assert rec.delete_intent is None
+    finally:
+        state2.close()
+
+
 def test_drainer_skips_dev_fake_rows(tmp_path: Path) -> None:
     """DEV_FAKE_CONFLICT rows are dev-seeded conflicts with no real
     Drive backing; pushing them would 404. Drainer must skip them

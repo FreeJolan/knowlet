@@ -36,6 +36,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +100,14 @@ class PushDrainer:
         self.poll_interval = poll_interval
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        # Serializes ``_tick`` runs. Without this the daemon thread's
+        # auto-tick can collide with ``POST /api/sync/drain-now``
+        # (called from the HTTP thread): both threads observe the
+        # same dirty row before either flips it to clean, so first-push
+        # creates *two* Drive files for one local file. Especially
+        # dangerous for attachments since they don't have revisionId
+        # OCC to catch the duplicate.
+        self._tick_lock = threading.Lock()
         # #122 — in-memory map of currently-failing pushes. Note id
         # → {"count", "last_error", "last_attempt_at"}. Cleared
         # whenever a push succeeds (or returns ConflictReport,
@@ -129,10 +138,15 @@ class PushDrainer:
             self._thread = None
 
     def tick_once(self) -> None:
-        """Public entry point for tests — runs one iteration of the
-        push loop synchronously without going through the daemon
-        thread. Production callers should use ``start()``."""
-        self._tick()
+        """Public entry point — runs one iteration of the push loop
+        synchronously. Used by tests and by ``POST /api/sync/drain-now``.
+        Production callers should also use ``start()`` to keep the
+        background poll running; ``tick_once`` is for "kick it now".
+
+        Holds ``_tick_lock`` so a concurrent auto-tick can't double-push
+        the same dirty row."""
+        with self._tick_lock:
+            self._tick()
 
     # --------------------------------------------------- internals
 
@@ -144,7 +158,8 @@ class PushDrainer:
             return
         while not self._stop.is_set():
             try:
-                self._tick()
+                with self._tick_lock:
+                    self._tick()
             except Exception:  # noqa: BLE001
                 logger.warning("drainer tick raised", exc_info=True)
             if self._stop.wait(self.poll_interval):
@@ -181,6 +196,13 @@ class PushDrainer:
         store = SyncStateStore(self.vault_root)
         try:
             service: Any = None
+            # Attachment orphan sweep — for every attachment row that
+            # already lives on Drive (drive_file_id set) but whose
+            # local file is gone, mark delete_intent=hard so the next
+            # _process_deletions pass tells Drive to clean it up. Runs
+            # every tick (cheap — one stat per tracked attachment) so
+            # a Finder-side `rm` propagates within ~5s.
+            self._sweep_for_attachment_orphans(store)
             # #118 — delete tombstones first. Cheap to process; gets
             # them out of the way so the chip stops counting them as
             # "unpushed" (the dirty list below excludes deleted=True
@@ -344,6 +366,48 @@ class PushDrainer:
         self.on_synced(row.entity_id)
         self._clear_failure(row.entity_id)
 
+    def _sweep_for_attachment_orphans(
+        self, store: SyncStateStore
+    ) -> None:
+        """For every attachment row whose Drive copy exists
+        (drive_file_id set, dirty=False, no delete_intent yet) but
+        whose local file is gone, set delete_intent=hard. The next
+        _process_deletions call drains it.
+
+        Why hard: attachments are immutable, and the user explicitly
+        deleted the local file — there's no "30-day undo" expectation
+        here. (Notes go to local trash first, hence soft. Attachments
+        live directly in _attachments/ with no trash bin; if the
+        bytes are gone locally they should be gone on Drive too.)
+
+        Rows with delete_intent already set are skipped (idempotent).
+        Rows where drive_file_id is None (never pushed) are dropped
+        directly — nothing to clean."""
+        for fs in store.list_all_files():
+            if fs.entity_type != ATTACHMENT_ENTITY_TYPE:
+                continue
+            if fs.delete_intent is not None:
+                continue
+            path = self.attachment_lookup(fs.entity_id)
+            if path is not None and path.exists():
+                continue
+            # File is gone. Two cases:
+            if not fs.drive_file_id:
+                # Never made it to Drive — just drop the row.
+                store.remove_file_state(
+                    ATTACHMENT_ENTITY_TYPE, fs.entity_id
+                )
+                continue
+            # Already on Drive — mark for hard delete so the next
+            # _process_deletions tick cleans it up.
+            store.upsert_file_state(
+                replace(
+                    fs,
+                    delete_intent="hard",
+                    dirty=False,
+                )
+            )
+
     def _process_deletions(
         self, store: SyncStateStore, creds: Any, service: Any
     ) -> Any:
@@ -359,7 +423,11 @@ class PushDrainer:
         without re-authenticating."""
         deletions = store.list_deletion_pending()
         for row in deletions:
-            if row.entity_type != "note":
+            if row.entity_type not in ("note", ATTACHMENT_ENTITY_TYPE):
+                # Unknown type — leave alone so a future slice can
+                # handle it. The intent row stays, which is safe:
+                # nothing reads it that doesn't also know about the
+                # entity type.
                 continue
             if row.drive_file_id is None or row.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
                 # Never pushed → no Drive cleanup needed; just drop
