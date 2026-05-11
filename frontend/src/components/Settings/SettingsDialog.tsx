@@ -407,6 +407,7 @@ function Section({
 
 function VaultPortabilityPanel(): React.ReactNode {
   const { t } = useTranslation();
+  const qc = useQueryClient();
   const [importing, setImporting] = useState(false);
   const [preview, setPreview] = useState<ImportReportPayload | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -444,19 +445,28 @@ function VaultPortabilityPanel(): React.ReactNode {
     setErrorText(null);
     try {
       const r = await commitImport(pendingFile);
-      const label = r.mode === "restore"
-        ? t("vaultPortability.restoreDoneShort", {
-            count: r.notes_created,
-            target: r.target_path,
-          })
-        : t("vaultPortability.mergeDoneShort", {
-            count: r.notes_created,
-            renamed: r.notes_renamed,
-          });
+      const label = t("vaultPortability.mergeDoneShort", {
+        count: r.notes_created,
+        renamed: r.notes_renamed,
+        skipped: r.notes_skipped,
+      });
       setResultText(label);
       setPreview(null);
       setPendingFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
+      // Server reindexed on the import endpoint. Bust the caches
+      // that surface notes so the new ``imported/YYYY-MM-DD/``
+      // folder + its rows show up immediately instead of waiting
+      // for the next 30s staleTime window.
+      void qc.invalidateQueries({ queryKey: QK.tree });
+      void qc.invalidateQueries({ queryKey: QK.tags });
+      void qc.invalidateQueries({ queryKey: QK.tagsWithNotes });
+      void qc.invalidateQueries({ queryKey: QK.graph });
+      // Search results are query-scoped; nuke them all.
+      void qc.invalidateQueries({
+        predicate: (q) =>
+          Array.isArray(q.queryKey) && q.queryKey[0] === "search",
+      });
     } catch (err) {
       setErrorText(err instanceof Error ? err.message : String(err));
     } finally {
@@ -508,37 +518,20 @@ function VaultPortabilityPanel(): React.ReactNode {
       {preview && (
         <div className="mt-3 w-full rounded border p-3 text-xs" style={{ borderColor: "var(--line)" }}>
           <div className="font-medium">
-            {preview.mode === "restore"
-              ? t("vaultPortability.previewRestoreTitle")
-              : t("vaultPortability.previewMergeTitle")}
+            {t("vaultPortability.previewMergeTitle")}
           </div>
-          {preview.mode === "restore" ? (
-            <ul className="mt-1 list-disc pl-5 text-muted-foreground">
-              <li>{t("vaultPortability.previewRestoreNotes", { count: preview.notes_created })}</li>
-              <li>{t("vaultPortability.previewRestoreAtt", { count: preview.attachments_copied })}</li>
-              {preview.manifest && (
-                <li>
-                  {t("vaultPortability.previewRestoreFrom", {
-                    version: preview.manifest.knowlet_version,
-                    at: preview.manifest.exported_at,
-                  })}
-                </li>
-              )}
-            </ul>
-          ) : (
-            <ul className="mt-1 list-disc pl-5 text-muted-foreground">
-              <li>{t("vaultPortability.previewMergeCreate", { count: preview.notes_created })}</li>
-              {preview.notes_renamed > 0 && (
-                <li>{t("vaultPortability.previewMergeRename", { count: preview.notes_renamed })}</li>
-              )}
-              {preview.notes_skipped > 0 && (
-                <li>{t("vaultPortability.previewMergeSkip", { count: preview.notes_skipped })}</li>
-              )}
-              {preview.attachments_copied > 0 && (
-                <li>{t("vaultPortability.previewMergeAtt", { count: preview.attachments_copied })}</li>
-              )}
-            </ul>
-          )}
+          <ul className="mt-1 list-disc pl-5 text-muted-foreground">
+            <li>{t("vaultPortability.previewMergeCreate", { count: preview.notes_created })}</li>
+            {preview.notes_renamed > 0 && (
+              <li>{t("vaultPortability.previewMergeRename", { count: preview.notes_renamed })}</li>
+            )}
+            {preview.notes_skipped > 0 && (
+              <li>{t("vaultPortability.previewMergeSkip", { count: preview.notes_skipped })}</li>
+            )}
+            {preview.attachments_copied > 0 && (
+              <li>{t("vaultPortability.previewMergeAtt", { count: preview.attachments_copied })}</li>
+            )}
+          </ul>
           <div className="mt-2 flex gap-2">
             <button
               type="button"

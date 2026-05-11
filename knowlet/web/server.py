@@ -5104,140 +5104,118 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             filename=filename,
         )
 
+    def _unpack_for_merge(tmp_path: Path) -> Path:
+        """Unzip the uploaded archive to a temp dir and return the
+        directory we'll walk. Lifecycle is the caller's
+        responsibility — return value points at a path the caller
+        must ``shutil_rmtree_safe`` after merging."""
+        import tempfile
+        import zipfile
+
+        walk_root = Path(tempfile.mkdtemp(prefix="kn-import-merge-"))
+        with zipfile.ZipFile(tmp_path, "r") as zf:
+            zf.extractall(walk_root)
+        return walk_root
+
     @app.post("/api/vault/import-preview")
     async def vault_import_preview(
         file: UploadFile = File(...),
     ) -> dict[str, Any]:
-        """Dry-run a `.zip` import: detect mode, surface counts +
-        per-note actions so the user sees the plan before committing.
+        """Dry-run an import: surface counts + per-note actions so
+        the user sees the plan before committing.
+
+        UI-level import is ALWAYS merge into the current vault
+        (per dogfood 2026-05-12: users expect upload → notes show
+        up here, not "a sibling vault was created somewhere"). For
+        sibling-vault restore use ``knowlet vault import --mode
+        restore`` on the CLI.
         """
         import tempfile
 
-        from knowlet.core.portability import (
-            detect_archive_mode,
-            merge_directory,
-            restore_archive,
-        )
+        from knowlet.core.portability import merge_directory
 
         tmp_path = Path(
             tempfile.mkstemp(suffix=".zip", prefix="kn-import-")[1]
         )
         tmp_path.write_bytes(await file.read())
+        walk_root = _unpack_for_merge(tmp_path)
         try:
-            mode = detect_archive_mode(tmp_path)
-            if mode == "restore":
-                # We never actually unpack here; just read the manifest.
-                report = restore_archive(
-                    archive_path=tmp_path,
-                    target_dir=vault.root.parent / "__dry_run_unused__",
-                    dry_run=True,
-                )
-                return _import_report_to_json(report)
-            # merge: unzip to temp, run merge dry-run
-            import zipfile
-
-            walk_root = Path(
-                tempfile.mkdtemp(prefix="kn-import-merge-")
-            )
-            with zipfile.ZipFile(tmp_path, "r") as zf:
-                zf.extractall(walk_root)
             existing_titles = _existing_note_titles(vault.root)
-            try:
-                report = merge_directory(
-                    source_dir=walk_root,
-                    vault_root=vault.root,
-                    existing_titles=existing_titles,
-                    dry_run=True,
-                )
-            finally:
-                shutil_rmtree_safe(walk_root)
+            existing_ids = _existing_note_ids(vault.root)
+            # A knowlet-format export wraps notes in a top-level
+            # ``notes/`` folder; merge from that subfolder if it
+            # exists so we don't try to import .knowlet/* etc.
+            walk_target = (
+                walk_root / "notes" if (walk_root / "notes").is_dir() else walk_root
+            )
+            report = merge_directory(
+                source_dir=walk_target,
+                vault_root=vault.root,
+                existing_titles=existing_titles,
+                existing_ids=existing_ids,
+                dry_run=True,
+            )
             return _import_report_to_json(report)
         finally:
+            shutil_rmtree_safe(walk_root)
             tmp_path.unlink(missing_ok=True)
 
     @app.post("/api/vault/import")
     async def vault_import_endpoint(
         file: UploadFile = File(...),
     ) -> dict[str, Any]:
-        """Commit a `.zip` import. Mirrors the CLI: restore creates a
-        sibling vault directory; merge unpacks into the current vault
-        under ``imported/YYYY-MM-DD/``. Returns the same report shape
-        as the preview endpoint, with ``dry_run`` = False."""
+        """Commit a merge import. Always lands new notes under
+        ``imported/YYYY-MM-DD/`` of the current vault. ID collisions
+        skip (the live note wins); title collisions get an
+        ``(imported)`` suffix."""
         import tempfile
 
-        from knowlet.core.portability import (
-            detect_archive_mode,
-            merge_directory,
-            restore_archive,
-        )
+        from knowlet.core.portability import merge_directory
 
         tmp_path = Path(
             tempfile.mkstemp(suffix=".zip", prefix="kn-import-")[1]
         )
         tmp_path.write_bytes(await file.read())
+        walk_root = _unpack_for_merge(tmp_path)
         try:
-            mode = detect_archive_mode(tmp_path)
-            if mode == "restore":
-                # Pick a sibling target directory. Use the uploaded
-                # filename (sans .zip) under the current vault's
-                # parent, with a "-restore" suffix if the user uploaded
-                # an archive whose name collides with an existing dir.
-                base = (file.filename or "knowlet-vault").rsplit(
-                    ".", 1
-                )[0]
-                target = vault.root.parent / base
-                suffix = 1
-                while target.exists() and any(target.iterdir()):
-                    suffix += 1
-                    target = vault.root.parent / f"{base}-{suffix}"
-                report = restore_archive(
-                    archive_path=tmp_path,
-                    target_dir=target,
-                    dry_run=False,
-                )
-                return _import_report_to_json(report)
-            # merge
-            import zipfile
-
-            walk_root = Path(
-                tempfile.mkdtemp(prefix="kn-import-merge-")
-            )
-            with zipfile.ZipFile(tmp_path, "r") as zf:
-                zf.extractall(walk_root)
             existing_titles = _existing_note_titles(vault.root)
-            try:
-                report = merge_directory(
-                    source_dir=walk_root,
-                    vault_root=vault.root,
-                    existing_titles=existing_titles,
-                    dry_run=False,
-                )
-            finally:
-                shutil_rmtree_safe(walk_root)
-            # Re-index so the new notes show up in tree / search.
-            runtime = state.runtime
-            if runtime is not None:
-                from knowlet.core.embedding import make_backend
-                from knowlet.core.index import Index, reindex_vault
-
-                cfg = runtime.config
-                backend = make_backend(
-                    cfg.embedding.backend,
-                    cfg.embedding.model,
-                    cfg.embedding.dim,
-                )
-                reindex_vault(
-                    runtime.vault.root,
-                    runtime.vault.db_path,
-                    backend,
-                    chunk_size=cfg.retrieval.chunk_size,
-                    chunk_overlap=cfg.retrieval.chunk_overlap,
-                    note_paths=list(runtime.vault.iter_note_paths()),
-                )
-                runtime.index = Index(runtime.vault.db_path, backend)
-            return _import_report_to_json(report)
+            existing_ids = _existing_note_ids(vault.root)
+            walk_target = (
+                walk_root / "notes" if (walk_root / "notes").is_dir() else walk_root
+            )
+            report = merge_directory(
+                source_dir=walk_target,
+                vault_root=vault.root,
+                existing_titles=existing_titles,
+                existing_ids=existing_ids,
+                dry_run=False,
+            )
         finally:
+            shutil_rmtree_safe(walk_root)
             tmp_path.unlink(missing_ok=True)
+
+        # Re-index so the new notes show up in tree / search.
+        runtime = state.runtime
+        if runtime is not None:
+            from knowlet.core.embedding import make_backend
+            from knowlet.core.index import Index, reindex_vault
+
+            cfg = runtime.config
+            backend = make_backend(
+                cfg.embedding.backend,
+                cfg.embedding.model,
+                cfg.embedding.dim,
+            )
+            reindex_vault(
+                runtime.vault.root,
+                runtime.vault.db_path,
+                backend,
+                chunk_size=cfg.retrieval.chunk_size,
+                chunk_overlap=cfg.retrieval.chunk_overlap,
+                note_paths=list(runtime.vault.iter_note_paths()),
+            )
+            runtime.index = Index(runtime.vault.db_path, backend)
+        return _import_report_to_json(report)
 
     def _existing_note_titles(vault_root: Path) -> list[str]:
         out: list[str] = []
@@ -5253,6 +5231,25 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 continue
             if note.title:
                 out.append(note.title)
+        return out
+
+    def _existing_note_ids(vault_root: Path) -> list[str]:
+        """All note ids currently in the vault. Used to skip
+        ID-collisions during import (so re-importing one's own
+        backup doesn't create duplicates)."""
+        out: list[str] = []
+        notes_dir = vault_root / "notes"
+        if not notes_dir.exists():
+            return out
+        from knowlet.core.note import Note as _Note
+
+        for p in notes_dir.rglob("*.md"):
+            try:
+                note = _Note.from_file(p)
+            except Exception:  # noqa: BLE001
+                continue
+            if note.id:
+                out.append(note.id)
         return out
 
     def shutil_rmtree_safe(p: Path) -> None:

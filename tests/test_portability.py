@@ -299,6 +299,7 @@ def test_merge_preserves_existing_knowlet_notes(tmp_path: Path) -> None:
         source_dir=src,
         vault_root=v.root,
         existing_titles=[],
+        existing_ids=[],
         dry_run=False,
     )
     imported = list((v.notes_dir / "imported").rglob("*.md"))
@@ -306,6 +307,37 @@ def test_merge_preserves_existing_knowlet_notes(tmp_path: Path) -> None:
     note = Note.from_file(imported[0])
     assert note.id == existing_id
     assert note.title == "preserved"
+
+
+def test_merge_skips_id_collisions(tmp_path: Path) -> None:
+    """Re-importing one's own export must not create duplicates of
+    notes already in the live vault. Same-ID rows are reported as
+    skipped, never overwritten."""
+    v = _seeded_vault(tmp_path)
+    src = tmp_path / "import-src"
+    src.mkdir()
+    duplicate_id = new_id()
+    duplicate = Note(id=duplicate_id, title="dup", body="from-export")
+    (src / f"{duplicate_id}.md").write_text(
+        duplicate.to_markdown(), encoding="utf-8"
+    )
+    (src / "fresh.md").write_text(
+        "# fresh\n\nbody", encoding="utf-8"
+    )
+    report = merge_directory(
+        source_dir=src,
+        vault_root=v.root,
+        existing_titles=[],
+        existing_ids=[duplicate_id],  # already in vault
+        dry_run=False,
+    )
+    assert report.notes_created == 1  # only "fresh.md"
+    assert report.notes_skipped == 1
+    # Verify the imported folder contains exactly one note, and it's
+    # the fresh one, not the duplicate.
+    imported = list((v.notes_dir / "imported").rglob("*.md"))
+    assert len(imported) == 1
+    assert duplicate_id not in imported[0].name
 
 
 # ----------------------------------------------------- round-trip

@@ -91,29 +91,62 @@ def test_import_commit_merges_into_current_vault(tmp_path: Path) -> None:
     assert sum(1 for _ in imported_dir.rglob("*.md")) == 2
 
 
-def test_round_trip_export_restore_via_api(tmp_path: Path) -> None:
-    """Export from one vault, restore through the import endpoint of
-    another (empty) vault. The endpoint creates a sibling restore
-    target; the API returns its location."""
+def test_export_then_import_merges_into_target_vault(tmp_path: Path) -> None:
+    """Export from one vault, upload the archive to a different
+    (empty) vault. UI-level import always merges, so the notes show
+    up under ``imported/YYYY-MM-DD/`` inside the destination
+    vault — no surprise sibling directory."""
     # Source vault
     src_client, src_v = _client(tmp_path / "src")
     _seed(src_v)
     archive_bytes = src_client.get("/api/vault/export").content
 
-    # Target vault (separate temp dir).
-    target_root = tmp_path / "dst-host"
-    target_root.mkdir()
-    dst_client, _dst_v = _client(target_root / "current")
+    # Target vault (empty)
+    dst_client, dst_v = _client(tmp_path / "dst")
     r = dst_client.post(
         "/api/vault/import",
         files={
-            "file": ("knowlet-vault-test.zip", archive_bytes, "application/zip")
+            "file": (
+                "knowlet-vault-test.zip",
+                archive_bytes,
+                "application/zip",
+            )
         },
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["mode"] == "restore"
-    # Sibling location was picked.
-    target = Path(body["target_path"])
-    assert target.parent == target_root
-    assert (target / "MANIFEST.json").exists()
+    assert body["mode"] == "merge"
+    assert body["dry_run"] is False
+    assert body["notes_created"] == 2
+    # Notes landed in the destination vault's imported/ folder.
+    imported = list((dst_v.notes_dir / "imported").rglob("*.md"))
+    assert len(imported) == 2
+
+
+def test_import_skips_duplicate_ids_idempotently(tmp_path: Path) -> None:
+    """Re-importing the same archive twice into the same vault
+    must not duplicate notes — second pass should skip them all."""
+    client, v = _client(tmp_path)
+    _seed(v)
+    archive_bytes = client.get("/api/vault/export").content
+    # First import: merges into imported/. Now we have duplicates of
+    # the original IDs across notes/ and notes/imported/.
+    # Wait — first import goes into THE SAME vault that was exported
+    # from, so ID collisions should immediately trip.
+    r = client.post(
+        "/api/vault/import",
+        files={
+            "file": (
+                "self-backup.zip",
+                archive_bytes,
+                "application/zip",
+            )
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    # All notes already exist in the vault (we just exported them) —
+    # the merge should skip every single one.
+    assert body["mode"] == "merge"
+    assert body["notes_skipped"] >= 2
+    assert body["notes_created"] == 0

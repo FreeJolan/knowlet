@@ -370,7 +370,7 @@
   },
   "vaultPortability": {
     "label": "Vault portability",
-    "blurb": "Export a portable .zip of your vault, or import one back. Importing a knowlet export creates a sibling vault; importing any other folder of markdown merges into the current vault.",
+    "blurb": "Export a portable .zip of your vault, or merge another vault / markdown folder into this one. New notes land under imported/YYYY-MM-DD; notes that already exist (same id) are skipped, never overwritten.",
     "exportButton": "Export vault…",
     "importButton": "Import…",
     "previewing": "Reading archive…",
@@ -391,8 +391,7 @@
     "previewMergeAtt_other": "{{count}} attachments will be copied",
     "confirmButton": "Confirm import",
     "cancelButton": "Cancel",
-    "restoreDoneShort": "Restored {{count}} note(s) → {{target}}",
-    "mergeDoneShort": "Imported {{count}} note(s) ({{renamed}} renamed). Open Search to find them.",
+    "mergeDoneShort": "Imported {{count}} note(s) ({{renamed}} renamed, {{skipped}} skipped). Open the imported/ folder in the file tree, or search to find them.",
     "errorPrefix": "Failed: {{detail}}"
   },
   "firstPush": {

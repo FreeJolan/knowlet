@@ -322,29 +322,36 @@ def merge_directory(
     vault_root: Path,
     subfolder: str | None = None,
     existing_titles: Iterable[str] | None = None,
+    existing_ids: Iterable[str] | None = None,
     dry_run: bool = False,
 ) -> ImportReport:
     """Walk ``source_dir`` and add every .md file into the vault.
 
     Notes without knowlet frontmatter get a fresh ULID + synthesized
-    metadata; notes that already look like knowlet (ULID filename or
-    valid frontmatter) keep their identity.
+    metadata; notes that already look like knowlet keep their
+    identity.
 
     All imported notes land under ``vault_root/notes/<subfolder>/``,
-    defaulting to ``imported/YYYY-MM-DD``. Title collisions with the
-    existing vault get a ``(imported)`` suffix on the new copy —
-    silent overwrites would be data loss.
+    defaulting to ``imported/YYYY-MM-DD``.
 
-    ``existing_titles`` is the snapshot of titles already in the
-    vault, used for collision detection. Passing ``None`` skips the
-    check (callers usually pass ``runtime.index.list_notes()``
-    titles).
+    Collision policy (never overwrites user content silently):
+      - **ID match** with an existing tracked note → skip. The user
+        is most likely re-importing their own backup; we don't
+        clobber the live note. ``notes_skipped`` increments.
+      - **Title match** without ID match → import the note, but
+        suffix its title with ``(imported)`` so the user can see
+        which copy came from where. ``notes_renamed`` increments.
+
+    ``existing_titles`` / ``existing_ids`` are snapshots of the
+    current vault, used for collision detection. Passing ``None``
+    skips the respective check.
     """
     if not source_dir.exists() or not source_dir.is_dir():
         raise NotADirectoryError(f"not a directory: {source_dir}")
     sub = subfolder or f"imported/{datetime.now().strftime('%Y-%m-%d')}"
     target = vault_root / "notes" / sub
-    existing = set(existing_titles or ())
+    titles_seen = set(existing_titles or ())
+    ids_seen = set(existing_ids or ())
 
     report = ImportReport(mode="merge", target_path=target, dry_run=dry_run)
     md_files = sorted(p for p in source_dir.rglob("*.md") if p.is_file())
@@ -357,20 +364,23 @@ def merge_directory(
             report.notes_skipped += 1
             report.items.append((rel_str, "skip-empty", None))
             continue
-        # Collision handling on title — never overwrite silently.
-        if note.title and note.title in existing:
+        # ID collision = user almost certainly re-importing their own
+        # backup. Skip rather than overwrite — the live note wins.
+        if note.id in ids_seen:
+            report.notes_skipped += 1
+            report.items.append((rel_str, "skip-duplicate-id", None))
+            continue
+        # Title collision (different ID) → import with suffix.
+        if note.title and note.title in titles_seen:
             note.title = f"{note.title} (imported)"
             report.notes_renamed += 1
             action = "rename"
         else:
             action = "create"
-        existing.add(note.title)
+        titles_seen.add(note.title)
+        ids_seen.add(note.id)
 
-        # On disk we write to ``<target>/<note.id>.md`` to dodge
-        # filename collisions; the title carries human identity.
-        final_rel = (
-            (Path("notes") / sub / f"{note.id}.md").as_posix()
-        )
+        final_rel = (Path("notes") / sub / f"{note.id}.md").as_posix()
         if not dry_run:
             target.mkdir(parents=True, exist_ok=True)
             (target / f"{note.id}.md").write_text(

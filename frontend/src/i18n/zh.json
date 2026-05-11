@@ -369,7 +369,7 @@
   },
   "vaultPortability": {
     "label": "Vault 导入导出",
-    "blurb": "把整个 vault 导出为可移植的 .zip,或从一个 .zip 导回。导入 knowlet 自己的导出包会建立 sibling vault;导入任意 markdown 文件夹则会合并进当前 vault。",
+    "blurb": "把整个 vault 导出为可移植的 .zip,或把另一个 vault / markdown 文件夹合并进来。新笔记落在 imported/YYYY-MM-DD 下;已有同 id 的笔记会跳过,绝不覆盖。",
     "exportButton": "导出 vault…",
     "importButton": "导入…",
     "previewing": "正在读取归档…",
@@ -390,8 +390,7 @@
     "previewMergeAtt_other": "{{count}} 个附件会一并复制",
     "confirmButton": "确认导入",
     "cancelButton": "取消",
-    "restoreDoneShort": "已恢复 {{count}} 篇笔记 → {{target}}",
-    "mergeDoneShort": "已导入 {{count}} 篇笔记({{renamed}} 篇重命名)。打开 Search 即可找到。",
+    "mergeDoneShort": "已导入 {{count}} 篇笔记({{renamed}} 篇重命名,{{skipped}} 篇跳过)。在左侧 imported/ 文件夹下查看,或用 Search 找到。",
     "errorPrefix": "失败:{{detail}}"
   },
   "firstPush": {
