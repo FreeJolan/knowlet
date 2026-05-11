@@ -163,14 +163,15 @@ def sync_connect(
     vault = resolve_vault_or_die()
     cfg = load_config_or_default(vault)
     cs_path, tok_path = _resolve_paths(vault.root, cfg.sync)
-    if cs_path is None:
+    # #115 — empty client_secrets_path is fine; ``run_connect_flow``
+    # falls back to the embedded OAuth client. Only warn (not error)
+    # if a configured path is set but the file is missing.
+    if cs_path is not None and not cs_path.exists():
         err_console.print(
-            "[red]sync.client_secrets_path is empty in your config.[/red]\n"
-            "1) Create a Desktop OAuth client in Google Cloud Console.\n"
-            "2) Download client_secret.json.\n"
-            "3) knowlet config set sync.client_secrets_path /path/to/client_secret.json"
+            f"[yellow]sync.client_secrets_path = {cs_path} but that file "
+            "doesn't exist — falling back to the embedded OAuth client.[/yellow]"
         )
-        raise typer.Exit(code=2)
+        cs_path = None
 
     try:
         from knowlet.core.sync import (

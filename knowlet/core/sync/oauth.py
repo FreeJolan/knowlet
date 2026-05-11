@@ -52,6 +52,67 @@ from knowlet.core.sync.credentials import (
 # raises mid-handshake. Drive's own ``about().get`` returns user
 # emailAddress + displayName under any drive scope, so we don't
 # need the OpenID identity scopes for what 5.A captures.
+# Embedded OAuth client (#115). Per Google's Desktop OAuth docs and
+# RFC 8252, the ``client_secret`` for native apps is NOT actually
+# confidential — Google explicitly says it can be distributed with
+# the binary. Risks are quota abuse + brand spoofing, not user data.
+# See the conversation around tasks #113/#115 for the full analysis.
+#
+# Override paths, in priority order:
+#   1. ``$KNOWLET_OAUTH_CLIENT_JSON`` env var — full JSON inline.
+#      Release builds inject the production knowlet client this way.
+#   2. ``sync.client_secrets_path`` config — points at a file on
+#      disk. Advanced users who want to scope the OAuth client to
+#      their own Google Cloud project use this.
+#   3. Fallback: the constant below — the dogfood-era client tied
+#      to FreeJolan's personal Cloud Console project.
+#
+# IMPORTANT: rotate ``EMBEDDED_OAUTH_CLIENT`` to a production
+# knowlet-branded OAuth client before this repo goes public.
+EMBEDDED_OAUTH_CLIENT: dict[str, dict[str, object]] = {
+    "installed": {
+        "client_id": "50097533807-nihf6pus7frvi0e2gm6g8v98fhakssvf.apps.googleusercontent.com",
+        "project_id": "knowlet-495706",
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        "client_secret": "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",
+        "redirect_uris": ["http://localhost"],
+    }
+}
+
+
+def resolve_client_config(
+    client_secrets_path: "Path | None" = None,
+) -> dict[str, dict[str, object]]:
+    """Resolve the OAuth client config payload to hand to
+    ``InstalledAppFlow.from_client_config``. Three sources, first
+    non-None wins:
+
+    1. ``KNOWLET_OAUTH_CLIENT_JSON`` env var (release-build override).
+    2. ``client_secrets_path`` file on disk (advanced user override).
+    3. ``EMBEDDED_OAUTH_CLIENT`` constant (default for everyone).
+    """
+    import json
+    import os
+    from pathlib import Path
+
+    env_blob = os.environ.get("KNOWLET_OAUTH_CLIENT_JSON")
+    if env_blob:
+        try:
+            parsed: dict[str, dict[str, object]] = json.loads(env_blob)
+            return parsed
+        except ValueError:
+            # Fall through to the next source rather than crash —
+            # a malformed env var shouldn't lock the user out.
+            pass
+    if client_secrets_path is not None and Path(client_secrets_path).exists():
+        with Path(client_secrets_path).open("r", encoding="utf-8") as f:
+            parsed_file: dict[str, dict[str, object]] = json.load(f)
+            return parsed_file
+    return EMBEDDED_OAUTH_CLIENT
+
+
 SCOPES: tuple[str, ...] = (
     "https://www.googleapis.com/auth/drive.appdata",
 )
@@ -113,26 +174,23 @@ class OAuthFlowError(RuntimeError):
 
 def run_connect_flow(
     *,
-    client_secrets_path: Path,
+    client_secrets_path: Path | None = None,
     save_to: Path,
     port: int = 0,
 ) -> ConnectResult:
     """Block until the user finishes consent in the browser, then
     persist tokens and return the captured identity.
 
+    ``client_secrets_path`` is optional (#115) — when omitted, the
+    embedded OAuth client is used. Pass a path to override with an
+    on-disk client_secret.json (advanced users running their own
+    Cloud Console project).
+
     ``port=0`` lets the OS pick a free loopback port — required when
     the configured Google OAuth client lists multiple
     ``http://localhost:*`` redirects, or when the user wants to
     avoid binding 8080 specifically.
     """
-    if not client_secrets_path.exists():
-        raise ClientSecretsMissingError(
-            f"client_secret.json not found at {client_secrets_path}. "
-            "Download from Google Cloud Console → APIs & Services → "
-            "Credentials → OAuth 2.0 Client ID (Desktop app) and "
-            "set sync.client_secrets_path to its path."
-        )
-
     # Lazy imports — the Google libs are an optional extra (ADR-0027
     # §pyproject.sync). Caller should have already passed
     # require_google_libs() before getting here, but we re-check at
@@ -145,8 +203,12 @@ def run_connect_flow(
 
         raise SyncDependenciesMissingError(str(exc)) from exc
 
-    flow = InstalledAppFlow.from_client_secrets_file(
-        str(client_secrets_path), scopes=list(SCOPES)
+    # #115 — resolve OAuth client config via the three-tier override
+    # chain. The passed-in path is only ONE of three sources;
+    # ``resolve_client_config`` also checks env var + embedded.
+    client_config = resolve_client_config(client_secrets_path)
+    flow = InstalledAppFlow.from_client_config(
+        client_config, scopes=list(SCOPES)
     )
     try:
         # `run_local_server` opens the browser, spins a tiny HTTP
