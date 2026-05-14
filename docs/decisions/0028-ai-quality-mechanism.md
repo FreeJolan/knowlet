@@ -247,8 +247,8 @@ Chat 第一轮做了 retrieve 返回 5 篇笔记片段(2-3K tokens),第二轮历
 
 ### §8 不做的事(显式划清)
 
-- ❌ **AI 替用户写正文并直接落库** — per ADR-0024 §5 A。允许 AI 输出**草稿**进 drafts queue,**用户审批是入库的硬前置**
-- ❌ **Auto-tag / Auto-alias / Auto-move / Auto-merge** — per ADR-0024 §5 C/D
+- ❌ **AI 替用户做笔记入库的最终决策** — per ADR-0024 §5 A + ADR-0029 §4 原则 1。**关键澄清**:AI **允许写大量正文**,前提是用户**显式调用** AND 走 review 流让**用户做最终入库决策**。本条 anti-goal 锁的是"决策权"而非"AI 写多少字数"
+- ❌ **Auto-tag / Auto-alias / Auto-move / Auto-merge** 等任何未经用户显式触发就改 vault 状态的行为 — per ADR-0024 §5 C/D
 - ❌ **frontmatter `confidence` LLM-attributed 字段** — per ADR-0024 §5 E
 - ❌ **预设 IA(`entities/` / `concepts/` / 等强制文件夹)** — per ADR-0024 §5 F
 - ❌ **AI fallback 到通用问答时强加 "通用知识" 标签** — per §4
@@ -279,7 +279,7 @@ Chat 第一轮做了 retrieve 返回 5 篇笔记片段(2-3K tokens),第二轮历
 
 ## References
 
-- [ADR-0024 — AI assist envelope + 7 roles + creative 不碰契约](./0024-ai-assist-envelope.md)
+- [ADR-0024 — AI assist envelope + 7 roles + "creative 工作 AI 不主动,仅在用户显式调用时输出草稿走 review queue"](./0024-ai-assist-envelope.md)
 - [ADR-0013 — 知识管理契约(用户拥有)](./0013-knowledge-management-contract.md)
 - [ADR-0023 §3 — events log(audit trail 基础)](./0023-llm-wiki-comparison-and-takeaways.md)
 - [ADR-0023 §5 — Linter 规约](./0023-llm-wiki-comparison-and-takeaways.md)

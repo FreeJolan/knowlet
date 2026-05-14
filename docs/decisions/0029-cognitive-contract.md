@@ -31,16 +31,18 @@ ADR-0013 锁定了 "**用户拥有,LLM 提案**" 的所有权根原则;ADR-0024 
 
 knowlet 设计接受这些共识,让产品服务它们,而不是对抗它们(对抗即:让 AI 替代用户的认知加工)。
 
-## §2 服务边界(诚实地说不服务谁)
+## §2 服务边界(核心 / 支持 / 不优化)
 
-knowlet **不是为这类用户设计**:
-- 想"塞一堆 AI 整理好的内容,需要时让 AI 帮我查" 的人
-- 把笔记软件当"增强版 ChatGPT" 的人
-- 在意"laps notes 数翻倍" 而不在意"我自己理解了什么" 的人
+**核心服务**:把知识沉淀当**自我成长过程**的人。 
+**同样支持**:这类用户日常会用到的资料 / 参考 / 备查内容(通过资料类型,详 §4.5)。**混合使用(主要内化 + 少量资料)是目标场景**,不是 fallback。
 
-对这类用户,**Notion AI / Mem.ai / Reflect / Glasp 等更合适**。knowlet 用清晰的边界换深度的服务,不试图同时讨好两类用户。
+**不优化**:把笔记软件当"增强版 ChatGPT"、**primary mode 是 AI 帮我囤积 + 查询而非自我成长** 的用户。这类用户技术上能用 knowlet(资料类型对他们可用),但 knowlet 的 design choices(深度可见 / anti-drift / 无 gamification / Vault Health Dashboard 反虚假积累)在反向工作,实际体验**不如 Notion AI / Mem.ai / Glasp**。
 
-承认这缩小 TAM,but **honest scoping 是 strong positioning 的前提**;广谱产品在 AI 时代会陷入 identity crisis,小而深的产品才能活。
+如果你是这类用户:**为了你自己好,建议选更合适的工具**。
+
+**关键区分**: 我们不是排斥"想存资料"的需求(几乎所有用户都会有),我们不优化的是"**把笔记软件当 AI 个人助理来囤积而非用来成长**"这个 primary mode。两者是 dominant intent 的区别,不是 feature 支持的有无。
+
+承认 honest scoping 缩小 TAM,但**广谱 AI 笔记产品**(同时讨好深度学习者 + 囤积者)在 AI 时代必然陷入 identity crisis;**小而深的定位才能活**。同时承认:产品挑用户 / 用户也挑产品是**双向**过程,本 ADR 的 honest scoping 是为了让 self-selection 更准,减少 mismatch churn,不是单方面拒绝。
 
 ## §3 关于人类认知局限的现实假设
 
@@ -161,6 +163,56 @@ User-pull,不是 AI-push。default 路径是"自己写",召 AI 是 explicit 选�
   - **无 badge / 无通知 / 无 streak / 无 guilt 语气**
 - 点开 ai-drafted note 顶部一次性 banner:"AI 起草,你 approve 后未再修改。Source: [link]。要现在过一遍吗?" —— **邀请**,不**催促**
 
+## §4.5 知识 vs 资料(两类内容的并行路径)
+
+并非所有进 vault 的内容都需要同等深度的认知处理。强制全部走"严格 engagement gate"会逼用户去用别的工具存参考资料,违反 knowlet 帮用户省摸索时间的差异化(per memory `project_knowlet_ai_value_is_curated_workflow`)。
+
+knowlet 因此区分两类笔记:
+
+| | **知识** | **资料** |
+|---|---|---|
+| 含义 | 你**理解 + 拥有 + 能用**的东西 | 你**收藏 + 可查 + 不用时记得**的东西 |
+| 例子 | "RAG 怎么工作 / 我对 X 的判断 / 这个 bug 的根因" | API 文档 / 配方 / 历史时间线 / 网页 clip |
+| 价值度量 | 用户认知能力 | vault 的查得到率 |
+| 处理路径 | 必须 engagement | 只要 findable |
+
+**8 条原则在两类内容上的应用强度**:
+
+| 原则 | 知识 | 资料 |
+|---|---|---|
+| 1 用户是最后字节通道 | **强制 review queue**(per ADR-0024 hybrid 路径) | **轻量确认**(单击保存即可) |
+| 2 AI 是脚手架 | 同样 | 同样 |
+| 3 降摩擦 ≠ 跳认知 | 严格(cognitive 工作禁止 AI 替做) | 放宽(AI 自动 extract + 落入资料库 OK) |
+| 4 traceable | 同样 | 同样(资料更要 traceable,将来要 cite) |
+| 5 AI 不主动浮 | 严格 | 同样 |
+| 6 不外部评判, 提供内部觉察 | dashboard 重点关注**深度** | dashboard 关注**库存量 + 查询命中率** |
+| 7 Anti-drift | 强制(approve 不批量秒批) | **不需要**(资料就是 stockpile) |
+| 8 Make depth visible | 重点 metric:"engage 了多少知识" | 单独 metric:"存了多少、最近用了哪些" |
+
+**默认分类(按 source)**,用户可改:
+
+| 创建路径 | 默认 | 理由 |
+|---|---|---|
+| 手动 ⌘N 新建 | 知识 | 主动写 = 主动思考 |
+| 从 chat 沉淀为草稿 | 知识 | 主动思想产出 |
+| 网页 URL 粘贴 → Capture extractor | 资料 | 绝大多数是参考用 |
+| 拖拽 PDF / 文件 | 资料 | 同上 |
+| Mining task 抓回 | 资料 | 自动收集本就为 stockpile |
+| 模板新建("今日笔记") | 知识 | 日记 / 反思类 = 主动思考 |
+
+**Chat 里粘 URL** 这个特殊入口(模糊场景):**两等权按钮**让用户选,没有默认 — 因为用户当下意图常常分裂(可能想讨论 / 可能想沉淀 / 可能想存档),逼用户做一次有意义的判断。
+
+**升级 vs 降级 不对称**(per 原则 7 anti-drift):
+- 资料 → 知识 = 升级,直接生效
+- 知识 → 资料 = 降级,需二次确认(防 escape hatch)
+
+**Dashboard 双 metric 显式区分**:
+- "知识维度: N 篇 / X 篇自己写 / Y 篇 AI 起草重改 / Z 篇 AI 起草直接 accept"
+- "资料库存: M 条 / 最近 30 天访问 K 条"
+- **vault 对外可见的"总笔记数"不在主界面突出展示**,避免虚假积累奖励通路对资料类生效
+
+**Meta 原则: 结构决策必须 visible**:笔记类型(知识 / 资料)必须在**用户做保存决定的同一屏内**显示 + 可改;**绝不藏在 frontmatter / settings / 二级菜单**。用户应当 NEVER 需要琢磨"这条笔记现在是哪类",knowlet UI 永远直接告诉他。
+
 ## §5 与其他 ADR 的关系
 
 本 ADR 在依赖图里**位于根**(其它 AI / IA 相关 ADR 都引用它的根原则):
@@ -184,8 +236,8 @@ ADR-0009(review queue = 认知契约第一个 mechanism)
 
 本 ADR 跟其它 ADR 的 anti-goal 联动:
 
-- ❌ **AI 替用户做笔记正文最终决策**(per ADR-0024 §A;本 ADR 原则 1)
-- ❌ **AI auto-write / auto-tag / auto-move / auto-merge**(per ADR-0024 §C/D;本 ADR 原则 1 + 7)
+- ❌ **AI 替用户做笔记入库的最终决策**(per ADR-0024 §A;本 ADR 原则 1)。**注意**:AI **允许写大量正文**,只要用户**显式调用** AND **走 review 流让用户做最终入库决策**。差异是触发模型 + 决策权,不是 AI 写多少字数
+- ❌ **AI auto-tag / auto-move / auto-merge / auto-import-to-vault 等任何不经用户显式触发就改 vault 状态的行为**(per ADR-0024 §C/D;本 ADR 原则 1 + 7)
 - ❌ **streak / guilt / leaderboard / 通知催复习**(本 ADR 原则 6)
 - ❌ **typing-time AI autocomplete**(本 ADR 原则 5 + ADR-0028 §3)
 - ❌ **"AI 总结今日笔记 / 周报" 让用户跳过原文**(本 ADR 原则 4)
