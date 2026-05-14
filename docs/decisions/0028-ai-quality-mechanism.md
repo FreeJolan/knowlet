@@ -153,6 +153,83 @@ per 项目 memory `project_ai_design_borrow_from_claude_code`:knowlet AI 的工�
 
 **为什么不前置**:用户原话(2026-05-14):"我觉得没必要一开始做那么复杂,甚至考虑做什么 eval 决策,即使要做也是后续的事情了。" 机制做对了,初期手动 dogfood 已足;eval 是规模化质量保障工具,Phase 3 单人开发期收益低、成本高。
 
+### §9 对话上下文管理 + LLM API 调用机制
+
+LLM API(OpenAI Chat Completions / Anthropic Messages / Vercel AI SDK 底层)**全部无状态**。每次调用都是独立的,SDK 不替我们维护对话历史。这是 LLM 应用开发的基础事实,所有设计建立在它上面。
+
+#### 9.1 历史维护是 knowlet 的责任
+
+每次 chat 调用,knowlet 都必须组装并发送**完整 message 数组**(system + 所有历史 turn + 当前 user 消息)。没有任何 SDK 替我们做这件事(Vercel AI SDK 的 `useChat` 仅前端 React state 缓存,底层调用仍发完整数组)。
+
+knowlet 历史持久化位置: `vault/.knowlet/conversations/<chat_id>/messages.jsonl`(per ADR-0023 §"events log" 的同构 store)。Drive sync 把它跟笔记一起同步(per ADR-0027)。
+
+#### 9.2 上下文增长 → 三层策略组合
+
+20 轮对话后,单次调用输入轻松超过 10K tokens(history + 检索片段 + envelope)。**成本 + 延迟随对话长度线性增长**。Knowlet chat 用以下组合控制:
+
+| 策略 | 触发 | 行为 |
+|---|---|---|
+| **滑动窗口** | 默认,所有对话 | 保留最近 N 轮 raw(默认 N=20) |
+| **摘要压缩** | 超过窗口 | 把超出窗口的老 turn 喂另一次 LLM 调用压成 1 段摘要,挂在 system 后、history 前 |
+| **用户主动重置** | 始终可用 | "新建对话" 按钮 → 归档当前 chat 到 `conversations/`,开新会话 |
+
+**Phase 3 起步只做滑动窗口**;摘要压缩 / 自动重置等到 dogfood 撞到长对话痛点再加。
+
+#### 9.3 Envelope 顺序必须 cache-friendly
+
+Anthropic prompt caching:**5 分钟内同一 stable prefix 的后续调用收 1/10 价**。envelope 7 层组装必须按"稳定度从高到低"排序,把变动小的层放前面:
+
+```
+[system static]                ← 长期稳定(每个 role 一份),缓存命中
+[user_profile.md]              ← 用户编辑才变,缓存命中
+[wiki_schema.md]               ← 用户编辑才变,缓存命中
+[vault_shape]                  ← 派生,5min 内大概率不变,缓存命中
+[recent_activity]              ← 每次新调用就变,不缓存
+[message history]              ← 增长部分,跟当前对话绑定
+[<task> / <rules> / <examples>] ← per-call
+[当前 user message]            ← 永远新
+```
+
+这条顺序在 `knowlet/core/ai/envelope.py` 的组装函数里**硬编**,所有 role 共用。
+
+#### 9.4 Retrieved notes 在历史里的保留策略
+
+Chat 第一轮做了 retrieve 返回 5 篇笔记片段(2-3K tokens),第二轮历史里要保留这些片段吗?
+
+- **保留(默认)**: 上下文连贯,模型能基于第一轮检索结果回答 follow-up。代价 = 每轮都拖着这些 tokens
+- **每轮重新检索**: token 省,但 follow-up 可能漂移到新检索结果上 → 答案不连续
+
+**knowlet 默认 = 保留,但裁剪**:只在 history 里保留每篇笔记的 title + 关键片段(~200 tokens/note),不带全文。全文只在该 turn 的 prompt 里出现一次。
+
+#### 9.5 cliproxyapi 路径专项
+
+用户(包括我们 dogfood)很可能通过 cliproxyapi 走 OAuth Claude 路径,而不是直连 Anthropic API。这条路径有几个区别要 knowlet 在设计上对齐:
+
+| 维度 | 直连 Anthropic API | cliproxyapi → `claude -p` |
+|---|---|---|
+| 凭证 | API key | OAuth Claude 订阅配额 |
+| 状态 | 服务端无状态(API 真)| `-p` 进程无状态(进程真),knowlet 仍发完整 history |
+| 用户配置漏入 | 无 | **`~/.claude/CLAUDE.md` + 项目 CLAUDE.md + skill 会注入**,可能污染 knowlet 输出 |
+| Claude 内置 tool | knowlet 不允许 LLM 直接动 vault | 同左 —— cliproxyapi 必须运行在禁 tool 模式;**knowlet 不依赖 LLM 内置 tool** |
+| Prompt cache | 完整支持(传 `cache_control`)| 取决于 cliproxyapi 是否透传 cache 字段;**有则赚,无则正常** |
+| 启动延迟 | 网络往返 | + 几百 ms 进程 spawn 开销 |
+| 模型固定 | API 调用方指定 | 只能用当前登录的 Claude 模型 |
+
+**knowlet 的 design 必须同时兼容两条路径**:
+- 默认配置 = cliproxyapi(per global CLAUDE.md 上的 Settings 引导),零摩擦
+- Settings 允许配置直连 API(高级用户 / 不想要配置污染 / 要更稳的延迟)
+- envelope 设计 cache-friendly + 不依赖 Claude 内置 tool —— 两条路径都能跑
+
+**配置污染兜底**:Phase 3 内 dogfood 阶段接受 `~/.claude/CLAUDE.md` 漏入(成本低、影响小);灰度前(Phase 4)必须实测 + 文档化此风险,或要求 cliproxyapi 增强为"isolated context 模式"。
+
+#### 9.6 关键设计纪律:LLM = 决策大脑,knowlet = 动手手脚
+
+**任何对 vault 的实际写操作(create file / move / delete / update),永远不通过 LLM tool call 执行**。LLM 的输出永远是**结构化 JSON 决策**(JSON schema 校验后),knowlet 自己的代码读 JSON 后执行实际动作。
+
+例:Editor advisor 输出 `{"recommended_folder": "concepts/rag/", "confidence": 0.8, "reason": "..."}`,knowlet UI 弹气泡让用户 accept,**用户点 accept 后 knowlet 自己做 `vault.move_note()`**。LLM 永远不直接动文件。
+
+这条是 ADR-0024 §C "auto-move 禁止" + ADR-0028 §2 第 6 条 "first-class tool 调用" 的合并表达。也是 cliproxyapi 路径下的硬保险 —— 即使 Claude 内置 tool 没禁,knowlet 也不会被它影响。
+
 ### §8 不做的事(显式划清)
 
 - ❌ **AI 替用户写正文并直接落库** — per ADR-0024 §5 A。允许 AI 输出**草稿**进 drafts queue,**用户审批是入库的硬前置**
