@@ -97,7 +97,8 @@ per 项目 memory `project_ai_design_borrow_from_claude_code`:knowlet AI 的工�
 - ⚠️ ⌘K 内联 AI 重写:必须走 diff preview + accept,绝不 silent overwrite;且 ⌘K 在 knowlet 已被 quick switcher 占,要换键
 - ⚠️ Tab autocomplete:需要 fine-tuned 小快模型,Phase 3 不做
 - ⚠️ Composer / Agent mode:跟 ADR-0024 §C 冲突,knowlet 等价是 mining task / linter / reorg planner(用户主动触发,不暴露"agent 自由行动")
-- ❌ Cursor 的 AI-driven authorship 文化("AI 写 70%,你 review"):跟 ADR-0024 §A + ADR-0013 §"用户拥有" 直接冲突。knowlet 反过来:**用户写 / AI 提议 + 拓展 + 帮整理**
+- ❌ Cursor 的 **autonomously-triggered AI authorship**(typing-time Tab autocomplete / 主动浮 suggest):跟 ADR-0024 §A "AI 必须用户显式调用才写" + ADR-0024 §"AI 替写 toggle 不开后门" + 新增 [ADR-0029 §4 原则 5 "AI 不主动浮"](./0029-cognitive-contract.md) 冲突。 
+  knowlet **允许 AI 写大量正文**,**前提是用户显式调用**(在 chat 里说"帮我起草这篇")**且必须走 drafts queue 让用户做最终入库决策**(per ADR-0013 + [ADR-0029 §4 原则 1](./0029-cognitive-contract.md))
 
 **两个参考都没有 + knowlet 必须自己设计**:
 - 笔记 tool catalog(create_card / start_quiz / list_drafts / suggest_folder / lint_note / find_dangling_concepts / 等)
