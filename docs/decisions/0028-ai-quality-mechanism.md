@@ -69,11 +69,11 @@ Phase 3 每个 role slice 在 review 前,必须证明这 8 条都满足:
    - **Reorg planner** → 必须输出 manifest + diff 预览
 8. **可中断 + 可撤销** — 长链 AI 任务(mining run / reorg / lint)用户**随时可停**(取消按钮),已落地的写动作**可 undo**(走 `.knowlet/backups/` + `vault.events` rewind)。
 
-### §3 参考架构:Claude Code(默认照抄,例外才发明)
+### §3 参考架构:Claude Code(后端工程)+ Cursor(集成 UX),默认照抄,例外才发明
 
-per 项目 memory `project_ai_design_borrow_from_claude_code`:knowlet AI 的工程模式默认 = Claude Code 的成熟实践。
+per 项目 memory `project_ai_design_borrow_from_claude_code`:knowlet AI 的工程模式默认 = 两个成熟产品的实践。Claude Code 教**怎么把 LLM 调出好结果**;Cursor 教**怎么把 AI 顺滑嵌进用户在编辑笔记的工作面板**。两者解决不同问题,knowlet 都需要。
 
-**直接借鉴的部分**(不发明):
+**从 Claude Code 直接照抄(后端 / prompt 层)**:
 - 7 层 prompt envelope 结构(ADR-0024 §3 已落)
 - `<system-reminder>` / `<example>` / `<task>` / `<rules>` 等 anchor tag
 - 多层级 memory(`~/.knowlet/wiki_schema.md` + `vault/.knowlet/wiki_schema.md`,跟 Claude Code 的 `~/.claude/CLAUDE.md` + 项目 CLAUDE.md 同构)
@@ -85,7 +85,21 @@ per 项目 memory `project_ai_design_borrow_from_claude_code`:knowlet AI 的工�
 
 **参考方式**:直接观察我们当前 Claude Code 运行环境(我们就在它里面跑),不是去抓网上泄漏版本。开发期通过 `~/.claude/`、`~/.claude/projects/<proj>/memory/`、当前 system prompt + tool catalog 直接观察 + 模仿。
 
-**必须自己设计的部分**(笔记领域特化):
+**从 Cursor 直接照抄(集成 UX 层)**:
+- **选中文本 → 召唤 AI 自动带 context**(笔记里选一段 → 快捷键 → chat 已知道这段)
+- **`@-mention` 在 chat 里精准拉对象进 context**(@ 笔记 / @ folder / @ tag,比纯 retrieve 更可控)
+- **Suggestion → Preview diff → Apply 流**(对应 knowlet 的 drafts queue;UI 必须做 diff 视图,不是只展示 final)
+- **`.cursorrules` 项目级规则文件存在**(对应我们 `wiki_schema.md`)
+- **整 codebase / vault index 给 AI 用**(我们已有 FTS + vec)
+- **显式隐私模式开关在 Settings 显眼位置**
+
+**Cursor 慎抄 / 不抄的部分**:
+- ⚠️ ⌘K 内联 AI 重写:必须走 diff preview + accept,绝不 silent overwrite;且 ⌘K 在 knowlet 已被 quick switcher 占,要换键
+- ⚠️ Tab autocomplete:需要 fine-tuned 小快模型,Phase 3 不做
+- ⚠️ Composer / Agent mode:跟 ADR-0024 §C 冲突,knowlet 等价是 mining task / linter / reorg planner(用户主动触发,不暴露"agent 自由行动")
+- ❌ Cursor 的 AI-driven authorship 文化("AI 写 70%,你 review"):跟 ADR-0024 §A + ADR-0013 §"用户拥有" 直接冲突。knowlet 反过来:**用户写 / AI 提议 + 拓展 + 帮整理**
+
+**两个参考都没有 + knowlet 必须自己设计**:
 - 笔记 tool catalog(create_card / start_quiz / list_drafts / suggest_folder / lint_note / find_dangling_concepts / 等)
 - Drafts review queue 工作流 — knowlet 独有的 hybrid 落地路径
 - 跨笔记 semantic 工具(near-duplicates / cross-page contradictions / dangling concepts)
