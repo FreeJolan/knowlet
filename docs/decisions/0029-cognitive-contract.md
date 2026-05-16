@@ -4,6 +4,9 @@
 
 - Status: Accepted
 - Date: 2026-05-15
+- Last update: 2026-05-16(§4 加 3-test、§4 原则 7 加 capture-time default 与 4 个 anti-drift 兜底、§4.5 命名 confirmed、Lint 触发约束 §5b)
+
+**重要 status(2026-05-16)**:knowlet 处于 v0.x 开发期(per ADR-0022),**无外部用户**。本 ADR 的所有 schema 字段、frontmatter 标记(如 `_origin` / `_type`)、目录约定(如 `drafts/archive/`)在开发期**可自由迭代**,不需要写 migration 路径。一旦 bump 到 v1.0.0-rc.1 进入灰度期,本 ADR 引入的所有数据结构必须按 ADR-0018 §1 演进规则处理(届时再 ADR amendment)。
 
 ## Context
 
@@ -139,6 +142,26 @@ User-pull,不是 AI-push。default 路径是"自己写",召 AI 是 explicit 选�
 - 任何子系统(SRS / quiz / lint)用户可完全关闭而不影响 knowlet 主功能
 - **Vault Health Dashboard** 用户主动打开才看,不主动推送
 
+#### §4 原则 5 ↔ 原则 6 边界检测(3-test)
+
+原则 5 "AI 不主动浮" 跟原则 6 "提供内部觉察 banner" 表面有矛盾,实际是同一原则的两面。具体边界用 3-test 判定:
+
+某条提示是 **push(违反原则 5)** 还是 **invite(满足原则 6)**?三个问题:
+1. 用户 dismiss 后**永久消失**吗?(还是再次出现?)
+2. 不 dismiss 也能**继续工作**吗?(还是阻断主流程?)
+3. 措辞是**邀请性**吗?(还是 demanding / urgent?)
+
+3 个 yes → 允许 invite。任何一个 no → 违反原则 5,改设计。
+
+**例子对照**:
+
+| UI 表现 | dismiss 后永久消失? | 不 dismiss 也能工作? | 措辞邀请性? | 判定 |
+|---|---|---|---|---|
+| ai-drafted note 顶部一次性 banner "要现在过一遍?" | ✅ | ✅ | ✅ | OK invite |
+| Dashboard 显示 "本月 17 篇直接 accept" | ✅(用户开才看) | ✅ | ✅ | OK invite |
+| 启动时 modal "你欠 12 条 review!" | ❌(每次启动) | ❌(阻断) | ❌(demanding) | ❌ push |
+| 红色 badge 显示 drafts 数 | ❌(常显) | ✅ | ❌(暗示 urgent) | ❌ push |
+
 ### 原则 7: Anti-drift design(反漂移设计)
 
 假设用户长期一定会漂向懒。设计让正确行为是 default,懒行为需 explicit cost。
@@ -147,7 +170,24 @@ User-pull,不是 AI-push。default 路径是"自己写",召 AI 是 explicit 选�
 - approve 单一动作必须看到 final 形态;不能从列表批量秒批
 - 没有 "all-accept-default" 按钮
 - chat 答案 source citation 比 answer 视觉权重更高(轻 nudge 用户回 source)
-- AI drafts queue 有自然 cost(必须主动打开 + 主动 accept / reject),不会"忘记看"则自动入库
+
+**Capture-time inline review 是 default,drafts queue 是 explicit-defer exception**:
+
+这条 invariant 防止 drafts queue 变成"AI 输出垃圾场" → 破窗效应 → 永远的"明天 review"。具体:
+
+1. **任何 AI 生成内容,UI 必然给用户一次"看到 + 决定"的机会**,不允许默默落 drafts queue
+2. **drafts queue 仅装"用户 explicit 选 save-for-later"的内容**,不是"AI 默认落点"
+3. **入口分四类**(详 ADR-0009 amendment):
+   - chat 粘 URL → 当场 inline review(三按钮:资料 / 知识 / 暂存)
+   - 拖拽 / Capture box → 模态半屏,必须 confirm
+   - Mining task 后台跑完 → 下次 knowlet 启动 first thing 看到 + 主动跳过 3 次才进 queue + 上限自动暂停
+   - chat 里"帮我起草" → 当场显示,当场决定
+
+**Drafts queue 的 anti-drift 兜底**(防止 deferred 部分长期堆积):
+- **age tickling**: 7 天灰显;30 天 banner "要 review 还是归档?";90 天自动归档到 `drafts/archive/`(不删,可恢复)
+- **soft limit**: active queue > 20 → 创建新 draft 时透明提示"已有 23 条 deferred,先 review?"(不 block)
+- **Mining task 节流**: 每 task 默认 max 5 pending,达上限 task 自动暂停
+- **无 streak / guilt / 红 badge**(per 原则 6 + §4 3-test)
 
 ### 原则 8: Make depth visible(让深度成可观察 metric)
 
@@ -213,6 +253,18 @@ knowlet 因此区分两类笔记:
 
 **Meta 原则: 结构决策必须 visible**:笔记类型(知识 / 资料)必须在**用户做保存决定的同一屏内**显示 + 可改;**绝不藏在 frontmatter / settings / 二级菜单**。用户应当 NEVER 需要琢磨"这条笔记现在是哪类",knowlet UI 永远直接告诉他。
 
+**命名 confirmed**(2026-05-16):
+- 中文: **知识 / 资料**
+- 英文: **Knowledge / Reference**
+- 不使用"笔记 / 素材"(素材过于原料感)、"沉淀 / 收藏"(收藏跟 Favorites 撞名)
+
+**Mobile 端处理**(forward-looking,Phase 5 落地时按此原则):
+- **不支持 drafts review on mobile**(per 用户 2026-05-16 决定:review 不带 edit 是半成品)
+- 移动端可**read-only 显示 deferred drafts 数 + age**(信息,不操作),提示用户回桌面处理
+- 知识类笔记的深度审 / 编辑 → 桌面端
+- 资料类笔记的快速浏览 + 复习 → 移动端 first-class
+- 这条跟 ADR-0029 §1 移动端定位"读 / 复习"一致
+
 ## §5 与其他 ADR 的关系
 
 本 ADR 在依赖图里**位于根**(其它 AI / IA 相关 ADR 都引用它的根原则):
@@ -231,6 +283,22 @@ ADR-0024(7 roles = 认知契约的 AI 落地)
 ADR-0028(质量机制 = 认知契约的 AI 实施护栏)
 ADR-0009(review queue = 认知契约第一个 mechanism)
 ```
+
+## §5b Linter 触发约束(amendment to ADR-0024 §4 Linter role)
+
+Linter 跑得起 ≠ 应该主动跑。具体触发规则:
+
+- ✅ **允许触发**:`knowlet lint` 命令 / Settings 里 "扫描笔记" 按钮 / 用户 opt-in 配置的 scheduled run(默认关) / 用户 opt-in 周报(默认关)
+- ❌ **禁止**:knowlet 启动时自动跑 / 笔记保存时自动 lint / 任何不经用户 explicit 触发的 lint
+
+**Lint 输出渲染**:
+- 报告 = 列表式(用户主动开 Lint 面板才看)
+- frontmatter 标记 = `status: needs-update` 写到对应笔记(per ADR-0024 §B 不动正文,只动 status field)
+- 进 Vault Health Dashboard 分类汇总(用户主动开)
+- **NoteView 一次性 banner**:仅在用户打开 `status: needs-update` 笔记时显示,过 §4 3-test(dismissible + non-blocking + 邀请措辞)
+- **绝不**主动弹结果 modal / 红点 / 通知
+
+**Why 这条 amendment**:Lint 跨 vault 扫一次,可能输出几十条问题。如果完成后主动弹,违反原则 5 + 制造类似 drafts queue 的 backlog 焦虑;如果不约束触发,后台自动跑会变成低质量噪音源。**用户主动触发 + 结果信息化呈现 = Lint 该有的姿态**。
 
 ## §6 不做的事(显式划清)
 

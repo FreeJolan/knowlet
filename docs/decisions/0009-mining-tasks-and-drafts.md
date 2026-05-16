@@ -132,3 +132,58 @@ optional Markdown body — 这是为什么这个 task 存在的说明
 - **遵循** [ADR-0008](./0008-cli-parity-discipline.md):6 个原子工具 + CLI 子命令 + slash + web endpoints + UI 面板,backend 函数共享;测试主要打 backend。
 - **遵循** [ADR-0006](./0006-storage-and-sync.md):tasks / drafts 用户文件用 Markdown,seen-set 派生状态用 JSON。
 - **不与** [ADR-0005](./0005-llm-integration-strategy.md) 冲突:LLM 通过同一个 OpenAI 兼容客户端调用,不引入新通道。
+
+---
+
+## Amendment 2026-05-16:drafts queue 不是默认收容所
+
+**Context**: 多轮 Phase 3 设计讨论后(per ADR-0029 §4 原则 7)确定了一个 invariant: drafts queue 不应该是 AI 输出的"默认目的地",否则会形成 broken windows 效应(队列堆积 → 用户破罐子破摔 → drafts 永远没 review)。
+
+ADR-0009 原始设计假设 mining drafts 自然进 queue,用户慢慢看。这条假设在用户行为现实(per ADR-0029 §3.1 behavioral drift)下不成立。本 amendment 重设计入队机制。
+
+### A2.1 Invariant: capture-time inline review is default,queue is explicit-defer exception
+
+**任何 AI 生成内容,UI 必然给用户一次"看到 + 决定"的机会**,不允许默默落 drafts queue。drafts queue 仅装"用户 explicit 选 save-for-later"的内容,**不是**"AI 默认落点"。
+
+### A2.2 各入口的具体 flow
+
+| 入口 | Flow |
+|---|---|
+| chat 粘 URL | AI fetch + summarize → 在 chat 当场显示 → 三按钮:**[📚 资料 直接存]** / **[🧠 知识 review 入库]** / **[暂存 进 queue]**(默认无,explicit 才选) |
+| 拖拽 / Capture box | 模态半屏 preview → 必须 confirm 一次才结束(approve / reject / save-for-later 三选一) |
+| chat 里"帮我起草这篇" | AI 起草 → 当场显示 → approve / edit then approve / reject / 暂存(后者 explicit) |
+| **Mining task 后台跑** | 跑完**不主动通知**;**下次 knowlet 启动 / 用户打开 Capture 面板 → first thing 看到"上次 mining 出了 N 篇,逐条 review?"**;用户主动跳过 3 次 → 下次 mining 跑前提示;每 task 默认 **max 5 pending**,达上限 task **自动暂停**,等用户清理 |
+
+### A2.3 Drafts queue 的 anti-drift 兜底
+
+对**用户 explicit defer** 进 queue 的内容,4 层兜底防长期堆积:
+
+1. **Age tickling**:
+   - draft 超 7 天 → 列表里 muted 显示
+   - draft 超 30 天 → 打开时顶部一次性 banner "这条 deferred 30 天了,要现在 review,还是归档?"(满足 ADR-0029 §4 3-test:dismissible + non-blocking + 邀请)
+   - draft 超 90 天 → **自动归档**到 `drafts/archive/<yyyy-mm>/`(**不删除**,可恢复;移出 active 队列)
+2. **Soft limit (visible)**:
+   - active queue > 20 → 创建新 draft 时 inline 提示"已有 23 条 deferred drafts,先 review?"
+   - 不 block,用户可以 override;但被透明告知
+3. **Mining task 自我节流**(per A2.2 表):
+   - 每 task 配置 `max_pending_drafts`(默认 5)
+   - 达上限 task **自动暂停**(状态 = paused-by-backlog)
+   - 用户清理后手动 unpause 或自动 unpause(per task config)
+4. **无 streak / guilt / 红 badge**(per ADR-0029 §4 原则 6):
+   - 显示用透明文字 + muted 颜色,不用情绪化提示
+   - "23 drafts pending" 是信息,不是 demand
+
+### A2.4 已实现路径的兼容
+
+ADR-0009 主体的 `<vault>/drafts/<id>-<slug>.md` 落点 + `<vault>/.knowlet/mining/<task_id>.json` seen-set 都不变。本 amendment 只改:
+
+- **入队时机**:从"自动入队"变成"capture-time review 后 explicit save-for-later 才入队"
+- **新增**:`drafts/archive/<yyyy-mm>/` 90 天归档目录
+- **新增**:task frontmatter 加 `max_pending_drafts: 5`(可改)
+- **新增**:task 状态枚举加 `paused-by-backlog`
+
+### A2.5 Why 这条 amendment 是 ADR-0029 §4 原则 7 (anti-drift) 的核心 mechanism
+
+如果 drafts queue 是默认收容所,knowlet 即使形式上满足"用户拥有 / review queue",实质上仍然 sliding into AI 内容的虚假积累(ADR-0029 §3.2 false accumulation)— 只是堆积发生在 drafts 这层而不是 notes 那层。
+
+本 amendment 强制"决策必须在 capture 那一刻发生",把"defer"变成 explicit 选项而非 default,从结构上断了 drift 路径。
