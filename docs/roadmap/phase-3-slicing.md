@@ -150,7 +150,8 @@ chat 入口空状态 + 一句话:"问关于你 vault 的任何问题"。
 她从来不点 chip,所有笔记保持默认 = 知识(她手写的)/ 资料(网页 capture)。OK 状态,不打扰。
 
 **新用户**: 
-第一次看到 chip 出现 → header 下一行小字解释 "knowlet 区分知识 / 资料两类... [了解更多] [知道了]" → dismiss 后不再出现。
+第一次看到 chip 出现 → header 下一行小字解释 "knowlet 区分知识 / 资料两类... [了解更多] [知道了]" → dismiss 后不再出现。 
+**之后任何时候**: 鼠标 hover chip → tooltip 显示一句话解释("知识 = 你要内化的内容,进 review queue / 资料 = 备查内容,直接存") + 可选 `(?)` 一级 affordance 展开更长解释(2026-05-16 加 — dismiss-once 假设太强,需要 permanent learnability)。
 
 ### 满足 ADR 检测
 - ADR-0029 §4.5: ✅ 整节物理实现
@@ -226,30 +227,39 @@ chat 里说 "起草这篇" → AI 在 chat 当场显示草稿 → 他读完点 [
 
 ## P3.4 — Editor advisor
 
-**范围**: 用户在 NoteView 写新笔记时,AI 根据 title + 前 N 字 + vault context 推荐 folder / tags / 相关笔记;气泡呈现,confidence < 0.5 不显示;用户 accept 才执行(knowlet 代码做,不是 LLM tool call)。
+**范围**: 用户在 NoteView 写新笔记后,**主动点击 "AI 建议位置" 按钮**触发;AI 根据 title + 前 N 字 + vault context 推荐 folder / tags / 相关笔记;气泡呈现,confidence < 0.5 不显示;用户 accept 才执行(knowlet 代码做,不是 LLM tool call)。
+
+**触发模型**:**纯 user-pull,不 auto-trigger**(2026-05-16 self-review 决定)。NoteView header 放一个 "AI 建议位置" 按钮,放在 type chip 旁边的位置 — 用户主动点才跑。
+
+**Why 不 auto-trigger**: 自动 debounce-on-typing 会:
+1. 违反 ADR-0029 原则 5(AI 不主动浮)
+2. 每次打字间断都调 LLM,成本爆炸
+3. 用户多数情况自己已经决定了 folder,AI 后浮变 noise
+
+User-pull 按钮的副作用是:用户不知道这功能存在的话不会点。需要在 NoteView 第一次出现的 onboarding hint 引导 + Settings → AI features 列出可用 AI 工具。
 
 ### 用户故事
 
-**小张(常用)**: 
-新建笔记,写完 title "Mintlify virtual filesystem" + 前两行内容 → header 气泡浮出"建议放 `concepts/mintlify/`,因为已有 3 篇 Mintlify 相关在那" → 他 accept → 笔记 move。
+**小张(主动用)**: 
+新建笔记 → 写完 title + 前几行 → **主动点 "AI 建议位置" 按钮** → 气泡浮出"建议放 `concepts/mintlify/`,因为已有 3 篇 Mintlify 相关在那" → 他 accept → 笔记 move。
 
 **小红**: 
-她写完笔记不点气泡 → 笔记保持原位 → 没影响。 
-失败路径: confidence 低时不显示气泡,她不感知 — 正确。
+她从来不点这个按钮 → 没影响,笔记保持原位 → OK,功能存在但不打扰。
 
 **新用户**: 
-空 vault 时 → advisor 没数据可参考 → 不显示。等他写了几篇后"自然就出现"。
+不知道这个按钮存在 → 第一次新建笔记时 header 有 onboarding hint "试试 AI 建议位置" 一次性显示 + 用户 dismiss 后不再出现(per §4 3-test) → 他点或不点都行。空 vault 时按钮 disabled + tooltip 解释 "等你写了几篇后我才知道你的习惯"。
 
 ### 满足 ADR 检测
 - ADR-0029 原则 1(用户最后字节): ✅ 气泡 = 建议,accept 才执行
 - ADR-0029 原则 4(why citation): ✅ "基于这 3 篇"
-- ADR-0029 原则 5(用户召唤): ✅ 用户主动写笔记时被动 nudge,不主动 push
+- ADR-0029 原则 5(用户召唤): ✅ **纯 user-pull(按钮触发,非 typing-time 自动)**
 - ADR-0028 §2 第 4 条(confidence threshold): ✅ < 0.5 不显示
 
 ### 显式不做
 - AI 改正文(per ADR-0024 §B)
 - 自动应用建议(per ADR-0024 §C)
 - Auto-tag(per ADR-0024 §D)
+- **Typing-time auto-trigger / debounce 浮气泡**(2026-05-16 决定:违反原则 5 + 成本爆炸 + noise)
 
 ---
 
@@ -261,7 +271,8 @@ chat 里说 "起草这篇" → AI 在 chat 当场显示草稿 → 他读完点 [
 
 **小张(用)**: 
 Settings → Mining → 新建任务 "每天早上抓 LLM 论文" → 配 prompt + RSS source + cron → 任务每天跑。 
-他出差 7 天回来 → 打开 knowlet → first thing 看到 "上次 mining 出 5 篇" → 逐条 review。
+他出差 7 天回来 → 打开 knowlet → first thing 看到 "上次 mining 出 5 篇,task X 已暂停等清理"(2026-05-16 加 — auto-pause 必须 user-aware) → 逐条 review → task 自动 unpause。 
+他到 Settings → Mining 看 task 列表 → 每个 task 显示 `running` / `paused-by-backlog` / `paused-by-user` 状态 + 一行解释。状态永远可见。
 
 **小红 / 新用户**: 
 不知道 mining 是什么,Settings 里看到入口但不点。OK。
@@ -283,8 +294,9 @@ Settings → Mining → 新建任务 "每天早上抓 LLM 论文" → 配 prompt
 ### 用户故事
 
 **小张(power user)**: 
-⌘⇧L 跑 lint → progress bar(全 vault 扫 1000 篇 P95 ≤ 30s) → 报告: 8 条问题,4 矛盾、2 dangling、1 missing entity、1 过时。 
-他点其中一条 → 跳 noteview → 自己改。改完 frontmatter `status: needs-update` 自动清除。
+⌘⇧L 跑 lint → progress bar(全 vault 扫 1000 篇 P95 ≤ 30s) → 报告: 50 条问题,**默认显示前 10 条按 severity 排序**(2026-05-16 加 — 防 backlog 压垮),其余 40 条折叠 "...还有 40 条 [展开]"。 
+他点其中一条 → 跳 noteview → 自己改。改完 frontmatter `status: needs-update` 自动清除。 
+14 天后他没全部处理完 → list 里剩下的 muted 显示;30 天后 dashboard 出现 "未处理 lint: 8 条";90 天后 hidden out of active view 但不删(可恢复)。
 
 **小红 / 新用户**: 
 不知道 lint 存在 → 在 Settings → Maintenance 下面有个 "Scan vault for issues" 按钮。他们不点也完全 OK,knowlet 不主动跑。
@@ -315,7 +327,8 @@ Settings → Mining → 新建任务 "每天早上抓 LLM 论文" → 配 prompt
 看一眼觉得太多数字 → 关掉 → 不再看 → OK,设计如此。
 
 **新用户**: 
-不会主动开,但用了一段时间后(假设设计上某天用户撞到它的入口)他打开看一眼 → 学到"哦原来 knowlet 区分知识 / 资料,以及 AI 起草和我手写"。
+不会主动开,但 vault 达到 50 / 200 / 500 篇 milestone 时一次性 invite → 他点 → 看一眼学到产品的认知结构(2026-05-16 加 — 没 discovery 机制 dashboard 等于白做)。 
+**常驻信息行**: 在 Capture 面板顶部 + Settings 首页有一行 muted 小字 "Vault Health: 8 drafts pending · 5 stale notes",点跳 dashboard。信息常驻不打扰。
 
 ### 满足 ADR 检测
 - ADR-0029 原则 8(make depth visible): ✅

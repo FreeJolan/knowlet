@@ -203,6 +203,11 @@ User-pull,不是 AI-push。default 路径是"自己写",召 AI 是 explicit 选�
   - **无 badge / 无通知 / 无 streak / 无 guilt 语气**
 - 点开 ai-drafted note 顶部一次性 banner:"AI 起草,你 approve 后未再修改。Source: [link]。要现在过一遍吗?" —— **邀请**,不**催促**
 
+**Dashboard discovery 机制**(2026-05-16 加 — self-review 发现 dashboard 如果没人主动开,等于原则 8 形同虚设):
+- **Threshold invite(一次性)**: vault 达到关键 milestone(50 篇 / 200 篇 / 500 篇)时 invite 一次"想看 Health Dashboard 吗?"。过 §4 3-test(dismissible 永久、非阻断、邀请措辞)。每个 milestone 只触发一次,不重复
+- **常驻信息行**: 在自然 surface(Settings 首页 / Capture 面板顶部)放一行 muted 小字 "Vault Health: 8 drafts pending · 5 stale notes" → 点击跳 dashboard。信息常驻但视觉权重低,不打扰
+- 这两条都过 §4 3-test,属 invite 不属 push
+
 ## §4.5 知识 vs 资料(两类内容的并行路径)
 
 并非所有进 vault 的内容都需要同等深度的认知处理。强制全部走"严格 engagement gate"会逼用户去用别的工具存参考资料,违反 knowlet 帮用户省摸索时间的差异化(per memory `project_knowlet_ai_value_is_curated_workflow`)。
@@ -253,6 +258,11 @@ knowlet 因此区分两类笔记:
 
 **Meta 原则: 结构决策必须 visible**:笔记类型(知识 / 资料)必须在**用户做保存决定的同一屏内**显示 + 可改;**绝不藏在 frontmatter / settings / 二级菜单**。用户应当 NEVER 需要琢磨"这条笔记现在是哪类",knowlet UI 永远直接告诉他。
 
+**Permanent learnability(2026-05-16 加 — self-review 发现 dismiss-once onboarding 假设过强)**:
+- 任意 chip 鼠标 hover → tooltip 永久可用,显示一句话解释("知识 = 你要内化的内容,会进 review queue / 资料 = 备查内容,直接存")
+- 任意 chip 旁边可选 `(?)` 一级 affordance,点开展开更长解释
+- 这条对 dismiss-once onboarding 是补强:onboarding 解释一次给意识到的人,hover tooltip 给所有人随时复习
+
 **命名 confirmed**(2026-05-16):
 - 中文: **知识 / 资料**
 - 英文: **Knowledge / Reference**
@@ -299,6 +309,16 @@ Linter 跑得起 ≠ 应该主动跑。具体触发规则:
 - **绝不**主动弹结果 modal / 红点 / 通知
 
 **Why 这条 amendment**:Lint 跨 vault 扫一次,可能输出几十条问题。如果完成后主动弹,违反原则 5 + 制造类似 drafts queue 的 backlog 焦虑;如果不约束触发,后台自动跑会变成低质量噪音源。**用户主动触发 + 结果信息化呈现 = Lint 该有的姿态**。
+
+**Lint 自身的 backlog anti-drift(2026-05-16 加 — self-review 发现:lint 报告 50 条同样会 backlog)**:
+
+跟 drafts queue 平等处理 — 适用原则 7 anti-drift:
+- **信息分级显示**:Lint 报告按 severity 排序;默认只显示前 10 条,其余折叠 "...还有 N 条"。**避免一打开就被 backlog 压垮 → 关掉 → 永远不处理**
+- **`status: needs-update` 标记的 age tickling**:
+  - 14 天未处理 → 笔记 list / dashboard 上 muted 颜色显示
+  - 30 天未处理 → Vault Health Dashboard 出现一行 "未处理 lint: 8 条,要看看吗?"
+  - 90 天未处理 → 标记不删但 hidden 出 active lint view(per drafts queue 相同的 archive 模式)
+- **无 streak / guilt / 红 badge**(同 drafts queue)
 
 ## §6 不做的事(显式划清)
 

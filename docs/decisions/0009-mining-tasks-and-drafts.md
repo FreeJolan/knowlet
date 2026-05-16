@@ -169,6 +169,10 @@ ADR-0009 原始设计假设 mining drafts 自然进 queue,用户慢慢看。这�
    - 每 task 配置 `max_pending_drafts`(默认 5)
    - 达上限 task **自动暂停**(状态 = paused-by-backlog)
    - 用户清理后手动 unpause 或自动 unpause(per task config)
+   - **可见性要求**(2026-05-16 加 — self-review 发现:silent auto-pause = 无声失败,违反 ADR-0028 §6 失败模式契约):
+     - Mining task 列表(Settings → Mining)永远显示每个 task 的状态(`running` / `paused-by-backlog` / `paused-by-user`)+ 一行简短解释 `paused-by-backlog` 的 task 显示 "已暂停 — 5 条 drafts 待审,清理后自动恢复"
+     - **下次 knowlet 启动 first-thing surface**(per A2.2 mining task 入口)除了说"上次出 N 篇要 review",**还要附加**"task X 已自动暂停,清理后恢复"
+     - 这两条让 auto-pause 永远 user-aware,不是 silent failure
 4. **无 streak / guilt / 红 badge**(per ADR-0029 §4 原则 6):
    - 显示用透明文字 + muted 颜色,不用情绪化提示
    - "23 drafts pending" 是信息,不是 demand
