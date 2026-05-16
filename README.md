@@ -112,6 +112,7 @@ knowlet 的差异本质是 **不自动化 Organize、Distill 永远走审批**�
 
 ## 文档索引
 
+- [`CLAUDE.md`](./CLAUDE.md) — **AI agent 协作准则**(Claude Code / Cursor / 其他 agent 进项目第一件事就是读这个)。包含工程纪律、UI 设计强制工作流、三角色 personas、不造轮子原则等。
 - [`docs/`](./docs/) — 设计文档总入口
   - [`decisions/`](./docs/decisions/) — 架构决策记录(ADR)
   - [`design/`](./docs/design/) — 活文档:架构 / 用户 / 组织策略 / 技术栈 / 语音

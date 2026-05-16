@@ -112,6 +112,7 @@ The three scenarios share **one user context** (goals / preferences / mistake pa
 
 ## Document Index
 
+- [`CLAUDE.md`](./CLAUDE.md) — **Collaboration guidelines for AI agents** (Claude Code / Cursor / others should read this first). Engineering discipline, the mandatory UI design workflow, the three personas, no-wheel-reinvention principle, and more.
 - [`docs/`](./docs/) — Top-level entry to design documents
   - [`decisions/`](./docs/decisions/) — Architecture Decision Records (ADR)
   - [`design/`](./docs/design/) — Living docs: architecture / users / organization / tech stack / voice
