@@ -3,6 +3,8 @@
 > **中文** | English to follow if needed
 >
 > Last update: 2026-05-16
+>
+> ⚠️ **2026-05-16 重打包**: Slice 概览那张表已被 [`phase-3-stages.md`](./phase-3-stages.md) 的 7-Stage 版本取代(把原推到 Phase 4 的 Eval / Reorg planner / Tidy advisor / Retrieval v2 全部拉回 Phase 3,让 Phase 4 纯 hardening)。本文件里**每个 slice 的详细描述**(用户故事 / ADR 检测)仍是有效参考,但**推进顺序请看 stages 文档**。
 
 ## 背景
 
