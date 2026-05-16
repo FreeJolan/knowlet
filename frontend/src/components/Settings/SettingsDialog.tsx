@@ -32,10 +32,8 @@ import {
   exportVaultUrl,
   getAuthStatus,
   getLLMConfig,
-  getRecommendedModels,
   getSyncMode,
   previewImport,
-  type RecommendedModel,
   setSyncMode as apiSetSyncMode,
   startConnect,
   testLLM,
@@ -590,11 +588,6 @@ function LLMConfigPanel(): React.ReactNode {
     queryFn: getLLMConfig,
     staleTime: 30_000,
   });
-  const recommended = useQuery({
-    queryKey: QK.llmRecommended,
-    queryFn: getRecommendedModels,
-    staleTime: 5 * 60_000,
-  });
   const update = useMutation({
     mutationFn: updateLLMConfig,
     onSuccess: (next) => {
@@ -618,7 +611,6 @@ function LLMConfigPanel(): React.ReactNode {
     api_key: "",
   });
   const [dirty, setDirty] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Sync draft when config query loads / refreshes.
   useEffect(() => {
@@ -642,47 +634,28 @@ function LLMConfigPanel(): React.ReactNode {
     );
   }
 
-  const currentTier = cfg.data.tier.tier;
-  const tierColor = {
-    A: "rgb(22, 163, 74)",   // green-600
-    B: "rgb(202, 138, 4)",   // yellow-600
-    C: "rgb(220, 38, 38)",   // red-600
-    unknown: "rgb(120, 120, 120)",
-  }[currentTier];
-
-  const handlePickModel = (
-    model_id: string,
-    base_url_hint: string | null,
-    provider: string,
-  ) => {
-    setDraft((d) => ({
-      ...d,
-      provider,
-      model: model_id,
-      base_url: base_url_hint ?? d.base_url,
-    }));
-    setDirty(true);
-  };
-
   const handleSave = () => {
-    const payload: Parameters<typeof updateLLMConfig>[0] = {
-      provider: draft.provider,
-      base_url: draft.base_url,
-      model: draft.model,
-      // empty string = keep existing key per backend convention
-      api_key: draft.api_key,
-    };
-    update.mutate(payload, {
-      onSuccess: () => {
-        setDraft((d) => ({ ...d, api_key: "" }));
-        setDirty(false);
+    update.mutate(
+      {
+        provider: draft.provider,
+        base_url: draft.base_url,
+        model: draft.model,
+        // empty string = keep existing key per backend convention
+        api_key: draft.api_key,
       },
-    });
+      {
+        onSuccess: () => {
+          setDraft((d) => ({ ...d, api_key: "" }));
+          setDirty(false);
+        },
+      },
+    );
   };
 
-  const providerEntries = Object.entries(
-    recommended.data?.providers ?? {},
-  ) as [string, RecommendedModel[]][];
+  const inputStyle = {
+    borderColor: "var(--line)",
+    background: "var(--bg-1)",
+  } as const;
 
   return (
     <Section title={t("llm.label")}>
@@ -690,91 +663,51 @@ function LLMConfigPanel(): React.ReactNode {
         {t("llm.blurb")}
       </div>
 
-      {/* Tier badge — current state. */}
-      <div className="mt-2 flex w-full items-center gap-2 text-xs">
-        <span
-          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px]"
-          style={{
-            background: "var(--bg-1)",
-            border: `1px solid ${tierColor}`,
-            color: tierColor,
-          }}
-          data-testid="llm-tier-badge"
-        >
-          Tier {currentTier}
-        </span>
-        <span className="text-muted-foreground">{cfg.data.tier.label}</span>
-      </div>
-
-      {currentTier !== "A" && (
-        <div
-          className="mt-2 w-full rounded border p-2 text-[11px]"
-          style={{
-            borderColor: tierColor,
-            background: "color-mix(in srgb, currentColor 5%, transparent)",
-          }}
-        >
-          <div>{cfg.data.tier.description}</div>
-          {cfg.data.tier.degraded_roles.length > 0 && (
-            <div className="mt-1 text-muted-foreground">
-              {t("llm.degradedRoles")}: {cfg.data.tier.degraded_roles.join(", ")}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Recommended models — primary picker. */}
-      <div className="mt-3 w-full">
-        <div className="mb-1 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
-          {t("llm.recommendedHeading")}
-        </div>
-        <div className="grid grid-cols-1 gap-1">
-          {providerEntries.map(([provider, entries]) => (
-            <div key={provider}>
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
-                {provider}
-              </div>
-              <div className="mt-1 flex flex-wrap gap-1">
-                {entries.map((m) => {
-                  const isActive =
-                    draft.model === m.model_id &&
-                    draft.provider === provider;
-                  const tierC = {
-                    A: "rgb(22, 163, 74)",
-                    B: "rgb(202, 138, 4)",
-                    C: "rgb(220, 38, 38)",
-                  }[m.tier];
-                  return (
-                    <button
-                      key={`${provider}/${m.model_id}`}
-                      type="button"
-                      onClick={() =>
-                        handlePickModel(m.model_id, m.base_url_hint, provider)
-                      }
-                      data-testid={`llm-pick-${m.model_id}`}
-                      className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] transition-colors hover:bg-accent/30"
-                      style={{
-                        background: isActive ? "var(--accent-tint-2)" : "var(--bg-1)",
-                        borderColor: isActive ? "var(--accent)" : "var(--line)",
-                        color: isActive ? "var(--ink)" : "var(--ink-mute)",
-                      }}
-                    >
-                      <span
-                        className="inline-block size-1.5 rounded-full"
-                        style={{ background: tierC }}
-                      />
-                      <span>{m.display_name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* API key field + Save / Test. */}
       <div className="mt-3 flex w-full flex-col gap-2">
+        <label className="flex w-full flex-col gap-1 text-[11px]">
+          <span className="text-muted-foreground">
+            {t("llm.providerLabel")}
+          </span>
+          <input
+            value={draft.provider}
+            onChange={(e) => {
+              setDraft((d) => ({ ...d, provider: e.target.value }));
+              setDirty(true);
+            }}
+            data-testid="llm-provider-input"
+            className="rounded border px-2 py-1 text-xs"
+            style={inputStyle}
+          />
+        </label>
+
+        <label className="flex w-full flex-col gap-1 text-[11px]">
+          <span className="text-muted-foreground">{t("llm.baseUrlLabel")}</span>
+          <input
+            value={draft.base_url}
+            onChange={(e) => {
+              setDraft((d) => ({ ...d, base_url: e.target.value }));
+              setDirty(true);
+            }}
+            data-testid="llm-base-url-input"
+            className="rounded border px-2 py-1 text-xs"
+            style={inputStyle}
+          />
+        </label>
+
+        <label className="flex w-full flex-col gap-1 text-[11px]">
+          <span className="text-muted-foreground">{t("llm.modelLabel")}</span>
+          <input
+            value={draft.model}
+            onChange={(e) => {
+              setDraft((d) => ({ ...d, model: e.target.value }));
+              setDirty(true);
+            }}
+            data-testid="llm-model-input"
+            className="rounded border px-2 py-1 text-xs"
+            style={inputStyle}
+          />
+        </label>
+
         <label className="flex w-full flex-col gap-1 text-[11px]">
           <span className="text-muted-foreground">
             {t("llm.apiKeyLabel")}{" "}
@@ -798,61 +731,9 @@ function LLMConfigPanel(): React.ReactNode {
             }
             data-testid="llm-api-key-input"
             className="rounded border px-2 py-1 text-xs"
-            style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+            style={inputStyle}
           />
         </label>
-
-        <button
-          type="button"
-          onClick={() => setShowAdvanced((s) => !s)}
-          className="self-start text-[10px] text-muted-foreground hover:text-foreground"
-        >
-          {showAdvanced ? t("llm.advancedHide") : t("llm.advancedShow")}
-        </button>
-
-        {showAdvanced && (
-          <div className="flex w-full flex-col gap-2">
-            <label className="flex w-full flex-col gap-1 text-[11px]">
-              <span className="text-muted-foreground">{t("llm.providerLabel")}</span>
-              <input
-                value={draft.provider}
-                onChange={(e) => {
-                  setDraft((d) => ({ ...d, provider: e.target.value }));
-                  setDirty(true);
-                }}
-                data-testid="llm-provider-input"
-                className="rounded border px-2 py-1 text-xs"
-                style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
-              />
-            </label>
-            <label className="flex w-full flex-col gap-1 text-[11px]">
-              <span className="text-muted-foreground">{t("llm.baseUrlLabel")}</span>
-              <input
-                value={draft.base_url}
-                onChange={(e) => {
-                  setDraft((d) => ({ ...d, base_url: e.target.value }));
-                  setDirty(true);
-                }}
-                data-testid="llm-base-url-input"
-                className="rounded border px-2 py-1 text-xs"
-                style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
-              />
-            </label>
-            <label className="flex w-full flex-col gap-1 text-[11px]">
-              <span className="text-muted-foreground">{t("llm.modelLabel")}</span>
-              <input
-                value={draft.model}
-                onChange={(e) => {
-                  setDraft((d) => ({ ...d, model: e.target.value }));
-                  setDirty(true);
-                }}
-                data-testid="llm-model-input"
-                className="rounded border px-2 py-1 text-xs"
-                style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
-              />
-            </label>
-          </div>
-        )}
 
         <div className="flex flex-wrap gap-2 pt-1">
           <button

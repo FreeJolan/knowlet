@@ -36,21 +36,34 @@ ADR-0024 钉了 AI 能力的 envelope 结构(7 层 prompt)+ 7 个 role + 工作�
 
 ## Decision
 
-### §1 模型档位策略(用户带,我们画线)
+### §1 模型选择:用户带,我们不评判(2026-05-16 重写)
 
-knowlet 不内嵌 LLM、不替用户付费。**用户自带 API key / OAuth 凭证。** 但我们要承担"质量底线声明"责任:
+knowlet 不内嵌 LLM、不替用户付费、**不评估模型质量**、**不分类模型**、**不基于模型 disable 或 hint 任何 AI feature**。用户自带 API key / OAuth 凭证;model id / base URL 自由输入。
 
-**推荐清单(default = 我们调试时的目标模型)**:
+**为什么不分类 / 不推荐**:
+- 我们**没有专业模型评测 pipeline** —— 即使做也不够准
+- 模型迭代速度远超 knowlet 发版频率 —— UI 里的 hardcoded 推荐必然过期
+- 模型在具体任务上的表现取决于用户的具体 vault / 具体查询,**我们无法 generalize**
+- 替用户 advise = paternalism dressed up,违反 ADR-0029 §3"信息透明、用户自决"
 
-| Tier | 模型示例 | knowlet 行为 |
-|---|---|---|
-| **A. 推荐** | Claude Opus 4.7 / Sonnet 4.6 / GPT-5 / Gemini 2.5 Pro | 全部 7 个 AI role 正常工作 |
-| **B. 可用** | Claude Haiku 4.5 / GPT-4o-mini / Gemini 2.5 Flash | Chat / Capture 可用;Editor advisor / Linter 在 UI 显式标"降级模式,准确率可能下降" |
-| **C. 不推荐** | GPT-3.5 / 本地小模型 / 任何 < 8K context window | 大多数 hybrid role 直接 disable,UI 提示"请升级模型以解锁";只保留最基本的 chat fallback |
+**knowlet 对 AI 输出质量的责任**(代替模型分类):
+- §2 八条机制(envelope / audit / JSON schema / confidence / structured destination / first-class tool / why-citation / interruptible+undoable)
+- 这些机制**在任何模型上都工作**,失败时干净 surface(JSON parse fail 走 retry/abstain;confidence < threshold 抑制输出;tool 调用失败有 UI 表现)
+- 用户从**实际看到的输出**判断他的模型够不够用,不从我们贴的标签判断
 
-**配置入口**:Settings → LLM → 模型推荐列表(直接选)+ 自定义 base URL / model name(高级用户)。**默认配置 = 本机 cliproxyapi(OAuth Claude)**,因为用户多数已经有 Claude 订阅。
+**配置入口**: Settings → AI 配置 → provider / base URL / model / API key 四个自由文本字段 + Save + Test connection。**没有推荐列表 picker、没有 tier badge、没有 degraded 提示**。Test connection 只返回**事实**(连通性、延迟、echo),不评判模型。
 
-**质量降级是显式的,不是 silent**:用户选 B/C 档,knowlet UI 永远明确告知当前能力边界,不假装"什么都能做"。
+**用户怎么决定用什么模型**:
+- 读 docs(我们 dogfood 时实际用过的模型可以在 docs 里**事实陈述**,不是 evaluation,docs 比 UI 更新成本低 N 倍)
+- 问社区 / 自己试
+- knowlet UI 不参与这个决策
+
+**历史**: 本 ADR 在 2026-05-15 首版里写了"Tier A/B/C 分类 + 自动 degrade",在 2026-05-16 与用户对话中被识别为过度工程 + paternalism:
+1. 我们没有评测模型的资格
+2. 任何 hardcoded 模型列表会过期
+3. 基于 tier 的 feature gating 重复了 §2 八条机制已经做的事(failure handling),且违反 ADR-0029 §3 用户自决原则
+
+已**整体删除** `knowlet/core/ai/tiers.py`、`/api/llm/recommended` endpoint、UI tier badge / 推荐 picker / degraded roles 列表。
 
 ### §2 8 条机制约束(每个 AI role 必须满足)
 

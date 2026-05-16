@@ -1,4 +1,12 @@
-"""P3.0 — LLM config HTTP endpoint smoke tests."""
+"""P3.0 — LLM config HTTP endpoint smoke tests.
+
+knowlet does not evaluate, classify, or comment on user-chosen
+models (per ADR-0028 §1 amendment 2026-05-16). Tests only cover:
+- GET returns config minus api_key
+- PUT semantics (partial update, empty-key keeps existing,
+  non-empty overwrites)
+- /test endpoint exists (actual LLM connectivity not tested here)
+"""
 
 from __future__ import annotations
 
@@ -42,36 +50,12 @@ def test_get_returns_config_without_api_key(tmp_path: Path) -> None:
     # Other fields round-trip.
     assert body["provider"] == "anthropic"
     assert body["model"] == "claude-opus-4-7"
-    # Tier is derived.
-    assert body["tier"]["tier"] == "A"
-    assert body["tier"]["degraded_roles"] == []
-
-
-def test_get_tier_for_b_tier_model(tmp_path: Path) -> None:
-    client, v, cfg = _client(tmp_path)
-    cfg.llm.model = "claude-haiku-4-5"
-    save_config(v.root, cfg)
-    r = client.get("/api/llm/config")
-    body = r.json()
-    assert body["tier"]["tier"] == "B"
-    # Editor advisor / linter degraded on Haiku.
-    assert "editor_advisor" in body["tier"]["degraded_roles"]
-    assert "linter" in body["tier"]["degraded_roles"]
-
-
-def test_get_tier_for_unknown_model(tmp_path: Path) -> None:
-    client, v, cfg = _client(tmp_path)
-    cfg.llm.model = "some-mystery-model"
-    save_config(v.root, cfg)
-    r = client.get("/api/llm/config")
-    body = r.json()
-    assert body["tier"]["tier"] == "unknown"
-    # Unknown defaults to C (safest).
-    assert "linter" in body["tier"]["degraded_roles"]
+    # No tier field — knowlet doesn't classify models.
+    assert "tier" not in body
 
 
 def test_get_has_api_key_false_when_empty(tmp_path: Path) -> None:
-    """GET /api/llm/config must not require a working LLM —— that's
+    """GET /api/llm/config must not require a working LLM — that's
     the whole point of a config endpoint that surfaces 'not yet
     configured' state."""
     v = Vault(tmp_path)
@@ -84,10 +68,9 @@ def test_get_has_api_key_false_when_empty(tmp_path: Path) -> None:
     save_config(v.root, cfg)
     app = create_app(v, cfg)
     client = TestClient(app)
-    # Deliberately skip ``runtime_or_init()`` — that would fail
-    # because the empty api_key path raises 503; but the config
-    # endpoint itself must work without it (it's how the user
-    # bootstraps from a fresh install).
+    # Skip runtime_or_init — empty api_key would raise 503; the config
+    # endpoint must work without it (it's how users bootstrap from
+    # a fresh install).
     r = client.get("/api/llm/config")
     assert r.status_code == 200
     assert r.json()["has_api_key"] is False
@@ -145,27 +128,13 @@ def test_put_partial_update(tmp_path: Path) -> None:
     assert body["provider"] == "anthropic"
 
 
-# ----------------------------------------------------- GET /api/llm/recommended
+# ----------------------------------------------------- /api/llm/recommended
 
 
-def test_recommended_returns_grouped_by_provider(tmp_path: Path) -> None:
+def test_recommended_endpoint_removed(tmp_path: Path) -> None:
+    """Endpoint was removed in 2026-05-16 cleanup — knowlet doesn't
+    recommend specific models (we have no qualified evaluation
+    pipeline, per ADR-0028 §1 amendment)."""
     client, _v, _cfg = _client(tmp_path)
     r = client.get("/api/llm/recommended")
-    assert r.status_code == 200
-    body = r.json()
-    providers = body["providers"]
-    assert "cliproxyapi" in providers
-    assert "anthropic" in providers
-    assert "openai" in providers
-    # cliproxyapi entries hint at the local port.
-    cp = providers["cliproxyapi"]
-    assert all(
-        m["base_url_hint"].startswith("http://127.0.0.1:")
-        for m in cp
-    )
-    # Each entry has tier annotation.
-    for entries in providers.values():
-        for m in entries:
-            assert m["tier"] in {"A", "B", "C"}
-            assert m["model_id"]
-            assert m["display_name"]
+    assert r.status_code == 404

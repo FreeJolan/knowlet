@@ -5304,28 +5304,22 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     @app.get("/api/llm/config")
     def llm_config_get() -> dict[str, Any]:
-        """Return the current LLM config + derived tier profile.
-        **Never** returns the api_key itself — only ``has_api_key`` bool."""
-        from knowlet.core.ai.tiers import classify_model, profile_for_tier
+        """Return the current LLM config (provider / base_url / model
+        / has_api_key / max_tokens). **Never** returns the api_key
+        itself — only ``has_api_key`` bool.
 
+        Per ADR-0028 §1 amendment 2026-05-16: knowlet does not
+        evaluate, classify, or comment on the configured model. The
+        UI just shows what the user has set."""
         # Always read fresh from disk (config might've been edited
         # externally; we don't trust the in-process copy).
         fresh = load_config(vault.root)
-        tier = classify_model(fresh.llm.model)
-        profile = profile_for_tier(tier)
         return {
             "provider": fresh.llm.provider,
             "base_url": fresh.llm.base_url,
             "model": fresh.llm.model,
             "has_api_key": bool(fresh.llm.api_key),
             "max_tokens": fresh.llm.max_tokens,
-            "tier": {
-                "tier": profile.tier,
-                "label": profile.label,
-                "description": profile.description,
-                "enabled_roles": profile.enabled_roles,
-                "degraded_roles": profile.degraded_roles,
-            },
         }
 
     @app.put("/api/llm/config")
@@ -5399,26 +5393,6 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "preview": preview,
             "model": config.llm.model,
         }
-
-    @app.get("/api/llm/recommended")
-    def llm_recommended() -> dict[str, Any]:
-        """Curated picker list for the Settings UI, grouped by
-        provider with tier annotations. UI renders these as the
-        primary 'pick a model' source; falls back to free-form
-        input for advanced users."""
-        from knowlet.core.ai.tiers import RECOMMENDED_MODELS
-
-        by_provider: dict[str, list[dict[str, Any]]] = {}
-        for m in RECOMMENDED_MODELS:
-            by_provider.setdefault(m.provider, []).append(
-                {
-                    "model_id": m.model_id,
-                    "display_name": m.display_name,
-                    "tier": m.tier,
-                    "base_url_hint": m.base_url_hint,
-                }
-            )
-        return {"providers": by_provider}
 
     # ---------------- profile ----------------
 
