@@ -450,3 +450,60 @@ export async function uploadAttachment(
   }
   return (await r.json()) as { path: string; bytes: number };
 }
+
+// ---------- LLM config (Phase 3 P3.0) ----------
+
+export interface LLMTierProfile {
+  tier: "A" | "B" | "C" | "unknown";
+  label: string;
+  description: string;
+  enabled_roles: string[];
+  degraded_roles: string[];
+}
+
+export interface LLMConfigSummary {
+  provider: string;
+  base_url: string;
+  model: string;
+  has_api_key: boolean;
+  max_tokens: number;
+  tier: LLMTierProfile;
+}
+
+export interface LLMConfigUpdate {
+  provider?: string;
+  base_url?: string;
+  model?: string;
+  /** Empty string = keep existing key; omit = unchanged; non-empty = overwrite. */
+  api_key?: string;
+  max_tokens?: number;
+}
+
+export interface LLMTestResult {
+  ok: boolean;
+  latency_ms: number;
+  preview?: string;
+  model?: string;
+  error?: string;
+}
+
+export interface RecommendedModel {
+  model_id: string;
+  display_name: string;
+  tier: "A" | "B" | "C";
+  base_url_hint: string | null;
+}
+
+export const getLLMConfig = (): Promise<LLMConfigSummary> =>
+  request("GET", "/api/llm/config");
+
+export const updateLLMConfig = (
+  payload: LLMConfigUpdate,
+): Promise<LLMConfigSummary> => request("PUT", "/api/llm/config", payload);
+
+export const testLLM = (): Promise<LLMTestResult> =>
+  request("POST", "/api/llm/test");
+
+export const getRecommendedModels = (): Promise<{
+  providers: Record<string, RecommendedModel[]>;
+}> => request("GET", "/api/llm/recommended");

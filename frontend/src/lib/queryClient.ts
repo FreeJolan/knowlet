@@ -37,4 +37,6 @@ export const QK = {
   syncAuth: ["sync-auth"] as const,
   syncPushErrors: ["sync-push-errors"] as const,
   favorites: ["favorites"] as const,
+  llmConfig: ["llm-config"] as const,
+  llmRecommended: ["llm-recommended"] as const,
 };

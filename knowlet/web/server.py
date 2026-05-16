@@ -129,6 +129,21 @@ class DevSeedConflictRequest(BaseModel):
     remote_text: str | None = None
 
 
+class LLMConfigUpdate(BaseModel):
+    """Payload for PUT /api/llm/config (Phase 3 P3.0).
+
+    All fields optional; only present ones are written. ``api_key``
+    is special: empty string = "leave existing key intact" (so the
+    UI never has to round-trip the secret); anything else = overwrite.
+    """
+
+    provider: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+    max_tokens: int | None = None
+
+
 class SyncModeRequest(BaseModel):
     """#107b — body for ``PUT /api/sync/mode``. Validation is a
     closed three-way enum; backend re-validates so a malformed
@@ -5284,6 +5299,126 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 else None
             ),
         }
+
+    # ---------------- LLM config (Phase 3 P3.0) ----------------
+
+    @app.get("/api/llm/config")
+    def llm_config_get() -> dict[str, Any]:
+        """Return the current LLM config + derived tier profile.
+        **Never** returns the api_key itself — only ``has_api_key`` bool."""
+        from knowlet.core.ai.tiers import classify_model, profile_for_tier
+
+        # Always read fresh from disk (config might've been edited
+        # externally; we don't trust the in-process copy).
+        fresh = load_config(vault.root)
+        tier = classify_model(fresh.llm.model)
+        profile = profile_for_tier(tier)
+        return {
+            "provider": fresh.llm.provider,
+            "base_url": fresh.llm.base_url,
+            "model": fresh.llm.model,
+            "has_api_key": bool(fresh.llm.api_key),
+            "max_tokens": fresh.llm.max_tokens,
+            "tier": {
+                "tier": profile.tier,
+                "label": profile.label,
+                "description": profile.description,
+                "enabled_roles": profile.enabled_roles,
+                "degraded_roles": profile.degraded_roles,
+            },
+        }
+
+    @app.put("/api/llm/config")
+    def llm_config_put(
+        payload: LLMConfigUpdate = Body(...),
+    ) -> dict[str, Any]:
+        """Update LLM config. Empty-string ``api_key`` means
+        "keep existing" so the UI can save other fields without
+        re-entering the secret."""
+        from knowlet.config import save_config as _save_cfg
+
+        fresh = load_config(vault.root)
+        if payload.provider is not None:
+            fresh.llm.provider = payload.provider
+        if payload.base_url is not None:
+            fresh.llm.base_url = payload.base_url
+        if payload.model is not None:
+            fresh.llm.model = payload.model
+        if payload.max_tokens is not None:
+            fresh.llm.max_tokens = payload.max_tokens
+        # api_key handling: None = field absent (don't touch); ""
+        # = keep existing; anything else = overwrite.
+        if payload.api_key is not None and payload.api_key != "":
+            fresh.llm.api_key = payload.api_key
+        _save_cfg(vault.root, fresh)
+        # Mutate the in-process config so subsequent endpoints see
+        # the new values without restart.
+        config.llm.provider = fresh.llm.provider
+        config.llm.base_url = fresh.llm.base_url
+        config.llm.model = fresh.llm.model
+        config.llm.api_key = fresh.llm.api_key
+        config.llm.max_tokens = fresh.llm.max_tokens
+        return llm_config_get()
+
+    @app.post("/api/llm/test")
+    def llm_test() -> dict[str, Any]:
+        """Run a minimal completion against the configured LLM to
+        verify connectivity + auth. Returns latency + a short echo
+        of the response so the UI can show "OK reply: <preview>"."""
+        import time as _time
+
+        from knowlet.core.llm import LLMClient
+
+        client = LLMClient(config.llm)
+        prompt = (
+            "Reply with the single word 'ok' (no punctuation, no "
+            "quotes). This is a connectivity check."
+        )
+        started = _time.monotonic()
+        try:
+            response = client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                tools=None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "error": repr(exc)[:500],
+                "latency_ms": int((_time.monotonic() - started) * 1000),
+            }
+        latency_ms = int((_time.monotonic() - started) * 1000)
+        # LLMClient returns AssistantMessage; preview the text content.
+        preview = (
+            (response.content or "")[:120]
+            if hasattr(response, "content")
+            else str(response)[:120]
+        )
+        return {
+            "ok": True,
+            "latency_ms": latency_ms,
+            "preview": preview,
+            "model": config.llm.model,
+        }
+
+    @app.get("/api/llm/recommended")
+    def llm_recommended() -> dict[str, Any]:
+        """Curated picker list for the Settings UI, grouped by
+        provider with tier annotations. UI renders these as the
+        primary 'pick a model' source; falls back to free-form
+        input for advanced users."""
+        from knowlet.core.ai.tiers import RECOMMENDED_MODELS
+
+        by_provider: dict[str, list[dict[str, Any]]] = {}
+        for m in RECOMMENDED_MODELS:
+            by_provider.setdefault(m.provider, []).append(
+                {
+                    "model_id": m.model_id,
+                    "display_name": m.display_name,
+                    "tier": m.tier,
+                    "base_url_hint": m.base_url_hint,
+                }
+            )
+        return {"providers": by_provider}
 
     # ---------------- profile ----------------
 

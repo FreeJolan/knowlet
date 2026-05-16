@@ -31,13 +31,18 @@ import {
   disconnect as apiDisconnect,
   exportVaultUrl,
   getAuthStatus,
+  getLLMConfig,
+  getRecommendedModels,
   getSyncMode,
   previewImport,
+  type RecommendedModel,
   setSyncMode as apiSetSyncMode,
   startConnect,
+  testLLM,
   type ImportReportPayload,
   type SyncAuthStatus,
   type SyncModeResponse,
+  updateLLMConfig,
 } from "@/api/client";
 import {
   Dialog,
@@ -120,6 +125,10 @@ export function SettingsDialog({ open, onClose }: Props) {
               })}
             </div>
           )}
+
+          <div className="mt-6">
+            <LLMConfigPanel />
+          </div>
 
           <div className="mt-6">
             <DriveAuthPanel />
@@ -569,6 +578,342 @@ function VaultPortabilityPanel(): React.ReactNode {
           {resultText}
         </div>
       )}
+    </Section>
+  );
+}
+
+function LLMConfigPanel(): React.ReactNode {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const cfg = useQuery({
+    queryKey: QK.llmConfig,
+    queryFn: getLLMConfig,
+    staleTime: 30_000,
+  });
+  const recommended = useQuery({
+    queryKey: QK.llmRecommended,
+    queryFn: getRecommendedModels,
+    staleTime: 5 * 60_000,
+  });
+  const update = useMutation({
+    mutationFn: updateLLMConfig,
+    onSuccess: (next) => {
+      qc.setQueryData(QK.llmConfig, next);
+    },
+  });
+  const testMut = useMutation({
+    mutationFn: testLLM,
+  });
+
+  // Local editing state — staged until user saves.
+  const [draft, setDraft] = useState<{
+    provider: string;
+    base_url: string;
+    model: string;
+    api_key: string;
+  }>({
+    provider: "",
+    base_url: "",
+    model: "",
+    api_key: "",
+  });
+  const [dirty, setDirty] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Sync draft when config query loads / refreshes.
+  useEffect(() => {
+    if (cfg.data && !dirty) {
+      setDraft({
+        provider: cfg.data.provider,
+        base_url: cfg.data.base_url,
+        model: cfg.data.model,
+        api_key: "",
+      });
+    }
+  }, [cfg.data, dirty]);
+
+  if (!cfg.data) {
+    return (
+      <Section title={t("llm.label")}>
+        <div className="text-muted-foreground w-full text-xs">
+          {t("llm.loading")}
+        </div>
+      </Section>
+    );
+  }
+
+  const currentTier = cfg.data.tier.tier;
+  const tierColor = {
+    A: "rgb(22, 163, 74)",   // green-600
+    B: "rgb(202, 138, 4)",   // yellow-600
+    C: "rgb(220, 38, 38)",   // red-600
+    unknown: "rgb(120, 120, 120)",
+  }[currentTier];
+
+  const handlePickModel = (
+    model_id: string,
+    base_url_hint: string | null,
+    provider: string,
+  ) => {
+    setDraft((d) => ({
+      ...d,
+      provider,
+      model: model_id,
+      base_url: base_url_hint ?? d.base_url,
+    }));
+    setDirty(true);
+  };
+
+  const handleSave = () => {
+    const payload: Parameters<typeof updateLLMConfig>[0] = {
+      provider: draft.provider,
+      base_url: draft.base_url,
+      model: draft.model,
+      // empty string = keep existing key per backend convention
+      api_key: draft.api_key,
+    };
+    update.mutate(payload, {
+      onSuccess: () => {
+        setDraft((d) => ({ ...d, api_key: "" }));
+        setDirty(false);
+      },
+    });
+  };
+
+  const providerEntries = Object.entries(
+    recommended.data?.providers ?? {},
+  ) as [string, RecommendedModel[]][];
+
+  return (
+    <Section title={t("llm.label")}>
+      <div className="text-muted-foreground w-full text-xs">
+        {t("llm.blurb")}
+      </div>
+
+      {/* Tier badge — current state. */}
+      <div className="mt-2 flex w-full items-center gap-2 text-xs">
+        <span
+          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px]"
+          style={{
+            background: "var(--bg-1)",
+            border: `1px solid ${tierColor}`,
+            color: tierColor,
+          }}
+          data-testid="llm-tier-badge"
+        >
+          Tier {currentTier}
+        </span>
+        <span className="text-muted-foreground">{cfg.data.tier.label}</span>
+      </div>
+
+      {currentTier !== "A" && (
+        <div
+          className="mt-2 w-full rounded border p-2 text-[11px]"
+          style={{
+            borderColor: tierColor,
+            background: "color-mix(in srgb, currentColor 5%, transparent)",
+          }}
+        >
+          <div>{cfg.data.tier.description}</div>
+          {cfg.data.tier.degraded_roles.length > 0 && (
+            <div className="mt-1 text-muted-foreground">
+              {t("llm.degradedRoles")}: {cfg.data.tier.degraded_roles.join(", ")}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Recommended models — primary picker. */}
+      <div className="mt-3 w-full">
+        <div className="mb-1 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
+          {t("llm.recommendedHeading")}
+        </div>
+        <div className="grid grid-cols-1 gap-1">
+          {providerEntries.map(([provider, entries]) => (
+            <div key={provider}>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+                {provider}
+              </div>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {entries.map((m) => {
+                  const isActive =
+                    draft.model === m.model_id &&
+                    draft.provider === provider;
+                  const tierC = {
+                    A: "rgb(22, 163, 74)",
+                    B: "rgb(202, 138, 4)",
+                    C: "rgb(220, 38, 38)",
+                  }[m.tier];
+                  return (
+                    <button
+                      key={`${provider}/${m.model_id}`}
+                      type="button"
+                      onClick={() =>
+                        handlePickModel(m.model_id, m.base_url_hint, provider)
+                      }
+                      data-testid={`llm-pick-${m.model_id}`}
+                      className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] transition-colors hover:bg-accent/30"
+                      style={{
+                        background: isActive ? "var(--accent-tint-2)" : "var(--bg-1)",
+                        borderColor: isActive ? "var(--accent)" : "var(--line)",
+                        color: isActive ? "var(--ink)" : "var(--ink-mute)",
+                      }}
+                    >
+                      <span
+                        className="inline-block size-1.5 rounded-full"
+                        style={{ background: tierC }}
+                      />
+                      <span>{m.display_name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* API key field + Save / Test. */}
+      <div className="mt-3 flex w-full flex-col gap-2">
+        <label className="flex w-full flex-col gap-1 text-[11px]">
+          <span className="text-muted-foreground">
+            {t("llm.apiKeyLabel")}{" "}
+            {cfg.data.has_api_key && (
+              <span className="text-[10px] opacity-70">
+                ({t("llm.apiKeyExists")})
+              </span>
+            )}
+          </span>
+          <input
+            type="password"
+            value={draft.api_key}
+            onChange={(e) => {
+              setDraft((d) => ({ ...d, api_key: e.target.value }));
+              setDirty(true);
+            }}
+            placeholder={
+              cfg.data.has_api_key
+                ? t("llm.apiKeyPlaceholderKeepExisting")
+                : t("llm.apiKeyPlaceholderNew")
+            }
+            data-testid="llm-api-key-input"
+            className="rounded border px-2 py-1 text-xs"
+            style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+          />
+        </label>
+
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((s) => !s)}
+          className="self-start text-[10px] text-muted-foreground hover:text-foreground"
+        >
+          {showAdvanced ? t("llm.advancedHide") : t("llm.advancedShow")}
+        </button>
+
+        {showAdvanced && (
+          <div className="flex w-full flex-col gap-2">
+            <label className="flex w-full flex-col gap-1 text-[11px]">
+              <span className="text-muted-foreground">{t("llm.providerLabel")}</span>
+              <input
+                value={draft.provider}
+                onChange={(e) => {
+                  setDraft((d) => ({ ...d, provider: e.target.value }));
+                  setDirty(true);
+                }}
+                data-testid="llm-provider-input"
+                className="rounded border px-2 py-1 text-xs"
+                style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+              />
+            </label>
+            <label className="flex w-full flex-col gap-1 text-[11px]">
+              <span className="text-muted-foreground">{t("llm.baseUrlLabel")}</span>
+              <input
+                value={draft.base_url}
+                onChange={(e) => {
+                  setDraft((d) => ({ ...d, base_url: e.target.value }));
+                  setDirty(true);
+                }}
+                data-testid="llm-base-url-input"
+                className="rounded border px-2 py-1 text-xs"
+                style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+              />
+            </label>
+            <label className="flex w-full flex-col gap-1 text-[11px]">
+              <span className="text-muted-foreground">{t("llm.modelLabel")}</span>
+              <input
+                value={draft.model}
+                onChange={(e) => {
+                  setDraft((d) => ({ ...d, model: e.target.value }));
+                  setDirty(true);
+                }}
+                data-testid="llm-model-input"
+                className="rounded border px-2 py-1 text-xs"
+                style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+              />
+            </label>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-2 pt-1">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={!dirty || update.isPending}
+            data-testid="llm-save"
+            className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors disabled:opacity-50"
+            style={{
+              background: "var(--accent-soft, rgba(91,122,156,0.18))",
+              color: "var(--accent-2, #34495e)",
+              borderColor: "var(--accent, #5b7a9c)",
+            }}
+          >
+            {update.isPending ? <Loader2 className="size-3 animate-spin" /> : null}
+            {t("llm.save")}
+          </button>
+          <button
+            type="button"
+            onClick={() => testMut.mutate()}
+            disabled={testMut.isPending || !cfg.data.has_api_key}
+            data-testid="llm-test"
+            className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors hover:bg-accent/30 disabled:opacity-50"
+            style={{ borderColor: "var(--line)" }}
+            title={!cfg.data.has_api_key ? t("llm.testNeedsKey") : ""}
+          >
+            {testMut.isPending ? <Loader2 className="size-3 animate-spin" /> : null}
+            {t("llm.test")}
+          </button>
+        </div>
+
+        {testMut.data && (
+          <div
+            className="rounded border p-2 text-[11px]"
+            style={{
+              borderColor: testMut.data.ok
+                ? "var(--ok, #198754)"
+                : "var(--destructive, #c0392b)",
+              background: "var(--bg-1)",
+            }}
+            data-testid="llm-test-result"
+          >
+            {testMut.data.ok ? (
+              <>
+                <div style={{ color: "var(--ok, #198754)" }}>
+                  ✓ {t("llm.testOk", { latency: testMut.data.latency_ms })}
+                </div>
+                {testMut.data.preview && (
+                  <div className="mt-1 text-muted-foreground">
+                    {t("llm.testPreview")}: {testMut.data.preview}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-destructive">
+                ✗ {t("llm.testFailed")}: {testMut.data.error}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </Section>
   );
 }

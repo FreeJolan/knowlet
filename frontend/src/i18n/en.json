@@ -368,6 +368,28 @@
     "blockingNoun_other": "conflicts",
     "blockingHint": "Click a row to merge. The app unlocks once all are resolved."
   },
+  "llm": {
+    "label": "AI provider",
+    "blurb": "knowlet uses your own LLM. Pick a recommended model below or configure a custom OpenAI-compatible endpoint.",
+    "loading": "Loading…",
+    "recommendedHeading": "Recommended models (tier-coded)",
+    "degradedRoles": "Degraded roles",
+    "apiKeyLabel": "API key",
+    "apiKeyExists": "stored",
+    "apiKeyPlaceholderKeepExisting": "Leave blank to keep existing key",
+    "apiKeyPlaceholderNew": "Paste API key…",
+    "advancedShow": "Advanced fields ▾",
+    "advancedHide": "Advanced fields ▴",
+    "providerLabel": "Provider id",
+    "baseUrlLabel": "Base URL",
+    "modelLabel": "Model id",
+    "save": "Save",
+    "test": "Test connection",
+    "testNeedsKey": "Save your API key first to test",
+    "testOk": "Connected · {{latency}}ms",
+    "testFailed": "Connection failed",
+    "testPreview": "Preview"
+  },
   "vaultPortability": {
     "label": "Vault portability",
     "blurb": "Export a portable .zip of your vault, or merge another vault / markdown folder into this one. New notes land under imported/YYYY-MM-DD; notes that already exist (same id) are skipped, never overwritten.",
