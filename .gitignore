@@ -27,6 +27,12 @@ env/
 *.swp
 .DS_Store
 
+# Claude Code — ignore agent runtime / per-user-local state, but
+# allow project-shared settings (.claude/settings.json) and
+# slash commands (.claude/commands/) to be committed if added.
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+
 # Local scratch
 scratch/
 .scratch/
