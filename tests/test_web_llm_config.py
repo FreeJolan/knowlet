@@ -48,10 +48,12 @@ def test_get_returns_config_without_api_key(tmp_path: Path) -> None:
     # has_api_key signals presence to the UI.
     assert body["has_api_key"] is True
     # Other fields round-trip.
-    assert body["provider"] == "anthropic"
     assert body["model"] == "claude-opus-4-7"
     # No tier field — knowlet doesn't classify models.
     assert "tier" not in body
+    # No provider field — removed 2026-05-16 (vestigial label,
+    # actual call only uses base_url + api_key + model).
+    assert "provider" not in body
 
 
 def test_get_has_api_key_false_when_empty(tmp_path: Path) -> None:
@@ -125,7 +127,6 @@ def test_put_partial_update(tmp_path: Path) -> None:
     assert body["max_tokens"] == 4096
     # Other fields unchanged.
     assert body["model"] == "claude-opus-4-7"
-    assert body["provider"] == "anthropic"
 
 
 # ----------------------------------------------------- /api/llm/recommended

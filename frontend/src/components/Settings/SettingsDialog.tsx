@@ -11,12 +11,17 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  CheckCircle2,
   Cloud,
   CloudOff,
   Download,
+  Eye,
+  EyeOff,
+  KeyRound,
   Loader2,
   Monitor,
   Moon,
+  RefreshCw,
   ShieldAlert,
   Sun,
   Upload,
@@ -32,6 +37,7 @@ import {
   exportVaultUrl,
   getAuthStatus,
   getLLMConfig,
+  getProviderModels,
   getSyncMode,
   previewImport,
   setSyncMode as apiSetSyncMode,
@@ -82,62 +88,117 @@ export function SettingsDialog({ open, onClose }: Props) {
     setThemePreference(next);
   };
 
+  // Left-sidebar tabs (per Cursor / VS Code / Linear Settings UX).
+  // Adding new categories = add a row here; the content area picks
+  // the right panel via the discriminated union below.
+  type SettingsTab = "appearance" | "ai" | "sync" | "vault";
+  const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
+  const tabs: { key: SettingsTab; label: string; icon: typeof Sun }[] = [
+    { key: "appearance", label: t("settings.tabs.appearance"), icon: Sun },
+    { key: "ai", label: t("settings.tabs.ai"), icon: Zap },
+    { key: "sync", label: t("settings.tabs.sync"), icon: Cloud },
+    { key: "vault", label: t("settings.tabs.vault"), icon: Download },
+  ];
+
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-lg" data-testid="settings-dialog">
-        <DialogHeader>
+      <DialogContent
+        className="flex h-[85vh] max-h-[700px] overflow-hidden p-0 sm:max-w-3xl"
+        data-testid="settings-dialog"
+      >
+        {/* a11y: keep DialogTitle/Description in the tree but visually
+            hidden — title appears integrated in the left rail below. */}
+        <DialogHeader className="sr-only">
           <DialogTitle>{t("settings.title")}</DialogTitle>
           <DialogDescription>{t("settings.subtitle")}</DialogDescription>
         </DialogHeader>
-        <div className="mt-2">
-          <Section title={t("settings.appearance.title")}>
-            <ThemePill
-              icon={<Sun size={14} />}
-              label={t("settings.appearance.light")}
-              active={pref === "light"}
-              onClick={() => set("light")}
-              testid="theme-pill-light"
-            />
-            <ThemePill
-              icon={<Moon size={14} />}
-              label={t("settings.appearance.dark")}
-              active={pref === "dark"}
-              onClick={() => set("dark")}
-              testid="theme-pill-dark"
-            />
-            <ThemePill
-              icon={<Monitor size={14} />}
-              label={t("settings.appearance.system")}
-              active={pref === "system"}
-              onClick={() => set("system")}
-              testid="theme-pill-system"
-            />
-          </Section>
-          {pref === "system" && (
-            <div
-              className="mt-3 font-mono text-[10.5px]"
-              style={{ color: "var(--ink-mute)" }}
-            >
-              {t("settings.appearance.systemHint", {
-                resolved: resolveTheme("system"),
-              })}
+
+        <div className="flex min-h-0 w-full flex-1">
+          {/* Left sidebar — title + tab list */}
+          <nav
+            className="flex w-44 shrink-0 flex-col border-r"
+            style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+            data-testid="settings-tabs"
+          >
+            <div className="px-3 py-3 font-semibold text-sm" aria-hidden="true">
+              {t("settings.title")}
             </div>
-          )}
+            <div className="flex flex-col gap-0.5 px-2 pb-2">
+            {tabs.map(({ key, label, icon: Icon }) => {
+              const isActive = activeTab === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setActiveTab(key)}
+                  data-testid={`settings-tab-${key}`}
+                  className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors"
+                  style={{
+                    background: isActive ? "var(--accent-tint-2)" : "transparent",
+                    color: isActive ? "var(--ink)" : "var(--ink-mute)",
+                    fontWeight: isActive ? 500 : 400,
+                  }}
+                >
+                  <Icon className="size-3.5 shrink-0" />
+                  <span className="truncate">{label}</span>
+                </button>
+              );
+            })}
+            </div>
+          </nav>
 
-          <div className="mt-6">
-            <LLMConfigPanel />
-          </div>
+          {/* Right — active panel content (scrollable) */}
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-5">
+            {activeTab === "appearance" && (
+              <>
+                <Section title={t("settings.appearance.title")}>
+                  <ThemePill
+                    icon={<Sun size={14} />}
+                    label={t("settings.appearance.light")}
+                    active={pref === "light"}
+                    onClick={() => set("light")}
+                    testid="theme-pill-light"
+                  />
+                  <ThemePill
+                    icon={<Moon size={14} />}
+                    label={t("settings.appearance.dark")}
+                    active={pref === "dark"}
+                    onClick={() => set("dark")}
+                    testid="theme-pill-dark"
+                  />
+                  <ThemePill
+                    icon={<Monitor size={14} />}
+                    label={t("settings.appearance.system")}
+                    active={pref === "system"}
+                    onClick={() => set("system")}
+                    testid="theme-pill-system"
+                  />
+                </Section>
+                {pref === "system" && (
+                  <div
+                    className="mt-3 font-mono text-[10.5px]"
+                    style={{ color: "var(--ink-mute)" }}
+                  >
+                    {t("settings.appearance.systemHint", {
+                      resolved: resolveTheme("system"),
+                    })}
+                  </div>
+                )}
+              </>
+            )}
 
-          <div className="mt-6">
-            <DriveAuthPanel />
-          </div>
+            {activeTab === "ai" && <LLMConfigPanel />}
 
-          <div className="mt-6">
-            <SyncModePicker />
-          </div>
+            {activeTab === "sync" && (
+              <>
+                <DriveAuthPanel />
+                <div className="mt-6">
+                  <SyncModePicker />
+                </div>
+              </>
+            )}
 
-          <div className="mt-6">
-            <VaultPortabilityPanel />
+            {activeTab === "vault" && <VaultPortabilityPanel />}
           </div>
         </div>
       </DialogContent>
@@ -588,6 +649,13 @@ function LLMConfigPanel(): React.ReactNode {
     queryFn: getLLMConfig,
     staleTime: 30_000,
   });
+  // Provider's /v1/models is a mutation, not a query, because it
+  // takes **draft** credentials (so user can preview the model list
+  // before clicking Save — fixes the chicken-and-egg where you
+  // can't pick a model without saving creds first).
+  const providerModelsMut = useMutation({
+    mutationFn: getProviderModels,
+  });
   const update = useMutation({
     mutationFn: updateLLMConfig,
     onSuccess: (next) => {
@@ -600,29 +668,41 @@ function LLMConfigPanel(): React.ReactNode {
 
   // Local editing state — staged until user saves.
   const [draft, setDraft] = useState<{
-    provider: string;
     base_url: string;
     model: string;
     api_key: string;
   }>({
-    provider: "",
     base_url: "",
     model: "",
     api_key: "",
   });
   const [dirty, setDirty] = useState(false);
+  const [revealKey, setRevealKey] = useState(false);
 
   // Sync draft when config query loads / refreshes.
   useEffect(() => {
     if (cfg.data && !dirty) {
       setDraft({
-        provider: cfg.data.provider,
         base_url: cfg.data.base_url,
         model: cfg.data.model,
         api_key: "",
       });
     }
   }, [cfg.data, dirty]);
+
+  // Auto-load model list once on mount, using saved config. Subsequent
+  // refreshes pass current draft (handled by handleRefresh below).
+  const autoLoaded = useRef(false);
+  useEffect(() => {
+    if (
+      cfg.data?.base_url &&
+      !autoLoaded.current &&
+      !providerModelsMut.isPending
+    ) {
+      autoLoaded.current = true;
+      providerModelsMut.mutate({});
+    }
+  }, [cfg.data?.base_url, providerModelsMut]);
 
   if (!cfg.data) {
     return (
@@ -634,10 +714,27 @@ function LLMConfigPanel(): React.ReactNode {
     );
   }
 
+  const handleRefreshModels = () => {
+    providerModelsMut.mutate({
+      base_url: draft.base_url,
+      api_key: draft.api_key,
+    });
+  };
+
+  // Save requires a non-empty model — otherwise the saved config
+  // would be silently broken (LLM calls fail with "no model" later).
+  const modelEmpty = !draft.model.trim();
+  const baseUrlEmpty = !draft.base_url.trim();
+  const saveBlockReason = baseUrlEmpty
+    ? t("llm.saveNeedsBaseUrl")
+    : modelEmpty
+      ? t("llm.saveNeedsModel")
+      : "";
+
   const handleSave = () => {
+    if (saveBlockReason) return;
     update.mutate(
       {
-        provider: draft.provider,
         base_url: draft.base_url,
         model: draft.model,
         // empty string = keep existing key per backend convention
@@ -665,22 +762,6 @@ function LLMConfigPanel(): React.ReactNode {
 
       <div className="mt-3 flex w-full flex-col gap-2">
         <label className="flex w-full flex-col gap-1 text-[11px]">
-          <span className="text-muted-foreground">
-            {t("llm.providerLabel")}
-          </span>
-          <input
-            value={draft.provider}
-            onChange={(e) => {
-              setDraft((d) => ({ ...d, provider: e.target.value }));
-              setDirty(true);
-            }}
-            data-testid="llm-provider-input"
-            className="rounded border px-2 py-1 text-xs"
-            style={inputStyle}
-          />
-        </label>
-
-        <label className="flex w-full flex-col gap-1 text-[11px]">
           <span className="text-muted-foreground">{t("llm.baseUrlLabel")}</span>
           <input
             value={draft.base_url}
@@ -688,58 +769,132 @@ function LLMConfigPanel(): React.ReactNode {
               setDraft((d) => ({ ...d, base_url: e.target.value }));
               setDirty(true);
             }}
+            placeholder={t("llm.baseUrlPlaceholder")}
             data-testid="llm-base-url-input"
             className="rounded border px-2 py-1 text-xs"
             style={inputStyle}
           />
+          <span className="text-[10px] text-muted-foreground">
+            {t("llm.baseUrlHelp")}
+          </span>
         </label>
 
         <label className="flex w-full flex-col gap-1 text-[11px]">
-          <span className="text-muted-foreground">{t("llm.modelLabel")}</span>
+          <span className="text-muted-foreground">{t("llm.apiKeyLabel")}</span>
+          {cfg.data.has_api_key ? (
+            // Configured state — show pill-style status instead of an
+            // empty input. Click "替换" to enter edit mode.
+            <ApiKeyStatusRow
+              onReplace={() => {
+                // Focusing the input is enough — placeholder explains
+                // "leave blank to keep, type to replace".
+                const el = document.querySelector<HTMLInputElement>(
+                  "[data-testid=llm-api-key-input]",
+                );
+                el?.focus();
+              }}
+              t={t}
+            />
+          ) : (
+            <div className="flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-400">
+              <KeyRound className="size-3" />
+              <span>{t("llm.apiKeyNotSet")}</span>
+            </div>
+          )}
+          <div className="relative">
+            <input
+              type={revealKey ? "text" : "password"}
+              value={draft.api_key}
+              onChange={(e) => {
+                setDraft((d) => ({ ...d, api_key: e.target.value }));
+                setDirty(true);
+              }}
+              placeholder={
+                cfg.data.has_api_key
+                  ? t("llm.apiKeyPlaceholderKeepExisting")
+                  : t("llm.apiKeyPlaceholderNew")
+              }
+              data-testid="llm-api-key-input"
+              className="w-full rounded border px-2 py-1 pr-7 text-xs"
+              style={inputStyle}
+            />
+            <button
+              type="button"
+              onClick={() => setRevealKey((v) => !v)}
+              disabled={!draft.api_key}
+              title={
+                revealKey ? t("llm.apiKeyHide") : t("llm.apiKeyReveal")
+              }
+              aria-label={
+                revealKey ? t("llm.apiKeyHide") : t("llm.apiKeyReveal")
+              }
+              data-testid="llm-api-key-reveal"
+              className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-30"
+            >
+              {revealKey ? (
+                <EyeOff className="size-3" />
+              ) : (
+                <Eye className="size-3" />
+              )}
+            </button>
+          </div>
+        </label>
+
+        <label className="flex w-full flex-col gap-1 text-[11px]">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">{t("llm.modelLabel")}</span>
+            <button
+              type="button"
+              onClick={handleRefreshModels}
+              title={t("llm.refreshModels")}
+              disabled={baseUrlEmpty}
+              className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40"
+            >
+              <RefreshCw
+                className={`size-3 ${providerModelsMut.isPending ? "animate-spin" : ""}`}
+              />
+            </button>
+          </div>
+          {/* Combobox: typeable input + datalist dropdown of provider's
+              actual models. We never list our own opinions here. */}
           <input
+            list="llm-model-options"
             value={draft.model}
             onChange={(e) => {
               setDraft((d) => ({ ...d, model: e.target.value }));
               setDirty(true);
             }}
+            placeholder={t("llm.modelPlaceholder")}
             data-testid="llm-model-input"
             className="rounded border px-2 py-1 text-xs"
             style={inputStyle}
           />
-        </label>
-
-        <label className="flex w-full flex-col gap-1 text-[11px]">
-          <span className="text-muted-foreground">
-            {t("llm.apiKeyLabel")}{" "}
-            {cfg.data.has_api_key && (
-              <span className="text-[10px] opacity-70">
-                ({t("llm.apiKeyExists")})
-              </span>
-            )}
-          </span>
-          <input
-            type="password"
-            value={draft.api_key}
-            onChange={(e) => {
-              setDraft((d) => ({ ...d, api_key: e.target.value }));
-              setDirty(true);
-            }}
-            placeholder={
-              cfg.data.has_api_key
-                ? t("llm.apiKeyPlaceholderKeepExisting")
-                : t("llm.apiKeyPlaceholderNew")
-            }
-            data-testid="llm-api-key-input"
-            className="rounded border px-2 py-1 text-xs"
-            style={inputStyle}
-          />
+          <datalist id="llm-model-options">
+            {(providerModelsMut.data?.models ?? []).map((m) => (
+              <option key={m.id} value={m.id} />
+            ))}
+          </datalist>
+          {providerModelsMut.data?.error ? (
+            <span className="text-[10px] text-muted-foreground">
+              {t("llm.modelsListFailed")}
+            </span>
+          ) : providerModelsMut.data?.models?.length ? (
+            <span className="text-[10px] text-emerald-700 dark:text-emerald-400">
+              {t("llm.modelsLoaded", { count: providerModelsMut.data.models.length })}
+            </span>
+          ) : (
+            <span className="text-[10px] text-muted-foreground">
+              {t("llm.modelsRefreshHint")}
+            </span>
+          )}
         </label>
 
         <div className="flex flex-wrap gap-2 pt-1">
           <button
             type="button"
             onClick={handleSave}
-            disabled={!dirty || update.isPending}
+            disabled={!dirty || update.isPending || !!saveBlockReason}
+            title={saveBlockReason || ""}
             data-testid="llm-save"
             className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors disabled:opacity-50"
             style={{
@@ -753,12 +908,27 @@ function LLMConfigPanel(): React.ReactNode {
           </button>
           <button
             type="button"
-            onClick={() => testMut.mutate()}
-            disabled={testMut.isPending || !cfg.data.has_api_key}
+            onClick={() =>
+              testMut.mutate({
+                base_url: draft.base_url,
+                api_key: draft.api_key,
+                model: draft.model,
+              })
+            }
+            disabled={
+              testMut.isPending ||
+              // Need *some* key — either typed or saved.
+              (!draft.api_key && !cfg.data.has_api_key) ||
+              baseUrlEmpty
+            }
             data-testid="llm-test"
             className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors hover:bg-accent/30 disabled:opacity-50"
             style={{ borderColor: "var(--line)" }}
-            title={!cfg.data.has_api_key ? t("llm.testNeedsKey") : ""}
+            title={
+              !draft.api_key && !cfg.data.has_api_key
+                ? t("llm.testNeedsKey")
+                : ""
+            }
           >
             {testMut.isPending ? <Loader2 className="size-3 animate-spin" /> : null}
             {t("llm.test")}
@@ -796,6 +966,30 @@ function LLMConfigPanel(): React.ReactNode {
         )}
       </div>
     </Section>
+  );
+}
+
+function ApiKeyStatusRow({
+  onReplace,
+  t,
+}: {
+  onReplace: () => void;
+  t: (k: string) => string;
+}) {
+  return (
+    <div className="flex items-center gap-1 text-[10px]">
+      <CheckCircle2 className="size-3 text-emerald-600 dark:text-emerald-400" />
+      <span className="text-emerald-700 dark:text-emerald-300">
+        {t("llm.apiKeyConfigured")}
+      </span>
+      <button
+        type="button"
+        onClick={onReplace}
+        className="ml-auto text-muted-foreground hover:text-foreground"
+      >
+        {t("llm.apiKeyReplace")}
+      </button>
+    </div>
   );
 }
 

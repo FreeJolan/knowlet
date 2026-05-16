@@ -454,7 +454,6 @@ export async function uploadAttachment(
 // ---------- LLM config (Phase 3 P3.0) ----------
 
 export interface LLMConfigSummary {
-  provider: string;
   base_url: string;
   model: string;
   has_api_key: boolean;
@@ -462,7 +461,6 @@ export interface LLMConfigSummary {
 }
 
 export interface LLMConfigUpdate {
-  provider?: string;
   base_url?: string;
   model?: string;
   /** Empty string = keep existing key; omit = unchanged; non-empty = overwrite. */
@@ -485,5 +483,37 @@ export const updateLLMConfig = (
   payload: LLMConfigUpdate,
 ): Promise<LLMConfigSummary> => request("PUT", "/api/llm/config", payload);
 
-export const testLLM = (): Promise<LLMTestResult> =>
-  request("POST", "/api/llm/test");
+export interface LLMTestRequest {
+  base_url?: string;
+  api_key?: string;
+  model?: string;
+}
+
+/** Test LLM connectivity. Pass draft credentials (what the user is
+ *  currently typing in Settings) so the test verifies the current
+ *  form values — not the still-saved old ones. Omit / empty fields
+ *  fall back to the saved config. */
+export const testLLM = (draft?: LLMTestRequest): Promise<LLMTestResult> =>
+  request("POST", "/api/llm/test", draft ?? {});
+
+export interface ProviderModelList {
+  models: { id: string }[];
+  error?: string;
+}
+
+export interface ProviderModelsRequest {
+  base_url?: string;
+  api_key?: string;
+}
+
+/** Live model list from the user's configured LLM provider's
+ *  ``/v1/models`` endpoint. NOT a knowlet recommendation — passthrough.
+ *
+ *  Pass draft credentials (from the Settings form before user
+ *  clicks Save) to preview models without committing. Omit / empty
+ *  falls back to saved config. Empty + error message when provider
+ *  doesn't support it or auth fails. */
+export const getProviderModels = (
+  draft?: ProviderModelsRequest,
+): Promise<ProviderModelList> =>
+  request("POST", "/api/llm/provider-models", draft ?? {});

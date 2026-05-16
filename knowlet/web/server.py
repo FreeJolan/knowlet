@@ -135,13 +135,44 @@ class LLMConfigUpdate(BaseModel):
     All fields optional; only present ones are written. ``api_key``
     is special: empty string = "leave existing key intact" (so the
     UI never has to round-trip the secret); anything else = overwrite.
+
+    The ``provider`` field used to be here but knowlet's actual LLM
+    call only needs base_url + api_key + model; provider was a
+    vestigial label, removed 2026-05-16 per user feedback.
     """
 
-    provider: str | None = None
     base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
     max_tokens: int | None = None
+
+
+class LLMProviderModelsRequest(BaseModel):
+    """Optional draft credentials for POST /api/llm/provider-models.
+
+    Used so the Settings UI can preview models **before saving** —
+    fixes the chicken-and-egg where the user can't pick a model
+    until they save creds, but can't save creds confidently until
+    they see what models exist. Both fields fall back to the saved
+    config if omitted / blank.
+    """
+
+    base_url: str | None = None
+    api_key: str | None = None
+
+
+class LLMTestRequest(BaseModel):
+    """Optional draft credentials for POST /api/llm/test.
+
+    Same motivation as :class:`LLMProviderModelsRequest`: the user
+    types new values in the Settings form and naturally expects
+    Test to verify **what they just typed**, not the still-saved
+    old creds. Fields fall back to the saved config when omitted /
+    blank."""
+
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
 
 
 class SyncModeRequest(BaseModel):
@@ -5315,7 +5346,6 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # externally; we don't trust the in-process copy).
         fresh = load_config(vault.root)
         return {
-            "provider": fresh.llm.provider,
             "base_url": fresh.llm.base_url,
             "model": fresh.llm.model,
             "has_api_key": bool(fresh.llm.api_key),
@@ -5332,8 +5362,6 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         from knowlet.config import save_config as _save_cfg
 
         fresh = load_config(vault.root)
-        if payload.provider is not None:
-            fresh.llm.provider = payload.provider
         if payload.base_url is not None:
             fresh.llm.base_url = payload.base_url
         if payload.model is not None:
@@ -5347,23 +5375,82 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         _save_cfg(vault.root, fresh)
         # Mutate the in-process config so subsequent endpoints see
         # the new values without restart.
-        config.llm.provider = fresh.llm.provider
         config.llm.base_url = fresh.llm.base_url
         config.llm.model = fresh.llm.model
         config.llm.api_key = fresh.llm.api_key
         config.llm.max_tokens = fresh.llm.max_tokens
         return llm_config_get()
 
+    @app.post("/api/llm/provider-models")
+    def llm_provider_models(
+        payload: LLMProviderModelsRequest | None = Body(default=None),
+    ) -> dict[str, Any]:
+        """Fetch the configured provider's actual ``/v1/models`` list.
+
+        This is **not** a knowlet recommendation — it's whatever the
+        user's own LLM provider exposes. knowlet just passes through.
+
+        Whether ``/v1/models`` requires the API key is **provider-
+        defined**: OpenAI/Anthropic-compat proxies typically yes;
+        local servers (LM Studio, vllm defaults) sometimes no.
+        We pass whatever the caller provides (draft values from the
+        Settings UI before save, or saved config as fallback) and
+        let the provider decide. Errors return clean fallback so
+        the UI degrades to a plain text input.
+
+        POST (not GET) so draft credentials don't leak into URLs /
+        access logs."""
+        from openai import OpenAI
+
+        draft_url = (payload.base_url if payload else None) or ""
+        draft_key = (payload.api_key if payload else None) or ""
+        effective_url = draft_url.strip() or config.llm.base_url
+        # Empty string from caller = "use saved key". Caller can pass
+        # whitespace-only or anything truthy to override; we don't
+        # second-guess the draft.
+        effective_key = (
+            draft_key if draft_key else (config.llm.api_key or "knowlet-no-key")
+        )
+
+        if not effective_url:
+            return {"models": [], "error": "base_url not configured"}
+        try:
+            client = OpenAI(base_url=effective_url, api_key=effective_key)
+            response = client.models.list()
+            models = [{"id": m.id} for m in response.data]
+            return {"models": models}
+        except Exception as exc:  # noqa: BLE001
+            return {"models": [], "error": repr(exc)[:300]}
+
     @app.post("/api/llm/test")
-    def llm_test() -> dict[str, Any]:
+    def llm_test(
+        payload: LLMTestRequest | None = Body(default=None),
+    ) -> dict[str, Any]:
         """Run a minimal completion against the configured LLM to
         verify connectivity + auth. Returns latency + a short echo
-        of the response so the UI can show "OK reply: <preview>"."""
+        of the response so the UI can show "OK reply: <preview>".
+
+        Accepts optional draft credentials so the Settings UI can
+        test what the user is **currently typing** without forcing
+        a Save first — the natural expectation from Cursor / Postman
+        / any modern API config UI."""
         import time as _time
 
+        from knowlet.config import LLMConfig
         from knowlet.core.llm import LLMClient
 
-        client = LLMClient(config.llm)
+        # Build an effective config: draft overrides saved per-field,
+        # blank/None means "use saved".
+        draft_url = (payload.base_url if payload else None) or ""
+        draft_key = (payload.api_key if payload else None) or ""
+        draft_model = (payload.model if payload else None) or ""
+        effective = LLMConfig(
+            base_url=draft_url.strip() or config.llm.base_url,
+            api_key=draft_key or config.llm.api_key,
+            model=draft_model.strip() or config.llm.model,
+            max_tokens=config.llm.max_tokens,
+        )
+        client = LLMClient(effective)
         prompt = (
             "Reply with the single word 'ok' (no punctuation, no "
             "quotes). This is a connectivity check."
@@ -5391,7 +5478,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "ok": True,
             "latency_ms": latency_ms,
             "preview": preview,
-            "model": config.llm.model,
+            "model": effective.model,
         }
 
     # ---------------- profile ----------------
