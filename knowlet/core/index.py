@@ -259,7 +259,19 @@ class Index:
         )
 
         body_for_chunking = f"# {note.title}\n\n{note.body}".strip()
-        chunks = chunk_text(body_for_chunking, size=chunk_size, overlap=chunk_overlap)
+        # Phase 3 Stage 1 Step 1.5: Markdown-aware chunking. Falls
+        # back to the legacy sliding-window splitter if the langchain
+        # dep isn't importable (e.g. partial install during tests).
+        try:
+            from knowlet.core.retrieval.chunking import smart_chunk_markdown
+
+            chunks = smart_chunk_markdown(
+                body_for_chunking, size=chunk_size, overlap=chunk_overlap
+            )
+        except ImportError:
+            chunks = chunk_text(
+                body_for_chunking, size=chunk_size, overlap=chunk_overlap
+            )
         if not chunks:
             conn.commit()
             return

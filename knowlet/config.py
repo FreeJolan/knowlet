@@ -28,6 +28,11 @@ class LLMConfig(BaseModel):
     # client into a 400-then-retry path on first call. Leave None unless
     # the user explicitly wants determinism on a non-Claude provider.
     temperature: float | None = None
+    # Optional independent model for LLM rerank (Phase 3 Stage 1).
+    # Empty string = "use ``model``"; otherwise the rerank path uses this
+    # one (typically a cheaper / faster model — e.g. Haiku for rerank
+    # while Opus answers chat). Same base_url + api_key are used.
+    rerank_model: str = ""
 
 
 class EmbeddingConfig(BaseModel):
