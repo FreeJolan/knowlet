@@ -1,12 +1,47 @@
 """Phase 3 — AI 子系统模块。
 
-每个 AI role 一个模块(per ADR-0024 §4),后续切片逐步填充:
-- ``envelope``    — 7 层 prompt envelope 组装器(P3.1,未来切片)
-- ``role/*``      — 7 个 role 各自的实现(P3.2 起,未来切片)
+每个 AI role 一个模块(per ADR-0024 §4),按 Phase 3 stages 推进:
 
-当前 sub-package 为空 —— P3.0 阶段一度引入过 tier 分类(`tiers.py`),
-2026-05-16 review 后删除(per ADR-0028 §1 amendment: knowlet 不评估
-模型、不分类、不基于模型 gate feature)。
+- ``envelope`` + ``layers`` — Stage 1 ✅ — 7 层 prompt envelope 框架
+  (ADR-0024 §3.1) + 7 个 ADR-0024 role 的 placeholder 配置。
+- ``retrieval/*``           — Stage 1(retrieval v2: query expansion /
+  LLM rerank / smart chunking)。
+- ``role/*``                — Stages 3-6,逐个 role 填充真 prompt
+  templates + 输入输出 schemas。
+
+Import side effect: importing this package registers the 7 roles and
+5 layer sources in the envelope registry (see ``layers.py``).
 """
 
 from __future__ import annotations
+
+# Importing ``layers`` registers all sources + roles. Without this
+# explicit re-export, ``from knowlet.core.ai import envelope`` would
+# leave the registry empty. We keep ``layers`` private to the module
+# itself — callers use ``build_envelope`` / ``known_roles`` etc.
+from knowlet.core.ai import layers  # noqa: F401 — registers on import
+from knowlet.core.ai.envelope import (
+    Envelope,
+    EnvelopeContext,
+    Layer,
+    LayerSource,
+    RoleConfig,
+    build_envelope,
+    known_roles,
+    known_tags,
+    register_role,
+    register_source,
+)
+
+__all__ = [
+    "Envelope",
+    "EnvelopeContext",
+    "Layer",
+    "LayerSource",
+    "RoleConfig",
+    "build_envelope",
+    "known_roles",
+    "known_tags",
+    "register_role",
+    "register_source",
+]
