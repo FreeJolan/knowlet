@@ -29,7 +29,8 @@
       "appearance": "外观",
       "ai": "AI",
       "sync": "同步",
-      "vault": "Vault"
+      "vault": "Vault",
+      "advanced": "高级"
     },
     "appearance": {
       "title": "外观",
@@ -37,6 +38,17 @@
       "dark": "深色",
       "system": "跟随系统",
       "systemHint": "当前系统偏好:{{resolved}}。"
+    },
+    "advanced": {
+      "aiCallTitle": "AI 调用记录",
+      "aiCallBlurb": "knowlet 每次调用 LLM(chat / mining / linter…)都会记一行,这里看最近 50 次。Power-user 用,排查 prompt / 延迟 / 错误。",
+      "eventCount": "{{count}} 条",
+      "refresh": "刷新",
+      "loading": "加载中…",
+      "empty": "暂无记录 — 触发一次 chat 后回来看。",
+      "error": "错误",
+      "input": "输入",
+      "output": "输出"
     }
   },
   "quickActions": {

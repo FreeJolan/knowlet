@@ -11,6 +11,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Activity,
   CheckCircle2,
   Cloud,
   CloudOff,
@@ -39,10 +40,12 @@ import {
   getLLMConfig,
   getProviderModels,
   getSyncMode,
+  listAICallEvents,
   previewImport,
   setSyncMode as apiSetSyncMode,
   startConnect,
   testLLM,
+  type AICallEvent,
   type ImportReportPayload,
   type SyncAuthStatus,
   type SyncModeResponse,
@@ -91,13 +94,16 @@ export function SettingsDialog({ open, onClose }: Props) {
   // Left-sidebar tabs (per Cursor / VS Code / Linear Settings UX).
   // Adding new categories = add a row here; the content area picks
   // the right panel via the discriminated union below.
-  type SettingsTab = "appearance" | "ai" | "sync" | "vault";
+  type SettingsTab = "appearance" | "ai" | "sync" | "vault" | "advanced";
   const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
   const tabs: { key: SettingsTab; label: string; icon: typeof Sun }[] = [
     { key: "appearance", label: t("settings.tabs.appearance"), icon: Sun },
     { key: "ai", label: t("settings.tabs.ai"), icon: Zap },
     { key: "sync", label: t("settings.tabs.sync"), icon: Cloud },
     { key: "vault", label: t("settings.tabs.vault"), icon: Download },
+    // Power-user trace / diagnostics; intentionally last per VS Code-style
+    // "Application" section placement.
+    { key: "advanced", label: t("settings.tabs.advanced"), icon: Activity },
   ];
 
   return (
@@ -199,6 +205,8 @@ export function SettingsDialog({ open, onClose }: Props) {
             )}
 
             {activeTab === "vault" && <VaultPortabilityPanel />}
+
+            {activeTab === "advanced" && <AICallTracePanel />}
           </div>
         </div>
       </DialogContent>
@@ -1025,5 +1033,155 @@ function ThemePill({
       {icon}
       <span>{label}</span>
     </button>
+  );
+}
+
+// ---------------- AI call trace (Phase 3 Stage 1 Step 1.6) ----------------
+
+function AICallTracePanel(): React.ReactNode {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const events = useQuery({
+    queryKey: ["ai-call-events"],
+    queryFn: () => listAICallEvents(50),
+    staleTime: 10_000,
+  });
+
+  return (
+    <Section title={t("settings.advanced.aiCallTitle")}>
+      <div className="w-full text-xs text-muted-foreground">
+        {t("settings.advanced.aiCallBlurb")}
+      </div>
+
+      <div className="mt-3 flex w-full items-center justify-between">
+        <span className="text-[11px] text-muted-foreground">
+          {events.data
+            ? t("settings.advanced.eventCount", {
+                count: events.data.events.length,
+              })
+            : ""}
+        </span>
+        <button
+          type="button"
+          onClick={() => events.refetch()}
+          className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+          title={t("settings.advanced.refresh")}
+        >
+          <RefreshCw
+            className={`size-3 ${events.isFetching ? "animate-spin" : ""}`}
+          />
+          {t("settings.advanced.refresh")}
+        </button>
+      </div>
+
+      <div
+        className="mt-2 w-full rounded border"
+        style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+      >
+        {!events.data && (
+          <div className="p-3 text-[11px] text-muted-foreground">
+            {t("settings.advanced.loading")}
+          </div>
+        )}
+        {events.data && events.data.events.length === 0 && (
+          <div className="p-3 text-[11px] text-muted-foreground">
+            {t("settings.advanced.empty")}
+          </div>
+        )}
+        {events.data &&
+          // Most recent first (store returns ASC; reverse for display).
+          [...events.data.events].reverse().map((ev) => (
+            <AICallRow
+              key={ev.id}
+              event={ev}
+              isExpanded={expanded === ev.id}
+              onToggle={() =>
+                setExpanded(expanded === ev.id ? null : ev.id)
+              }
+              t={t}
+            />
+          ))}
+      </div>
+    </Section>
+  );
+}
+
+function AICallRow({
+  event,
+  isExpanded,
+  onToggle,
+  t,
+}: {
+  event: AICallEvent;
+  isExpanded: boolean;
+  onToggle: () => void;
+  t: (k: string, v?: Record<string, unknown>) => string;
+}): React.ReactNode {
+  const p = event.payload;
+  const isError = !!p.error;
+  return (
+    <div
+      className="border-b last:border-b-0 px-2 py-1.5 text-[11px] cursor-pointer hover:bg-accent/10"
+      style={{ borderColor: "var(--line)" }}
+      onClick={onToggle}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono" style={{ color: "var(--ink-mute)" }}>
+          {event.ts.slice(11, 19)}
+        </span>
+        <span
+          className="rounded px-1.5"
+          style={{
+            background: isError
+              ? "rgba(192,57,43,0.15)"
+              : "var(--accent-tint-2)",
+            color: isError
+              ? "var(--destructive,#c0392b)"
+              : "var(--ink)",
+          }}
+        >
+          {p.role || "unknown"}
+        </span>
+        <span className="font-mono text-[10px] text-muted-foreground">
+          {p.model}
+        </span>
+        <span className="text-muted-foreground">
+          {p.latency_ms}ms · {p.prompt_chars}→{p.response_chars} chars
+          {p.tool_calls ? ` · ${p.tool_calls} tools` : ""}
+          {p.stream ? " · stream" : ""}
+        </span>
+      </div>
+      {isExpanded && (
+        <div className="mt-1.5 space-y-1.5 pl-2 text-[10.5px]">
+          {p.error && (
+            <div
+              className="rounded px-1.5 py-1"
+              style={{
+                background: "rgba(192,57,43,0.1)",
+                color: "var(--destructive,#c0392b)",
+              }}
+            >
+              <strong>{t("settings.advanced.error")}:</strong> {p.error}
+            </div>
+          )}
+          {p.input_preview && (
+            <div>
+              <strong>{t("settings.advanced.input")}:</strong>{" "}
+              <span className="font-mono text-muted-foreground">
+                {p.input_preview}
+              </span>
+            </div>
+          )}
+          {p.output_preview && (
+            <div>
+              <strong>{t("settings.advanced.output")}:</strong>{" "}
+              <span className="font-mono text-muted-foreground">
+                {p.output_preview}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

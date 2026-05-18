@@ -79,7 +79,7 @@ def _make_client(
     )
     store: AuditEventStore | None = None
     if with_audit:
-        store = AuditEventStore(tmp_path / "events.sqlite")
+        store = AuditEventStore(tmp_path)
     client = LLMClient(cfg, audit_store=store)
     fake = _FakeOpenAI(response_text=response_text, raises=raises)
     # Bypass _ensure() so we don't try a real connection.
@@ -195,7 +195,7 @@ def test_chat_stream_emits_audit_after_completion(tmp_path: Path) -> None:
         api_key="fake-key",
         model="fake-streaming-model",
     )
-    store = AuditEventStore(tmp_path / "events.sqlite")
+    store = AuditEventStore(tmp_path)
     client = LLMClient(cfg, audit_store=store)
     client._client = _StreamingOpenAI()  # type: ignore[assignment]
 

@@ -162,12 +162,9 @@ def bootstrap_chat(
     # Chat is the highest-traffic LLM path; wire the audit store so
     # ``ai.call`` rows land in events.sqlite for the power-user trace
     # viewer (Stage 1 Step 1.6).
-    from knowlet.core.audit_log import AuditEventStore, events_db_path
+    from knowlet.core.audit_log import AuditEventStore
 
-    llm = LLMClient(
-        cfg.llm,
-        audit_store=AuditEventStore(events_db_path(vault.root)),
-    )
+    llm = LLMClient(cfg.llm, audit_store=AuditEventStore(vault.root))
     registry = default_registry()
     cards = CardStore(vault.cards_dir)
     tasks = TaskStore(vault.tasks_dir)

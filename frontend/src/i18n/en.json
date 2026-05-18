@@ -29,7 +29,8 @@
       "appearance": "Appearance",
       "ai": "AI",
       "sync": "Sync",
-      "vault": "Vault"
+      "vault": "Vault",
+      "advanced": "Advanced"
     },
     "appearance": {
       "title": "Appearance",
@@ -37,6 +38,17 @@
       "dark": "Dark",
       "system": "Follow system",
       "systemHint": "System preference is currently {{resolved}}."
+    },
+    "advanced": {
+      "aiCallTitle": "AI call trace",
+      "aiCallBlurb": "knowlet logs one row per LLM call (chat / mining / linter…). Shown here: the last 50. Power-user diagnostic for inspecting prompt / latency / errors.",
+      "eventCount": "{{count}} events",
+      "refresh": "Refresh",
+      "loading": "Loading…",
+      "empty": "No calls yet — trigger a chat to see entries here.",
+      "error": "Error",
+      "input": "Input",
+      "output": "Output"
     }
   },
   "tree": {

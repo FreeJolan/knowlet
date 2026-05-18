@@ -224,7 +224,7 @@ def test_vault_shape_empty_vault_skipped(tmp_path: Path) -> None:
 def test_recent_activity_with_events(tmp_path: Path) -> None:
     v = Vault(tmp_path)
     v.init_layout()
-    store = AuditEventStore(v.state_dir / "events.sqlite")
+    store = AuditEventStore(v.root)
     store.append(
         AuditEvent(
             kind="note.created",
@@ -246,7 +246,7 @@ def test_recent_activity_with_events(tmp_path: Path) -> None:
 def test_recent_activity_no_events_skipped(tmp_path: Path) -> None:
     v = Vault(tmp_path)
     v.init_layout()
-    store = AuditEventStore(v.state_dir / "events.sqlite")
+    store = AuditEventStore(v.root)
     env = build_envelope(
         "chat_companion",
         task=None,

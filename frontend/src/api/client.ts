@@ -517,3 +517,39 @@ export const getProviderModels = (
   draft?: ProviderModelsRequest,
 ): Promise<ProviderModelList> =>
   request("POST", "/api/llm/provider-models", draft ?? {});
+
+// ---------- audit log (Phase 3 Stage 1 Step 1.6) ----------
+
+export interface AICallEvent {
+  id: string;
+  ts: string;
+  kind: string;
+  entity_type: string;
+  entity_id: string;
+  actor: string;
+  payload: {
+    role?: string;
+    model?: string;
+    prompt_chars?: number;
+    response_chars?: number;
+    latency_ms?: number;
+    tool_calls?: number;
+    stream?: boolean;
+    input_preview?: string;
+    output_preview?: string;
+    error?: string;
+  };
+}
+
+export interface AICallEventsResponse {
+  events: AICallEvent[];
+  total: number;
+}
+
+/** Fetch recent ``ai.call`` audit events for the Settings → Advanced
+ *  power-user trace viewer. Backed by the generic ``/api/events``
+ *  endpoint filtered to ``kind=ai.call``. */
+export const listAICallEvents = (
+  limit = 50,
+): Promise<AICallEventsResponse> =>
+  request("GET", `/api/events?kind=ai.call&limit=${limit}`);
