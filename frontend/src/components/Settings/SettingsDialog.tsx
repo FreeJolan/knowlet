@@ -41,12 +41,14 @@ import {
   getProviderModels,
   getSyncMode,
   listAICallEvents,
+  listMiningTasks,
   previewImport,
   setSyncMode as apiSetSyncMode,
   startConnect,
   testLLM,
   type AICallEvent,
   type ImportReportPayload,
+  type MiningTaskSummary,
   type SyncAuthStatus,
   type SyncModeResponse,
   updateLLMConfig,
@@ -206,7 +208,14 @@ export function SettingsDialog({ open, onClose }: Props) {
 
             {activeTab === "vault" && <VaultPortabilityPanel />}
 
-            {activeTab === "advanced" && <AICallTracePanel />}
+            {activeTab === "advanced" && (
+              <>
+                <AICallTracePanel />
+                <div className="mt-6">
+                  <MiningTaskStatusPanel />
+                </div>
+              </>
+            )}
           </div>
         </div>
       </DialogContent>
@@ -1180,6 +1189,100 @@ function AICallRow({
               </span>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ------------ Mining task status (Phase 3 Stage 3 §3.8) -----------
+
+function MiningTaskStatusPanel(): React.ReactNode {
+  const { t } = useTranslation();
+  const tasks = useQuery({
+    queryKey: ["mining-tasks"],
+    queryFn: listMiningTasks,
+    staleTime: 10_000,
+  });
+
+  return (
+    <Section title={t("settings.advanced.miningTitle")}>
+      <div className="w-full text-xs text-muted-foreground">
+        {t("settings.advanced.miningBlurb")}
+      </div>
+
+      <div
+        className="mt-2 w-full rounded border"
+        style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+      >
+        {!tasks.data && (
+          <div className="p-3 text-[11px] text-muted-foreground">
+            {t("settings.advanced.loading")}
+          </div>
+        )}
+        {tasks.data && tasks.data.length === 0 && (
+          <div className="p-3 text-[11px] text-muted-foreground">
+            {t("settings.advanced.miningEmpty")}
+          </div>
+        )}
+        {tasks.data &&
+          tasks.data.map((task) => (
+            <MiningTaskRow key={task.id} task={task} t={t} />
+          ))}
+      </div>
+    </Section>
+  );
+}
+
+function MiningTaskRow({
+  task,
+  t,
+}: {
+  task: MiningTaskSummary;
+  t: (k: string, v?: Record<string, unknown>) => string;
+}): React.ReactNode {
+  const statusColor = (() => {
+    switch (task.status) {
+      case "running":
+        return { bg: "var(--accent-tint-2)", fg: "var(--ink)" };
+      case "paused-by-backlog":
+        return {
+          bg: "rgba(217,151,77,0.15)",
+          fg: "var(--ink)",
+        };
+      case "paused-by-user":
+      default:
+        return {
+          bg: "rgba(100,100,100,0.1)",
+          fg: "var(--ink-mute)",
+        };
+    }
+  })();
+  return (
+    <div
+      className="border-b last:border-b-0 px-2 py-1.5 text-[11px]"
+      style={{ borderColor: "var(--line)" }}
+      data-testid={`mining-task-row-${task.id}`}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className="rounded px-1.5"
+          style={{ background: statusColor.bg, color: statusColor.fg }}
+          data-testid={`mining-task-status-${task.id}`}
+        >
+          {t(`settings.advanced.miningStatus.${task.status}`)}
+        </span>
+        <span className="font-medium">{task.name}</span>
+        <span className="text-muted-foreground">
+          {t("settings.advanced.miningPendingCount", {
+            n: task.pending_drafts,
+            max: task.max_pending_drafts ?? "∞",
+          })}
+        </span>
+      </div>
+      {task.status === "paused-by-backlog" && (
+        <div className="mt-1 pl-2 text-[10.5px] text-muted-foreground">
+          {t("settings.advanced.miningPausedByBacklog")}
         </div>
       )}
     </div>

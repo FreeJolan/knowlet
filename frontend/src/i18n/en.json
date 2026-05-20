@@ -48,7 +48,58 @@
       "empty": "No calls yet — trigger a chat to see entries here.",
       "error": "Error",
       "input": "Input",
-      "output": "Output"
+      "output": "Output",
+      "miningTitle": "Mining task status",
+      "miningBlurb": "Background mining task status. When pending drafts for a task hit the ceiling (default 5), the task auto-pauses (paused-by-backlog); clearing drafts auto-resumes it on the next tick — per ADR-0009 amendment A2.3.",
+      "miningEmpty": "No mining tasks configured.",
+      "miningPendingCount": "{{n}} / {{max}} pending",
+      "miningPausedByBacklog": "Paused — pending drafts at ceiling; review a few to auto-resume.",
+      "miningStatus": {
+        "running": "Running",
+        "paused-by-user": "Paused (user)",
+        "paused-by-backlog": "Paused (backlog)"
+      }
+    }
+  },
+  "drafts": {
+    "title": "Drafts",
+    "count": "{{count}} pending",
+    "close": "Close",
+    "loading": "Loading…",
+    "untitled": "(untitled)",
+    "emptyTitle": "No drafts yet",
+    "emptyHint": "Try ⌘⇧V to paste a URL or drop a .md file — AI fetches a summary; you decide on the spot (Knowledge / Reference / Defer)",
+    "ageDays_one": "{{count}} day",
+    "ageDays_other": "{{count}} days",
+    "approve": "Approve (write as Note)",
+    "reject": "Archive (recoverable)",
+    "softLimit": "{{count}} deferred drafts — review some before capturing more?",
+    "warnAge": "Deferred for {{days}} days — review now, or archive?"
+  },
+  "capture": {
+    "title": "Capture",
+    "subtitle": "Paste a URL or drop a .md / .txt file. AI distills a summary; you decide on the spot where it goes (per ADR-0009 amendment).",
+    "urlLabel": "URL",
+    "fetchButton": "Fetch & summarize",
+    "dropzone": "Drag a file here, or click to choose (.md / .txt)",
+    "fetching": "AI is fetching the summary…",
+    "sourceLabel": "Source",
+    "summaryFailed": "Summary failed; showing raw content. Still savable — you can review it yourself later.",
+    "decide": {
+      "knowledge": "Knowledge",
+      "reference": "Reference",
+      "defer": "Defer"
+    },
+    "done": {
+      "knowledge": "Saved as Knowledge note",
+      "reference": "Saved as Reference note",
+      "defer": "Added to Drafts"
+    },
+    "errors": {
+      "fetchFailed": "URL fetch failed — check that the link is reachable",
+      "fileFailed": "File read failed — only .md / .txt supported (PDF deferred)",
+      "saveFailed": "Save failed — try again",
+      "retry": "Retry"
     }
   },
   "noteKind": {

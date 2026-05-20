@@ -30,6 +30,8 @@ import { CommandPalette } from "@/components/Palette/CommandPalette";
 import { buildBuiltinCommands } from "@/components/Palette/commands";
 import { RightRail } from "@/components/RightRail/RightRail";
 import { SearchFocusMode } from "@/components/Search/SearchFocusMode";
+import { DraftsFocusMode } from "@/components/Drafts";
+import { CaptureBox } from "@/components/Capture";
 import { SettingsDialog } from "@/components/Settings/SettingsDialog";
 import { NewDocDialog } from "@/components/NewDoc/NewDocDialog";
 import { QuickActionsManager } from "@/components/QuickActions/QuickActionsManager";
@@ -145,6 +147,11 @@ export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Phase 1 D slice 2 — global search focus mode (Cmd+Shift+F).
   const [searchFocusOpen, setSearchFocusOpen] = useState(false);
+  // Phase 3 Stage 3 §3.5 — Drafts focus mode (⌘I).
+  const [draftsOpen, setDraftsOpen] = useState(false);
+  // Phase 3 Stage 3 §3.4 — CaptureBox modal (⌘⇧V).
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [captureInitialUrl, setCaptureInitialUrl] = useState<string | undefined>();
   // Phase 2 D Slice 2 — 新建文档 dialog. `seedFolder` is the folder
   // pre-selected when the dialog opens (current tree selection or the
   // folder right-clicked from the tree's context menu).
@@ -501,6 +508,30 @@ export function AppShell() {
       const folder = (e as CustomEvent<string>).detail ?? "";
       setNewDocSeedFolder(folder);
     };
+    // Phase 3 Stage 3 §3.6 — ⌘⇧V opens CaptureBox. We read the
+    // clipboard here (inside the user-gesture handler) and pass the
+    // detected URL as initial value if present. navigator.clipboard
+    // can reject (permission denied / non-secure context); fall back
+    // to opening empty.
+    const openCapture = () => {
+      setCaptureInitialUrl(undefined);
+      const cb = navigator.clipboard;
+      if (cb && typeof cb.readText === "function") {
+        cb.readText().then(
+          (text) => {
+            const t = (text ?? "").trim();
+            if (t.startsWith("http://") || t.startsWith("https://")) {
+              setCaptureInitialUrl(t);
+            }
+          },
+          () => {
+            /* clipboard denied — open empty */
+          },
+        );
+      }
+      setCaptureOpen(true);
+    };
+    const openDrafts = () => setDraftsOpen(true);
     window.addEventListener("knowlet:open-palette", openPalette);
     window.addEventListener("knowlet:open-trash", openTrash);
     window.addEventListener("knowlet:close-active-tab", closeActiveTab);
@@ -509,6 +540,8 @@ export function AppShell() {
     window.addEventListener("knowlet:new-doc-folder-change", onFolderChange);
     window.addEventListener("knowlet:open-wikilink", openWikilink);
     window.addEventListener("knowlet:open-tag", openTag);
+    window.addEventListener("knowlet:open-capture", openCapture);
+    window.addEventListener("knowlet:open-drafts", openDrafts);
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("knowlet:open-palette", openPalette);
@@ -522,6 +555,8 @@ export function AppShell() {
       );
       window.removeEventListener("knowlet:open-wikilink", openWikilink);
       window.removeEventListener("knowlet:open-tag", openTag);
+      window.removeEventListener("knowlet:open-capture", openCapture);
+      window.removeEventListener("knowlet:open-drafts", openDrafts);
       window.removeEventListener("keydown", onKey);
     };
   }, [qc, selectedNoteId, openNewDocDialog]);
@@ -832,6 +867,23 @@ export function AppShell() {
           setPendingLine(null);
           setPendingPreserveMode(false);
         }}
+      />
+      <DraftsFocusMode
+        open={draftsOpen}
+        onClose={() => setDraftsOpen(false)}
+        onOpenNote={(id) => {
+          // Per draft is a file; opening just reveals it. For now,
+          // close the focus mode and rely on the file appearing in
+          // the tree (Stage 3.5 stops here; richer in-modal preview
+          // can come later). We don't have a tabs entry for drafts.
+          setDraftsOpen(false);
+          setSelectedNoteId(id);
+        }}
+      />
+      <CaptureBox
+        open={captureOpen}
+        onClose={() => setCaptureOpen(false)}
+        initialUrl={captureInitialUrl}
       />
       <NewDocDialog
         open={newDocOpen}

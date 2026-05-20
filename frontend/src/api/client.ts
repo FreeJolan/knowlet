@@ -567,3 +567,102 @@ export const setNoteKind = (
   payload: { kind: "knowledge" | "reference"; confirm?: boolean },
 ): Promise<NoteFull> =>
   request("POST", `/api/notes/${noteId}/kind`, payload);
+
+// ---------- Capture flow (Phase 3 Stage 3 — ADR-0009 amendment) ----
+
+export interface CapturePayload {
+  title: string;
+  body: string;
+  source?: string | null;
+  hostname?: string | null;
+  /** True iff the page extracted but the summarize LLM call raised.
+   *  Frontend should render "摘要失败" / "summary failed" hint. */
+  summary_failed?: boolean;
+}
+
+export interface CaptureDecisionResponse {
+  decision: "knowledge" | "reference" | "defer";
+  note_id?: string | null;
+  note_path?: string | null;
+  draft_id?: string | null;
+  draft_path?: string | null;
+}
+
+/** POST a URL → backend fetches + summarizes → returns a capsule. */
+export const captureFromUrl = (url: string): Promise<CapturePayload> =>
+  request("POST", "/api/capture/url", { url });
+
+/** POST a multipart file → returns a capsule. Markdown / text only;
+ *  PDF returns 415 (deferred per Stage 3 scope). */
+export const captureFromFile = async (
+  file: File,
+): Promise<CapturePayload> => {
+  const fd = new FormData();
+  fd.append("file", file);
+  const r = await fetch("/api/capture/file", { method: "POST", body: fd });
+  if (!r.ok) {
+    let detail = r.statusText;
+    try {
+      const data = (await r.json()) as { detail?: string };
+      if (data.detail) detail = data.detail;
+    } catch {
+      /* not JSON */
+    }
+    const err: ApiError = { status: r.status, detail };
+    throw err;
+  }
+  return (await r.json()) as CapturePayload;
+};
+
+/** User's three-way decision on a capsule. Knowledge / reference
+ *  write a Note directly; defer writes a Draft. */
+export const captureDecide = (payload: {
+  capsule: CapturePayload;
+  decision: "knowledge" | "reference" | "defer";
+  defer_kind?: "knowledge" | "reference";
+}): Promise<CaptureDecisionResponse> =>
+  request("POST", "/api/capture/decide", payload);
+
+// ---------- Drafts list (Phase 3 Stage 3) ----------------
+
+export interface DraftSummary {
+  id: string;
+  title: string;
+  body?: string;
+  source?: string | null;
+  tags: string[];
+  kind: "knowledge" | "reference";
+  task_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  /** computed by backend: days elapsed since created_at */
+  age_days?: number;
+  is_stale?: boolean;
+  is_warn_age?: boolean;
+}
+
+export const listDrafts = (): Promise<DraftSummary[]> =>
+  request("GET", "/api/drafts");
+
+export const approveDraft = (id: string): Promise<{ note_id: string }> =>
+  request("POST", `/api/drafts/${id}/approve`);
+
+export const rejectDraft = (id: string): Promise<{ archived: boolean }> =>
+  request("POST", `/api/drafts/${id}/reject`);
+
+// ---------- Mining task status (Phase 3 Stage 3 §3.8) -------------
+
+export interface MiningTaskSummary {
+  id: string;
+  name: string;
+  enabled: boolean;
+  schedule: Record<string, string>;
+  sources: Array<Record<string, string>>;
+  updated_at: string;
+  status: "running" | "paused-by-user" | "paused-by-backlog";
+  max_pending_drafts: number | null;
+  pending_drafts: number;
+}
+
+export const listMiningTasks = (): Promise<MiningTaskSummary[]> =>
+  request("GET", "/api/mining/tasks");

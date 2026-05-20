@@ -70,9 +70,13 @@
 
 ---
 
-## Stage 3 — 采集闭环
+## Stage 3 — 采集闭环(2026-05-21: §3.7 deferred to Stage 4)
 
 **TuTu 名**: `采集闭环`
+
+> 实施记录(2026-05-21): §3.1–§3.6 + §3.8 全部 ship;§3.7 chat URL inline review 合并到 Stage 4(对话重做)— chat 输入面本来要重写,inline review 和 chat input 重写合做一次更自然。⌘⇧V + CaptureBox 已经覆盖了小红从 chat 外的 capture 路径。
+
+
 
 **范围**:
 - **Drafts queue 重做**(原 P3.9)— capture-time inline review;age tickling;auto-archive;anti-drift 四种 safety net(per ADR-0029 §4 原则 7 + ADR-0009 amendment 2026-05-16)

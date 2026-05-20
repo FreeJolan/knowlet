@@ -717,6 +717,13 @@ class TaskSummary(BaseModel):
     schedule: dict[str, str]
     sources: list[dict[str, str]]
     updated_at: str
+    # Phase 3 Stage 3 §3.3 — auto-pause visibility per ADR-0009 A2.3.
+    # ``status`` = "running" | "paused-by-user" | "paused-by-backlog".
+    # ``pending_drafts`` = live draft count for this task (so UI can
+    # show "5 / 5 pending" next to the paused-by-backlog badge).
+    status: Literal["running", "paused-by-user", "paused-by-backlog"] = "running"
+    max_pending_drafts: int | None = 5
+    pending_drafts: int = 0
 
 
 class TaskFull(TaskSummary):
@@ -734,6 +741,14 @@ class DraftSummary(BaseModel):
     task_id: str | None = None
     created_at: str
     updated_at: str
+    # Phase 3 Stage 3 — ADR-0029 §4.5 kind on drafts.
+    kind: Literal["knowledge", "reference"] = "knowledge"
+    # Phase 3 Stage 3 — age helpers computed server-side so the UI
+    # doesn't re-derive timezone math (per ADR-0029 §4 原则 7
+    # anti-drift visibility).
+    age_days: int = 0
+    is_stale: bool = False
+    is_warn_age: bool = False
 
 
 class DraftFull(DraftSummary):
@@ -5118,6 +5133,16 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     # ---------------- mining tasks ----------------
 
     def _task_summary(t: MiningTask) -> TaskSummary:
+        # Phase 3 Stage 3 — count this task's live drafts so the UI
+        # can show "N / max_pending_drafts" next to a paused-by-
+        # backlog badge.
+        try:
+            pending = len(
+                runtime_or_init_safe()
+                .ctx.drafts.list_for_task(t.id)
+            )
+        except Exception:  # noqa: BLE001
+            pending = 0
         return TaskSummary(
             id=t.id,
             name=t.name,
@@ -5125,7 +5150,16 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             schedule=t.schedule.to_payload(),
             sources=[s.to_payload() for s in t.sources],
             updated_at=t.updated_at,
+            status=t.status,  # type: ignore[arg-type]
+            max_pending_drafts=t.max_pending_drafts,
+            pending_drafts=pending,
         )
+
+    def runtime_or_init_safe() -> ChatRuntime:
+        """``runtime_or_init`` may raise during early bootstrap. _task_summary
+        is also called from contexts where that's OK; this wrapper isolates
+        a possible NoneType error."""
+        return app.state.web_state.runtime_or_init()
 
     def _reload_scheduler() -> None:
         if state.scheduler is not None:
@@ -5304,13 +5338,23 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             task_id=d.task_id,
             created_at=d.created_at,
             updated_at=d.updated_at,
+            kind=d.kind,
+            age_days=d.age_days,
+            is_stale=d.is_stale,
+            is_warn_age=d.is_warn_age,
         )
 
     @app.get("/api/drafts", response_model=list[DraftSummary])
     def list_drafts_endpoint(
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> list[DraftSummary]:
-        return [_draft_summary(d) for d in runtime.ctx.drafts.all_drafts()]
+        # Phase 3 Stage 3 — enforce 90-day age-archive on every list
+        # so stale drafts don't accumulate. Cheap; only mutates state
+        # when something actually crossed the threshold.
+        runtime.ctx.drafts.enforce_age_archive()
+        return [
+            _draft_summary(d) for d in runtime.ctx.drafts.all_drafts()
+        ]
 
     @app.get("/api/drafts/{draft_id}", response_model=DraftFull)
     def get_draft_endpoint(

@@ -48,7 +48,58 @@
       "empty": "暂无记录 — 触发一次 chat 后回来看。",
       "error": "错误",
       "input": "输入",
-      "output": "输出"
+      "output": "输出",
+      "miningTitle": "Mining task 状态",
+      "miningBlurb": "后台跑的 mining task 状态。当某个 task 的 pending drafts 达到上限(默认 5),task 会自动暂停(paused-by-backlog),清理 Drafts 后下次 tick 自动恢复 — per ADR-0009 amendment A2.3。",
+      "miningEmpty": "未配置 mining task。",
+      "miningPendingCount": "{{n}} / {{max}} pending",
+      "miningPausedByBacklog": "已暂停 — pending drafts 满,review 几条后会自动恢复。",
+      "miningStatus": {
+        "running": "运行中",
+        "paused-by-user": "用户暂停",
+        "paused-by-backlog": "积压暂停"
+      }
+    }
+  },
+  "drafts": {
+    "title": "草稿 / Drafts",
+    "count": "{{count}} 条待审",
+    "close": "关闭",
+    "loading": "加载中…",
+    "untitled": "(无标题)",
+    "emptyTitle": "暂无 drafts",
+    "emptyHint": "试一下 ⌘⇧V 粘个 URL 或拖入 .md 文件 — AI 帮你拉摘要,你当场决定存哪里(知识 / 资料 / 暂存)",
+    "ageDays_one": "{{count}} 天",
+    "ageDays_other": "{{count}} 天",
+    "approve": "Approve(变 Note)",
+    "reject": "Archive(归档,可恢复)",
+    "softLimit": "已有 {{count}} 条 deferred drafts — 先清几条再继续 capture?",
+    "warnAge": "已 deferred {{days}} 天了 — 现在 review,还是归档?"
+  },
+  "capture": {
+    "title": "捕获",
+    "subtitle": "粘贴 URL 或拖入 .md / .txt 文件,AI 帮你提炼摘要,你当场决定存哪里(per ADR-0009 amendment)",
+    "urlLabel": "URL",
+    "fetchButton": "拉取摘要",
+    "dropzone": "拖入文件,或点击选择(支持 .md / .txt)",
+    "fetching": "AI 正在拉取摘要…",
+    "sourceLabel": "来源",
+    "summaryFailed": "摘要失败,仅展示原始内容。仍可保存,稍后自己批阅。",
+    "decide": {
+      "knowledge": "知识",
+      "reference": "资料",
+      "defer": "暂存"
+    },
+    "done": {
+      "knowledge": "已存为 知识 Note",
+      "reference": "已存为 资料 Note",
+      "defer": "已进 Drafts 草稿区"
+    },
+    "errors": {
+      "fetchFailed": "URL 拉取失败 — 检查链接是否可访问",
+      "fileFailed": "文件读取失败 — 仅支持 .md / .txt(PDF 暂不支持)",
+      "saveFailed": "保存失败 — 请稍后重试",
+      "retry": "重试"
     }
   },
   "noteKind": {
