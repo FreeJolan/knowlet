@@ -145,6 +145,32 @@ def run_task(
     started = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     report = RunReport(task_id=task.id, started_at=started, finished_at=started)
 
+    # Phase 3 Stage 3 — ADR-0009 amendment A2.3 #3 self-throttle.
+    # If the live draft count for this task is already at the
+    # max_pending_drafts ceiling, auto-pause and skip the run.
+    # If the task was previously paused-by-backlog and the live count
+    # has dropped below the ceiling (user cleared some), auto-resume.
+    # Both transitions are visible (task.status changes, persisted on
+    # save) so the UI can show ``paused-by-backlog`` with an
+    # explanatory line per A2.3 visibility requirement.
+    if task.max_pending_drafts is not None and task.max_pending_drafts > 0:
+        live_count = len(drafts.list_for_task(task.id))
+        if task.paused_reason == "backlog" and live_count < task.max_pending_drafts:
+            # User cleared some — auto-resume.
+            task.enabled = True
+            task.paused_reason = None
+        elif task.enabled and live_count >= task.max_pending_drafts:
+            # Hit the ceiling — auto-pause.
+            task.enabled = False
+            task.paused_reason = "backlog"
+            report.errors.append(
+                f"paused-by-backlog: {live_count} pending drafts "
+                f"(max_pending_drafts={task.max_pending_drafts}); "
+                f"review or archive some to resume"
+            )
+            report.finished_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return report
+
     if not task.enabled:
         report.errors.append("task is disabled")
         report.finished_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

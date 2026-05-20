@@ -509,6 +509,11 @@ def test_max_keep_archives_oldest_drafts(tmp_path: Path, monkeypatch):
         sources=[SourceSpec(type="rss", url="https://feed")],
         prompt="p",
         max_keep=2,
+        # Stage 3 added a separate backlog-throttle that would auto-pause
+        # this task before the run even reaches max_keep enforcement
+        # (5 pre-seeded ≥ default max_pending_drafts of 5). Disable for
+        # this M6.5 max_keep test.
+        max_pending_drafts=None,
     )
 
     class StubLLM:

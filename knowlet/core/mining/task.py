@@ -126,6 +126,17 @@ class MiningTask:
     # piling up untouched drafts becomes Roam-style backlog anxiety.
     # 30 mirrors what ADR-0011 specced as the default. None = unlimited.
     max_keep: int | None = 30
+    # Phase 3 Stage 3 — ADR-0009 amendment A2.3 #3 self-throttle.
+    # When the **live** drafts queue for this task reaches this many
+    # *unreviewed* items, the task **auto-pauses** (paused_reason
+    # becomes "backlog"). The user clears some, the task auto-resumes
+    # on the next eligible tick. Default 5 per the ADR.
+    max_pending_drafts: int | None = 5
+    # Phase 3 Stage 3 — paused_reason distinguishes user-explicit
+    # disable (clicked the button) from auto-pause triggered by the
+    # backlog throttle above. "user" = explicit; "backlog" = auto;
+    # None = not paused (status derives from ``enabled``).
+    paused_reason: str | None = None
     # M7.3.1: ask the extractor to add a "## Critical take" section with a
     # content-grounded model evaluation (vs the existing neutral
     # summary/key-points/why-it-matters trio). Default OFF — adds tokens,
@@ -137,6 +148,28 @@ class MiningTask:
     updated_at: str = field(default_factory=now_iso)
     schema_version: int = MINING_TASK_SCHEMA_VERSION
     path: Path | None = None
+
+    # ------------------------------- status (Phase 3 Stage 3)
+
+    @property
+    def status(self) -> str:
+        """Computed status surfaced to the UI / API.
+
+        Derived from ``enabled`` + ``paused_reason``:
+        - enabled=True  → "running"
+        - enabled=False, paused_reason="backlog" → "paused-by-backlog"
+        - enabled=False, paused_reason="user" / None → "paused-by-user"
+
+        Per ADR-0009 amendment A2.3: paused-by-backlog must be
+        surfaced in the UI (silent auto-pause is a forbidden failure
+        mode per ADR-0028 §6)."""
+        if self.enabled:
+            return "running"
+        return (
+            "paused-by-backlog"
+            if self.paused_reason == "backlog"
+            else "paused-by-user"
+        )
 
     @property
     def slug(self) -> str:
@@ -164,6 +197,10 @@ class MiningTask:
             meta["max_items_per_run"] = self.max_items_per_run
         if self.max_keep is not None:
             meta["max_keep"] = self.max_keep
+        if self.max_pending_drafts is not None:
+            meta["max_pending_drafts"] = self.max_pending_drafts
+        if self.paused_reason is not None:
+            meta["paused_reason"] = self.paused_reason
         if self.include_critical_take:
             meta["include_critical_take"] = True
         post = frontmatter.Post(self.body, **meta)
@@ -188,6 +225,13 @@ class MiningTask:
 
         cap = _int_or_default(meta.get("max_items_per_run"), 50)
         keep = _int_or_default(meta.get("max_keep"), 30)
+        pending = _int_or_default(meta.get("max_pending_drafts"), 5)
+        paused_reason_raw = meta.get("paused_reason")
+        paused_reason: str | None
+        if paused_reason_raw in ("backlog", "user"):
+            paused_reason = str(paused_reason_raw)
+        else:
+            paused_reason = None
         try:
             schema_version = int(meta.get("schema_version") or 1)
         except (TypeError, ValueError):
@@ -202,6 +246,8 @@ class MiningTask:
             output_language=str(ol_raw) if ol_raw else None,
             max_items_per_run=cap,
             max_keep=keep,
+            max_pending_drafts=pending,
+            paused_reason=paused_reason,
             include_critical_take=bool(meta.get("include_critical_take", False)),
             body=post.content,
             created_at=str(meta.get("created_at") or now_iso()),

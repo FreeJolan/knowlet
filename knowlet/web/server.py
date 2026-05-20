@@ -160,6 +160,57 @@ class NoteKindUpdate(BaseModel):
     confirm: bool = False
 
 
+# --------- Capture flow (Phase 3 Stage 3 — ADR-0009 amendment A2.1)
+
+
+class CapturePayload(BaseModel):
+    """A capsule of AI-processed material, ready for user decision.
+
+    Stateless: the /capture/url + /capture/file endpoints return the
+    full capsule; the frontend holds it and re-sends to /capture/decide.
+    No server-side TTL store needed."""
+
+    title: str
+    body: str
+    source: str | None = None
+    hostname: str | None = None
+    # True iff the page extracted but the summarize LLM step raised.
+    # Frontend can render "(摘要失败 — 仅原始内容)" so the user is
+    # informed and can still proceed.
+    summary_failed: bool = False
+
+
+class CaptureDecision(BaseModel):
+    """User's three-way decision on a capsule (per ADR-0009 A2.2).
+
+    - ``decision="knowledge"`` → write a Note with kind=knowledge to
+      `notes/` (skips drafts queue per ADR-0009 A2.1: queue is the
+      explicit-defer exception, not the default).
+    - ``decision="reference"`` → write a Note with kind=reference to
+      `notes/`.
+    - ``decision="defer"`` → write a Draft to `drafts/` with the
+      best-guess ``defer_kind`` (caller may pass; defaults to
+      "reference" since most defers are URL/file captures).
+    """
+
+    capsule: CapturePayload
+    decision: Literal["knowledge", "reference", "defer"]
+    # Only used when decision == "defer"; sets the draft's kind so
+    # the user can later see what they were thinking when they parked
+    # it. Default reference (the majority case for capture).
+    defer_kind: Literal["knowledge", "reference"] = "reference"
+
+
+class CaptureDecisionResponse(BaseModel):
+    decision: Literal["knowledge", "reference", "defer"]
+    # Populated when decision is knowledge / reference — the new Note.
+    note_id: str | None = None
+    note_path: str | None = None
+    # Populated when decision is defer — the new Draft.
+    draft_id: str | None = None
+    draft_path: str | None = None
+
+
 class LLMProviderModelsRequest(BaseModel):
     """Optional draft credentials for POST /api/llm/provider-models.
 
@@ -4518,6 +4569,167 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 summary=f"(摘要失败:{exc})",
                 summary_failed=True,
             )
+
+    # ---------------- Stage 3 capture flow (ADR-0009 amendment A2) ----
+
+    @app.post("/api/capture/url", response_model=CapturePayload)
+    def capture_flow_url(
+        req: UrlCaptureRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> CapturePayload:
+        """Stage 3 capture: fetch + summarize URL, return a capsule the
+        frontend will pair with /capture/decide to commit.
+
+        Differs from the older /api/url/capture (M7.2) which returned
+        URL-attachment shape for chat. This returns a generic
+        CapturePayload usable for the modal three-button flow."""
+        from knowlet.core.url_capture import (
+            ExtractionError,
+            FetchError,
+            _hostname,
+            capture_url,
+            fetch_and_extract,
+        )
+
+        url = (req.url or "").strip()
+        if not url or not (
+            url.startswith("http://") or url.startswith("https://")
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="invalid url (must start with http:// or https://)",
+            )
+        try:
+            cap = capture_url(url, runtime.llm)
+            return CapturePayload(
+                title=cap.title or url,
+                body=cap.summary,
+                source=cap.url,
+                hostname=cap.hostname,
+                summary_failed=False,
+            )
+        except FetchError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            ) from exc
+        except ExtractionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            # Page fetched, but summarize blew up. Return a capsule
+            # with raw extracted text so the user can still triage.
+            try:
+                title, body = fetch_and_extract(url)
+            except Exception:  # noqa: BLE001
+                title, body = url, ""
+            return CapturePayload(
+                title=title or url,
+                body=body or f"(摘要失败: {exc})",
+                source=url,
+                hostname=_hostname(url),
+                summary_failed=True,
+            )
+
+    @app.post("/api/capture/file", response_model=CapturePayload)
+    async def capture_flow_file(
+        file: UploadFile,
+        _runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> CapturePayload:
+        """Stage 3 capture: drag-dropped text / markdown file → capsule.
+
+        Stage 3 ships with text + markdown support only; PDF parsing is
+        deferred (per Stage 3 scope decision 2026-05-21). Unsupported
+        types return 415."""
+        name = file.filename or "file"
+        suffix = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if suffix not in ("md", "markdown", "txt", "text"):
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=(
+                    "Only .md / .txt files are supported in Stage 3. "
+                    "PDF support is on the roadmap."
+                ),
+            )
+        raw = await file.read()
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("utf-8", errors="replace")
+        # Markdown files often start with frontmatter or a leading
+        # heading. Use the first H1/H2 line as title if present,
+        # otherwise fall back to the filename stem.
+        title = Path(name).stem
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("# ") or stripped.startswith("## "):
+                title = stripped.lstrip("#").strip() or title
+                break
+        return CapturePayload(
+            title=title,
+            body=text,
+            source=name,
+            hostname=None,
+            summary_failed=False,
+        )
+
+    @app.post("/api/capture/decide", response_model=CaptureDecisionResponse)
+    def capture_flow_decide(
+        req: CaptureDecision,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> CaptureDecisionResponse:
+        """User's three-way decision on a capsule.
+
+        Per ADR-0009 amendment A2.1, the Drafts queue is the explicit-
+        defer exception, NOT the default destination. Knowledge and
+        Reference both write straight to notes/. Only "defer" lands in
+        drafts/."""
+        from knowlet.core.drafts import DRAFTS_DIR, Draft, DraftStore
+        from knowlet.core.note import Note, new_id
+
+        cap = req.capsule
+        title = (cap.title or "untitled").strip() or "untitled"
+        body = cap.body or ""
+
+        if req.decision == "defer":
+            store = DraftStore(runtime.vault.drafts_dir)
+            d = Draft(
+                id=new_id(),
+                title=title,
+                body=body,
+                source=cap.source,
+                kind=req.defer_kind,
+            )
+            path = store.save(d)
+            return CaptureDecisionResponse(
+                decision="defer",
+                draft_id=d.id,
+                draft_path=str(path),
+            )
+
+        # decision is knowledge | reference — write straight to notes/
+        note = Note(
+            id=new_id(),
+            title=title,
+            body=body,
+            source=cap.source,
+            kind=req.decision,
+        )
+        try:
+            path = runtime.vault.write_note(note)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+        _mark_note_dirty_for_push(note.id)
+        runtime.index.upsert_note(
+            note,
+            chunk_size=runtime.config.retrieval.chunk_size,
+            chunk_overlap=runtime.config.retrieval.chunk_overlap,
+        )
+        return CaptureDecisionResponse(
+            decision=req.decision,
+            note_id=note.id,
+            note_path=str(path),
+        )
 
     # ---------------- quiz (M7.4 / ADR-0014) ----------------
 
