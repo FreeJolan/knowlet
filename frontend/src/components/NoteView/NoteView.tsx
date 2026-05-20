@@ -25,10 +25,12 @@ import {
   listFavorites,
   listTemplates,
   removeFavorite,
+  setNoteKind,
   updateNote,
 } from "@/api/client";
 import type { TemplateSummary } from "@/api/client";
-import type { NoteFull, TreeFolder } from "@/api/types";
+import type { NoteFull, NoteKind, TreeFolder } from "@/api/types";
+import { KindChip } from "@/components/KindChip";
 import { EditorView } from "@codemirror/view";
 
 import { MarkdownEditor } from "@/components/Editor/MarkdownEditor";
@@ -303,6 +305,52 @@ export function NoteView({
       void qc.invalidateQueries({ queryKey: QK.tree });
     },
   });
+
+  // Phase 3 Stage 2 — knowledge / reference toggle (ADR-0029 §4.5).
+  // Demote confirmation is handled inside KindChip itself (popover);
+  // by the time this mutation fires, the user already confirmed.
+  // Backend still enforces confirm=true for safety in case some other
+  // caller (CLI / future MCP) tries to demote without it.
+  const setKindMutation = useMutation({
+    mutationFn: ({ id, kind }: { id: string; kind: NoteKind }) =>
+      setNoteKind(id, { kind, confirm: true }),
+    onSuccess: (data, vars) => {
+      qc.setQueryData<NoteFull>(QK.note(vars.id), (prev) =>
+        prev ? { ...prev, kind: data.kind } : data,
+      );
+    },
+  });
+
+  // ⌘⇧K — toggle kind. Reference → knowledge promotes instantly (no
+  // confirmation needed per ADR-0029 §4.5 asymmetric semantics).
+  // Knowledge → reference is a downgrade; the keyboard path doesn't
+  // bypass the chip's popover, so we focus the chip so the user can
+  // confirm with Enter. This keeps the anti-drift guard from being
+  // shortcut-bypassed.
+  useEffect(() => {
+    const onToggleKind = () => {
+      const current = note.data;
+      if (!current) return;
+      const kind = current.kind ?? "knowledge";
+      if (kind === "reference") {
+        setKindMutation.mutate({ id: current.id, kind: "knowledge" });
+        return;
+      }
+      // knowledge → reference: focus the chip so the popover opens
+      // on click (the chip button toggles the popover when activated).
+      const chipBtn = document.querySelector<HTMLButtonElement>(
+        '[data-testid="kind-chip-knowledge-button"]',
+      );
+      chipBtn?.focus();
+      chipBtn?.click();
+    };
+    window.addEventListener("knowlet:toggle-active-note-kind", onToggleKind);
+    return () =>
+      window.removeEventListener(
+        "knowlet:toggle-active-note-kind",
+        onToggleKind,
+      );
+  }, [note.data, setKindMutation]);
 
   // Phase 1 C polish — tag-only update (chip strip add/remove). Mirrors
   // the rename pattern: optimistic update on the cached note + tree, with
@@ -791,6 +839,18 @@ export function NoteView({
             </h1>
           )}
           <div className="flex items-center gap-3">
+            {/* Phase 3 Stage 2 — kind chip (knowledge / reference).
+             * ADR-0029 §4.5 meta principle: type must be visible on
+             * the same screen the user makes save decisions. Click
+             * to toggle; demote (knowledge → reference) opens a
+             * popover for confirmation. */}
+            <KindChip
+              kind={note.data.kind ?? "knowledge"}
+              variant="chip"
+              onConfirmedToggle={(next) =>
+                setKindMutation.mutate({ id: note.data.id, kind: next })
+              }
+            />
             {/* Reserve a fixed slot so the toolbar / title baseline doesn't
              * jump when the badge text appears + disappears. The visible
              * text is wrapped in a span we toggle with `visibility`, which

@@ -307,6 +307,67 @@ def test_status_round_trips_via_frontmatter(tmp_path):
     assert re_read.status == "needs-update"
 
 
+# ----------------------------------- kind (Phase 3 Stage 2 — ADR-0029 §4.5)
+
+
+def test_kind_default_is_knowledge() -> None:
+    """Per ADR-0029 §4.5: manual-create default = knowledge."""
+    from knowlet.core.note import DEFAULT_NOTE_KIND
+
+    n = Note(id=new_id(), title="t", body="b")
+    assert n.kind == "knowledge"
+    assert DEFAULT_NOTE_KIND == "knowledge"
+
+
+def test_kind_round_trips_via_frontmatter(tmp_path):
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+    n = Note(id=new_id(), title="t", body="b", kind="reference")
+    path = v.write_note(n)
+    raw = path.read_text(encoding="utf-8")
+    assert "kind: reference" in raw
+    re_read = Note.from_file(path)
+    assert re_read.kind == "reference"
+
+
+def test_legacy_v1_note_reads_kind_as_knowledge(tmp_path):
+    """A note hand-written before the kind field existed (no kind in
+    frontmatter) reads back as kind=knowledge — backward-compat default
+    per ADR-0029 §4.5 (manual authoring path)."""
+    legacy = tmp_path / "01ABC.md"
+    legacy.write_text(
+        "---\n"
+        "id: 01ABC\n"
+        "title: legacy\n"
+        "---\n"
+        "body\n",
+        encoding="utf-8",
+    )
+    n = Note.from_file(legacy)
+    assert n.kind == "knowledge"
+
+
+def test_invalid_kind_value_falls_back_to_knowledge(tmp_path):
+    """Bogus kind value (hand-edit gone wrong / future schema typo) →
+    log a warning and default to knowledge, same forward-compat shape
+    as status. Next write rewrites with a clean value."""
+    bogus = tmp_path / "01XYZ.md"
+    bogus.write_text(
+        "---\n"
+        "id: 01XYZ\n"
+        "title: bogus\n"
+        "schema_version: 2\n"
+        "kind: total-nonsense\n"
+        "---\n"
+        "body\n",
+        encoding="utf-8",
+    )
+    n = Note.from_file(bogus)
+    assert n.kind == "knowledge"
+
+
 def test_v2_emit_includes_schema_version(tmp_path):
     """to_markdown must always stamp the current schema_version on
     write — that's how lazy migration upgrades v1 files to v2 on the

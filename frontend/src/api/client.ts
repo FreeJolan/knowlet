@@ -553,3 +553,17 @@ export const listAICallEvents = (
   limit = 50,
 ): Promise<AICallEventsResponse> =>
   request("GET", `/api/events?kind=ai.call&limit=${limit}`);
+
+// ---------- Note kind (Phase 3 Stage 2 — ADR-0029 §4.5) ----------
+
+/** Set a note's kind. ADR-0029 §4.5 asymmetric semantics:
+ *  - reference → knowledge: instant, no ``confirm`` needed
+ *  - knowledge → reference: requires ``confirm: true``; otherwise
+ *    the backend returns 409 with detail.code = "demote_requires_confirm".
+ *  - Same-kind POST is a 200 no-op, useful for refresh.
+ */
+export const setNoteKind = (
+  noteId: string,
+  payload: { kind: "knowledge" | "reference"; confirm?: boolean },
+): Promise<NoteFull> =>
+  request("POST", `/api/notes/${noteId}/kind`, payload);

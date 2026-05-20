@@ -7,6 +7,11 @@
  * 30 endpoints, revisit and pull in `openapi-typescript`.
  */
 
+/** Phase 3 Stage 2 — ADR-0029 §4.5 知识 / 资料 distinction.
+ *  - knowledge = content the user intends to internalize / own / use
+ *  - reference = content the user wants to find again later */
+export type NoteKind = "knowledge" | "reference";
+
 export interface NoteSummary {
   id: string;
   title: string;
@@ -22,6 +27,9 @@ export interface NoteSummary {
   /** URL the note was captured from (e.g. quick-capture from a web
    *  page). Read-only display in Properties UI. */
   source?: string | null;
+  /** Phase 3 Stage 2 — frontmatter `kind` field. Default "knowledge"
+   *  for legacy summaries pre-dating the field. */
+  kind?: NoteKind;
 }
 
 export interface NoteFull extends NoteSummary {

@@ -55,6 +55,28 @@ NoteStatus = Literal["active", "stub", "needs-update", "deprecated"]
 NOTE_STATUSES: tuple[str, ...] = get_args(NoteStatus)
 DEFAULT_NOTE_STATUS: NoteStatus = "active"
 
+# Phase 3 Stage 2 — ADR-0029 §4.5 知识 / 资料 two-class distinction.
+#
+# Knowledge = content the user intends to understand / own / use
+# (their own writing, distilled ideas, decisions). Goes through
+# review queue / engagement gates.
+#
+# Reference = content the user wants to find again later (clipped
+# webpages, API docs, recipes, source material). Lightweight save
+# path; no engagement gate.
+#
+# Per-source defaults (per ADR-0029 §4.5 default-by-source table):
+#  - manual ⌘N / template / chat sediment → "knowledge"
+#  - URL paste / PDF drop / mining task   → "reference"
+# The chat-with-URL-paste path is "two equal-weight buttons, no
+# default" — that's Stage 3 capture-extractor UX.
+#
+# Schema-version-wise: v1 / v2 notes pre-dating this field default
+# to "knowledge" on read (they were manually authored during dev).
+NoteKind = Literal["knowledge", "reference"]
+NOTE_KINDS: tuple[str, ...] = get_args(NoteKind)
+DEFAULT_NOTE_KIND: NoteKind = "knowledge"
+
 
 def now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -113,6 +135,11 @@ class Note:
     # to "active" on read; the field is always emitted on write so
     # the frontmatter stays self-describing.
     status: NoteStatus = DEFAULT_NOTE_STATUS
+    # Phase 3 Stage 2 — ADR-0029 §4.5. "knowledge" = engage / own;
+    # "reference" = file for lookup. Persisted in frontmatter so the
+    # raw markdown stays self-describing (works for Obsidian / sync /
+    # backup). Default "knowledge" matches the manual-create path.
+    kind: NoteKind = DEFAULT_NOTE_KIND
     # When the note is in `notes/.trash/`, this captures the folder
     # (relative to `notes/`) it was sitting in before deletion. `None`
     # when the note is live or when the trash entry pre-dates this
@@ -173,6 +200,7 @@ class Note:
             "title": self.title,
             "tags": list(self.tags),
             "status": self.status,
+            "kind": self.kind,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -223,6 +251,7 @@ class Note:
                 path=path,
                 schema_version=NOTE_SCHEMA_VERSION,
                 status=DEFAULT_NOTE_STATUS,
+                kind=DEFAULT_NOTE_KIND,
                 trashed_from=None,
                 frontmatter_status=fm_status,
                 frontmatter_corruption=corruption,
@@ -255,6 +284,23 @@ class Note:
                     DEFAULT_NOTE_STATUS,
                 )
             status = DEFAULT_NOTE_STATUS
+        # Phase 3 Stage 2 — kind, same forward-compat shape as status.
+        # Missing on legacy notes (or future-schema bogus values) →
+        # default "knowledge" (matches manual-create path).
+        kind_raw = meta.get("kind")
+        if kind_raw in NOTE_KINDS:
+            kind: NoteKind = kind_raw
+        else:
+            if kind_raw is not None:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "note %s has invalid kind %r; defaulting to %s",
+                    path.name if path else "<in-memory>",
+                    kind_raw,
+                    DEFAULT_NOTE_KIND,
+                )
+            kind = DEFAULT_NOTE_KIND
         trashed_from_raw = meta.get("trashed_from")
         trashed_from = str(trashed_from_raw) if trashed_from_raw is not None else None
         folder_raw = meta.get("folder")
@@ -272,6 +318,7 @@ class Note:
             path=path,
             schema_version=schema_version,
             status=status,
+            kind=kind,
             trashed_from=trashed_from,
             folder=folder,
         )

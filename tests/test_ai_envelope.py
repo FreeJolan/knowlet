@@ -258,7 +258,12 @@ def test_recent_activity_no_events_skipped(tmp_path: Path) -> None:
 # ------------------------------------------- wiki-schema
 
 
-def test_wiki_schema_included_when_present(tmp_path: Path) -> None:
+def test_wiki_schema_included_when_present(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Isolate from the dev's real ~/.knowlet so the per-vault content
+    # is the only signal in the rendered layer.
+    monkeypatch.setenv("KNOWLET_HOME", str(tmp_path / "knowlet-home"))
     v = Vault(tmp_path)
     v.init_layout()
     (v.state_dir / "wiki_schema.md").write_text(
@@ -274,7 +279,10 @@ def test_wiki_schema_included_when_present(tmp_path: Path) -> None:
     assert "kebab-case" in sp
 
 
-def test_wiki_schema_empty_file_skipped(tmp_path: Path) -> None:
+def test_wiki_schema_empty_file_skipped(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("KNOWLET_HOME", str(tmp_path / "knowlet-home"))
     v = Vault(tmp_path)
     v.init_layout()
     (v.state_dir / "wiki_schema.md").write_text("   \n  \n", encoding="utf-8")
@@ -284,6 +292,57 @@ def test_wiki_schema_empty_file_skipped(tmp_path: Path) -> None:
         ctx=EnvelopeContext(vault=v),
     )
     assert "<wiki-schema" not in env.system_prompt()
+
+
+def test_wiki_schema_global_layer_alone(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No per-vault file, only global — global content renders."""
+    home = tmp_path / "knowlet-home"
+    home.mkdir()
+    (home / "wiki_schema.md").write_text(
+        "Always cite sources.\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("KNOWLET_HOME", str(home))
+    v = Vault(tmp_path / "vault")
+    v.init_layout()
+    env = build_envelope(
+        "capture_extractor",
+        task={"url": "x"},
+        ctx=EnvelopeContext(vault=v),
+    )
+    sp = env.system_prompt()
+    assert "<wiki-schema" in sp
+    assert "Always cite sources" in sp
+
+
+def test_wiki_schema_global_and_per_vault_merged(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Both files present — global appears first, per-vault second."""
+    home = tmp_path / "knowlet-home"
+    home.mkdir()
+    (home / "wiki_schema.md").write_text(
+        "GLOBAL: Always cite sources.\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("KNOWLET_HOME", str(home))
+    v = Vault(tmp_path / "vault")
+    v.init_layout()
+    (v.state_dir / "wiki_schema.md").write_text(
+        "PER_VAULT: Use kebab-case.\n", encoding="utf-8"
+    )
+    env = build_envelope(
+        "capture_extractor",
+        task={"url": "x"},
+        ctx=EnvelopeContext(vault=v),
+    )
+    sp = env.system_prompt()
+    # Both appear; global precedes per-vault (LLMs weight later text
+    # heavier; per-vault wins by being last).
+    g_idx = sp.find("GLOBAL")
+    v_idx = sp.find("PER_VAULT")
+    assert g_idx >= 0 and v_idx >= 0
+    assert g_idx < v_idx
 
 
 # -------------------------------------------- task layer

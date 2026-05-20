@@ -147,6 +147,19 @@ class LLMConfigUpdate(BaseModel):
     max_tokens: int | None = None
 
 
+class NoteKindUpdate(BaseModel):
+    """Payload for POST /api/notes/{id}/kind (Phase 3 Stage 2).
+
+    Asymmetric upgrade per ADR-0029 §4.5: 资料 → 知识 (upgrade) is
+    instant; 知识 → 资料 (downgrade) requires ``confirm=true`` — the
+    UI surfaces a popover before sending. Module-level so FastAPI
+    can resolve the body type.
+    """
+
+    kind: Literal["knowledge", "reference"]
+    confirm: bool = False
+
+
 class LLMProviderModelsRequest(BaseModel):
     """Optional draft credentials for POST /api/llm/provider-models.
 
@@ -255,6 +268,9 @@ class NoteSummary(BaseModel):
     # these columns yet — NoteFull constructors fill them explicitly.
     aliases: list[str] = []
     source: str | None = None
+    # Phase 3 Stage 2 — ADR-0029 §4.5 知识 / 资料. Default "knowledge"
+    # for legacy index rows that don't carry the column yet.
+    kind: Literal["knowledge", "reference"] = "knowledge"
 
 
 class NoteFull(NoteSummary):
@@ -3568,6 +3584,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             created_at=note.created_at,
             updated_at=note.updated_at,
             body=note.body,
+            kind=note.kind,
             frontmatter_status=note.frontmatter_status,
             frontmatter_corruption=note.frontmatter_corruption,
         )
@@ -3931,6 +3948,67 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             created_at=note.created_at,
             updated_at=note.updated_at,
             body=note.body,
+            kind=note.kind,
+        )
+
+    # ---------- Note kind (Phase 3 Stage 2 — ADR-0029 §4.5) ----------
+
+    @app.post("/api/notes/{note_id}/kind", response_model=NoteFull)
+    def set_note_kind(
+        note_id: str,
+        payload: NoteKindUpdate,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> NoteFull:
+        from knowlet.core.note import now_iso as _now_iso
+
+        meta = runtime.index.get_note_meta(note_id)
+        if meta is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note not found: {note_id}",
+            )
+        path = Path(meta["path"])
+        if not path.is_absolute():
+            path = runtime.vault.notes_dir / path.name
+        note = runtime.vault.read_note(path)
+        # ADR-0029 §4.5: knowledge → reference is a downgrade. Reject
+        # unless the caller explicitly opted in via confirm=true so
+        # accidental clicks can't quietly demote.
+        is_downgrade = note.kind == "knowledge" and payload.kind == "reference"
+        if is_downgrade and not payload.confirm:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "demote_requires_confirm",
+                    "message": (
+                        "Demoting knowledge → reference requires "
+                        "confirm=true (anti-drift guard, ADR-0029 §4.5)."
+                    ),
+                },
+            )
+        if note.kind != payload.kind:
+            note.kind = payload.kind
+            note.updated_at = _now_iso()
+            folder = runtime.vault.folder_of(path) or None
+            runtime.vault.write_note(note, folder=folder)
+            _mark_note_dirty_for_push(note.id)
+            runtime.index.upsert_note(
+                note,
+                chunk_size=runtime.config.retrieval.chunk_size,
+                chunk_overlap=runtime.config.retrieval.chunk_overlap,
+            )
+        return NoteFull(
+            id=note_id,
+            title=note.title,
+            path=str(path),
+            folder=runtime.vault.folder_of(path),
+            tags=list(note.tags),
+            aliases=list(note.aliases),
+            source=note.source,
+            created_at=note.created_at,
+            updated_at=note.updated_at,
+            body=note.body,
+            kind=note.kind,
         )
 
     # ---------- Quick actions (Phase 2 D Slice 2c, ADR-0025) ----------

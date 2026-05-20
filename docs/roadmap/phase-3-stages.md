@@ -50,17 +50,21 @@
 **TuTu 名**: `结构基底`
 
 **范围**:
-- **知识/资料 type chip + 默认分类**(原 P3.8)— frontmatter 加 `kind` 字段;UI 在文件树 / drafts / quick switcher 上显示 type chip;capture-time 默认 = 资料,手动 promote 才是知识(per ADR-0029 §4.5)
-- **wiki_schema.md + user_profile.md 注入**(原 P3.A)— vault 级 schema 写作约定 + 用户上下文,自动注入 chat / mining / capture 的 envelope
+- **知识/资料 type chip + per-source 默认**(原 P3.8)— frontmatter 加 `kind: knowledge | reference` 字段;`<KindChip>` 组件落 4 个 surface(文件树 / note header / drafts / quick switcher);⌘⇧K 切换;**升级即时,降级需 popover 二次确认**(per ADR-0029 §4.5 anti-drift)
+- **wiki_schema 多层级 merge**(原 P3.A 的一部分)— `~/.knowlet/wiki_schema.md`(global) + `vault/.knowlet/wiki_schema.md`(per-vault),global 先 per-vault 追加在后
+- **wiki_schema 模板 + onboarding 文案** — vault init 时写 starter 模板,含 Rule + **Why:** 行示例(per ADR-0024 §3.4)
 
-**用户故事(三角色)**:
-- 小张: 新建 note 默认 = 资料(快速 capture),写得多了再手动 ⌘⇧K promote 成知识 → 不再每次纠结"这是知识还是资料"
-- 小红: 看到文件名旁的 chip,知道"📚 资料"和"💡 知识"是 vault 里两类,不混
-- 新用户: 第一次看到的 vault 已经按这两类分;不用读文档就知道有别
+注: `user_profile.md` / `wiki_schema.md` **注入 envelope** 的部分已在 Stage 1 落地(`knowlet/core/ai/layers.py` 的 `UserProfileSource` / `WikiSchemaSource`)。本 stage 只补 multi-level merge + onboarding。
+
+**用户故事(三角色)**(已与 ADR-0029 §4.5 默认分类表对齐):
+- **小张**: 手动 ⌘N 新建 → 默认 **知识**(主动写 = 主动思考);看完一份资料想转 ⌘⇧K → popover 提示"资料 → 知识 即时生效";偶尔写偏了想降级 → 同键 → popover 警告"知识 → 资料 需二次确认"防误降
+- **小红**: 文件树每行 / note header / quick switcher 都看见 📘 知识 / 📄 资料 的小 chip,hover 出 tooltip 解释("知识 = 你要内化的内容,会进 review queue / 资料 = 备查内容,直接存");随时一眼知道每篇是哪类
+- **新用户**: 第一次进 vault 看到 chip 跟解释 → 不读文档就理解结构;空 vault 的 starter `wiki_schema.md` 模板演示了 Rule + Why 写法
 
 **满足 ADR**:
-- ADR-0029 §4.5 知识/资料 asymmetric distinction(完整兑现)
-- ADR-0023 §2 wiki_schema(本 stage 实现 co-evolution 主动机制 + 多层级合并)
+- ADR-0029 §4.5 知识/资料 asymmetric distinction(完整兑现:per-source 默认表 + 升降级不对称 + structure-visible meta 原则 + permanent learnability hover)
+- ADR-0023 §2 wiki_schema(multi-level merge + co-evolution 主动机制)
+- ADR-0024 §3.4 借鉴 Claude Code 的 Rule + Why 模式(模板硬约定)
 
 **工期**: 5-7 天
 

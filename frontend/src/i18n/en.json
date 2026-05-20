@@ -51,6 +51,23 @@
       "output": "Output"
     }
   },
+  "noteKind": {
+    "knowledge": {
+      "label": "Knowledge",
+      "tooltip": "Knowledge = content you intend to internalize / own / use. Enters the review queue; active engagement."
+    },
+    "reference": {
+      "label": "Reference",
+      "tooltip": "Reference = lookup material to find later. Lightweight save, no engagement gate."
+    },
+    "toggleAriaLabel": "Toggle note kind (currently {{from}})",
+    "demote": {
+      "title": "Demote knowledge → reference?",
+      "body": "Demotion is the anti-drift guard; it requires confirmation (ADR-0029 §4.5). The note will no longer enter the review queue. Upgrading back is always available.",
+      "cancel": "Cancel",
+      "confirm": "Demote"
+    }
+  },
   "tree": {
     "vault": "Vault",
     "newFolder": "New folder",

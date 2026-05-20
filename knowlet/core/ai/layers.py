@@ -10,9 +10,11 @@ Source-by-source notes:
 
 - ``user-profile`` reads ``vault/.knowlet/user_profile.md`` via
   :func:`knowlet.core.user_profile.read_profile`.
-- ``wiki-schema`` reads ``vault/.knowlet/wiki_schema.md``. Multi-level
-  merge with ``~/.knowlet/wiki_schema.md`` (cross-vault) is deferred
-  to Phase 3 Stage 2 — see ADR-0024 §3.4 (multi-level schema merge).
+- ``wiki-schema`` does multi-level merge of
+  ``$KNOWLET_HOME/wiki_schema.md`` (or ``~/.knowlet/wiki_schema.md``
+  if not overridden) + ``vault/.knowlet/wiki_schema.md`` — per
+  ADR-0024 §3.4 borrowed from Claude Code's multi-level CLAUDE.md
+  merge. Per-vault wins by appending last.
 - ``vault-shape`` derives ``total_notes`` / top folders / max depth
   by walking :meth:`Vault.iter_note_paths` (cheap; no DB hit needed).
 - ``recent-activity`` queries :class:`AuditEventStore` for events in
@@ -24,9 +26,11 @@ Source-by-source notes:
 from __future__ import annotations
 
 import json
+import os
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from knowlet.core.ai.envelope import (
@@ -36,6 +40,18 @@ from knowlet.core.ai.envelope import (
     register_role,
     register_source,
 )
+
+
+def knowlet_home() -> Path:
+    """User-level knowlet config dir, parallel to ``~/.claude/``.
+
+    Defaults to ``~/.knowlet/``. Override via ``KNOWLET_HOME`` env var
+    (used by tests to avoid leaking the dev's real home into fixtures,
+    and by power users who want config in a non-standard location)."""
+    override = os.environ.get("KNOWLET_HOME")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".knowlet"
 
 # ----------------------------------------------------- static layers
 
@@ -72,8 +88,19 @@ class UserProfileSource:
 class WikiSchemaSource:
     """``vault/.knowlet/wiki_schema.md`` — vault writing conventions.
 
-    Cross-vault merge with ``~/.knowlet/wiki_schema.md`` is deferred
-    to Phase 3 Stage 2 (`结构基底`). Per-vault only for now.
+    Multi-level merge (Phase 3 Stage 2, per ADR-0024 §3.4 "borrowed
+    from Claude Code's multi-level CLAUDE.md merge"):
+
+    1. ``~/.knowlet/wiki_schema.md`` (global, cross-vault) — your
+       writing conventions that apply to **every** vault you open
+       (naming, voice, default tag conventions).
+    2. ``vault/.knowlet/wiki_schema.md`` (per-vault) — overrides /
+       additions specific to this vault.
+
+    Order: global first, per-vault appended (per-vault wins by
+    coming last; the LLM weights later instructions more). Each
+    level is independently optional; missing files collapse to skip.
+    Empty result (neither file exists) → return None.
     """
 
     tag: str = "wiki-schema"
@@ -85,16 +112,41 @@ class WikiSchemaSource:
         vault = ctx.vault
         if vault is None:
             return None
-        path = vault.state_dir / self.filename
-        if not path.exists():
-            return None
-        body = path.read_text(encoding="utf-8").strip()
-        if not body:
+        parts: list[str] = []
+        srcs: list[str] = []
+
+        # Global level. ``~/.knowlet/`` is the cross-vault dotdir,
+        # parallel to git's ``~/.gitconfig`` or Claude Code's user-level
+        # ``~/.claude/CLAUDE.md``. Optional — most users may only set
+        # the per-vault file. Test fixtures override via ``KNOWLET_HOME``
+        # so a developer's real ``~/.knowlet/`` doesn't bleed into
+        # vault-scoped tests.
+        global_path = knowlet_home() / self.filename
+        if global_path.exists():
+            global_body = global_path.read_text(encoding="utf-8").strip()
+            if global_body:
+                parts.append(
+                    f"## (global) {global_path}\n\n{global_body}"
+                )
+                srcs.append("~/.knowlet/" + self.filename)
+
+        # Per-vault level. Wins by coming last (LLMs weight later
+        # instructions more heavily — by convention; not a strict rule).
+        local_path = vault.state_dir / self.filename
+        if local_path.exists():
+            local_body = local_path.read_text(encoding="utf-8").strip()
+            if local_body:
+                parts.append(
+                    f"## (vault) {local_path.relative_to(vault.root)}\n\n{local_body}"
+                )
+                srcs.append(".knowlet/" + self.filename)
+
+        if not parts:
             return None
         return Layer(
             tag=self.tag,
-            content=body,
-            src=f".knowlet/{self.filename}",
+            content="\n\n".join(parts),
+            src=" + ".join(srcs),
         )
 
 

@@ -22,6 +22,68 @@ CONVERSATIONS_DIR = "conversations"
 BACKUPS_DIR = "backups"
 
 
+# Phase 3 Stage 2 Step 2.6 — starter wiki_schema.md.
+#
+# Written into a freshly-init'd vault to demonstrate (a) what the file
+# is for, (b) the Rule + **Why:** pattern (per ADR-0024 §3.4 borrowed
+# from Claude Code's CLAUDE.md convention), and (c) how it ties into
+# the multi-level merge with ``~/.knowlet/wiki_schema.md``.
+#
+# The starter is written exactly once on vault init; if the user
+# already has a wiki_schema.md it is NOT overwritten. Subsequent
+# edits are theirs.
+_WIKI_SCHEMA_STARTER = """\
+# Wiki Schema — Vault Writing Conventions
+
+> This file is read by knowlet AI roles (chat / capture / linter / …)
+> on every call. It's how you teach the AI **how this vault is written**:
+> naming, voice, structure, the rules YOU care about.
+>
+> Two-level merge (per ADR-0024 §3.4):
+>   1. `~/.knowlet/wiki_schema.md` — your cross-vault defaults
+>   2. `<this-vault>/.knowlet/wiki_schema.md` — vault-specific overrides
+>
+> Empty / non-existent files are silently skipped. Delete this starter
+> if you want a fully empty schema.
+
+## Style: write rules as `Rule + Why:`
+
+Every convention below pairs a one-line rule with a `**Why:**` line.
+The Why isn't decoration — it lets the AI judge edge cases instead
+of mechanically following the rule (per ADR-0024 §3.4 "Rule + Why
+mode", borrowed from Claude Code's CLAUDE.md convention).
+
+## Examples
+
+- **Default to kebab-case filenames** (e.g. `rag-vs-fine-tuning.md`).
+  **Why:** Easier to type, more URL-friendly, plays well with Finder
+  search.
+
+- **Use first-person singular for personal-experience notes**.
+  **Why:** This vault is mine; rewriting in passive voice signals
+  the note is impersonal reference (which it isn't).
+
+- **Headings: `##` for top-level sections inside a note** (skip `#`,
+  the title is in frontmatter).
+  **Why:** Lets the file render correctly in both Obsidian and the
+  knowlet web UI without a duplicate H1.
+
+## Customize this file
+
+Add / remove rules to taste. The AI reads whatever's here on the
+next prompt — no restart needed.
+"""
+
+
+def _ensure_wiki_schema_template(path: Path) -> None:
+    """Write the starter ``wiki_schema.md`` if and only if the file
+    doesn't exist yet. Idempotent: never overwrites user edits."""
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_WIKI_SCHEMA_STARTER, encoding="utf-8")
+
+
 class Vault:
     """Filesystem operations on a knowlet vault."""
 
@@ -128,6 +190,10 @@ class Vault:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.conversations_dir.mkdir(parents=True, exist_ok=True)
         self.backups_dir.mkdir(parents=True, exist_ok=True)
+        # Phase 3 Stage 2 — write a starter wiki_schema.md if none
+        # exists. The template demonstrates the Rule + Why pattern
+        # (per ADR-0024 §3.4) and explains what wiki_schema is for.
+        _ensure_wiki_schema_template(self.state_dir / "wiki_schema.md")
 
     def iter_note_paths(self) -> Iterator[Path]:
         """Yield every Note file under `notes/` recursively.

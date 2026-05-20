@@ -51,6 +51,23 @@
       "output": "输出"
     }
   },
+  "noteKind": {
+    "knowledge": {
+      "label": "知识",
+      "tooltip": "知识 = 你要内化 / 拥有 / 能用的内容。会进 review queue,主动 engage。"
+    },
+    "reference": {
+      "label": "资料",
+      "tooltip": "资料 = 备查 / 收藏 / 不用时记得的内容。轻量保存,不强制 engage。"
+    },
+    "toggleAriaLabel": "切换笔记类型(当前 {{from}})",
+    "demote": {
+      "title": "降级 知识 → 资料?",
+      "body": "降级是 anti-drift 兜底,需要二次确认(per ADR-0029 §4.5)。降级后该笔记不再进 review queue;升级随时可逆。",
+      "cancel": "取消",
+      "confirm": "确认降级"
+    }
+  },
   "quickActions": {
     "title": "快捷操作",
     "loading": "加载中…",

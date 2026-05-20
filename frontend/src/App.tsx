@@ -10,6 +10,7 @@ export default function App() {
   //   ⌘P     → quick switcher (files mode)
   //   ⌘⇧P    → command palette (commands mode)
   //   ⌘⇧T    → trash
+  //   ⌘⇧K    → toggle active note's kind (Phase 3 Stage 2, ADR-0029 §4.5)
   // We dispatch CustomEvents so AppShell can stay the single owner of
   // dialog state without threading setters through QueryClientProvider.
   useEffect(() => {
@@ -28,6 +29,10 @@ export default function App() {
       if (meta && e.shiftKey && key === "t") {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("knowlet:open-trash"));
+      }
+      if (meta && e.shiftKey && key === "k") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("knowlet:toggle-active-note-kind"));
       }
       // Phase 2 D Slice 2c.4 — ⌘W closes the active tab (matches
       // VS Code / browser tab semantics). Browsers reserve ⌘W for
