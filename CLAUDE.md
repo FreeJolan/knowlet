@@ -88,6 +88,22 @@ This pattern (Stripe / GitHub / Vercel CLI use it) makes the CLI double as a QA 
 
 ---
 
+## 6. 大功能开工前 — 先用一句话讲清"做什么 + 解决什么"
+
+**Trigger**: 任何被命名为 stage / phase / 大 feature 的工作开始时。stage / phase 边界本身就是触发信号。
+
+**Step 1 — 抽象描述**: 一两句话讲清这个 stage 解决的是什么问题、要做的是什么。**不准列字段、不准说工期、不准画 UI**。就是产品定位级别的话。
+
+**Step 2 — 用户校准**: 把抽象描述抛给用户 → 用户确认 / 修正 → 才能进 §4(UI 2-step)/ §5(不造轮子)的细化流程。
+
+**Why**: 直接从需求跳具体设计很容易跑偏 — 做出来的东西貌似"覆盖了 spec",但跟用户脑子里那个"问题"对不上。先给抽象描述,用户能立刻判断"是这个事 / 不是这个事";一旦框定了,后面的细节才有方向。这一步极便宜(2 句话),跳了会很贵(返工 / 误解 / 沉默偏离)。
+
+**反例(2026-05-21)**: Stage 3 开工讨论里,我直接给了 8 步细化 plan + 4 决策点,跳过了抽象描述。用户做了一次概括(部分对),我反过来要纠正它。先讲"Stage 3 = capture 外部 / 内部 → 用户当场决定 → 存或暂存 + queue 自治"那句话,这一轮能省一半。
+
+**与 §4 / §5 的关系**: §4 / §5 是**解决方案层**的"先看世界上的现成答案";§6 是**问题定义层**的"先框清楚是什么问题"。顺序是 §6 → §4 / §5。
+
+---
+
 ## See also
 
 - `docs/decisions/` — Architecture Decision Records. Treat as authoritative for the "why" behind major choices.
