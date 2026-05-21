@@ -96,6 +96,7 @@
     "fetching": "AI is fetching the summary…",
     "sourceLabel": "Source",
     "summaryFailed": "Summary failed; showing raw content. Still savable — you can review it yourself later.",
+    "retrySummary": "Retry summary",
     "decide": {
       "knowledge": "Knowledge",
       "reference": "Reference",

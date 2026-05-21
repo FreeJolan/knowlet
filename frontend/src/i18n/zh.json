@@ -96,6 +96,7 @@
     "fetching": "AI 正在拉取摘要…",
     "sourceLabel": "来源",
     "summaryFailed": "摘要失败,仅展示原始内容。仍可保存,稍后自己批阅。",
+    "retrySummary": "重试摘要",
     "decide": {
       "knowledge": "知识",
       "reference": "资料",

@@ -255,6 +255,18 @@ export function CaptureBox({
             capsule={state.capsule}
             deciding={state.kind === "deciding" ? state.choice : null}
             onDecide={(d) => decide(state.capsule, d)}
+            onRetrySummary={
+              // Only URL captures can retry — file captures already
+              // dropped the file blob after first upload. Detect by
+              // source shape.
+              state.kind === "ready" &&
+              state.capsule.summary_failed &&
+              typeof state.capsule.source === "string" &&
+              (state.capsule.source.startsWith("http://") ||
+                state.capsule.source.startsWith("https://"))
+                ? () => fetchUrl(state.capsule.source as string)
+                : undefined
+            }
             t={t}
           />
         )}
@@ -305,18 +317,23 @@ function CapsulePreview({
   capsule,
   deciding,
   onDecide,
+  onRetrySummary,
   t,
 }: {
   capsule: CapturePayload;
   deciding: string | null;
   onDecide: (d: "knowledge" | "reference" | "defer") => void;
+  /** Present only when the capsule came from a URL AND summary failed.
+   *  File captures can't retry (file blob is gone), so this is
+   *  undefined for them. */
+  onRetrySummary?: () => void;
   t: (key: string, vars?: Record<string, unknown>) => string;
 }): React.ReactElement {
   return (
     <div className="space-y-2.5" data-testid="capture-capsule">
       {capsule.summary_failed && (
         <div
-          className="rounded px-2 py-1 text-[11px] space-y-1"
+          className="rounded px-2 py-1 text-[11px] space-y-1.5"
           style={{
             background: "rgba(192,57,43,0.1)",
             color: "var(--destructive, #c0392b)",
@@ -331,6 +348,21 @@ function CapsulePreview({
             >
               {capsule.summary_error}
             </div>
+          )}
+          {onRetrySummary && (
+            <button
+              type="button"
+              onClick={onRetrySummary}
+              data-testid="capture-retry-summary"
+              className="rounded border px-2 py-0.5 text-[10.5px] hover:bg-accent/30"
+              style={{
+                borderColor: "var(--destructive, #c0392b)",
+                color: "var(--destructive, #c0392b)",
+                background: "transparent",
+              }}
+            >
+              {t("capture.retrySummary")}
+            </button>
           )}
         </div>
       )}
