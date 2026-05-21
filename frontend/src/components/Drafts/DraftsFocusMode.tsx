@@ -14,13 +14,18 @@
  *  - Warn-age inline strip at ≥30 days (one-line per row)
  *  - 90-day auto-archive happens server-side on every list fetch
  *
+ * Row interaction (added 2026-05-22 after dogfood):
+ *  - Click the row → toggle inline expansion (show body)
+ *  - Inside expansion: [Edit] opens a dialog with title + body editor
+ *  - Approve / Archive available both collapsed and expanded
+ *
  * Empty state: a single line teaching the ⌘⇧V shortcut. New users
  * arrive here with zero drafts and need to know how to get one.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Trash2, X } from "lucide-react";
-import { useEffect } from "react";
+import { CheckCircle2, ChevronDown, ChevronRight, Pencil, Trash2, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -29,13 +34,13 @@ import {
   rejectDraft,
   type DraftSummary,
 } from "@/api/client";
+import { DraftEditDialog } from "@/components/Drafts/DraftEditDialog";
 import { KindChip } from "@/components/KindChip";
 import { QK } from "@/lib/queryClient";
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  onOpenNote: (noteId: string) => void;
 }
 
 const SOFT_LIMIT = 20;
@@ -43,29 +48,26 @@ const SOFT_LIMIT = 20;
 export function DraftsFocusMode({
   open,
   onClose,
-  onOpenNote,
 }: Props): React.ReactElement | null {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Esc closes.
+  // Esc closes — unless the edit dialog is open, in which case Esc
+  // closes the dialog and the global Esc closes the panel.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && !editingId) {
         e.stopPropagation();
         onClose();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, editingId]);
 
-  // Always refetch when the panel opens — user expects "what's
-  // pending right now", not a snapshot from when they last looked.
-  // Without refetchOnMount, a panel re-open within staleTime would
-  // show a stale empty list even after the user just deferred
-  // something via the CaptureBox.
   const drafts = useQuery({
     queryKey: ["drafts"],
     queryFn: listDrafts,
@@ -163,7 +165,11 @@ export function DraftsFocusMode({
             <DraftRow
               key={d.id}
               draft={d}
-              onOpen={() => onOpenNote(d.id)}
+              expanded={expandedId === d.id}
+              onToggleExpand={() =>
+                setExpandedId((prev) => (prev === d.id ? null : d.id))
+              }
+              onEdit={() => setEditingId(d.id)}
               onApprove={() => approveMut.mutate(d.id)}
               onReject={() => rejectMut.mutate(d.id)}
               isPending={
@@ -174,20 +180,32 @@ export function DraftsFocusMode({
           ))}
         </ul>
       </div>
+
+      {editingId && (
+        <DraftEditDialog
+          draftId={editingId}
+          open
+          onClose={() => setEditingId(null)}
+        />
+      )}
     </div>
   );
 }
 
 function DraftRow({
   draft,
-  onOpen,
+  expanded,
+  onToggleExpand,
+  onEdit,
   onApprove,
   onReject,
   isPending,
   t,
 }: {
   draft: DraftSummary;
-  onOpen: () => void;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onEdit: () => void;
   onApprove: () => void;
   onReject: () => void;
   isPending: boolean;
@@ -208,14 +226,29 @@ function DraftRow({
       data-stale={stale ? "true" : "false"}
     >
       <div className="flex items-start gap-3">
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          aria-label={expanded ? t("drafts.collapse") : t("drafts.expand")}
+          className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+          data-testid={`draft-toggle-${draft.id}`}
+        >
+          {expanded ? (
+            <ChevronDown className="size-3.5" />
+          ) : (
+            <ChevronRight className="size-3.5" />
+          )}
+        </button>
         <KindChip kind={draft.kind} variant="tag" />
         <button
           type="button"
-          onClick={onOpen}
+          onClick={onToggleExpand}
           className="flex-1 text-left text-sm hover:text-foreground"
           data-testid={`draft-title-${draft.id}`}
         >
-          <div className="font-serif font-medium">{draft.title || t("drafts.untitled")}</div>
+          <div className="font-serif font-medium">
+            {draft.title || t("drafts.untitled")}
+          </div>
           {draft.source && (
             <div className="mt-0.5 text-[10.5px] text-muted-foreground truncate">
               {draft.source}
@@ -226,6 +259,16 @@ function DraftRow({
           {t("drafts.ageDays", { count: draft.age_days ?? 0 })}
         </span>
         <div className="flex gap-1">
+          <button
+            type="button"
+            onClick={onEdit}
+            disabled={isPending}
+            title={t("drafts.edit")}
+            className="rounded p-1 hover:text-amber-700"
+            data-testid={`draft-edit-${draft.id}`}
+          >
+            <Pencil className="size-3.5" />
+          </button>
           <button
             type="button"
             onClick={onApprove}
@@ -248,6 +291,20 @@ function DraftRow({
           </button>
         </div>
       </div>
+      {expanded && (
+        <div
+          className="mt-2 ml-7 rounded border p-3 text-xs whitespace-pre-wrap"
+          style={{
+            borderColor: "var(--line)",
+            background: "var(--bg-1)",
+            maxHeight: "40vh",
+            overflowY: "auto",
+          }}
+          data-testid={`draft-body-${draft.id}`}
+        >
+          {draft.body ?? t("drafts.bodyMissing")}
+        </div>
+      )}
       {warnAge && (
         <div
           className="mt-1.5 rounded px-2 py-0.5 text-[10.5px]"

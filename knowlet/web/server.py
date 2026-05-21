@@ -147,6 +147,20 @@ class LLMConfigUpdate(BaseModel):
     max_tokens: int | None = None
 
 
+class DraftUpdate(BaseModel):
+    """Payload for PUT /api/drafts/{id} (Phase 3 Stage 3).
+
+    All fields optional — only present ones are written. Lets the
+    Drafts focus-mode editor fix typos / improve title / clean up
+    AI-extracted body before the user approves. Per ADR-0029 §4
+    原则 1: the user is the last-byte channel; pre-approve edits
+    are the central case, not an edge case."""
+
+    title: str | None = None
+    body: str | None = None
+    kind: Literal["knowledge", "reference"] | None = None
+
+
 class NoteKindUpdate(BaseModel):
     """Payload for POST /api/notes/{id}/kind (Phase 3 Stage 2).
 
@@ -749,10 +763,16 @@ class DraftSummary(BaseModel):
     age_days: int = 0
     is_stale: bool = False
     is_warn_age: bool = False
+    # Phase 3 Stage 3 dogfood fix (2026-05-22) — include body in
+    # summary so the focus-mode row can expand inline without a
+    # follow-up GET /api/drafts/{id}. knowlet's soft-limit is 20
+    # drafts so the payload stays small in practice.
+    body: str = ""
 
 
 class DraftFull(DraftSummary):
-    body: str
+    """Same shape as DraftSummary now that body lives there. Kept
+    as a distinct type for API back-compat."""
 
 
 # ----------------------------------------------------------------- runtime singleton
@@ -5342,6 +5362,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             age_days=d.age_days,
             is_stale=d.is_stale,
             is_warn_age=d.is_warn_age,
+            body=d.body,
         )
 
     @app.get("/api/drafts", response_model=list[DraftSummary])
@@ -5367,7 +5388,31 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"draft not found: {draft_id}",
             )
-        return DraftFull(**_draft_summary(d).model_dump(), body=d.body)
+        return DraftFull(**_draft_summary(d).model_dump())
+
+    @app.put("/api/drafts/{draft_id}", response_model=DraftFull)
+    def update_draft_endpoint(
+        draft_id: str,
+        payload: DraftUpdate,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> DraftFull:
+        """Edit a draft in place — title / body / kind. Per ADR-0029
+        §4 原则 1, pre-approve refinement is a central path: AI's
+        first pass isn't always the user's final text."""
+        d = runtime.ctx.drafts.get(draft_id)
+        if d is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"draft not found: {draft_id}",
+            )
+        if payload.title is not None:
+            d.title = payload.title.strip() or d.title
+        if payload.body is not None:
+            d.body = payload.body
+        if payload.kind is not None:
+            d.kind = payload.kind
+        runtime.ctx.drafts.save(d)
+        return DraftFull(**_draft_summary(d).model_dump())
 
     @app.post("/api/drafts/{draft_id}/approve")
     def approve_draft_endpoint(

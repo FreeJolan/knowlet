@@ -71,10 +71,21 @@
     "emptyHint": "Try ⌘⇧V to paste a URL or drop a .md file — AI fetches a summary; you decide on the spot (Knowledge / Reference / Defer)",
     "ageDays_one": "{{count}} day",
     "ageDays_other": "{{count}} days",
+    "expand": "Expand body",
+    "collapse": "Collapse body",
+    "bodyMissing": "(empty body)",
+    "edit": "Edit",
     "approve": "Approve (write as Note)",
     "reject": "Archive (recoverable)",
     "softLimit": "{{count}} deferred drafts — review some before capturing more?",
-    "warnAge": "Deferred for {{days}} days — review now, or archive?"
+    "warnAge": "Deferred for {{days}} days — review now, or archive?",
+    "editTitle": "Edit draft",
+    "editSubtitle": "AI's first pass isn't always your final text — refine before you approve (ADR-0029 §4 principle 1).",
+    "titleLabel": "Title",
+    "bodyLabel": "Body",
+    "editCancel": "Cancel",
+    "editSave": "Save as draft",
+    "editSaveApprove": "Save & Approve"
   },
   "capture": {
     "title": "Capture",

@@ -71,10 +71,21 @@
     "emptyHint": "试一下 ⌘⇧V 粘个 URL 或拖入 .md 文件 — AI 帮你拉摘要,你当场决定存哪里(知识 / 资料 / 暂存)",
     "ageDays_one": "{{count}} 天",
     "ageDays_other": "{{count}} 天",
+    "expand": "展开正文",
+    "collapse": "收起正文",
+    "bodyMissing": "(正文为空)",
+    "edit": "编辑",
     "approve": "Approve(变 Note)",
     "reject": "Archive(归档,可恢复)",
     "softLimit": "已有 {{count}} 条 deferred drafts — 先清几条再继续 capture?",
-    "warnAge": "已 deferred {{days}} 天了 — 现在 review,还是归档?"
+    "warnAge": "已 deferred {{days}} 天了 — 现在 review,还是归档?",
+    "editTitle": "编辑草稿",
+    "editSubtitle": "AI 起草不一定完美;改好再 approve(per ADR-0029 §4 原则 1)。",
+    "titleLabel": "标题",
+    "bodyLabel": "正文",
+    "editCancel": "取消",
+    "editSave": "保存为草稿",
+    "editSaveApprove": "保存并 Approve"
   },
   "capture": {
     "title": "捕获",

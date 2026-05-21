@@ -650,6 +650,19 @@ export const approveDraft = (id: string): Promise<{ note_id: string }> =>
 export const rejectDraft = (id: string): Promise<{ archived: boolean }> =>
   request("POST", `/api/drafts/${id}/reject`);
 
+/** PUT /api/drafts/{id} — pre-approve edit. Per ADR-0029 §4 原则 1,
+ *  the user is the last-byte channel: AI's first pass isn't always
+ *  the final text. All fields optional. */
+export const updateDraft = (
+  id: string,
+  payload: {
+    title?: string;
+    body?: string;
+    kind?: "knowledge" | "reference";
+  },
+): Promise<DraftSummary> =>
+  request("PUT", `/api/drafts/${id}`, payload);
+
 // ---------- Mining task status (Phase 3 Stage 3 §3.8) -------------
 
 export interface MiningTaskSummary {

@@ -871,14 +871,6 @@ export function AppShell() {
       <DraftsFocusMode
         open={draftsOpen}
         onClose={() => setDraftsOpen(false)}
-        onOpenNote={(id) => {
-          // Per draft is a file; opening just reveals it. For now,
-          // close the focus mode and rely on the file appearing in
-          // the tree (Stage 3.5 stops here; richer in-modal preview
-          // can come later). We don't have a tabs entry for drafts.
-          setDraftsOpen(false);
-          setSelectedNoteId(id);
-        }}
       />
       <CaptureBox
         open={captureOpen}

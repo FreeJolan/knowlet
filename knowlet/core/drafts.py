@@ -215,11 +215,27 @@ class DraftStore:
     def save(self, draft: Draft) -> Path:
         self.root.mkdir(parents=True, exist_ok=True)
         draft.updated_at = now_iso()
+        # Capture the on-disk path BEFORE we reassign — the title may
+        # have changed, which would re-derive the slug and hence the
+        # filename. If we ignore the old file, it'd linger as a
+        # duplicate of the same draft id.
+        previous_path = draft.path
         target = self.root / draft.filename
         draft.path = target
         tmp = target.with_suffix(target.suffix + ".tmp")
         tmp.write_text(draft.to_markdown(), encoding="utf-8")
         tmp.replace(target)
+        # If the slug changed, delete the old file so the draft has
+        # exactly one home on disk.
+        if (
+            previous_path is not None
+            and previous_path != target
+            and previous_path.exists()
+        ):
+            try:
+                os.unlink(previous_path)
+            except OSError:
+                pass  # best-effort cleanup
         return target
 
     def delete(self, draft_id: str) -> bool:

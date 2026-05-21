@@ -167,14 +167,109 @@ try {
       .locator('[data-testid^="draft-row-"]')
       .filter({ hasText: "Test draft beta" })
       .waitFor({ state: "detached", timeout: 5000 });
-    // Should NOT be in /api/tree (archive only removes from active queue).
+  });
+
+  // -------- inline expand + Edit dialog (added 2026-05-22) --------
+
+  await runTest("Click row title toggles inline body expansion", async () => {
+    // Close panel first so re-open triggers refetch with the new
+    // seeded draft.
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+    await seedDraft({
+      title: "Editable draft",
+      body: "Original body text from capture.",
+      kind: "reference",
+    });
+    await page.locator("body").click({ position: { x: 5, y: 5 } });
+    await page.waitForTimeout(150);
+    await page.keyboard.press("Meta+I");
+    await page.waitForTimeout(500);
+    const row = page
+      .locator('[data-testid^="draft-row-"]')
+      .filter({ hasText: "Editable draft" })
+      .first();
+    await row.waitFor({ state: "visible", timeout: 3000 });
+    // Body should NOT be visible until expanded.
+    const bodyLocator = row.locator('[data-testid^="draft-body-"]');
+    let bodyCount = await bodyLocator.count();
+    assert(bodyCount === 0, "body hidden initially");
+    // Click title → expand.
+    await row.locator('[data-testid^="draft-title-"]').click();
+    await bodyLocator.waitFor({ state: "visible", timeout: 2000 });
+    const bodyText = await bodyLocator.innerText();
+    assert(
+      bodyText.includes("Original body"),
+      `body content shown: got "${bodyText.slice(0, 80)}"`,
+    );
+    // Click again → collapse.
+    await row.locator('[data-testid^="draft-title-"]').click();
+    await page.waitForTimeout(200);
+    bodyCount = await bodyLocator.count();
+    assert(bodyCount === 0, "body hidden after second click");
+  });
+
+  await runTest("Edit dialog updates draft title + body in place", async () => {
+    const row = page
+      .locator('[data-testid^="draft-row-"]')
+      .filter({ hasText: "Editable draft" })
+      .first();
+    await row.locator('[data-testid^="draft-edit-"]').click();
+    const dialog = page.locator('[data-testid="draft-edit-dialog"]');
+    await dialog.waitFor({ state: "visible", timeout: 3000 });
+    // Edit both fields.
+    const titleInput = page.locator('[data-testid="draft-edit-title"]');
+    await titleInput.fill("Edited title");
+    const bodyInput = page.locator('[data-testid="draft-edit-body"]');
+    await bodyInput.fill("Refined body content.");
+    // Save (NOT approve).
+    await page.locator('[data-testid="draft-edit-save"]').click();
+    // Wait for the row to re-render with the new title.
+    await page
+      .locator('[data-testid^="draft-row-"]')
+      .filter({ hasText: "Edited title" })
+      .waitFor({ state: "visible", timeout: 3000 });
+    // Original title should be gone.
+    const oldCount = await page
+      .locator('[data-testid^="draft-row-"]')
+      .filter({ hasText: "Editable draft" })
+      .count();
+    assert(oldCount === 0, "original title gone after rename");
+  });
+
+  await runTest("Save & Approve writes the (edited) draft as a Note", async () => {
+    const row = page
+      .locator('[data-testid^="draft-row-"]')
+      .filter({ hasText: "Edited title" })
+      .first();
+    await row.locator('[data-testid^="draft-edit-"]').click();
+    await page
+      .locator('[data-testid="draft-edit-dialog"]')
+      .waitFor({ state: "visible", timeout: 3000 });
+    // Tweak once more then Save & Approve.
+    const bodyInput = page.locator('[data-testid="draft-edit-body"]');
+    await bodyInput.fill("Final body, ready to approve.");
+    await page
+      .locator('[data-testid="draft-edit-save-approve"]')
+      .click();
+    // Dialog closes, row vanishes.
+    await page
+      .locator('[data-testid^="draft-row-"]')
+      .filter({ hasText: "Edited title" })
+      .waitFor({ state: "detached", timeout: 5000 });
+    // Note exists in /api/tree.
     const tree = await (
       await page.request.get(`${baseURL}/api/tree`)
     ).json();
     const titles = (tree.notes ?? []).map((n) => n.title);
     assert(
+      titles.includes("Edited title"),
+      `Save & Approve wrote a Note: got ${JSON.stringify(titles)}`,
+    );
+    // beta from the earlier archive test should still not be a Note.
+    assert(
       !titles.includes("Test draft beta"),
-      `archive should NOT promote to Note: tree=${JSON.stringify(titles)}`,
+      `archived draft must not have leaked into notes: ${JSON.stringify(titles)}`,
     );
   });
 } finally {
