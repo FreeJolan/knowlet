@@ -39,6 +39,41 @@ try {
     await page.waitForTimeout(300);
     const panel = page.locator('[data-testid="drafts-focus-mode"]');
     await panel.waitFor({ state: "visible", timeout: 3000 });
+
+    // Playwright's `state: "visible"` only checks DOM + size +
+    // display/visibility — it accepts transparent panels and
+    // panels covered by higher-z-index siblings. Verify the panel
+    // is **actually opaque + on top** by:
+    //   (a) elementFromPoint at center lands on the panel (z-stack OK)
+    //   (b) computed background-color is non-transparent (so the
+    //       main UI doesn't bleed through — the original 2026-05-22
+    //       bug was `var(--bg-0)` which doesn't exist, silently
+    //       resolving to transparent).
+    const visualCheck = await page.evaluate(() => {
+      const panel = document.querySelector('[data-testid="drafts-focus-mode"]');
+      if (!panel) return { onTop: false, opaque: false, bg: null };
+      const r = panel.getBoundingClientRect();
+      const cx = Math.round(r.left + r.width / 2);
+      const cy = Math.round(r.top + r.height / 2);
+      const hit = document.elementFromPoint(cx, cy);
+      const onTop = !!hit && (hit === panel || panel.contains(hit));
+      const bg = getComputedStyle(panel).backgroundColor;
+      const opaque =
+        bg !== "" &&
+        bg !== "transparent" &&
+        !/rgba\([^)]+,\s*0\s*\)/.test(bg) &&
+        bg !== "rgb(0, 0, 0)" /* defensive — JSDOM-style unset */;
+      return { onTop, opaque, bg };
+    });
+    assert(
+      visualCheck.onTop,
+      "Drafts panel center is the topmost hit element (z-index OK)",
+    );
+    assert(
+      visualCheck.opaque,
+      `Drafts panel background must be opaque, got "${visualCheck.bg}"`,
+    );
+
     const empty = page.locator('[data-testid="drafts-empty"]');
     await empty.waitFor({ state: "visible", timeout: 1500 });
     // Empty hint mentions the capture shortcut.

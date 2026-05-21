@@ -95,8 +95,8 @@ export function DraftsFocusMode({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex flex-col"
-      style={{ background: "var(--bg-0)" }}
+      className="fixed inset-0 z-50 flex flex-col"
+      style={{ background: "var(--bg, #f4f0e8)" }}
       data-testid="drafts-focus-mode"
     >
       <header
