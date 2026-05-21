@@ -1,111 +1,400 @@
-# knowlet — Collaboration principles for AI agents
+# knowlet — Collaboration workflow for AI agents
 
-This file is the canonical source for how Claude Code (and other AI agents) should approach work on knowlet. Read it at the start of each session.
+This file is the **ordered workflow** for how AI agents (Claude Code or
+others) approach work on knowlet. Not a list of principles — a sequence.
+Read it at the start of each stage. Skipping phases has documented cost.
 
-Per-user, per-machine preferences (English-learning corrections, local cliproxyapi endpoint, memory hygiene for the agent's own memory store, etc.) live in the user's global `~/.claude/CLAUDE.md` and are NOT committed. This file stacks on top of that.
-
-Project-specific architectural decisions live in `docs/decisions/` (ADRs) — those are authoritative for "what we decided"; this file is authoritative for "how we work."
-
----
-
-## Personas — for user-story walkthroughs
-
-When walking through any UI / interaction work (see §4 below), use these three personas. Each gets 2 sentences: "what do I see / do / get stuck on?"
-
-- **小张** — power user with heavy journaling + dev-notes habits. Tolerates complexity for power. Asks: "does this shave steps off my daily flow?"
-- **小红** — casual user, writes occasionally. Asks: "can I remember this? can I discover this?"
-- **新用户** — first-time opener. Asks: "what is this? what's my first move? can I leave without committing?"
-
-If a design only works for 小张 and traps 小红 / 新用户, the design is incomplete — not "ship anyway for power users."
+Per-user / per-machine preferences live in `~/.claude/CLAUDE.md` (not
+committed). Architectural decisions live in `docs/decisions/` (ADRs).
+This file covers **process**.
 
 ---
 
-## 1. No hidden technical debt
+## Personas — used at B.3
 
-The project is ~99% written by AI agents; writing cost is near-zero. Debugging, root-causing, and refactoring cost dominate. So default to *good* technical taste, not *fast*:
+- **新用户** — never opened the app. Tests entry / discoverability / "can I leave without committing?"
+- **小红** — opens weekly, writes occasionally. Tests "can I remember / discover this?"
+- **小张** — daily, power features. Tests "does this shave steps off my flow?"
 
-- "Should this be its own module / class / function?" → **yes**, unless trivially 1-2 lines used in exactly one place.
-- "Should I add a test?" → **yes** for parsing, state machines, error paths, anything stateful or async.
-- "Is this a quick-fix workaround?" → **no.** Find the root cause; bypasses become traps for future agents.
-- "Am I crossing layers / using globals / inlining what should be encapsulated?" → **no.**
-
-When in doubt, ask: *"if a different agent reads this in three months, how many files and how many lines until they understand it?"* If the answer is large, the structure is wrong — refactor before adding logic.
+**Scope rule**: 新用户 is in scope for every entry point; 小红 for every read or write path; 小张 only for power-feature paths.
 
 ---
 
-## 2. Work autonomously with good technical taste
+## Definitions used throughout
 
-Apply judgment; don't ask the project owner about small calls. The escalation bar is **product- or maintenance-scale** issues, **not** code-shape issues.
+**"User OK"** — an **explicit affirmative** in chat: 继续 / yes / go / ship / proceed / 同意 / equivalent. The following are NOT user OK:
 
-- ❌ **Don't ask** about: module/file names, parameter order, error-message wording, whether to extract a helper, internal library selection within already-established constraints, default values, formatting/style.
-- ✅ **Do ask** about: product experience and information architecture, decisions whose impact is months long (sync vs async stack, single-tenant vs multi-tenant, persistence model), changes to target users / scope / milestones, anything that contradicts an existing ADR or memory.
+- A question or follow-up ("interesting, what about X?")
+- An adjacent comment without explicit go-ahead
+- A 👍 reaction or silence
+- Anything the agent has to *interpret* as approval
 
-The project owner welcomes interruptions for the second category and considers them well-spent. The first category wastes attention.
-
----
-
-## 3. Single source of truth, thin shells per interface
-
-knowlet has multiple interfaces (CLI, web UI, future desktop app, possibly MCP server). The discipline:
-
-- All business logic lives in one backend module set (`knowlet/core/...`); each interface is a **thin adapter** over backend functions.
-- Streaming responses (LLM tokens, progress, tool-call traces) are exposed as **structured-event generators** that any adapter consumes — never reimplemented per interface.
-- Tests primarily target the backend modules. Per-interface tests are **integration smoke** only (e.g., CLI runs a known command and asserts the right backend function was hit). UI tests cover only what's UI-specific (rendering, events, websocket/SSE plumbing).
-- A feature isn't "done" until **every existing interface** can reach it. If you've added a UI button without a CLI / slash mirror, the design is incomplete.
-
-This pattern (Stripe / GitHub / Vercel CLI use it) makes the CLI double as a QA harness, replacing most manual UI-clicking regression testing with cheap automated tests.
+If unsure, treat the response as Phase A.3 input (reframe) and re-ask. Forward-motion bias is the most common gate-bypass failure mode — when in doubt, do not proceed.
 
 ---
 
-## 4. UI / 交互设计工作 — 强制 2-step 工作流
+## The workflow: A → B → C → D → E
 
-**触发**: 任何设计、修改、重排 UI / 交互流程的工作 —— 包括新加 panel、改字段顺序、设计 picker / form / onboarding、声明 "X 应该是 Y" 这类 IA 断言、刚实现完准备说 "done" 的 UI 改动。**不允许跳步**,包括 "看起来很显然" 的小改动(显然是错觉的常见来源)。
+Each phase has explicit **outputs** that gate the next. Produce the
+artifact, don't hand-wave.
 
-**Step 1 — 先看竞品**: VS Code(北极星)+ 至少 1 个其他主流(Obsidian / macOS Settings / Chrome / Cursor / Slack…)。把它们怎么做的**明确说出来**。找不到对照 → 明示 "未找到先例,以下为首次设计",**不能用 "懒得查" 伪装成 "全新发明"**。
+**Trigger**: any work that (a) touches >1 file, OR (b) changes >50 LOC,
+OR (c) changes user-visible behavior. Below all three thresholds, only
+Phase E (verification) applies. Trivial mechanical refactors with NO
+behavior change (token rename, formatter sweep, import sort) skip the
+full workflow but still must leave C.2's commands green.
 
-**Step 2 — 再走用户故事**: 用本文件顶部定义的三角色(小张 / 小红 / 新用户),每人 2 句 "看到什么 / 做什么 / 卡在哪"。卡住的点 = 要修的点。
-
-**产出时明示**: 对照了谁、哪个角色卡在哪。不能只给结论不给依据。
-
-**Why**: 反复观察到的失败模式 —— 从随手编的理论(如 "按重要性排 tabs")直接给自信结论;或实现完一个 UI 后只查技术信号(类型 / 测试通过)就宣布 done,不模拟用户走一遍。这两个缺陷加起来会让明显的体验问题(chicken-and-egg / 顺序反 / 静默坏配置)漏到用户面前才被发现。
-
----
-
-## 5. 不造轮子,优先复用成熟方案
-
-**触发**: 任何要写 "自己实现 X" 的时刻 —— 包括算法、数据结构、协议解析、UI 组件、状态管理、流处理、文件 watch、diff、并发原语、序列化、文本搜索…
-
-**Step 1 — 先查**: 现有依赖里有没有?生态里有没有 battle-tested 的库?该领域的标准做法是什么?**明确说出查到了什么、为什么不用**。哪怕只是一句 "我搜了 X、Y,X 不维护了,Y 体积太大"。
-
-**Step 2 — 再造**: 只在以下情况自己实现:
-- (a) 现有方案严重不匹配需求,且 adapter 成本高于自实现;
-- (b) 引入依赖的安全 / 体积 / 维护成本超过自实现;
-- (c) 这就是项目的核心创新(领域特殊部分,不是通用机械)。
-
-**Step 3 — 说出来**: 决定自实现时,在对话 / PR 里**明示**对照了哪些现成方案、为什么不选,而不是默默重写。沉默地造轮子是常见的隐藏债。
-
-**Why**: 自己造的代码 "看起来简单" 是错觉 —— 边界条件、罕见 bug、未来维护、跨平台差异都是隐藏成本;成熟库已经被大量用户暴露过这些问题。除非有清晰的 "不复用" 理由,否则默认复用。与 §4 的 "先看竞品" 是同一精神:**自信结论之前先看世界上的现成答案**。
+For bug-fixes that change observable behavior, Phase B.2's path
+checklist + Phase E still apply.
 
 ---
 
-## 6. 大功能开工前 — 先用一句话讲清"做什么 + 解决什么"
+### Phase A — Frame the problem
 
-**Trigger**: 任何被命名为 stage / phase / 大 feature 的工作开始时。stage / phase 边界本身就是触发信号。
+**A.1 — Abstract**: write 1-2 sentences. What problem? What does this do?
+**No fields, no UI, no timeline.** Product-positioning level. Example
+of a violating abstract: "Add a `kind` field to drafts and a chip
+component." Example of a passing abstract: "Drafts should show users
+which items are knowledge vs reference so they can prioritize what to
+internalize first."
 
-**Step 1 — 抽象描述**: 一两句话讲清这个 stage 解决的是什么问题、要做的是什么。**不准列字段、不准说工期、不准画 UI**。就是产品定位级别的话。
+**A.2 — User calibration**: post A.1 to the user. Wait for **user OK**
+(as defined above). Until user OK arrives, do NOT proceed to Phase B.
 
-**Step 2 — 用户校准**: 把抽象描述抛给用户 → 用户确认 / 修正 → 才能进 §4(UI 2-step)/ §5(不造轮子)的细化流程。
+*Escalation rule (used here and throughout — single source)*: ✅ ask
+the user about product experience, IA, decisions with month-long
+impact, target users / scope / milestones, anything contradicting an
+ADR or memory. ❌ don't ask about: file names, parameter order, error
+wording, internal library picks within established constraints,
+default values, formatting.
 
-**Why**: 直接从需求跳具体设计很容易跑偏 — 做出来的东西貌似"覆盖了 spec",但跟用户脑子里那个"问题"对不上。先给抽象描述,用户能立刻判断"是这个事 / 不是这个事";一旦框定了,后面的细节才有方向。这一步极便宜(2 句话),跳了会很贵(返工 / 误解 / 沉默偏离)。
+**A.3 — If the user rejects A.1's framing**: do NOT jump to a revised
+plan. Return to A.1, rewrite, re-post. Two iterations of A is normal
+and cheap; one wrong B is expensive.
 
-**反例(2026-05-21)**: Stage 3 开工讨论里,我直接给了 8 步细化 plan + 4 决策点,跳过了抽象描述。用户做了一次概括(部分对),我反过来要纠正它。先讲"Stage 3 = capture 外部 / 内部 → 用户当场决定 → 存或暂存 + queue 自治"那句话,这一轮能省一半。
+**A.4 — If the user does not respond within the session**: stop and
+surface what's blocked. Do NOT assume tacit approval.
 
-**与 §4 / §5 的关系**: §4 / §5 是**解决方案层**的"先看世界上的现成答案";§6 是**问题定义层**的"先框清楚是什么问题"。顺序是 §6 → §4 / §5。
+---
+
+### Phase B — Research the solution shape
+
+**B.1 — Prior art**: VS Code (north star) + at least 1 other mainstream
+(Obsidian / macOS Settings / Cursor / Things 3 / Readwise / …). Describe
+in writing how each handles the problem space. Weak parallels that
+share a noun but not a pattern do NOT count — name the load-bearing
+similarity. If you genuinely find nothing comparable, that claim
+itself requires user OK before B.2.
+
+**B.2 — Path checklist (THE scope contract)**:
+
+First, list every user verb each persona would naturally try once they
+encounter this feature. Examples for a list-of-things UI:
+**see / read / create / edit / approve / archive / delete / move /
+link / search / filter / sort / share / bulk-act / undo**.
+
+Then for EACH verb in scope, write its full **interaction path**:
+
+- **Entry state**: how does the user get here? (e.g. "panel open, row visible")
+- **Step sequence**: what they click / type / drag, in order.
+- **Final assertion**: what state must hold after? (DOM + backend)
+- **Two branches required**:
+  - (i) the happy "they did it right" branch
+  - (ii) a meaningful second branch — in priority order:
+    1. genuine redo / undo / cancel sub-path
+    2. error / failure path (network down / invalid input / 4xx)
+    3. action interrupted mid-way (close modal mid-edit / navigate during save)
+  - "Navigate away and come back" is NOT a valid second branch unless
+    the path is specifically about state preservation.
+
+**Save this list as a literal checklist** (in the PR description or
+stage tracking note) marked per-path as:
+
+```
+P1  [reference name]
+    □ implemented   □ tested   □ dogfooded   (or: ⏸ deferred + rationale)
+P2  ...
+```
+
+Update the marks AS you work — not retroactively at the end. **The
+checklist is the scope contract. Phase E.5 reconciles against it.
+Any path neither implemented nor explicitly deferred = NOT done,
+regardless of test results.**
+
+**Deferral budget**: if >30% of paths are deferred, that is a scope
+signal — surface it to the user before continuing, not silently in
+E.5.
+
+**B.3 — Walk each path through each persona** per the scope rule. For
+each in-scope persona × path cell, 2 sentences: "what I see / what I
+do / where I get stuck." Stuck points = bugs to design around NOW.
+
+**B.4 — Build-or-borrow with forcing** (applies when the workflow
+trigger applies — a 6-line helper is exempt). For each non-trivial
+piece of logic (algorithm / parser / UI primitive / state machine / IO):
+
+- Check existing deps + ecosystem + project conventions.
+- **Writeup must include at least one concrete package name + version
+  + last-publish date per piece of logic — even for packages you
+  rejected.** "Considered and rejected" without a name = "did not
+  search." If the only candidates are >2 years stale, flag that
+  explicitly — "no actively-maintained match" is a different decision
+  from "found and rejected."
+- Self-implement only when (a) adapter cost > self-implement, (b) dep
+  cost > self-implement, or (c) it IS the project's core innovation.
+- *(Surface-your-reasoning is general: applies to every non-trivial
+  choice in this document, not just here. B.4 is the same rule applied
+  to build-or-borrow specifically.)*
+
+**B.5 — Produce the artifact + user OK**: by end of Phase B you have:
+- The path checklist (B.2)
+- The persona walkthrough across paths (B.3)
+- The prior-art + library lookup (B.1 + B.4, with package names)
+
+Post a summary. Wait for **user OK** before Phase C.
+
+**Length self-check**: an unusually long Phase B writeup (multi-page
+prior-art essay, paragraph-justifications for every package) is a
+smell, not a virtue — it usually means justification is being used
+as a work-substitute. If your writeup runs longer than the path
+checklist itself, trim.
+
+---
+
+### Phase C — Survey infrastructure
+
+**C.1 — Read similar code first**: before writing ANY new file, find
+2-3 existing files in the codebase solving a similar problem. Match
+their pattern unless deliberately departing (and say so).
+
+**C.2 — Map the testing surface — record EXACT commands**:
+
+- Backend tests (knowlet: `uv run pytest tests/`)
+- E2E suites (knowlet: `cd frontend && npm run e2e`, or
+  `SKIP_BUILD=1 node scripts/e2e/<file>.mjs` for one suite)
+- Type / lint (knowlet: `cd frontend && npx tsc --noEmit`)
+- CI workflow file: read once, note what it gates on.
+
+**Do not build parallel test infrastructure.** Record the EXACT
+commands now; Phase E.2 will run the SAME commands.
+
+**C.3 — Map the dev cycle**: how to run dev server / build / each
+suite. Run all of them once BEFORE changes to establish a green
+baseline.
+
+---
+
+### Phase D — Implement, per path, test-first
+
+**D.1 — Pick the next path** from B.2 in this priority order
+(risk dominates across tiers; smallest-LOC is only a within-tier
+tiebreaker):
+
+1. **Foundational state / data path** other paths depend on
+2. **Entry / read path for 新用户**
+3. **Write paths** (create / edit / move / delete)
+4. **Branches and edge cases**
+
+Do NOT pick "easiest to implement" when "highest risk if broken"
+exists in an earlier tier.
+
+**D.2 — Write the test first. No exceptions for UI.**
+- Backend logic → unit + integration test (pytest)
+- UI / events / keyboard → E2E test in the existing suite directory
+- **Show the red→green transition**: run the new test against current
+  `main` and either (a) paste the failing test output into chat, or
+  (b) commit the failing test as its own commit, **before writing the
+  implementation in D.3**. A test you write alongside the
+  implementation has not demonstrated that it would fail without it.
+
+"I cannot write a failing test for this UI" is the agent's most
+common dodge here. Before invoking the exception, name the specific
+existing E2E test in `frontend/scripts/e2e/` that has a comparable
+shape — if you can't, the dodge is unjustified.
+
+**D.3 — Implement**:
+
+- **No hidden tech debt**: proper modules, no globals, no quick-fixes
+  that bypass root cause. If understanding a 10-line behavior requires
+  reading >3 files or >100 LOC of indirection, refactor before adding.
+- **Thin shells per interface**: business logic in `knowlet/core/...`;
+  web / CLI / desktop / MCP are thin adapters. Streaming events are
+  structured generators shared across interfaces, never re-emitted.
+
+**D.4 — Run the test**. Iterate until green. Update B.2's checklist:
+mark the path `☑ implemented · ☑ tested · □ dogfooded`. **Leave the
+`dogfooded` box explicitly empty** — it is set in Phase E.3, not
+here. An empty `dogfooded` box is what tells E.5 this path still owes
+verification.
+
+**D.5 — Loop** back to D.1 for the next path.
+
+---
+
+### Phase E — Verification (done criteria)
+
+A stage is NOT done until every line below holds.
+
+**E.1 — Path × test reconciliation** (an artifact D.4 did NOT produce):
+
+Walk B.2's checklist. For each path on the list, write a line:
+
+```
+P1 [name]  →  frontend/scripts/e2e/<file>.mjs:<line>   ☑
+P2 [name]  →  tests/test_<file>.py::<test_name>        ☑
+P3 [name]  →  ⏸ deferred — rationale
+```
+
+If a path has no test file:line mapping AND is not deferred, return
+to Phase D. This step exists because an agent under context-pressure
+will pattern-match "I already verified this in D.4" and skip E.1 —
+forcing a fresh path↔test mapping prevents that skip.
+
+Every non-deferred path's E2E must cover ALL of:
+
+- **a)** Entry state correct
+- **b)** Happy-step sequence
+- **c)** Both branches identified in B.2 (happy + meaningful second)
+- **d)** Final state assertion (DOM + backend)
+
+"Button click doesn't error" is NOT coverage. "User journey
+end-to-end with branches" IS.
+
+**E.2 — Run the EXACT commands recorded at C.2**. All green. Any
+pre-existing breakage must be fixed or explicitly deferred.
+
+**E.3 — Manual dogfood (mandatory, mechanical, adversarial)**:
+
+1. **Cache bust**: stop the dev server. Rebuild. Restart with a fresh
+   Playwright context (`browser.newContext({ storageState: undefined })`)
+   or browser launched with `--disable-cache`. If a human will also
+   visually review, they look at a hard-reloaded production build,
+   not the HMR dev server.
+
+2. **Name the change-surface in one phrase** (e.g. "popover with
+   hover + dismiss-on-outside-click"; "list with inline expand +
+   modal editor"). List the probes you are adding for that surface
+   **beyond** the floor below. If your added list is empty, write
+   one sentence justifying why the floor alone is sufficient. An
+   empty added list with no justification = NOT done.
+
+3. **Floor probes** (run these every time, via Playwright `evaluate`
+   or DevTools):
+   - `getComputedStyle(el).backgroundColor` must not be `rgba(0,0,0,0)`
+     for opaque panels
+   - For every `var(--x)` referenced in changed CSS, grep the repo
+     for `--x:` definition — fail loud if missing
+   - `document.elementFromPoint(center)` lands on the expected element
+   - `document.activeElement` is what the path expects
+   - Console: zero errors and zero new warnings introduced
+
+4. **Adversarial pass**: for each in-scope path, ALSO try to break it:
+   - resize the window mid-action
+   - rapid double-click / spam-press the trigger
+   - empty / oversized input
+   - refresh mid-action
+   - keyboard navigation (Tab / Esc / Enter) from each focal point
+   The mechanical probes catch what they were written to catch; the
+   unknown unknowns require adversarial intent.
+
+5. **Vault data probe** (when the change writes to vault / changes
+   schema):
+   - Run against a **copy of a real existing vault**, not an empty fixture
+   - Confirm no data loss
+   - Confirm no silent format upgrade without a backup file
+   - Confirm reopening with the **previous** knowlet version still
+     works OR there is a documented, tested migration
+
+6. **Perf probe** (when the change touches a hot path — vault scan /
+   index rebuild / chat retrieval / paint-on-keystroke):
+   - Time the operation against a realistic vault size
+   - Verify effects don't fire on every keystroke when they only need
+     to fire on commit / blur
+
+7. **Capture a screenshot** of the final state for each path. Attach
+   to E.5.
+
+8. **Update B.2's checklist**: for each path that passed all
+   applicable probes, set `✓ dogfooded`.
+
+**Tests passing + floor probes + added probes + screenshots + vault
+probe (when applicable) + perf probe (when applicable) = done. Any
+one missing = NOT done.**
+
+Mechanical reminder: Playwright's `state: "visible"` accepts a
+transparent panel as visible. Floor probes exist to corrective that
+class of false-green.
+
+**E.4 — Cross-interface check (capabilities, not affordances)**: list
+every **backend capability** touched (a method that mutates or reads
+vault state). For each, confirm the CLI / MCP can invoke it. UI-only
+interaction affordances (drag-to-reorder, keyboard nav, focus
+indicators) are exempt and listed explicitly under "UI-only
+affordances."
+
+A new backend capability without a CLI / MCP entry point is incomplete.
+
+**E.5 — Reconcile against B.2 and report**:
+
+Walk every path on B.2's checklist. Each must be `☑ implemented · ☑
+tested · ✓ dogfooded` OR `⏸ deferred + rationale`. Anything else =
+NOT done; return to the relevant phase.
+
+Report:
+- ✓ paths done (with test file:line + screenshots)
+- ⏸ paths deferred (with rationale — silence is not deferral)
+- 🎨 UI-only affordances (exempt from E.4)
+- ⚠ open concerns from dogfood
+- ⏱ anything that took notably longer than estimated
+
+**E.6 — Every "this is broken" gets a regression test**, at every
+lifecycle stage — between dogfood and ship, post-ship dogfood, weeks
+later in a follow-up PR. If the user reports unexpected behavior, the
+fix MUST include a regression test that would have caught it. The
+test added at fix-time is the version of the agent that should have
+caught it.
+
+Only after E.5 reconciliation acknowledged: declare done.
+
+---
+
+## Domain risks (knowlet-specific concerns, always-on)
+
+Three risk classes the workflow phases handle in spots; these are the
+principles to keep in mind whenever the trigger applies.
+
+**Vault data safety (local-first PKM = user data on the line)**:
+
+- File writes go through write-then-rename atomic paths, never
+  in-place truncation
+- "Delete" goes to `.trash/` or `.archive/`, never `unlink()` direct
+- Vault paths must be validated against traversal (no `..` resolving
+  outside the vault root)
+- Schema changes require a documented migration + a backup of the
+  previous shape on first upgrade run
+- Verification probe: E.3 step 5
+
+**Performance regressions (vaults grow; 100 notes today, 5000 in two years)**:
+
+- Effects must not fire on every keystroke when they only need to fire
+  on commit / blur
+- Backend operations on the vault list should be O(notes), not
+  O(notes × something else)
+- Verification probe: E.3 step 6
+
+**Dependency pinning**:
+
+- New deps must be pinned to an exact version (or `~exact`) in
+  pyproject.toml / package.json, never `^latest` or unbounded
+- B.4's "name + version + last-publish date" requirement is the audit
+  trail; the pin is the reproducibility
 
 ---
 
 ## See also
 
-- `docs/decisions/` — Architecture Decision Records. Treat as authoritative for the "why" behind major choices.
-- `docs/roadmap/` — current milestone slicing.
-- ADR-0029 (`docs/decisions/0029-cognitive-contract.md`) — the root principle anchor for all AI / IA design decisions in this project. Read it before proposing any AI-touching feature.
+- `docs/decisions/0029-cognitive-contract.md` — root principle anchor
+  for AI / IA decisions on this project
+- `docs/decisions/` (broader index)
+- `docs/roadmap/` — current milestone slicing
+- `~/.claude/CLAUDE.md` — per-user / per-machine (not committed)
