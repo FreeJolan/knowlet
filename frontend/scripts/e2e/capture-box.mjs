@@ -126,6 +126,71 @@ try {
       `defer should write to drafts: got ${JSON.stringify(draftTitles)}`,
     );
   });
+
+  // ---------------- P1 cancel branch + P2 wrong-file branch ----
+
+  await runTest("P1 branch: Esc before decision creates nothing", async () => {
+    await page.keyboard.press("Meta+Shift+V");
+    await page.waitForTimeout(300);
+    await page.locator('[data-testid="capture-box"]').waitFor({
+      state: "visible",
+      timeout: 2000,
+    });
+    // Upload a file so we reach the capsule-ready state, then Esc
+    // BEFORE any decision button click.
+    await page.locator('[data-testid="capture-file-input"]').setInputFiles({
+      name: "should-not-save.md",
+      mimeType: "text/markdown",
+      buffer: Buffer.from("# should not save\n\nbody\n"),
+    });
+    await page
+      .locator('[data-testid="capture-capsule"]')
+      .waitFor({ state: "visible", timeout: 5000 });
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(500);
+    // No new Note, no new Draft.
+    const tree = await (
+      await page.request.get(`${baseURL}/api/tree`)
+    ).json();
+    const drafts = await (
+      await page.request.get(`${baseURL}/api/drafts`)
+    ).json();
+    assert(
+      !(tree.notes ?? []).map((n) => n.title).includes("should not save"),
+      "Esc must not commit a Note",
+    );
+    assert(
+      !drafts.map((d) => d.title).includes("should not save"),
+      "Esc must not commit a Draft",
+    );
+  });
+
+  await runTest("P2 branch: PDF upload shows error, not capsule", async () => {
+    await page.keyboard.press("Meta+Shift+V");
+    await page.waitForTimeout(300);
+    await page
+      .locator('[data-testid="capture-box"]')
+      .waitFor({ state: "visible", timeout: 2000 });
+    await page.locator('[data-testid="capture-file-input"]').setInputFiles({
+      name: "doc.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4 fake"),
+    });
+    // Backend returns 415; frontend surfaces error UI, not capsule.
+    const err = page.locator('[data-testid="capture-error"]');
+    await err.waitFor({ state: "visible", timeout: 3000 });
+    const errText = await err.innerText();
+    assert(
+      errText.length > 0,
+      "error message should be visible for unsupported file types",
+    );
+    // No capsule should have appeared.
+    const capCount = await page
+      .locator('[data-testid="capture-capsule"]')
+      .count();
+    assert(capCount === 0, "no capsule for rejected file type");
+    await page.keyboard.press("Escape");
+  });
 } finally {
   await teardown();
 }
