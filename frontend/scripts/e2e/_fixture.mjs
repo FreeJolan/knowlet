@@ -263,6 +263,40 @@ export async function setupTestEnv(opts = {}) {
 export function assert(cond, msg) {
   if (!cond) throw new Error(`assertion failed: ${msg}`);
 }
+
+/**
+ * Global console-clean assertion — per CLAUDE.md v4 §E.3 "Console:
+ * zero errors and zero new warnings introduced by this change."
+ *
+ * Call at the end of any suite, before teardown. Asserts that the
+ * test session captured zero console errors and zero pageerror
+ * events. Existing suites that DO want to assert errors (negative-
+ * path tests where an error is the expected output) should filter
+ * `env.errors` manually before calling this.
+ *
+ * Errors are printed before throw so the failure tells the user
+ * what went wrong instead of just "1 error captured."
+ */
+export function assertConsoleClean(env, opts = {}) {
+  const { allowMessages = [] } = opts;
+  const filtered = env.errors.filter((e) => {
+    return !allowMessages.some((needle) =>
+      typeof needle === "string"
+        ? e.text.includes(needle)
+        : needle.test(e.text),
+    );
+  });
+  if (filtered.length === 0) return;
+  console.error(
+    `✗ ${filtered.length} console error(s) / pageerror(s) captured:`,
+  );
+  for (const e of filtered) {
+    console.error(`   [${e.type}] ${e.text}`);
+  }
+  throw new Error(
+    `assertion failed: console must be clean (got ${filtered.length} error(s); see logs above)`,
+  );
+}
 export function assertEqual(actual, expected, msg) {
   if (actual !== expected) {
     throw new Error(

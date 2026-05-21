@@ -5,7 +5,13 @@
 //   - knowledge → reference: popover requires confirm; cancel keeps it.
 // Plus the ⌘⇧K global shortcut on each direction.
 
-import { assert, exitAfter, runTest, setupTestEnv } from "./_fixture.mjs";
+import {
+  assert,
+  assertConsoleClean,
+  exitAfter,
+  runTest,
+  setupTestEnv,
+} from "./_fixture.mjs";
 
 const env = await setupTestEnv({
   notes: [{ title: "kind chip test note", body: "body" }],
@@ -127,6 +133,10 @@ try {
     // Now ⌘⇧K should instantly upgrade.
     await page.keyboard.press("Meta+Shift+K");
     await knowledgeChip.waitFor({ state: "visible", timeout: 3000 });
+  });
+
+  await runTest("no console errors during the suite", () => {
+    assertConsoleClean(env);
   });
 } finally {
   await teardown();

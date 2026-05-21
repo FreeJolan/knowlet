@@ -4,7 +4,13 @@
 // the capsule is supplied directly), opens ⌘I, exercises the row
 // actions and the empty state.
 
-import { assert, exitAfter, runTest, setupTestEnv } from "./_fixture.mjs";
+import {
+  assert,
+  assertConsoleClean,
+  exitAfter,
+  runTest,
+  setupTestEnv,
+} from "./_fixture.mjs";
 
 const env = await setupTestEnv({
   notes: [],
@@ -271,6 +277,10 @@ try {
       !titles.includes("Test draft beta"),
       `archived draft must not have leaked into notes: ${JSON.stringify(titles)}`,
     );
+  });
+
+  await runTest("no console errors during the suite", () => {
+    assertConsoleClean(env);
   });
 } finally {
   await teardown();

@@ -9,7 +9,13 @@
 // The earlier "我按了快捷键没反应" dogfood report is the literal
 // reason this file exists.
 
-import { assert, exitAfter, runTest, setupTestEnv } from "./_fixture.mjs";
+import {
+  assert,
+  assertConsoleClean,
+  exitAfter,
+  runTest,
+  setupTestEnv,
+} from "./_fixture.mjs";
 
 const env = await setupTestEnv({
   notes: [],
@@ -190,6 +196,19 @@ try {
       .count();
     assert(capCount === 0, "no capsule for rejected file type");
     await page.keyboard.press("Escape");
+  });
+
+  await runTest("no console errors during the suite", () => {
+    // P2 / P3 negative tests trigger expected 415 / 502 responses;
+    // the React client logs those as fetch failures via console.
+    // Filter just those, keep everything else strict.
+    assertConsoleClean(env, {
+      allowMessages: [
+        /415/,
+        /Unsupported Media Type/i,
+        /Failed to load resource/i,
+      ],
+    });
   });
 } finally {
   await teardown();

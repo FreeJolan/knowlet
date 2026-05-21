@@ -19,6 +19,7 @@ from rich.prompt import Prompt
 
 from knowlet import __version__
 from knowlet.cli import backups as backups_cli
+from knowlet.cli import capture as capture_cli
 from knowlet.cli import cards as cards_cli
 from knowlet.cli import config as config_cli
 from knowlet.cli import drafts as drafts_cli
@@ -65,6 +66,7 @@ app.add_typer(user_cli.app, name="user")
 app.add_typer(cards_cli.app, name="cards")
 app.add_typer(mining_cli.app, name="mining")
 app.add_typer(drafts_cli.app, name="drafts")
+app.add_typer(capture_cli.app, name="capture")
 app.add_typer(notes_cli.app, name="notes")
 app.add_typer(quiz_cli.app, name="quiz")
 app.add_typer(tags_cli.app, name="tags")

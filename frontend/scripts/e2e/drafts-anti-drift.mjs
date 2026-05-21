@@ -7,7 +7,13 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { assert, exitAfter, runTest, setupTestEnv } from "./_fixture.mjs";
+import {
+  assert,
+  assertConsoleClean,
+  exitAfter,
+  runTest,
+  setupTestEnv,
+} from "./_fixture.mjs";
 
 const env = await setupTestEnv({ notes: [], language: "en" });
 const { page, baseURL, vaultDir, teardown } = env;
@@ -135,6 +141,10 @@ try {
       );
     },
   );
+
+  await runTest("no console errors during the suite", () => {
+    assertConsoleClean(env);
+  });
 } finally {
   await teardown();
 }

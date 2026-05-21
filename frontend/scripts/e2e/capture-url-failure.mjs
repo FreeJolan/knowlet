@@ -5,7 +5,13 @@
 // UI with a Retry button; clicking Retry re-attempts and succeeds
 // once the route is unblocked.
 
-import { assert, exitAfter, runTest, setupTestEnv } from "./_fixture.mjs";
+import {
+  assert,
+  assertConsoleClean,
+  exitAfter,
+  runTest,
+  setupTestEnv,
+} from "./_fixture.mjs";
 
 const env = await setupTestEnv({ notes: [], language: "en" });
 const { page, baseURL, teardown } = env;
@@ -79,6 +85,14 @@ try {
       capText.includes("Recovered fetch"),
       `recovered capsule rendered: got "${capText.slice(0, 80)}"`,
     );
+  });
+
+  await runTest("no unexpected console errors during the suite", () => {
+    // P3.a deliberately triggers a 502 → client logs the fetch
+    // failure. That's expected; filter it.
+    assertConsoleClean(env, {
+      allowMessages: [/502/, /Failed to load resource/i],
+    });
   });
 } finally {
   await teardown();

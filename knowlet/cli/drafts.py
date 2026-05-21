@@ -76,6 +76,62 @@ def drafts_reject(
     _draft_approve_or_reject(draft_id, approve=False)
 
 
+@app.command("edit")
+def drafts_edit(
+    draft_id: Annotated[str, typer.Argument(help="Draft id (or 8-char prefix).")],
+) -> None:
+    """Open the draft file in $EDITOR (or $VISUAL).
+
+    Edits the markdown file directly — frontmatter + body. After the
+    editor exits the file is left as the user saved it; knowlet picks
+    up the new title / body on the next list / show / approve. Use
+    when capture's AI extraction needs refining before approve."""
+    import os
+    import subprocess
+
+    from knowlet.core.drafts import DraftStore
+
+    vault = resolve_vault_or_die()
+    store = DraftStore(vault.drafts_dir)
+    d = store.get(draft_id)
+    if d is None or d.path is None:
+        err_console.print(f"[red]draft not found:[/red] {draft_id}")
+        raise typer.Exit(code=1)
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+    subprocess.run([editor, str(d.path)], check=False)
+    console.print(f"[dim]edited (saved as-is):[/dim] {d.path}")
+
+
+@app.command("kind")
+def drafts_kind(
+    draft_id: Annotated[str, typer.Argument(help="Draft id (or 8-char prefix).")],
+    kind: Annotated[
+        str,
+        typer.Argument(help="New kind: 'knowledge' or 'reference'."),
+    ],
+) -> None:
+    """Change a draft's kind (knowledge / reference).
+
+    Web UI mirror per ADR-0029 §4.5 — every backend capability the
+    UI exposes should be reachable from CLI too."""
+    from knowlet.core.drafts import DraftStore
+
+    if kind not in ("knowledge", "reference"):
+        err_console.print(
+            f"[red]invalid kind:[/red] {kind!r} (must be 'knowledge' or 'reference')"
+        )
+        raise typer.Exit(code=1)
+    vault = resolve_vault_or_die()
+    store = DraftStore(vault.drafts_dir)
+    d = store.get(draft_id)
+    if d is None:
+        err_console.print(f"[red]draft not found:[/red] {draft_id}")
+        raise typer.Exit(code=1)
+    d.kind = kind  # type: ignore[assignment]
+    store.save(d)
+    console.print(f"[green]kind set:[/green] {d.id[:8]}… → {kind}")
+
+
 def _draft_approve_or_reject(draft_id: str, *, approve: bool) -> None:
     from knowlet.core.drafts import DraftStore
     from knowlet.core.embedding import make_backend
