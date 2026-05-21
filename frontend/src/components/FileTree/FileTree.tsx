@@ -15,7 +15,6 @@ import {
   FileText,
   Folder,
   FolderPlus,
-  Plus,
   Star,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -44,11 +43,6 @@ import {
   updateNote,
 } from "@/api/client";
 import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import {
   ContextMenu,
   ContextMenuContent,

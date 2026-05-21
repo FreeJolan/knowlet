@@ -61,11 +61,17 @@ export function DraftsFocusMode({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // Always refetch when the panel opens — user expects "what's
+  // pending right now", not a snapshot from when they last looked.
+  // Without refetchOnMount, a panel re-open within staleTime would
+  // show a stale empty list even after the user just deferred
+  // something via the CaptureBox.
   const drafts = useQuery({
     queryKey: ["drafts"],
     queryFn: listDrafts,
     enabled: open,
-    staleTime: 10_000,
+    refetchOnMount: "always",
+    staleTime: 0,
   });
 
   const approveMut = useMutation({

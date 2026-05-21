@@ -126,8 +126,11 @@ export function KindChip({
     </span>
   );
 
-  // Wrap with Popover (interactive demote) or just tooltip (anything else).
-  if (interactive) {
+  // Three render paths to avoid Radix PopoverTrigger's auto-toggle
+  // behavior firing for reference-chip clicks (which must be instant
+  // upgrades, no popover). The popover only wraps the knowledge chip
+  // — for reference + non-interactive we render a plain trigger.
+  if (interactive && kind === "knowledge") {
     return (
       <TooltipProvider delayDuration={350}>
         <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
@@ -187,6 +190,32 @@ export function KindChip({
             </div>
           </PopoverContent>
         </Popover>
+      </TooltipProvider>
+    );
+  }
+
+  // Interactive reference chip — plain button, instant upgrade on click.
+  // No PopoverTrigger wrapping (its auto-toggle would surface a stray
+  // popover on what should be a friction-free upgrade path).
+  if (interactive) {
+    return (
+      <TooltipProvider delayDuration={350}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleClick}
+              className="cursor-pointer p-0"
+              data-testid={
+                testId ? `${testId}-button` : `kind-chip-${kind}-button`
+              }
+              aria-label={t("noteKind.toggleAriaLabel", { from: label })}
+            >
+              {content}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">{tooltip}</TooltipContent>
+        </Tooltip>
       </TooltipProvider>
     );
   }

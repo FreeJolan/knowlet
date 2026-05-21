@@ -34,19 +34,55 @@ async function freePort() {
   });
 }
 
-/** Wait for `GET /api/health` on the given baseURL to return 200. */
-async function waitForBackend(baseURL, timeoutMs = 15000) {
+/** Wait for the backend to be fully ready — not just listening, but
+ *  with the runtime initialized so vault-touching endpoints don't
+ *  return 503.
+ *
+ *  ``/api/health`` answers 200 the moment uvicorn binds the port,
+ *  even before ``runtime_or_init`` has finished (which involves
+ *  reading config, opening the index DB, and warming the embedding
+ *  backend). If the SPA loads during that window, its initial
+ *  ``GET /api/tree`` gets 503 and the React Query cache locks into
+ *  a failure state — the user sees "Failed to load tree" even
+ *  after the runtime comes up.
+ *
+ *  Poll ``/api/tree`` too so the page.goto in tests can rely on a
+ *  fully-initialized backend. */
+async function waitForBackend(baseURL, timeoutMs = 30000) {
   const t0 = Date.now();
+  // Phase 1: bind check.
+  let bound = false;
   while (Date.now() - t0 < timeoutMs) {
     try {
       const r = await fetch(`${baseURL}/api/health`);
-      if (r.ok) return;
+      if (r.ok) {
+        bound = true;
+        break;
+      }
     } catch {
-      // Backend not up yet; retry.
+      // not up yet
     }
     await new Promise((r) => setTimeout(r, 150));
   }
-  throw new Error(`backend did not become ready within ${timeoutMs} ms`);
+  if (!bound) {
+    throw new Error(
+      `backend did not bind within ${timeoutMs} ms (port not listening)`,
+    );
+  }
+  // Phase 2: runtime ready check.
+  while (Date.now() - t0 < timeoutMs) {
+    try {
+      const r = await fetch(`${baseURL}/api/tree`);
+      if (r.ok) return;
+    } catch {
+      // network blip; retry
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error(
+    `backend bound but runtime not ready within ${timeoutMs} ms ` +
+      `(GET /api/tree never returned 200)`,
+  );
 }
 
 /**
