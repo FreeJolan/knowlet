@@ -166,6 +166,49 @@ def test_decide_defer_default_kind_is_reference(tmp_path: Path) -> None:
     assert "kind: reference" in raw
 
 
+def test_defer_then_list_drafts_includes_body(tmp_path: Path) -> None:
+    """Regression for 2026-05-22 dogfood: a deferred capsule's body
+    must round-trip through to /api/drafts response. The earlier
+    DraftSummary lacked the body field — drafts showed empty body in
+    the UI even though the markdown file on disk was correct."""
+    client, v = _client(tmp_path)
+    capsule = {
+        "title": "Article with body",
+        "body": (
+            "This is the actual extracted article body. It contains "
+            "multiple sentences and should be returned verbatim from "
+            "the drafts list endpoint."
+        ),
+        "source": "https://example.com/article",
+        "hostname": "example.com",
+        "summary_failed": False,
+    }
+    # Defer.
+    r = client.post(
+        "/api/capture/decide",
+        json={"capsule": capsule, "decision": "defer"},
+    )
+    assert r.status_code == 200
+
+    # GET /api/drafts must return the body, not just metadata.
+    r = client.get("/api/drafts")
+    assert r.status_code == 200
+    drafts = r.json()
+    assert len(drafts) == 1
+    body = drafts[0].get("body", "")
+    assert capsule["body"] in body, (
+        f"draft body lost in transit: got {body!r}, expected to contain "
+        f"{capsule['body'][:60]!r}"
+    )
+
+    # GET /api/drafts/{id} must also return it (was already correct
+    # via DraftFull, but assert to be defensive).
+    draft_id = drafts[0]["id"]
+    r = client.get(f"/api/drafts/{draft_id}")
+    assert r.status_code == 200
+    assert capsule["body"] in r.json()["body"]
+
+
 def test_decide_unknown_value_returns_422(tmp_path: Path) -> None:
     client, _ = _client(tmp_path)
     r = client.post(
