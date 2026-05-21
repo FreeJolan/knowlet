@@ -192,6 +192,11 @@ class CapturePayload(BaseModel):
     # Frontend can render "(摘要失败 — 仅原始内容)" so the user is
     # informed and can still proceed.
     summary_failed: bool = False
+    # When summary_failed=true, this is the underlying LLM error
+    # message (truncated). Surfacing it in product lets the user
+    # diagnose root cause (e.g. "Claude auth expired" / "rate
+    # limited" / "model not found") instead of guessing.
+    summary_error: str | None = None
 
 
 class CaptureDecision(BaseModel):
@@ -4662,6 +4667,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 source=url,
                 hostname=_hostname(url),
                 summary_failed=True,
+                summary_error=repr(exc)[:300],
             )
 
     @app.post("/api/capture/file", response_model=CapturePayload)

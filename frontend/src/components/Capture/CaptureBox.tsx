@@ -316,13 +316,22 @@ function CapsulePreview({
     <div className="space-y-2.5" data-testid="capture-capsule">
       {capsule.summary_failed && (
         <div
-          className="rounded px-2 py-1 text-[11px]"
+          className="rounded px-2 py-1 text-[11px] space-y-1"
           style={{
             background: "rgba(192,57,43,0.1)",
             color: "var(--destructive, #c0392b)",
           }}
+          data-testid="capture-summary-failed"
         >
-          {t("capture.summaryFailed")}
+          <div>{t("capture.summaryFailed")}</div>
+          {capsule.summary_error && (
+            <div
+              className="font-mono text-[10px] opacity-75"
+              data-testid="capture-summary-error"
+            >
+              {capsule.summary_error}
+            </div>
+          )}
         </div>
       )}
       <div>

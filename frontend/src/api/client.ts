@@ -578,6 +578,10 @@ export interface CapturePayload {
   /** True iff the page extracted but the summarize LLM call raised.
    *  Frontend should render "摘要失败" / "summary failed" hint. */
   summary_failed?: boolean;
+  /** When summary_failed=true, the underlying LLM error message.
+   *  Surfacing root cause lets user diagnose (e.g. "auth expired"
+   *  / "rate limited") instead of guessing. */
+  summary_error?: string | null;
 }
 
 export interface CaptureDecisionResponse {

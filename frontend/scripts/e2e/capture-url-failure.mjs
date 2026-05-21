@@ -16,23 +16,28 @@ import {
 const env = await setupTestEnv({ notes: [], language: "en" });
 const { page, baseURL, teardown } = env;
 
-let failNextCapture = true;
+/**
+ * Route mode controls how the mocked /api/capture/url responds:
+ *   "502"          — return 502 (P3.a, P3.retry-error path)
+ *   "200-ok"       — return clean capsule (P3.b retry success)
+ *   "200-degraded" — return 200 + summary_failed=true + summary_error
+ *                    (regression for 2026-05-22 dogfood: LLM down
+ *                    but page extraction worked)
+ */
+let routeMode = "502";
 
 try {
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await page.waitForTimeout(500);
 
-  // Intercept the capture endpoint. First call fails 502; once
-  // ``failNextCapture`` flips false, requests pass through so the
-  // Retry path can succeed on a synthetic body.
   await page.route("**/api/capture/url", async (route) => {
-    if (failNextCapture) {
+    if (routeMode === "502") {
       await route.fulfill({
         status: 502,
         contentType: "application/json",
         body: JSON.stringify({ detail: "simulated upstream failure" }),
       });
-    } else {
+    } else if (routeMode === "200-ok") {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -42,6 +47,21 @@ try {
           source: "https://example.com/after-retry",
           hostname: "example.com",
           summary_failed: false,
+        }),
+      });
+    } else {
+      // "200-degraded"
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          title: "example.com",
+          body: "raw extracted body content",
+          source: "https://example.com/will-degrade",
+          hostname: "example.com",
+          summary_failed: true,
+          summary_error:
+            "InternalServerError('Error code: 503 - auth_unavailable')",
         }),
       });
     }
@@ -74,7 +94,7 @@ try {
     await retryBtn.first().click();
     await page.waitForTimeout(300);
     // Now flip route to succeed for the second call.
-    failNextCapture = false;
+    routeMode = "200-ok";
     const urlInput = page.locator('[data-testid="capture-url-input"]');
     await urlInput.fill("https://example.com/will-succeed");
     await page.locator('[data-testid="capture-fetch"]').click();
@@ -86,6 +106,48 @@ try {
       `recovered capsule rendered: got "${capText.slice(0, 80)}"`,
     );
   });
+
+  // Regression for 2026-05-22 dogfood: when /capture/url returns
+  // summary_failed=true with summary_error set, the UI must show
+  // BOTH the generic "summary failed" line AND the underlying
+  // error message. The original UI only showed the generic line,
+  // leaving the user unable to diagnose root cause.
+  await runTest(
+    "P3.c: degraded capsule surfaces summary_error root cause",
+    async () => {
+      // Close the existing modal first.
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(300);
+      routeMode = "200-degraded";
+      await page.keyboard.press("Meta+Shift+V");
+      await page.waitForTimeout(300);
+      const urlInput = page.locator('[data-testid="capture-url-input"]');
+      await urlInput.fill("https://example.com/will-degrade");
+      await page.locator('[data-testid="capture-fetch"]').click();
+      // Capsule appears with the "summary failed" warning.
+      const warn = page.locator(
+        '[data-testid="capture-summary-failed"]',
+      );
+      await warn.waitFor({ state: "visible", timeout: 5000 });
+      const errRow = page.locator(
+        '[data-testid="capture-summary-error"]',
+      );
+      await errRow.waitFor({ state: "visible", timeout: 1000 });
+      const errText = await errRow.innerText();
+      assert(
+        errText.includes("auth_unavailable") ||
+          errText.includes("503"),
+        `summary_error surfaces root cause: got "${errText.slice(0, 120)}"`,
+      );
+      // Capsule body still renders (graceful degrade).
+      const capsule = page.locator('[data-testid="capture-capsule"]');
+      const capText = await capsule.innerText();
+      assert(
+        capText.includes("raw extracted body content"),
+        `raw body still shown for triage: got "${capText.slice(0, 80)}"`,
+      );
+    },
+  );
 
   await runTest("no unexpected console errors during the suite", () => {
     // P3.a deliberately triggers a 502 → client logs the fetch
