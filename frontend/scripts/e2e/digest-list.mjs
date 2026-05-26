@@ -76,6 +76,18 @@ try {
     daysAgo: 0,
   });
   writeDraft({
+    id: "01DIGESTSAVE01",
+    title: "Save as reference item",
+    taskId: "01DIGESTTASK01",
+    daysAgo: 0,
+  });
+  writeDraft({
+    id: "01DIGESTINTRNL",
+    title: "Internalize item",
+    taskId: "01DIGESTTASK01",
+    daysAgo: 0,
+  });
+  writeDraft({
     id: "01DIGESTWEEK01",
     title: "Digest week item",
     taskId: "01DIGESTTASK01",
@@ -95,6 +107,29 @@ try {
   });
 
   await page.goto(baseURL, { waitUntil: "networkidle" });
+
+  await page.route("**/api/chat/draft/*/stream", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body:
+        'data: {"type":"reply_chunk","text":"Grounded draft reply"}\n\n' +
+        'data: {"type":"turn_done"}\n\n',
+    });
+  });
+  await page.route("**/api/chat/draft/*/propose-internalize", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        note_id: "01DIGESTINTRNL",
+        old_body: "Internalize item body\n",
+        new_body: "# Internalized body\n\nThis is my reusable take.",
+        changed: true,
+        reason: "",
+      }),
+    });
+  });
 
   await runTest("digest button opens today's intake cards only", async () => {
     await page.locator('[data-testid="header-digest-button"]').click();
@@ -116,7 +151,74 @@ try {
     );
   });
 
+  await runTest("selected digest item can be read and discussed", async () => {
+    await page.locator('[data-testid="digest-card-01DIGESTTODAY1"]').click();
+    await page.locator('[data-testid="digest-detail"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    assert(
+      (await page.locator('[data-testid="digest-detail"]').textContent()).includes(
+        "Digest today item body",
+      ),
+      "detail pane shows full draft body",
+    );
+    await page.locator('[data-testid="digest-chat-input"]').fill("What matters?");
+    await page.locator('[data-testid="digest-chat-send"]').click();
+    await page
+      .locator('[data-testid="digest-message-assistant"]')
+      .filter({ hasText: "Grounded draft reply" })
+      .waitFor({ state: "visible", timeout: 3000 });
+  });
+
+  await runTest("skip removes only the selected digest draft", async () => {
+    await page.locator('[data-testid="digest-action-skip"]').click();
+    await page.locator('[data-testid="digest-card-01DIGESTTODAY1"]').waitFor({
+      state: "detached",
+      timeout: 3000,
+    });
+    const drafts = await (await page.request.get(`${baseURL}/api/digest/drafts?period=today`)).json();
+    assert(!drafts.some((d) => d.id === "01DIGESTTODAY1"), "skipped draft is gone");
+    assert(drafts.some((d) => d.id === "01DIGESTSAVE01"), "other digest drafts remain");
+  });
+
+  await runTest("save reference promotes the draft as a reference note", async () => {
+    await page.locator('[data-testid="digest-card-01DIGESTSAVE01"]').click();
+    await page.locator('[data-testid="digest-action-save-reference"]').click();
+    await page.locator('[data-testid="digest-card-01DIGESTSAVE01"]').waitFor({
+      state: "detached",
+      timeout: 3000,
+    });
+    const notes = await (await page.request.get(`${baseURL}/api/notes`)).json();
+    const note = notes.find((n) => n.id === "01DIGESTSAVE01");
+    assert(note, "reference note was created");
+    const full = await (await page.request.get(`${baseURL}/api/notes/01DIGESTSAVE01`)).json();
+    assert(full.kind === "reference", "reference action preserves reference kind");
+  });
+
+  await runTest("internalize uses AI diff review before creating a knowledge note", async () => {
+    await page.locator('[data-testid="header-digest-button"]').click();
+    await page.locator('[data-testid="digest-card-01DIGESTINTRNL"]').click();
+    await page.locator('[data-testid="digest-action-internalize"]').click();
+    await page.locator('[data-testid="diff-review"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="diff-apply"]').click();
+    await page.locator('[data-testid="digest-card-01DIGESTINTRNL"]').waitFor({
+      state: "detached",
+      timeout: 3000,
+    });
+    const notes = await (await page.request.get(`${baseURL}/api/notes`)).json();
+    const note = notes.find((n) => n.id === "01DIGESTINTRNL");
+    assert(note, "knowledge note was created after accepting diff");
+    assert(note.kind === "knowledge", "internalize action creates a knowledge note");
+    const full = await (await page.request.get(`${baseURL}/api/notes/01DIGESTINTRNL`)).json();
+    assert(full.body.includes("Internalized body"), "accepted diff body was written");
+  });
+
   await runTest("week tab includes this week's digest cards", async () => {
+    await page.locator('[data-testid="header-digest-button"]').click();
     await page.locator('[data-testid="digest-period-week"]').click();
     await page.locator('[data-testid="digest-card-01DIGESTWEEK01"]').waitFor({
       state: "visible",

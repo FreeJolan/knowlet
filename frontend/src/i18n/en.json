@@ -101,7 +101,21 @@
     "untitled": "(untitled)",
     "ageDays_one": "{{count}} day",
     "ageDays_other": "{{count}} days",
-    "bodyMissing": "(empty body)"
+    "bodyMissing": "(empty body)",
+    "selectHint": "Select an item to read it.",
+    "detail": "Item",
+    "discuss": "Discuss",
+    "chatEmpty": "Ask about this item before deciding.",
+    "chatPlaceholder": "Ask about this item…",
+    "you": "You",
+    "send": "Send",
+    "stop": "Stop",
+    "skip": "Skip",
+    "saveReference": "Save reference",
+    "internalize": "Internalize",
+    "working": "Working…",
+    "noProposal": "AI did not return a usable draft.",
+    "internalizeFailed": "Could not internalize this item."
   },
   "capture": {
     "title": "Capture",

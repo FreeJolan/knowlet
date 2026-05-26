@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 
 from knowlet.chat.note_chat import build_grounded_turn
 from knowlet.config import KnowletConfig, save_config
+from knowlet.core.drafts import Draft, DraftStore
 from knowlet.core.events import ReplyChunkEvent, ReplyDoneEvent
 from knowlet.core.llm import AssistantMessage
 from knowlet.core.note import Note, new_id
@@ -75,6 +76,36 @@ def _client_with_note(
     runtime.llm = stub  # type: ignore[assignment]
     runtime.session.llm = stub  # type: ignore[assignment]
     return client, note
+
+
+def _client_with_draft(
+    tmp_path: Path, body: str, stub: Any
+) -> tuple[TestClient, Draft]:
+    from knowlet.core.audit_log import AuditEventStore
+    from knowlet.core.backups import BackupStore
+    from knowlet.web.server import create_app
+
+    v = Vault(
+        tmp_path,
+        audit_log=AuditEventStore(tmp_path),
+        backups=BackupStore(tmp_path),
+    )
+    v.init_layout()
+    cfg = KnowletConfig()
+    cfg.embedding.backend = "dummy"
+    cfg.embedding.dim = 32
+    cfg.llm.api_key = "stub"
+    save_config(v.root, cfg)
+
+    draft = Draft(id=new_id(), title="Digest item", body=body, tags=["digest"])
+    DraftStore(v.drafts_dir).save(draft)
+
+    app = create_app(v, cfg)
+    client = TestClient(app)
+    runtime = app.state.web_state.runtime_or_init()
+    runtime.llm = stub  # type: ignore[assignment]
+    runtime.session.llm = stub  # type: ignore[assignment]
+    return client, draft
 
 
 def _parse_sse(text: str) -> list[dict[str, Any]]:
@@ -141,6 +172,27 @@ def test_note_chat_llm_failure_yields_error_event(tmp_path: Path):
     assert "error" in [e["type"] for e in events]
     msg = next(e["message"] for e in events if e["type"] == "error")
     assert "upstream went down" in msg
+
+
+def test_draft_chat_streams_grounded_reply(tmp_path: Path):
+    """C3: digest drafts can be discussed before the user decides to
+    skip/save/internalize. The draft body must reach the same grounded
+    note-chat machinery without first promoting it to a Note."""
+    stub = StreamStubLLM([ReplyDoneEvent(final_text="draft answer")])
+    client, draft = _client_with_draft(
+        tmp_path, body="The feed item argues that notes need context.", stub=stub
+    )
+    r = client.post(
+        f"/api/chat/draft/{draft.id}/stream", json={"text": "what matters here?"}
+    )
+    assert r.status_code == 200
+    events = _parse_sse(r.text)
+    assert "turn_done" in [e["type"] for e in events]
+    assert stub.seen_messages is not None
+    user_blob = "\n".join(
+        m["content"] for m in stub.seen_messages if m["role"] == "user"
+    )
+    assert "The feed item argues that notes need context." in user_blob
 
 
 # ------------------------------ tone (AI infers from the note's nature)
@@ -281,3 +333,27 @@ def test_propose_edit_invalid_output_is_noop_not_corruption(tmp_path: Path):
     assert r.json()["changed"] is False
     after = client.get(f"/api/notes/{note.id}").json()
     assert after["body"] == "intact body"
+
+
+def test_draft_internalize_proposes_diff_without_writing(tmp_path: Path):
+    """C3: internalizing a digest item asks AI for a knowledge-note body,
+    but still writes nothing until the UI diff is accepted."""
+    new_body = "# My take\n\nContext beats recall."
+    stub = ChatStubLLM(json.dumps({"new_body": new_body}))
+    client, draft = _client_with_draft(
+        tmp_path, body="Source says context helps recall.", stub=stub
+    )
+    r = client.post(
+        f"/api/chat/draft/{draft.id}/propose-internalize",
+        json={"instruction": "turn this into my own durable note"},
+    )
+    assert r.status_code == 200
+    d = r.json()
+    assert d["changed"] is True
+    assert d["old_body"] == "Source says context helps recall."
+    assert "Context beats recall" in d["new_body"]
+
+    # Proposal only: the draft and notes collection are untouched.
+    draft_after = client.get(f"/api/drafts/{draft.id}").json()
+    assert draft_after["body"] == "Source says context helps recall."
+    assert client.get("/api/notes").json() == []

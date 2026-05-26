@@ -3365,6 +3365,98 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "reason": result.reason,
         }
 
+    @app.post("/api/chat/draft/{draft_id}/stream")
+    def chat_draft_stream(
+        draft_id: str,
+        req: NoteChatRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> StreamingResponse:
+        """SSE stream for a draft-anchored digest discussion (Stage C3).
+
+        A digest item is still a Draft while the user is deciding. We
+        project it to Note shape only in memory, then reuse the same
+        grounded note-chat generator so "chat about this" works before
+        any write/promotion happens.
+        """
+        from knowlet.chat.note_chat import (
+            build_grounded_turn,
+            build_note_chat_session,
+        )
+
+        draft = runtime.ctx.drafts.get(draft_id)
+        if draft is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"draft not found: {draft_id}",
+            )
+        note = draft.to_note()
+        session = build_note_chat_session(
+            llm=runtime.session.llm,
+            registry=runtime.session.registry,
+            ctx=runtime.session.ctx,
+        )
+        for m in req.history:
+            session.history.append({"role": m.role, "content": m.content})
+        grounded = build_grounded_turn(note, req.text)
+
+        def event_source() -> Iterator[str]:
+            try:
+                for event in session.user_turn_stream(grounded):
+                    payload = json.dumps(event_to_dict(event), ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
+            except Exception as exc:
+                err = ErrorEvent(message=f"server error: {exc}")
+                yield f"data: {json.dumps(event_to_dict(err))}\n\n"
+
+        return StreamingResponse(
+            event_source(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.post("/api/chat/draft/{draft_id}/propose-internalize")
+    def chat_draft_propose_internalize(
+        draft_id: str,
+        req: NoteEditProposeRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """Ask AI to draft a knowledge-note body from a digest Draft.
+
+        Proposal only: this endpoint does not mutate the draft and does
+        not create a Note. The UI accepts the diff, then explicitly
+        updates/approves the draft as knowledge.
+        """
+        from knowlet.chat.note_chat import propose_draft_internalization
+
+        draft = runtime.ctx.drafts.get(draft_id)
+        if draft is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"draft not found: {draft_id}",
+            )
+        note = draft.to_note()
+        try:
+            result = propose_draft_internalization(
+                llm=runtime.session.llm,
+                note=note,
+                instruction=req.instruction,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"LLM error: {exc}",
+            ) from exc
+        return {
+            "note_id": draft_id,
+            "old_body": result.old_body,
+            "new_body": result.new_body,
+            "changed": result.changed,
+            "reason": result.reason,
+        }
+
     @app.get("/api/chat/history")
     def chat_history(
         runtime: ChatRuntime = Depends(runtime_dep),

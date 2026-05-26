@@ -101,7 +101,21 @@
     "untitled": "(无标题)",
     "ageDays_one": "{{count}} 天",
     "ageDays_other": "{{count}} 天",
-    "bodyMissing": "(正文为空)"
+    "bodyMissing": "(正文为空)",
+    "selectHint": "选择一条来阅读。",
+    "detail": "条目",
+    "discuss": "对谈",
+    "chatEmpty": "决定之前,可以先就这条聊一聊。",
+    "chatPlaceholder": "问问这条…",
+    "you": "你",
+    "send": "发送",
+    "stop": "停止",
+    "skip": "跳过",
+    "saveReference": "存资料",
+    "internalize": "内化",
+    "working": "处理中…",
+    "noProposal": "AI 没有返回可用草稿。",
+    "internalizeFailed": "这条内化失败。"
   },
   "capture": {
     "title": "捕获",

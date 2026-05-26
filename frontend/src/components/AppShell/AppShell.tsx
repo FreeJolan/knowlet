@@ -1019,6 +1019,13 @@ export function AppShell() {
       <DigestFocusMode
         open={digestOpen}
         onClose={() => setDigestOpen(false)}
+        onOpenNote={(id, opts) => {
+          setSelectedNoteId(id);
+          setPendingHash(null);
+          setPendingLine(null);
+          setPendingPreserveMode(false);
+          if (opts?.discuss) setDiscussOpen(true);
+        }}
       />
       <CaptureBox
         open={captureOpen}

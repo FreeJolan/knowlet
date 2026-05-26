@@ -226,6 +226,16 @@ export const proposeNoteEdit = (
     { instruction },
   );
 
+export const proposeDraftInternalize = (
+  draftId: string,
+  instruction: string,
+): Promise<ProposedEdit> =>
+  request(
+    "POST",
+    `/api/chat/draft/${encodeURIComponent(draftId)}/propose-internalize`,
+    { instruction },
+  );
+
 // Create a note via the existing POST /api/notes (sediment commit shape).
 // Phase 1 B will add a dedicated /api/notes/new for empty notes; for now
 // the UI uses this with empty body and Phase 1 A mkdir-then-edit.

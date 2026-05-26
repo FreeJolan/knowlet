@@ -56,7 +56,7 @@ knowlet AI = **Cursor-for-notes**。唯一不可替代价值 = grounded 对谈 +
 
 - [x] C1 源配置（RSS/URL）+ 定时抓取（复用 mining 后端）— 2026-05-27 新增 `knowlet digest add/list/run/remove`;底层仍是带 marker 的 MiningTask,复用现有 scheduler/runner/seen-set/drafts;已用本地 HTML 源 + `gpt-5.5` 真模型 dogfood 生成 draft
 - [x] C2 digest 列表 UI（今日/本周新抓,逐条卡片）— 2026-05-27 新增 `/api/digest/drafts` + Digest focus mode;Today/This week 切换只显示 digest source 产出的 drafts,普通 mining drafts 不混入;E2E + 截图 `/tmp/knowlet-c2-digest.png`
-- [ ] C3 逐条:读 + 用 A 讨论 → 三选（跳过/存资料/内化为知识,内化可 AI 起草草稿走 diff 审）— ~1.5d
+- [x] C3 逐条:读 + 用 A 讨论 → 三选（跳过/存资料/内化为知识,内化可 AI 起草草稿走 diff 审）— 2026-05-27 新增 draft-anchored chat/propose-internalize;Digest detail 里可先对谈再 skip/save reference/internalize;internalize 走 DiffReview 后才写入;E2E + 真 `gpt-5.5` dogfood + 截图 `/tmp/knowlet-c3-digest.png`
 - _死掉不做:anti-drift 队列 / 自动归档 / 知识资料强制二次确认（逐条亲自过,无垃圾场）_
 
 ## 阶段 D — 笔记校准 check-note（need 4 上半,中频）
@@ -83,9 +83,9 @@ knowlet AI = **Cursor-for-notes**。唯一不可替代价值 = grounded 对谈 +
 
 ## 工期 & 排程
 
-**剩余粗估** ≈ **8–10 单人天**（C3 ≈ 1.5d · D ≈ 2d · E ≈ 4–5d · 收尾 ≈ 1.5d）。B/C1/C2 已完成。
+**剩余粗估** ≈ **6.5–8.5 单人天**（D ≈ 2d · E ≈ 4–5d · 收尾 ≈ 1.5d）。B/C 已完成。
 
-**建议顺序**:A/B/C1/C2 已完成 → C3 → D → E。A 是引擎必须先稳;C3 是下一段主线;E 垫底。
+**建议顺序**:A/B/C 已完成 → D → E。A 是引擎必须先稳;D 是下一段主线;E 垫底。
 
 ## 明确不做（旧计划里、用户场景没点到的）
 

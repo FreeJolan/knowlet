@@ -157,3 +157,45 @@ def propose_note_edit(*, llm: Any, note: Note, instruction: str) -> ProposedEdit
         )
     changed = new_body.strip() != note.body.strip()
     return ProposedEdit(old_body=note.body, new_body=new_body, changed=changed)
+
+
+# ---------------------------------------------------- draft internalize (C3)
+
+INTERNALIZE_SYSTEM = (
+    "用户正在 digest 里阅读一条来源资料,想决定是否把它内化成自己的知识笔记。"
+    "请基于资料正文,起草一版更像用户个人知识库里的笔记正文:保留关键事实和出处线索,"
+    "但用清晰的主题、要点、自己的理解/可复用结论组织起来。不要虚构资料没有的内容。"
+    '只输出 JSON,形如:{"new_body": "<起草后的完整正文>"}。'
+)
+
+
+def propose_draft_internalization(
+    *, llm: Any, note: Note, instruction: str
+) -> ProposedEdit:
+    """Ask the LLM to turn a draft/source item into a knowledge-note body.
+
+    This is deliberately proposal-only, mirroring :func:`propose_note_edit`:
+    C3's UI reviews the diff before writing the draft / approving it.
+    """
+    messages = [
+        {"role": "system", "content": "你帮用户把来源资料内化成知识笔记。"},
+        {
+            "role": "user",
+            "content": (
+                INTERNALIZE_SYSTEM + "\n\n"
+                f"<digest-draft title={note.title!r}>\n{note.body}\n</digest-draft>\n\n"
+                f"用户额外要求:{instruction or '无'}"
+            ),
+        },
+    ]
+    resp = llm.chat(messages)
+    new_body = _extract_new_body(getattr(resp, "content", "") or "")
+    if new_body is None:
+        return ProposedEdit(
+            old_body=note.body,
+            new_body=note.body,
+            changed=False,
+            reason="无法从 AI 回复中解析出可应用的内化草稿",
+        )
+    changed = new_body.strip() != note.body.strip()
+    return ProposedEdit(old_body=note.body, new_body=new_body, changed=changed)
