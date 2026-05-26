@@ -5530,6 +5530,38 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             _draft_summary(d) for d in runtime.ctx.drafts.all_drafts()
         ]
 
+    @app.get("/api/digest/drafts", response_model=list[DraftSummary])
+    def list_digest_drafts_endpoint(
+        period: Literal["today", "week", "all"] = "today",
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[DraftSummary]:
+        """Drafts produced by Stage C digest sources only.
+
+        C2 is a read-only digest inbox: today / this week cards. The
+        source-of-truth remains DraftStore + MiningTask; this endpoint
+        only filters the existing draft queue by tasks marked as digest
+        sources, so regular mining drafts never leak into the digest UI.
+        """
+        from knowlet.core.digest import is_digest_task
+
+        runtime.ctx.drafts.enforce_age_archive()
+        digest_task_ids = {
+            task.id for task in runtime.ctx.tasks.list() if is_digest_task(task)
+        }
+
+        def in_period(draft: Draft) -> bool:
+            if period == "all":
+                return True
+            if period == "today":
+                return draft.age_days == 0
+            return draft.age_days < 7
+
+        return [
+            _draft_summary(d)
+            for d in runtime.ctx.drafts.all_drafts()
+            if d.task_id in digest_task_ids and in_period(d)
+        ]
+
     @app.get("/api/drafts/{draft_id}", response_model=DraftFull)
     def get_draft_endpoint(
         draft_id: str,

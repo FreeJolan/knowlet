@@ -670,6 +670,13 @@ export interface DraftSummary {
 export const listDrafts = (): Promise<DraftSummary[]> =>
   request("GET", "/api/drafts");
 
+export type DigestPeriod = "today" | "week" | "all";
+
+export const listDigestDrafts = (
+  period: DigestPeriod = "today",
+): Promise<DraftSummary[]> =>
+  request("GET", `/api/digest/drafts?period=${encodeURIComponent(period)}`);
+
 export const approveDraft = (id: string): Promise<{ note_id: string }> =>
   request("POST", `/api/drafts/${id}/approve`);
 

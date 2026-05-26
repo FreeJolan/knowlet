@@ -12,6 +12,7 @@ import {
   MessageSquare,
   NotebookPen,
   Network,
+  Newspaper,
   PanelRight,
   PanelRightOpen,
   Settings as SettingsIcon,
@@ -33,6 +34,7 @@ import { buildBuiltinCommands } from "@/components/Palette/commands";
 import { RightRail } from "@/components/RightRail/RightRail";
 import { SearchFocusMode } from "@/components/Search/SearchFocusMode";
 import { DraftsFocusMode } from "@/components/Drafts";
+import { DigestFocusMode } from "@/components/Digest";
 import { CaptureBox } from "@/components/Capture";
 import { DiffReview, DiscussPane } from "@/components/Discuss";
 import { SettingsDialog } from "@/components/Settings/SettingsDialog";
@@ -152,6 +154,8 @@ export function AppShell() {
   const [searchFocusOpen, setSearchFocusOpen] = useState(false);
   // Phase 3 Stage 3 §3.5 — Drafts focus mode (⌘I).
   const [draftsOpen, setDraftsOpen] = useState(false);
+  // Stage C2 — digest intake focus mode.
+  const [digestOpen, setDigestOpen] = useState(false);
   // Phase 3 Stage 3 §3.4 — CaptureBox modal (⌘⇧V).
   const [captureOpen, setCaptureOpen] = useState(false);
   const [captureInitialUrl, setCaptureInitialUrl] = useState<string | undefined>();
@@ -571,6 +575,7 @@ export function AppShell() {
       setCaptureOpen(true);
     };
     const openDrafts = () => setDraftsOpen(true);
+    const openDigest = () => setDigestOpen(true);
     window.addEventListener("knowlet:open-palette", openPalette);
     window.addEventListener("knowlet:open-trash", openTrash);
     window.addEventListener("knowlet:close-active-tab", closeActiveTab);
@@ -581,6 +586,7 @@ export function AppShell() {
     window.addEventListener("knowlet:open-tag", openTag);
     window.addEventListener("knowlet:open-capture", openCapture);
     window.addEventListener("knowlet:open-drafts", openDrafts);
+    window.addEventListener("knowlet:open-digest", openDigest);
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("knowlet:open-palette", openPalette);
@@ -596,6 +602,7 @@ export function AppShell() {
       window.removeEventListener("knowlet:open-tag", openTag);
       window.removeEventListener("knowlet:open-capture", openCapture);
       window.removeEventListener("knowlet:open-drafts", openDrafts);
+      window.removeEventListener("knowlet:open-digest", openDigest);
       window.removeEventListener("keydown", onKey);
     };
   }, [qc, selectedNoteId, openNewDocDialog]);
@@ -724,6 +731,16 @@ export function AppShell() {
               data-testid="header-reflect-button"
             >
               <NotebookPen className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={t("app.digest")}
+              title={t("app.digest")}
+              onClick={() => setDigestOpen(true)}
+              data-testid="header-digest-button"
+            >
+              <Newspaper className="size-4" />
             </Button>
             <Button
               variant="ghost"
@@ -998,6 +1015,10 @@ export function AppShell() {
       <DraftsFocusMode
         open={draftsOpen}
         onClose={() => setDraftsOpen(false)}
+      />
+      <DigestFocusMode
+        open={digestOpen}
+        onClose={() => setDigestOpen(false)}
       />
       <CaptureBox
         open={captureOpen}

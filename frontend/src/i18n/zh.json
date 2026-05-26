@@ -8,7 +8,8 @@
     "settings": "设置",
     "daily": "今日笔记",
     "newDocument": "新建文档",
-    "quickActions": "快捷操作"
+    "quickActions": "快捷操作",
+    "digest": "Digest"
   },
   "search": {
     "placeholder": "搜索所有笔记…",
@@ -86,6 +87,21 @@
     "editCancel": "取消",
     "editSave": "保存为草稿",
     "editSaveApprove": "保存并 Approve"
+  },
+  "digest": {
+    "title": "Digest",
+    "count_one": "{{count}} 条",
+    "count_other": "{{count}} 条",
+    "close": "关闭",
+    "today": "今日",
+    "week": "本周",
+    "loading": "加载中…",
+    "emptyTitle": "暂无 digest 项",
+    "emptyHint": "用 `knowlet digest add` 添加来源后,手动 run 一次或保持 web app 开着等 scheduler。",
+    "untitled": "(无标题)",
+    "ageDays_one": "{{count}} 天",
+    "ageDays_other": "{{count}} 天",
+    "bodyMissing": "(正文为空)"
   },
   "capture": {
     "title": "捕获",

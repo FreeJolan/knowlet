@@ -8,7 +8,8 @@
     "settings": "Settings",
     "daily": "Today's note",
     "newDocument": "New document",
-    "quickActions": "Quick actions"
+    "quickActions": "Quick actions",
+    "digest": "Digest"
   },
   "search": {
     "placeholder": "Search across all notes…",
@@ -86,6 +87,21 @@
     "editCancel": "Cancel",
     "editSave": "Save as draft",
     "editSaveApprove": "Save & Approve"
+  },
+  "digest": {
+    "title": "Digest",
+    "count_one": "{{count}} item",
+    "count_other": "{{count}} items",
+    "close": "Close",
+    "today": "Today",
+    "week": "This week",
+    "loading": "Loading…",
+    "emptyTitle": "No digest items",
+    "emptyHint": "Add a source with `knowlet digest add`, then run it or keep the web app open for the scheduler.",
+    "untitled": "(untitled)",
+    "ageDays_one": "{{count}} day",
+    "ageDays_other": "{{count}} days",
+    "bodyMissing": "(empty body)"
   },
   "capture": {
     "title": "Capture",

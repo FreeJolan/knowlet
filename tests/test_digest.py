@@ -7,6 +7,9 @@ schedule, C2 can later render the produced drafts as a digest inbox.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from knowlet.cli.main import app
@@ -17,10 +20,12 @@ from knowlet.core.digest import (
     is_digest_task,
     list_digest_tasks,
 )
+from knowlet.core.drafts import Draft, DraftStore
 from knowlet.core.mining.scheduler import MiningScheduler
 from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
 from knowlet.core.mining.task_store import TaskStore
 from knowlet.core.vault import Vault
+from knowlet.web.server import create_app
 
 runner = CliRunner()
 
@@ -127,3 +132,87 @@ def test_digest_cli_add_list_remove_round_trip(tmp_path, monkeypatch):
     removed = runner.invoke(app, ["digest", "remove", tasks[0].id[:8]])
     assert removed.exit_code == 0, removed.stdout
     assert list_digest_tasks(TaskStore(vault.tasks_dir)) == []
+
+
+def test_web_digest_drafts_filters_by_digest_task_and_period(tmp_path):
+    vault = _ready_vault(tmp_path)
+    cfg = KnowletConfig()
+    cfg.embedding.backend = "dummy"
+    cfg.embedding.dim = 32
+    cfg.llm.api_key = "stub"
+    save_config(vault.root, cfg)
+    tasks = TaskStore(vault.tasks_dir)
+    digest = build_digest_task(
+        name="Daily digest",
+        sources=[SourceSpec(type="rss", url="https://example.com/feed.xml")],
+        schedule=Schedule(every="1d"),
+    )
+    regular = MiningTask(
+        name="Regular mining",
+        sources=[SourceSpec(type="rss", url="https://example.com/other.xml")],
+        schedule=Schedule(every="1d"),
+        prompt="summarize",
+    )
+    tasks.save(digest)
+    tasks.save(regular)
+
+    now = datetime.now(UTC)
+
+    def iso(days_ago: int) -> str:
+        return (now - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    drafts = DraftStore(vault.drafts_dir)
+    drafts.save(
+        Draft(
+            id="digest-today",
+            title="Digest today",
+            body="today body",
+            task_id=digest.id,
+            created_at=iso(0),
+            updated_at=iso(0),
+        )
+    )
+    drafts.save(
+        Draft(
+            id="digest-week",
+            title="Digest week",
+            body="week body",
+            task_id=digest.id,
+            created_at=iso(3),
+            updated_at=iso(3),
+        )
+    )
+    drafts.save(
+        Draft(
+            id="digest-old",
+            title="Digest old",
+            body="old body",
+            task_id=digest.id,
+            created_at=iso(8),
+            updated_at=iso(8),
+        )
+    )
+    drafts.save(
+        Draft(
+            id="regular-today",
+            title="Regular today",
+            body="regular body",
+            task_id=regular.id,
+            created_at=iso(0),
+            updated_at=iso(0),
+        )
+    )
+
+    client = TestClient(create_app(vault, cfg))
+    today = client.get("/api/digest/drafts?period=today").json()
+    assert [d["id"] for d in today] == ["digest-today"]
+
+    week = client.get("/api/digest/drafts?period=week").json()
+    assert [d["id"] for d in week] == ["digest-today", "digest-week"]
+
+    all_items = client.get("/api/digest/drafts?period=all").json()
+    assert [d["id"] for d in all_items] == [
+        "digest-today",
+        "digest-week",
+        "digest-old",
+    ]
