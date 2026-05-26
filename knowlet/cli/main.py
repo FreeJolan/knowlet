@@ -343,6 +343,95 @@ def discuss(
         runtime.close()
 
 
+# ------------------------------------------------------------------ check-note
+
+
+@app.command("check-note")
+def check_note_cmd(
+    note: Annotated[
+        str, typer.Argument(help="Note id, or a case-insensitive title substring.")
+    ],
+    standard_answer: Annotated[
+        str,
+        typer.Option(
+            "--standard",
+            "-s",
+            help="Standard answer / key to check the note against.",
+        ),
+    ] = "",
+    standard_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--standard-file",
+            help="Read the standard answer / key from a text file.",
+        ),
+    ] = None,
+    instruction: Annotated[
+        str,
+        typer.Option("--instruction", "-i", help="Extra checking instruction."),
+    ] = "",
+) -> None:
+    """Check one note for mistakes / omissions without editing it (Stage D)."""
+    from knowlet.chat.bootstrap import bootstrap_chat
+    from knowlet.chat.note_check import check_note
+
+    vault, cfg = _ensure_ready_or_wizard()
+    runtime, _ = bootstrap_chat(vault, cfg)
+    try:
+        meta = runtime.index.get_note_meta(note)
+        if meta is None:
+            rows = runtime.index.list_notes(limit=10_000, order="updated_at")
+            hits = [r for r in rows if note.lower() in (r.get("title") or "").lower()]
+            if not hits:
+                err_console.print(f"[red]no note matching {note!r}[/red]")
+                raise typer.Exit(code=1)
+            meta = hits[0]
+        path = Path(meta["path"])
+        if not path.is_absolute():
+            path = runtime.vault.notes_dir / path.name
+        note_obj = runtime.vault.read_note(path)
+
+        standard = standard_answer
+        if standard_file is not None:
+            try:
+                standard = standard_file.read_text(encoding="utf-8")
+            except OSError as exc:
+                err_console.print(f"[red]cannot read standard file: {exc}[/red]")
+                raise typer.Exit(code=1) from exc
+
+        console.print(f"[dim]checking: {note_obj.title}[/dim]")
+        report = check_note(
+            llm=runtime.session.llm,
+            note=note_obj,
+            standard_answer=standard,
+            instruction=instruction,
+        )
+        console.print(f"[bold]{report.summary}[/bold]")
+        if not report.findings:
+            console.print("[green]no concrete issues found[/green]")
+            return
+        for idx, finding in enumerate(report.findings, start=1):
+            location = (
+                f"paragraph {finding.paragraph}"
+                if finding.paragraph is not None
+                else "paragraph ?"
+            )
+            console.print(
+                Panel.fit(
+                    f"[bold]{finding.finding}[/bold]\n\n"
+                    f"[dim]{location} · {finding.severity} · "
+                    f"confidence {finding.confidence:.2f}[/dim]\n"
+                    f"[italic]{finding.quote}[/italic]\n\n"
+                    f"{finding.why}\n\n"
+                    f"[cyan]suggestion[/cyan]: {finding.suggestion}\n"
+                    f"[cyan]diff instruction[/cyan]: {finding.fix_instruction}",
+                    title=f"finding {idx}",
+                )
+            )
+    finally:
+        runtime.close()
+
+
 # ------------------------------------------------------------------ setup wizard
 
 

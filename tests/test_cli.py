@@ -43,6 +43,7 @@ def test_root_help_lists_all_subcommands():
         "reindex",
         "doctor",
         "chat",
+        "check-note",
     ):
         assert sub in out, f"`{sub}` missing from `knowlet --help`"
 
@@ -107,8 +108,8 @@ def test_notes_help():
 
 
 def test_top_level_command_helps():
-    """Each top-level command (web/ls/reindex/doctor/chat) parses --help."""
-    for cmd in ("web", "ls", "reindex", "doctor", "chat"):
+    """Each top-level command parses --help."""
+    for cmd in ("web", "ls", "reindex", "doctor", "chat", "check-note"):
         _help(cmd)
 
 

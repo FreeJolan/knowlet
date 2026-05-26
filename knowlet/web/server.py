@@ -318,6 +318,18 @@ class NoteEditProposeRequest(BaseModel):
     instruction: str = Field(..., description="what to change")
 
 
+class NoteCheckRequest(BaseModel):
+    """Body for POST /api/chat/note/{note_id}/check (Stage D).
+
+    ``standard_answer`` is optional but preferred: it is the answer/key
+    the note should be checked against. The endpoint returns a report
+    only and never writes to the note.
+    """
+
+    standard_answer: str = ""
+    instruction: str = ""
+
+
 class ToolTrace(BaseModel):
     name: str
     arguments: dict[str, Any]
@@ -3365,6 +3377,66 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "reason": result.reason,
         }
 
+    @app.post("/api/chat/note/{note_id}/check")
+    def chat_note_check(
+        note_id: str,
+        req: NoteCheckRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """Stage D: check one note against a standard answer / key.
+
+        This is deliberately report-only: no status flag, no body edit,
+        no background scan. D2 uses each finding's ``fix_instruction`` to
+        enter the existing propose-edit + diff-accept flow.
+        """
+        from knowlet.chat.note_check import check_note
+
+        meta = runtime.index.get_note_meta(note_id)
+        if meta is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note not found: {note_id}",
+            )
+        path = Path(meta["path"])
+        if not path.is_absolute():
+            path = runtime.vault.notes_dir / path.name
+        try:
+            note = runtime.vault.read_note(path)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail=f"note file missing on disk: {path}",
+            ) from exc
+        try:
+            report = check_note(
+                llm=runtime.session.llm,
+                note=note,
+                standard_answer=req.standard_answer,
+                instruction=req.instruction,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"LLM error: {exc}",
+            ) from exc
+        return {
+            "note_id": note_id,
+            "summary": report.summary,
+            "findings": [
+                {
+                    "severity": finding.severity,
+                    "paragraph": finding.paragraph,
+                    "quote": finding.quote,
+                    "finding": finding.finding,
+                    "why": finding.why,
+                    "suggestion": finding.suggestion,
+                    "fix_instruction": finding.fix_instruction,
+                    "confidence": finding.confidence,
+                }
+                for finding in report.findings
+            ],
+        }
+
     @app.post("/api/chat/draft/{draft_id}/stream")
     def chat_draft_stream(
         draft_id: str,
@@ -4962,7 +5034,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         defer exception, NOT the default destination. Knowledge and
         Reference both write straight to notes/. Only "defer" lands in
         drafts/."""
-        from knowlet.core.drafts import DRAFTS_DIR, Draft, DraftStore
+        from knowlet.core.drafts import Draft, DraftStore
         from knowlet.core.note import Note, new_id
 
         cap = req.capsule

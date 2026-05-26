@@ -212,6 +212,64 @@ try {
     );
   });
 
+  await runTest("D1/D2: 查这篇 shows a report and fix enters diff review", async () => {
+    await page.route("**/api/chat/note/*/check", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          note_id: "x",
+          summary: "One omission found.",
+          findings: [
+            {
+              severity: "medium",
+              paragraph: 1,
+              quote: "RAG retrieves relevant chunks",
+              finding: "The note omits reranking.",
+              why: "The standard answer says reranking happens before generation.",
+              suggestion: "Mention reranking before generation.",
+              fix_instruction: "Add reranking between retrieval and generation.",
+              confidence: 0.82,
+            },
+          ],
+        }),
+      }),
+    );
+    await page.route("**/api/chat/note/*/propose-edit", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          note_id: "x",
+          old_body:
+            "RAG retrieves relevant chunks, reranks them, then generates an answer.",
+          new_body:
+            "RAG retrieves relevant chunks, reranks them carefully, then generates an answer.",
+          changed: true,
+          reason: "",
+        }),
+      }),
+    );
+    const input = page.locator('[data-testid="discuss-input"]');
+    await input.click();
+    await page.keyboard.type("Standard: retrieval, reranking, generation.");
+    await page.locator('[data-testid="discuss-check"]').click();
+    await page
+      .locator('[data-testid="check-note-report"]')
+      .waitFor({ state: "visible", timeout: 4000 });
+    const reportText = await page.locator('[data-testid="check-note-report"]').innerText();
+    assert(reportText.includes("omits reranking"), `report text: ${reportText}`);
+    assert(reportText.includes("paragraph 1"), `report points to paragraph: ${reportText}`);
+
+    await page.locator('[data-testid="check-note-fix-0"]').click();
+    await page
+      .locator('[data-testid="diff-review"]')
+      .waitFor({ state: "visible", timeout: 4000 });
+    await page.locator('[data-testid="diff-reject"]').click();
+    await page.unroute("**/api/chat/note/*/check");
+    await page.unroute("**/api/chat/note/*/propose-edit");
+  });
+
   await runTest("A6: conversation persists across pane close/reopen", async () => {
     await page.route("**/api/chat/note/*/stream", (route) =>
       route.fulfill({

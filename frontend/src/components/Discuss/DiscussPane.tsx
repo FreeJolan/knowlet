@@ -9,11 +9,16 @@
  * nothing is written from here.
  */
 
-import { Pencil, Send, Square, X } from "lucide-react";
+import { ClipboardCheck, Pencil, Send, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 
-import { proposeNoteEdit } from "@/api/client";
+import {
+  checkNote,
+  proposeNoteEdit,
+  type CheckNoteFinding,
+  type CheckNoteReport,
+} from "@/api/client";
 import type { ApiError } from "@/api/types";
 import { Button } from "@/components/ui/button";
 
@@ -34,6 +39,8 @@ export function DiscussPane({
   const { messages, status, error, send, stop } = useNoteChat(noteId);
   const [input, setInput] = useState("");
   const [proposing, setProposing] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [checkReport, setCheckReport] = useState<CheckNoteReport | null>(null);
   const [proposeMsg, setProposeMsg] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -75,7 +82,46 @@ export function DiscussPane({
     }
   };
 
-  const busy = status === "streaming" || proposing;
+  const doCheck = async () => {
+    if (!noteId || checking || status === "streaming") return;
+    setChecking(true);
+    setProposeMsg(null);
+    try {
+      const res = await checkNote(noteId, { standard_answer: input.trim() });
+      setCheckReport(res);
+    } catch (e) {
+      const detail = (e as ApiError)?.detail ?? "出错了";
+      setProposeMsg(`查这篇失败：${detail}`);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const doFixFinding = async (finding: CheckNoteFinding) => {
+    if (!noteId || proposing) return;
+    const text = finding.fix_instruction.trim() || finding.suggestion.trim();
+    if (!text) {
+      setProposeMsg("这条报告没有可用的修正指令");
+      return;
+    }
+    setProposing(true);
+    setProposeMsg(null);
+    try {
+      const res = await proposeNoteEdit(noteId, text);
+      if (res.changed) {
+        onProposeEdit?.({ oldBody: res.old_body, newBody: res.new_body });
+      } else {
+        setProposeMsg(res.reason || "无可应用改动");
+      }
+    } catch (e) {
+      const detail = (e as ApiError)?.detail ?? "出错了";
+      setProposeMsg(`提议失败：${detail}`);
+    } finally {
+      setProposing(false);
+    }
+  };
+
+  const busy = status === "streaming" || proposing || checking;
 
   return (
     <div
@@ -157,6 +203,13 @@ export function DiscussPane({
             对谈出错：{error}
           </div>
         )}
+        {checkReport && (
+          <CheckNoteReportView
+            report={checkReport}
+            onFix={doFixFinding}
+            busy={busy}
+          />
+        )}
       </div>
 
       <div className="shrink-0 border-t p-2" style={{ borderColor: "var(--line)" }}>
@@ -186,17 +239,30 @@ export function DiscussPane({
           style={{ borderColor: "var(--line)", color: "var(--ink)" }}
         />
         <div className="mt-1 flex items-center justify-between gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            data-testid="discuss-propose"
-            title="让 AI 按你的输入给出这篇笔记的最小修改，再由你审 diff"
-            disabled={!input.trim() || busy}
-            onClick={doPropose}
-          >
-            <Pencil className="mr-1 size-3" />
-            {proposing ? "…" : "改这篇"}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="discuss-check"
+              title="按输入里的标准答案/校准依据检查这篇笔记"
+              disabled={busy || !noteId}
+              onClick={doCheck}
+            >
+              <ClipboardCheck className="mr-1 size-3" />
+              {checking ? "…" : "查这篇"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="discuss-propose"
+              title="让 AI 按你的输入给出这篇笔记的最小修改，再由你审 diff"
+              disabled={!input.trim() || busy}
+              onClick={doPropose}
+            >
+              <Pencil className="mr-1 size-3" />
+              {proposing ? "…" : "改这篇"}
+            </Button>
+          </div>
           {status === "streaming" ? (
             <Button
               size="sm"
@@ -221,6 +287,85 @@ export function DiscussPane({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function CheckNoteReportView({
+  report,
+  onFix,
+  busy,
+}: {
+  report: CheckNoteReport;
+  onFix: (finding: CheckNoteFinding) => void;
+  busy: boolean;
+}) {
+  return (
+    <div
+      data-testid="check-note-report"
+      className="rounded-md border p-3 text-sm"
+      style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+    >
+      <div
+        className="mb-2 text-[10px] font-mono uppercase tracking-wide"
+        style={{ color: "var(--ink-mute)" }}
+      >
+        查这篇
+      </div>
+      <div className="mb-3" style={{ color: "var(--ink)" }}>
+        {report.summary}
+      </div>
+      {report.findings.length === 0 ? (
+        <div className="text-xs" style={{ color: "var(--ink-mute)" }}>
+          没有发现能定位到段落的明确错漏。
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {report.findings.map((finding, index) => (
+            <div
+              key={`${finding.paragraph ?? "x"}-${index}`}
+              className="rounded border p-2"
+              style={{ borderColor: "var(--line)" }}
+              data-testid={`check-note-finding-${index}`}
+            >
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <div className="text-xs font-medium" style={{ color: "var(--ink)" }}>
+                  {finding.finding}
+                </div>
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {finding.paragraph !== null
+                    ? `paragraph ${finding.paragraph}`
+                    : "paragraph ?"}
+                </span>
+              </div>
+              {finding.quote && (
+                <blockquote
+                  className="mb-2 border-l-2 pl-2 text-xs italic"
+                  style={{ borderColor: "var(--line)", color: "var(--ink-mute)" }}
+                >
+                  {finding.quote}
+                </blockquote>
+              )}
+              <div className="space-y-1 text-xs" style={{ color: "var(--ink)" }}>
+                <div>{finding.why}</div>
+                <div>{finding.suggestion}</div>
+              </div>
+              <div className="mt-2 flex justify-end">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  data-testid={`check-note-fix-${index}`}
+                  disabled={busy}
+                  onClick={() => onFix(finding)}
+                >
+                  <Pencil className="mr-1 size-3" />
+                  修正
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

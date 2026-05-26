@@ -226,6 +226,32 @@ export const proposeNoteEdit = (
     { instruction },
   );
 
+export interface CheckNoteFinding {
+  severity: "high" | "medium" | "low";
+  paragraph: number | null;
+  quote: string;
+  finding: string;
+  why: string;
+  suggestion: string;
+  fix_instruction: string;
+  confidence: number;
+}
+
+export interface CheckNoteReport {
+  note_id: string;
+  summary: string;
+  findings: CheckNoteFinding[];
+}
+
+export const checkNote = (
+  noteId: string,
+  payload: { standard_answer?: string; instruction?: string },
+): Promise<CheckNoteReport> =>
+  request("POST", `/api/chat/note/${encodeURIComponent(noteId)}/check`, {
+    standard_answer: payload.standard_answer ?? "",
+    instruction: payload.instruction ?? "",
+  });
+
 export const proposeDraftInternalize = (
   draftId: string,
   instruction: string,

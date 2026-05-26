@@ -63,8 +63,8 @@ knowlet AI = **Cursor-for-notes**。唯一不可替代价值 = grounded 对谈 +
 
 > 单篇、用户触发、对标准答案查对错/遗漏（窄版 linter,**不**全库自动扫）。依赖 A。
 
-- [ ] D1「查这篇」→ AI 报告错漏,指向具体段落（不改正文）— ~1.5d
-- [ ] D2 报告里的修正一键接 A 的 diff 流 — ~0.5d
+- [x] D1「查这篇」→ AI 报告错漏,指向具体段落（不改正文）— 2026-05-27 新增 `check_note` 核心 + `POST /api/chat/note/{id}/check` + `knowlet check-note`;单篇用户触发,报告-only,不改正文/不标 status
+- [x] D2 报告里的修正一键接 A 的 diff 流 — 2026-05-27 Discuss pane 新增“查这篇”;报告 finding 的“修正”复用 `propose-edit` → DiffReview → 用户应用;E2E + 真 `gpt-5.5` CLI dogfood + 截图 `/tmp/knowlet-d-check-note.png`
 
 ## 阶段 E — 出题考我 quiz（need 4 下半,最低频,垫底）
 
@@ -83,9 +83,9 @@ knowlet AI = **Cursor-for-notes**。唯一不可替代价值 = grounded 对谈 +
 
 ## 工期 & 排程
 
-**剩余粗估** ≈ **6.5–8.5 单人天**（D ≈ 2d · E ≈ 4–5d · 收尾 ≈ 1.5d）。B/C 已完成。
+**剩余粗估** ≈ **4.5–6.5 单人天**（E ≈ 3–5d · 收尾 ≈ 1.5d）。B/C/D 已完成。
 
-**建议顺序**:A/B/C 已完成 → D → E。A 是引擎必须先稳;D 是下一段主线;E 垫底。
+**建议顺序**:A/B/C/D 已完成 → E。A 是引擎必须先稳;E 是下一段主线。
 
 ## 明确不做（旧计划里、用户场景没点到的）
 
