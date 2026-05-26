@@ -22,6 +22,7 @@ from knowlet.cli import backups as backups_cli
 from knowlet.cli import capture as capture_cli
 from knowlet.cli import cards as cards_cli
 from knowlet.cli import config as config_cli
+from knowlet.cli import digest as digest_cli
 from knowlet.cli import drafts as drafts_cli
 from knowlet.cli import events as events_cli
 from knowlet.cli import graph as graph_cli
@@ -64,6 +65,7 @@ app.add_typer(vault_cli.app, name="vault")
 app.add_typer(config_cli.app, name="config")
 app.add_typer(user_cli.app, name="user")
 app.add_typer(cards_cli.app, name="cards")
+app.add_typer(digest_cli.app, name="digest")
 app.add_typer(mining_cli.app, name="mining")
 app.add_typer(drafts_cli.app, name="drafts")
 app.add_typer(capture_cli.app, name="capture")

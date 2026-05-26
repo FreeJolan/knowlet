@@ -34,6 +34,7 @@ def test_root_help_lists_all_subcommands():
         "config",
         "user",
         "cards",
+        "digest",
         "mining",
         "drafts",
         "notes",
@@ -84,6 +85,12 @@ def test_mining_help():
         assert cmd in out
 
 
+def test_digest_help():
+    out = _help("digest")
+    for cmd in ("list", "add", "remove", "run"):
+        assert cmd in out
+
+
 def test_drafts_help():
     out = _help("drafts")
     for cmd in ("list", "show", "approve", "reject"):
@@ -119,6 +126,12 @@ def test_cards_new_options_parse():
 def test_mining_add_options_parse():
     out = _help("mining", "add")
     for opt in ("--name", "--rss", "--url", "--every", "--cron", "--prompt", "--output-language"):
+        assert opt in out
+
+
+def test_digest_add_options_parse():
+    out = _help("digest", "add")
+    for opt in ("--name", "--rss", "--url", "--every", "--cron", "--output-language"):
         assert opt in out
 
 
