@@ -2,8 +2,8 @@
 
 Phase 3 Stage 4 redesign, P1 — grounded discussion pane. The pane is
 Cursor-style "chat about this note": a conversation anchored to a
-specific note, with the note's content grounded into the system
-prompt so the user never re-explains context (closes pain (a)).
+specific note, with the note's content grounded into the user turn
+so the user never re-explains context (closes pain (a)).
 
 Per ADR-0008, the endpoint is a thin shell over a core helper that
 assembles a note-grounded ``ChatSession``; this file tests the HTTP
@@ -21,6 +21,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+from knowlet.chat.note_chat import build_grounded_turn
 from knowlet.config import KnowletConfig, save_config
 from knowlet.core.events import ReplyChunkEvent, ReplyDoneEvent
 from knowlet.core.llm import AssistantMessage
@@ -166,6 +167,21 @@ def test_note_grounding_and_tone_guidance_in_user_turn(tmp_path: Path):
     assert "UNIQUE_GROUND_MARKER_42" in user_blob  # note in the user turn
     assert "先判断这篇笔记是什么性质" in user_blob  # tone guidance in the user turn
     assert "UNIQUE_GROUND_MARKER_42" not in system_blob  # not only in system
+
+
+def test_emotional_tone_guidance_is_non_fixing_and_non_cliche() -> None:
+    note = Note(
+        id="n1",
+        title="今日反思",
+        body="今天被很多事情压着,很疲惫,也有点委屈。",
+        tags=["daily"],
+    )
+    turn = build_grounded_turn(note, "陪我聊聊")
+    assert "先接住和映照具体感受" in turn
+    assert "不急着给建议" in turn
+    assert "不要诊断" in turn
+    assert "不灌鸡汤" in turn
+    assert "最多只问一个轻问题" in turn
 
 
 # ------------------------------------- A6: multi-turn (conversation memory)

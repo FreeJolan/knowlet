@@ -2,7 +2,7 @@
 
 Phase 3 Stage 4 (P1 — grounded discussion pane). This is the
 "chat about this note" primitive (Cursor-style): the anchored note's
-title + body are folded into the system prompt so the user never
+title + body are folded into the user turn so the user never
 re-explains what they're discussing — that closes pain (a) ("每次都要
 重新介绍上下文") from the redesign.
 
@@ -11,10 +11,8 @@ future MCP can build the *same* grounded session; the web endpoint is a
 thin SSE shell over :func:`build_note_chat_session` (ADR-0008 — one
 source of streaming behavior, reachable from every interface).
 
-Stance (the conversational posture — warm mirror / sharp critic /
-peer) is a single neutral default here; P2 layers folder-defaulted
-presets on top via the ``stance`` argument without touching this
-grounding path.
+Tone is inferred from the note's nature: emotional material gets a
+warm mirror; formal material gets a sharper critic.
 """
 
 from __future__ import annotations
@@ -35,8 +33,10 @@ from knowlet.core.note import Note
 TONE_GUIDANCE = (
     "回答前,先判断这篇笔记是什么性质的材料,并据此调整你的口吻,不要千篇一律。"
     "几个参考(只是例子,不是固定选项——材料真实什么样就怎么来):\n"
-    "- 日记、随笔、情绪或心理感受类的私人记录 → 温和、有共情;重点是接住用户的"
-    "感受而非纠错,即使察觉到问题,也只柔和、试探地轻轻点一下,绝不追着改。\n"
+    "- 日记、随笔、情绪或心理感受类的私人记录 → 像镜子一样先接住和映照具体感受:"
+    "引用笔记里的具体处境/词语回应,少评价;不急着给建议、不纠错、不优化人生;"
+    "不要诊断、贴标签或判断对错;不灌鸡汤,避免'一切都会好起来'、'你已经很棒了'"
+    "这类空泛安慰。若需要推动,最多只问一个轻问题,或给一个很小的可选下一步。\n"
     "- 论文、技术、论证类的正式严肃材料 → 认真、严谨,该尖锐就尖锐,直接指出其中"
     "的错误、漏洞和站不住的推理,不必为照顾情绪而和稀泥。\n"
     "- 其它或介于之间 → 自行拿捏分寸,贴合材料本身。\n"
@@ -48,7 +48,7 @@ TONE_GUIDANCE = (
 # Some OpenAI-compatible proxies drop the caller's `system` message
 # (verified 2026-05-25 via local CLI proxy:
 # note in system → model answers "缺少上下文"; note in the user turn →
-# grounded). So the grounding + stance ride in the USER turn
+# grounded). So the grounding + tone guidance ride in the USER turn
 # (build_grounded_turn), and the system message stays minimal.
 DISCUSS_SYSTEM = "你是 knowlet 里的笔记对谈助手,只围绕用户给你的这篇笔记跟他交流。"
 
@@ -57,7 +57,7 @@ def build_note_chat_session(*, llm: Any, registry: Any, ctx: Any) -> ChatSession
     """A fresh :class:`ChatSession` for a note-anchored discussion.
 
     Reuses the runtime's ``llm`` / ``registry`` / ``ctx`` (same wiring as
-    the ask-once path). The note grounding + stance ride in the user
+    the ask-once path). The note grounding + tone guidance ride in the user
     turn via :func:`build_grounded_turn`, **not** the system message, so
     they survive proxies that ignore system. Ephemeral per call in P1;
     per-note persistence lands in P6.
