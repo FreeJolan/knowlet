@@ -108,7 +108,7 @@ Phase 5   移动端(灰度后,按真实反馈启动)
 - 内容推荐 / 信息发现 / 社交
 - 任务 / 日历 / Todo 管理
 - AI Chat 产品的功能复刻
-- knowlet chat 不抢 Claude / Cursor 的位置
+- knowlet chat 不抢 Codex / Cursor 的位置
 
 ## 阶段二 — V1 → V2:用户需求驱动的扩展
 
@@ -124,7 +124,7 @@ Phase 5   移动端(灰度后,按真实反馈启动)
 
 knowlet 阶段一的原子能力按 MCP 标准设计([ADR-0004](../decisions/0004-ai-compose-code-execute.md))。阶段三正式开放 MCP server 形态:
 
-- Claude Desktop / Cursor / 其他 MCP-compatible 工具直接调 knowlet 的能力
+- Codex / Cursor / 其他 MCP-compatible 工具直接调 knowlet 的能力
 - knowlet 不再只是"打开就用的应用",而是"用户所有 AI 工具的私人记忆层"
 
 ## 阶段四 — 长远全能形态

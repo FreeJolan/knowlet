@@ -24,12 +24,12 @@ Knowlet in stage 1 **holds no LLM API keys and proxies no conversation traffic**
 
 Supported providers connect via a **unified OpenAI-compatible protocol**:
 
-- Official OpenAI / Anthropic / Google
+- Official OpenAI / Google / other OpenAI-compatible services
 - Aggregator services compatible with the protocol (OpenRouter / Together / DeepInfra, etc.)
 - Local inference (Ollama / LM Studio / vLLM, etc.)
 - User-self-hosted LLM services
 
-Users who already subscribe to Claude / ChatGPT can use open-source tools (e.g., `claude-code-router`) to wrap their subscription as an OpenAI-compatible endpoint and connect it to knowlet. Knowlet does not officially endorse such wrapping but is compatible with it.
+Users who already subscribe to ChatGPT/Codex can use local `cliproxyapi` or similar tools to wrap their subscription as an OpenAI-compatible endpoint and connect it to knowlet. Knowlet does not officially endorse such wrapping but is compatible with it.
 
 ### Configuration Form: Visualized UI in Stage 1
 
@@ -42,9 +42,8 @@ LLM configuration is the user's first step with knowlet; it cannot depend on a c
 
 For mining tasks (ADR-0003 Scenario B) and real-time web access during conversation, knowlet **prefers the LLM provider's own native web search capability**:
 
-- Claude API's `web_search` server-side tool
 - OpenAI Responses API's `web_search_preview` tool
-- Other compatible providers with similar server-side search capability
+- Other providers with similar server-side search capability
 
 Implications:
 
@@ -58,8 +57,8 @@ For **providers without native web search** (some local models, some smaller ven
 
 Knowlet shows a **recommended capability tier** in LLM config UI:
 
-- Recommended: supports tool use + long context + strong reasoning (Claude Opus / GPT-4 class)
-- Usable but reduced quality: medium reasoning + tool use (Claude Haiku / GPT-3.5 class)
+- Recommended: supports tool use + long context + strong reasoning (GPT 5.5 / GPT-4 class)
+- Usable but reduced quality: medium reasoning + tool use (smaller models / GPT-3.5 class)
 - Not recommended: no tool use or unstable tool use (small local models)
 
 When users pick a weak model, the UI explicitly warns **"orchestration quality may degrade"** (corresponding to [ADR-0004](./0004-ai-compose-code-execute.en.md)'s "depends on model capability floor" cost).
@@ -80,14 +79,14 @@ This is engineering preparation, not a stage 1 deliverable.
 - **Clean data flow**: user conversations go directly to the user-chosen provider; knowlet is not in the middle
 - **Low operational burden (stage 1)**: knowlet holds no API keys and pays no LLM fees
 - **Fully vendor-agnostic**: switching LLMs does not affect knowlet data
-- **Web search zero extra config**: works out of the box for the vast majority of mainstream users (Claude / OpenAI / OpenRouter)
+- **Web search zero extra config**: works out of the box for the vast majority of mainstream users (OpenAI / OpenRouter / other providers with server-side search)
 - **Fully aligned with ADR-0002 data sovereignty**: user has full control over LLM choice
 
 ### Costs / Constraints
 
 - **First-time configuration has nonzero friction**: user has to find an API key and enter it; acceptable for target users (knowledge workers / programmers)
 - **LLM provider sees the conversation**: user-provider connection is direct; knowlet cannot encrypt-proxy
-  - User-side mitigation: choose a zero-retention API tier (Anthropic / OpenAI both offer); or use local Ollama
+  - User-side mitigation: choose a zero-retention API tier; or use local Ollama
   - Knowlet documentation explicitly states this fact, no concealment
 - **Mining tasks unavailable on providers without web search**: stage 1 has no fallback
   - Workaround: switch to a provider with web search for mining tasks; daily chat can still use local models

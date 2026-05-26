@@ -15,7 +15,7 @@ dogfood 期间用户原 side-ask:
 
 > 现在通过 OpenAI 格式对接的 LLM,是不具备 web search 能力的吗
 
-**答**:OpenAI Chat Completions 协议本身**没有原生 web search**;Claude 经 OpenAI-compat 代理**通常也没接**(server tools 没有协议映射)。这意味着 knowlet 的所有 chat 流(M0 CLI / M2 web / M7.1 capsule / M7.2 URL discuss / M7.4 quiz)在**询问实时信息**时都会撞墙 —— LLM 只能基于训练截止前的知识答。
+**答**:OpenAI Chat Completions 协议本身**没有原生 web search**;经 OpenAI-compat 代理的本地 CLI/OAuth 模型通常也**没接** provider server tools(协议层没有稳定映射)。这意味着 knowlet 的所有 chat 流(M0 CLI / M2 web / M7.1 capsule / M7.2 URL discuss / M7.4 quiz)在**询问实时信息**时都会撞墙 —— LLM 只能基于训练截止前的知识答。
 
 本 ADR **加一条 backend-agnostic 路径**:写本地 `web_search` tool,走 LLM function-calling 注册,任何 OpenAI-compat 后端都自动获得搜索能力。跟 [feedback_backend_agnostic](memory) + [ADR-0008](./0008-cli-parity-discipline.md) 的精神一致。
 
@@ -23,9 +23,9 @@ dogfood 期间用户原 side-ask:
 
 ### 1. 实现路径 — 本地 function-calling tool
 
-**不依赖** LLM 厂商的 server tool(Claude `web_search_20250305` / OpenAI `gpt-4o-search-preview` / 等等)。原因:
+**不依赖** LLM 厂商的 server tool(OpenAI `web_search_preview` / Claude `web_search_20250305` / 等等)。原因:
 
-- knowlet 的 LLM 后端是用户配置的 OpenAI-compat endpoint(默认 `claude-opus-4-7` 经 cliproxyapi);server tools 在协议层不可见
+- knowlet 的 LLM 后端是用户配置的 OpenAI-compat endpoint(当前默认 `gpt-5.5` 经本机 cliproxyapi);server tools 在协议层不可见
 - 跟 [feedback_backend_agnostic](memory) 一致:不写 per-backend 集成
 - LLM function-calling 是 OpenAI-compat 协议的**必有**部分,任何后端都支持
 
@@ -200,7 +200,7 @@ M7.5.3  CLI smoke + dogfood 文档(README + config docs)
 
 - per-session 累计上限 + UI 用量 monitor → 后续 polish,等 dogfood 数据
 - 自动备 search 结果到 vault → 不做(等同 M7.2 URL capture 的语义,如果用户想留就走 capture 流)
-- 多语言 search 切换 → 让 LLM 自己决定 query 语言(Claude 已经会根据上下文自动切)
+- 多语言 search 切换 → 让 LLM 自己决定 query 语言
 - LLM 主动 fetch 大文件(PDF / video) → trafilatura 不处理,fetch_url 拒绝非 HTML
 
 ## References

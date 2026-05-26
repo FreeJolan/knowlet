@@ -7,7 +7,7 @@ the user's own sectioning, then size-bounds inside each header
 section with overlap. Fenced code blocks stay whole — splitting
 inside ``` blocks would corrupt them.
 
-Why not roll our own (per CLAUDE.md §5 "don't reinvent wheels"):
+Why not roll our own (per AGENTS.md "don't reinvent wheels"):
 LangChain's ``langchain-text-splitters`` is a narrow, battle-
 tested package (no LLM / no chain runtime) that handles Markdown
 edge cases other implementations get wrong — nested headers,

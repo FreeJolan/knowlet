@@ -39,7 +39,7 @@ def draft_from_conversation(
 ) -> Draft:
     """Ask the LLM to summarize the chat into a Note draft. Returns a Draft.
 
-    Some OpenAI-compat proxies (notably ones routing through Claude Code) do
+    Some OpenAI-compat proxies (notably ones routing through local CLI agents) do
     not respect role:'system' task assignment — they stay in the proxy's
     default persona. So the sediment instructions live in a single user
     message instead.

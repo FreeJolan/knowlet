@@ -194,7 +194,7 @@ class CapturePayload(BaseModel):
     summary_failed: bool = False
     # When summary_failed=true, this is the underlying LLM error
     # message (truncated). Surfacing it in product lets the user
-    # diagnose root cause (e.g. "Claude auth expired" / "rate
+    # diagnose root cause (e.g. "Codex auth expired" / "rate
     # limited" / "model not found") instead of guessing.
     summary_error: str | None = None
 
@@ -286,6 +286,36 @@ class ChatTurnRequest(BaseModel):
         default_factory=list,
         description="M7.1 selection capsules — soft cap 5; over-cap is silently truncated.",
     )
+
+
+class NoteChatMessage(BaseModel):
+    """One prior turn forwarded for conversation memory (A6)."""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class NoteChatRequest(BaseModel):
+    """Body for POST /api/chat/note/{note_id}/stream (Phase 3 Stage 4 P1).
+
+    Note-anchored discussion. ``text`` is the user's message; the note's
+    content is grounded server-side from ``note_id``. The AI infers its
+    tone from the note's nature — there is no user-selected stance.
+    ``history`` carries prior clean turns so the model has conversation
+    memory (A6); the grounding rides in the current turn, not history."""
+
+    text: str = Field(..., description="user message")
+    history: list[NoteChatMessage] = Field(default_factory=list)
+
+
+class NoteEditProposeRequest(BaseModel):
+    """Body for POST /api/chat/note/{note_id}/propose-edit (Stage 4 P3).
+
+    ``instruction`` is what the user wants changed (often distilled from
+    the discussion). The AI proposes a minimal revision; the endpoint
+    returns it as a diff and never writes — the user accepts in P4."""
+
+    instruction: str = Field(..., description="what to change")
 
 
 class ToolTrace(BaseModel):
@@ -3218,6 +3248,123 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             },
         )
 
+    @app.post("/api/chat/note/{note_id}/stream")
+    def chat_note_stream(
+        note_id: str,
+        req: NoteChatRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> StreamingResponse:
+        """SSE stream for a note-anchored discussion (Phase 3 Stage 4 P1).
+
+        Cursor-style "chat about this note": the note's content is
+        grounded into the system prompt so the user never re-explains
+        context. Ephemeral per request like ask-once (per-note
+        persistence lands in P6). Reuses ``user_turn_stream`` so the
+        ChatEvent stream stays the single source of truth (ADR-0008).
+        """
+        from knowlet.chat.note_chat import (
+            build_grounded_turn,
+            build_note_chat_session,
+        )
+
+        meta = runtime.index.get_note_meta(note_id)
+        if meta is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note not found: {note_id}",
+            )
+        path = Path(meta["path"])
+        if not path.is_absolute():
+            path = runtime.vault.notes_dir / path.name
+        try:
+            note = runtime.vault.read_note(path)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail=f"note file missing on disk: {path}",
+            ) from exc
+
+        session = build_note_chat_session(
+            llm=runtime.session.llm,
+            registry=runtime.session.registry,
+            ctx=runtime.session.ctx,
+        )
+        # A6: seed prior clean turns so the model has conversation memory.
+        for m in req.history:
+            session.history.append({"role": m.role, "content": m.content})
+        # Grounding + tone guidance ride in the CURRENT user turn (not
+        # system) so they survive proxies that drop system messages
+        # (dogfood 2026-05-25). The AI infers tone from the note's nature.
+        grounded = build_grounded_turn(note, req.text)
+
+        def event_source() -> Iterator[str]:
+            try:
+                for event in session.user_turn_stream(grounded):
+                    payload = json.dumps(event_to_dict(event), ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
+            except Exception as exc:
+                err = ErrorEvent(message=f"server error: {exc}")
+                yield f"data: {json.dumps(event_to_dict(err))}\n\n"
+
+        return StreamingResponse(
+            event_source(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.post("/api/chat/note/{note_id}/propose-edit")
+    def chat_note_propose_edit(
+        note_id: str,
+        req: NoteEditProposeRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        """Ask the AI for a minimal revision of a note (Stage 4 P3).
+
+        Returns old + new body for the diff UI; does NOT write — the
+        user accepts the diff in P4 (ADR-0029 原则 1, the user is the
+        last byte). A malformed AI reply yields ``changed=false``,
+        never a corrupted note.
+        """
+        from knowlet.chat.note_chat import propose_note_edit
+
+        meta = runtime.index.get_note_meta(note_id)
+        if meta is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"note not found: {note_id}",
+            )
+        path = Path(meta["path"])
+        if not path.is_absolute():
+            path = runtime.vault.notes_dir / path.name
+        try:
+            note = runtime.vault.read_note(path)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail=f"note file missing on disk: {path}",
+            ) from exc
+        try:
+            result = propose_note_edit(
+                llm=runtime.session.llm,
+                note=note,
+                instruction=req.instruction,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"LLM error: {exc}",
+            ) from exc
+        return {
+            "note_id": note_id,
+            "old_body": result.old_body,
+            "new_body": result.new_body,
+            "changed": result.changed,
+            "reason": result.reason,
+        }
+
     @app.get("/api/chat/history")
     def chat_history(
         runtime: ChatRuntime = Depends(runtime_dep),
@@ -5776,7 +5923,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         user's own LLM provider exposes. knowlet just passes through.
 
         Whether ``/v1/models`` requires the API key is **provider-
-        defined**: OpenAI/Anthropic-compat proxies typically yes;
+        defined**: OpenAI-compatible proxies typically yes;
         local servers (LM Studio, vllm defaults) sometimes no.
         We pass whatever the caller provides (draft values from the
         Settings UI before save, or saved config as fallback) and

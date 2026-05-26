@@ -44,7 +44,7 @@ A single message can carry up to **5 capsules**. Reasoning:
 
 - Single-only is too rigid (cross-note comparisons happen)
 - Unbounded fills up and the LLM context can't take it
-- 5 × ~1500 chars ≈ 7500 chars ≈ 2000 tokens — well within Claude's window
+- 5 × ~1500 chars ≈ 7500 chars ≈ 2000 tokens — well within modern long-context models such as GPT 5.5
 
 Past 5 → toast "max 5 capsules; remove one first." No silent enqueue.
 

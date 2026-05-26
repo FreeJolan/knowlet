@@ -9,7 +9,7 @@ File schema:
     {
       "id":        "<ulid>",
       "title":     "free-form, ~5 words; auto-summarized after first turn",
-      "model":     "claude-opus-4-7",
+      "model":     "gpt-5.5",
       "started_at":"2026-05-02T10:00:00Z",
       "updated_at":"2026-05-02T10:42:00Z",
       "messages":  [{"role": "system"|"user"|"assistant"|"tool", ...}, ...]

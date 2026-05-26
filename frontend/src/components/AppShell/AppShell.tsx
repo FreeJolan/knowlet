@@ -9,6 +9,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   FileText,
   LayoutTemplate,
+  MessageSquare,
+  NotebookPen,
   Network,
   PanelRight,
   PanelRightOpen,
@@ -20,8 +22,8 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { getTree } from "@/api/client";
-import type { TreeFolder, TreeNote } from "@/api/types";
+import { getNote, getTree, updateNote } from "@/api/client";
+import type { NoteFull, TreeFolder, TreeNote } from "@/api/types";
 import { FavoritesSection } from "@/components/Favorites/FavoritesSection";
 import { FileTree } from "@/components/FileTree/FileTree";
 import { GraphFocusMode } from "@/components/Graph/GraphFocusMode";
@@ -32,6 +34,7 @@ import { RightRail } from "@/components/RightRail/RightRail";
 import { SearchFocusMode } from "@/components/Search/SearchFocusMode";
 import { DraftsFocusMode } from "@/components/Drafts";
 import { CaptureBox } from "@/components/Capture";
+import { DiffReview, DiscussPane } from "@/components/Discuss";
 import { SettingsDialog } from "@/components/Settings/SettingsDialog";
 import { NewDocDialog } from "@/components/NewDoc/NewDocDialog";
 import { QuickActionsManager } from "@/components/QuickActions/QuickActionsManager";
@@ -152,6 +155,19 @@ export function AppShell() {
   // Phase 3 Stage 3 §3.4 — CaptureBox modal (⌘⇧V).
   const [captureOpen, setCaptureOpen] = useState(false);
   const [captureInitialUrl, setCaptureInitialUrl] = useState<string | undefined>();
+  // Phase 3 Stage 4 P1 — note-anchored discussion pane (⌘J). Opens
+  // beside the active note (Cursor-style); only meaningful with a note
+  // selected.
+  const [discussOpen, setDiscussOpen] = useState(false);
+  // Phase 3 Stage 4 P3/P4 — an AI-proposed edit awaiting the user's
+  // diff review. While set, the note column shows the diff instead of
+  // the editor. Cleared on accept (after the write) or reject.
+  const [proposedEdit, setProposedEdit] = useState<{
+    noteId: string;
+    oldBody: string;
+    newBody: string;
+  } | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
   // Phase 2 D Slice 2 — 新建文档 dialog. `seedFolder` is the folder
   // pre-selected when the dialog opens (current tree selection or the
   // folder right-clicked from the tree's context menu).
@@ -301,7 +317,10 @@ export function AppShell() {
       for (const sub of f.folders) stack.push(sub);
     }
     return "";
-  }, [selectedNoteId, qc]);
+    // `treeQuery.data` in deps so a freshly-created note's title (e.g.
+    // 今日反思) populates once the tree refetch lands — without it the
+    // memo computes "" before the new note is cached and never recomputes.
+  }, [selectedNoteId, qc, treeQuery.data]);
 
   const toggleRail = () => {
     setRailCollapsed((v) => {
@@ -375,6 +394,15 @@ export function AppShell() {
     } catch (err) {
       console.error("daily-note action run failed", err);
     }
+  };
+
+  // Phase 3 Stage 4 — B1: 今日反思. Open (or create) today's daily note
+  // AND open the discussion pane on it in one gesture, so the daily
+  // reflect-and-talk habit is a single click. Tone is auto-inferred from
+  // what the user writes (warm once it's a journal-ish entry).
+  const openReflectToday = async () => {
+    await openTodayDaily();
+    setDiscussOpen(true);
   };
 
   useEffect(() => {
@@ -480,6 +508,17 @@ export function AppShell() {
         e.preventDefault();
         setQuickActionsOpen((v) => !v);
       }
+      // Phase 3 Stage 4 P1 — Cmd+J toggles the note-anchored
+      // discussion pane (Cursor-style "chat about this note").
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        (e.key === "j" || e.key === "J")
+      ) {
+        e.preventDefault();
+        setDiscussOpen((v) => !v);
+      }
       // Phase 2 D Slice 2c.3 — palette open shortcuts (⌘P / ⌘⇧P) live
       // in App.tsx so they fire even before AppShell mounts; both
       // dispatch `knowlet:open-palette` with a `mode` detail that the
@@ -561,6 +600,59 @@ export function AppShell() {
     };
   }, [qc, selectedNoteId, openNewDocDialog]);
 
+  // Phase 3 Stage 4 P3/P4 — apply an accepted AI edit through the
+  // existing atomic note-save (PUT /api/notes), which backs up the
+  // previous version (ADR-0018). Nothing is written until the user
+  // clicks 应用 in the diff; reject discards.
+  const acceptEdit = useCallback(
+    async (finalBody: string) => {
+      if (!proposedEdit) return;
+      const { noteId } = proposedEdit;
+      setSavingEdit(true);
+      try {
+        const current =
+          qc.getQueryData<NoteFull>(QK.note(noteId)) ?? (await getNote(noteId));
+        const updated = await updateNote(noteId, {
+          title: current.title,
+          tags: current.tags,
+          body: finalBody,
+          aliases: current.aliases,
+        });
+        qc.setQueryData(QK.note(noteId), updated);
+        void qc.invalidateQueries({ queryKey: QK.note(noteId) });
+        void qc.invalidateQueries({ queryKey: QK.tree });
+        setProposedEdit(null);
+      } catch (err) {
+        console.error("apply AI edit failed", err);
+      } finally {
+        setSavingEdit(false);
+      }
+    },
+    [proposedEdit, qc],
+  );
+
+  const reviewing =
+    proposedEdit !== null && proposedEdit.noteId === selectedNoteId;
+  const noteOrDiff =
+    reviewing && proposedEdit ? (
+      <DiffReview
+        oldBody={proposedEdit.oldBody}
+        newBody={proposedEdit.newBody}
+        saving={savingEdit}
+        onAccept={acceptEdit}
+        onReject={() => setProposedEdit(null)}
+      />
+    ) : (
+      <NoteView
+        noteId={selectedNoteId}
+        pendingHash={pendingHash}
+        onPendingHashConsumed={() => setPendingHash(null)}
+        pendingLine={pendingLine}
+        onPendingLineConsumed={() => setPendingLine(null)}
+        preserveViewMode={pendingPreserveMode}
+      />
+    );
+
   return (
     <>
       <div
@@ -622,6 +714,27 @@ export function AppShell() {
               data-testid="header-quick-actions-button"
             >
               <Zap className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="今日反思"
+              title="今日反思（今日笔记 + 对谈）"
+              onClick={() => void openReflectToday()}
+              data-testid="header-reflect-button"
+            >
+              <NotebookPen className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="对谈"
+              title="对谈这篇笔记 (⌘J)"
+              onClick={() => setDiscussOpen((v) => !v)}
+              disabled={!selectedNoteId}
+              data-testid="header-discuss-button"
+            >
+              <MessageSquare className="size-4" />
             </Button>
             <Button
               variant="ghost"
@@ -768,14 +881,28 @@ export function AppShell() {
                   onReorder={tabsApi.reorder}
                 />
                 <div className="min-h-0 flex-1">
-                  <NoteView
-                    noteId={selectedNoteId}
-                    pendingHash={pendingHash}
-                    onPendingHashConsumed={() => setPendingHash(null)}
-                    pendingLine={pendingLine}
-                    onPendingLineConsumed={() => setPendingLine(null)}
-                    preserveViewMode={pendingPreserveMode}
-                  />
+                  {discussOpen && selectedNoteId ? (
+                    <ResizablePanelGroup direction="horizontal">
+                      <ResizablePanel minSize={30}>{noteOrDiff}</ResizablePanel>
+                      <ResizableHandle />
+                      <ResizablePanel defaultSize={38} minSize={25} maxSize={60}>
+                        <DiscussPane
+                          noteId={selectedNoteId}
+                          noteTitle={selectedNoteTitle}
+                          onClose={() => {
+                            setDiscussOpen(false);
+                            setProposedEdit(null);
+                          }}
+                          onProposeEdit={(p) => {
+                            if (selectedNoteId)
+                              setProposedEdit({ noteId: selectedNoteId, ...p });
+                          }}
+                        />
+                      </ResizablePanel>
+                    </ResizablePanelGroup>
+                  ) : (
+                    noteOrDiff
+                  )}
                 </div>
               </div>
             </ResizablePanel>

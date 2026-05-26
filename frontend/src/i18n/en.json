@@ -481,7 +481,7 @@
     "apiKeyHide": "Hide key",
     "baseUrlLabel": "Base URL",
     "baseUrlPlaceholder": "e.g. https://api.openai.com/v1",
-    "baseUrlHelp": "OpenAI-compatible endpoint. Common: OpenAI / Anthropic official, OpenRouter, local cliproxyapi (http://127.0.0.1:8317/v1), LM Studio (http://localhost:1234/v1), etc.",
+    "baseUrlHelp": "OpenAI-compatible endpoint. Default local path: cliproxyapi + Codex/GPT 5.5 (http://127.0.0.1:8317/v1). Other common options: OpenAI, OpenRouter, LM Studio (http://localhost:1234/v1), etc.",
     "modelLabel": "Model",
     "modelPlaceholder": "Fill URL + key above, click ↻ to load list; or type directly",
     "refreshModels": "Refresh model list",

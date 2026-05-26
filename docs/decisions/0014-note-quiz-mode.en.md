@@ -189,7 +189,7 @@ Session schema sketch:
   "id": "<ulid>",
   "started_at": "...",
   "finished_at": "...",
-  "model": "claude-opus-4-7",
+  "model": "gpt-5.5",
   "scope": {
     "type": "notes" | "tag" | "cluster",
     "note_ids": ["..."],

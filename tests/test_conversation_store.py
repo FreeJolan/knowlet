@@ -139,7 +139,7 @@ def test_legacy_log_format_loads_with_defaults(tmp_path: Path):
     legacy_id = "01HX0000000000000000000001"
     legacy = {
         "id": legacy_id,
-        "model": "claude-opus-4-7",
+        "model": "gpt-5.5",
         "started_at": "2026-04-30T00:00:00Z",
         "ended_at": "2026-04-30T00:42:00Z",
         "messages": [
@@ -161,8 +161,8 @@ def test_legacy_log_format_loads_with_defaults(tmp_path: Path):
 
 def test_new_seeds_system_prompt(tmp_path: Path):
     store = ConversationStore(tmp_path)
-    conv = store.new(model="claude-opus-4-7", system_prompt="be brief")
-    assert conv.model == "claude-opus-4-7"
+    conv = store.new(model="gpt-5.5", system_prompt="be brief")
+    assert conv.model == "gpt-5.5"
     assert conv.messages == [{"role": "system", "content": "be brief"}]
     assert not conv.is_meaningful  # system prompt only doesn't count
 

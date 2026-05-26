@@ -33,7 +33,7 @@ Based on these two judgments, ADR-0001's wedge narrative needs to be replaced.
 
 Pivot the wedge to form B, with positioning tightened to:
 
-> **Personal knowledge base + AI long-term memory layer.** AI takes over mechanical organization (summarizing, classifying, sedimenting, retrieving); the user retains intent, thinking, judgment. Simultaneously, any AI tool (Claude / Cursor / others) can actively retrieve from this knowledge base during conversation — visible not just inside knowlet but across all the user's AI workflows.
+> **Personal knowledge base + AI long-term memory layer.** AI takes over mechanical organization (summarizing, classifying, sedimenting, retrieving); the user retains intent, thinking, judgment. Simultaneously, any AI tool (Codex / Cursor / others) can actively retrieve from this knowledge base during conversation — visible not just inside knowlet but across all the user's AI workflows.
 
 ### Slogan
 
@@ -81,7 +81,7 @@ The three scenarios share **one user context** (goals / preferences / mistake pa
 - Content moderation / safety filtering
 - Built-in Wikipedia / public knowledge bases
 - OT / CRDT real-time multi-device editing
-- knowlet's chat does not displace Claude / Cursor: only enters the picture when "work meets sedimentation"
+- knowlet's chat does not displace Codex / Cursor: only enters the picture when "work meets sedimentation"
 
 ### Stage Evolution Anchors
 
@@ -104,14 +104,14 @@ See [`../roadmap/`](../roadmap/) for details. Briefly:
 - **Focused narrative**: target users are clear (knowledge workers / programmers / researchers / continuous learners)
 - **Fully aligned with ADR-0002 tone**: data sovereignty / AI optional / plugin-ization promises naturally hold; no more tension as in ADR-0001
 - **Directly addresses PKM high abandonment pain**: "management cost" becomes AI's primary service target, frustration source eliminated
-- **Cross-scenario context accumulation forms natural differentiation**: Anki / Claude / Duolingo / Notion AI cannot do this (they're isolated from each other)
+- **Cross-scenario context accumulation forms natural differentiation**: Anki / Codex / Duolingo / Notion AI cannot do this (they're isolated from each other)
 - **Stage 2 expansion is pulled by user need**, not arbitrary feature padding
 
 ### Costs / Constraints
 
 - Abandons the strong SRS narrative for exam scenarios (a core selling point of original ADR-0001)
 - OCR + cards descend to the SRS submodule level, no longer the main stage 1 battleground
-- Users must bring their own LLM (OpenAI / Anthropic / Ollama, etc.); first-time configuration has nonzero friction, but acceptable for target users
+- Users must bring their own LLM (default local cliproxyapi + Codex/GPT 5.5, with OpenAI / OpenRouter / Ollama etc. still configurable); first-time configuration has nonzero friction, but acceptable for target users
 - Sync pipeline brought by the user (iCloud / Dropbox / Syncthing, etc.); knowlet does not implement sync logic in stage 1
 - LLM provider sees user conversations + RAG-hit fragments; knowlet does not proxy or filter; privacy is determined by the user's LLM choice
 - "Rebuild mechanism" (rebuilding derived data from Markdown / JSON) has visible delay on large vaults at first launch — acceptable

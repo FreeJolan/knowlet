@@ -4,7 +4,7 @@
 >
 > Last update: 2026-05-16
 >
-> ⚠️ **2026-05-16 重打包**: Slice 概览那张表已被 [`phase-3-stages.md`](./phase-3-stages.md) 的 7-Stage 版本取代(把原推到 Phase 4 的 Eval / Reorg planner / Tidy advisor / Retrieval v2 全部拉回 Phase 3,让 Phase 4 纯 hardening)。本文件里**每个 slice 的详细描述**(用户故事 / ADR 检测)仍是有效参考,但**推进顺序请看 stages 文档**。
+> ⚠️ **已被取代两次**:2026-05-16 本 slice 表被 [`phase-3-stages.md`](./phase-3-stages.md) 取代;2026-05-24 `phase-3-stages.md` 又被 [`ai-modes-roadmap.md`](./ai-modes-roadmap.md) 取代。**当前推进顺序只看 `ai-modes-roadmap.md`。** 本文件仅作历史参考,不要用这里的 Phase/P3 名称判断下一步。
 
 ## 背景
 
@@ -61,12 +61,12 @@ P3.1  Envelope assembly framework + ai.call audit       3-4 天    依赖 P3.0
 
 ### 用户故事
 
-**小张(power user · 想用 Sonnet 4.6)**: 
-打开 Settings → LLM → 选 "Claude" → 看到三档推荐("A: Opus 4.7 / Sonnet 4.6 - 完整体验"、"B: Haiku - 部分能力降级"、"C: 3.5/小模型 - 大多数高级 role 不可用") → 选 Sonnet 4.6 + 粘 API key → done。 
-他切到 Haiku 测便宜版 → UI 立刻显示一行 "current mode: 降级,以下 role 已禁用: editor advisor / linter detail"。
+**小张(power user · 想用 GPT 5.5)**:
+打开 Settings → LLM → 默认看到 "本机 cliproxyapi + Codex/GPT 5.5" → 刷新模型列表确认 `gpt-5.5` → Test 通过 → done。
+他切到更小模型测便宜版 → UI 只展示连通性与实际 model id,不做主观推荐档位。
 
-**小红(casual · 不知道选什么)**: 
-打开 Settings → LLM → 看到默认 = "本机 cliproxyapi"(我们 detect 到她有装就 default 选这个);看到一行说明 "knowlet 自动使用你已登录的 Claude 订阅";不用做任何事就能用。 
+**小红(casual · 不知道选什么)**:
+打开 Settings → LLM → 看到默认 = "本机 cliproxyapi + Codex/GPT 5.5";看到一行说明 "knowlet 使用你本机已登录的 Codex/ChatGPT auth";不用做任何事就能用。
 她忽略 Privacy panel(默认安全)。
 
 **完全新用户**: 

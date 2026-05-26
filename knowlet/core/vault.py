@@ -26,7 +26,7 @@ BACKUPS_DIR = "backups"
 #
 # Written into a freshly-init'd vault to demonstrate (a) what the file
 # is for, (b) the Rule + **Why:** pattern (per ADR-0024 §3.4 borrowed
-# from Claude Code's CLAUDE.md convention), and (c) how it ties into
+# from mature agents' rules-file convention), and (c) how it ties into
 # the multi-level merge with ``~/.knowlet/wiki_schema.md``.
 #
 # The starter is written exactly once on vault init; if the user
@@ -51,7 +51,7 @@ _WIKI_SCHEMA_STARTER = """\
 Every convention below pairs a one-line rule with a `**Why:**` line.
 The Why isn't decoration — it lets the AI judge edge cases instead
 of mechanically following the rule (per ADR-0024 §3.4 "Rule + Why
-mode", borrowed from Claude Code's CLAUDE.md convention).
+mode", borrowed from mature agents' rules-file convention).
 
 ## Examples
 

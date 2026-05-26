@@ -1,6 +1,6 @@
 """LLM-based extraction: turn a SourceItem + task prompt into a Draft.
 
-Same Claude-Code-via-proxy lesson as `chat/sediment.py`: role:'system'
+Same local-CLI-proxy lesson as `chat/sediment.py`: role:'system'
 instructions are unreliable in some backends, so the task prompt is folded
 into the user message.
 """

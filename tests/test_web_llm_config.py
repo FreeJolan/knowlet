@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from knowlet.config import KnowletConfig, save_config
+from knowlet.config import DEFAULT_LLM_MODEL, KnowletConfig, save_config
 from knowlet.core.vault import Vault
 from knowlet.web.server import create_app
 
@@ -26,8 +26,8 @@ def _client(tmp_path: Path) -> tuple[TestClient, Vault, KnowletConfig]:
     cfg.embedding.backend = "dummy"
     cfg.embedding.dim = 32
     cfg.llm.api_key = "starting-secret"
-    cfg.llm.model = "claude-opus-4-7"
-    cfg.llm.provider = "anthropic"
+    cfg.llm.model = DEFAULT_LLM_MODEL
+    cfg.llm.provider = "openai"
     save_config(v.root, cfg)
     app = create_app(v, cfg)
     client = TestClient(app)
@@ -48,7 +48,7 @@ def test_get_returns_config_without_api_key(tmp_path: Path) -> None:
     # has_api_key signals presence to the UI.
     assert body["has_api_key"] is True
     # Other fields round-trip.
-    assert body["model"] == "claude-opus-4-7"
+    assert body["model"] == DEFAULT_LLM_MODEL
     # No tier field — knowlet doesn't classify models.
     assert "tier" not in body
     # No provider field — removed 2026-05-16 (vestigial label,
@@ -66,7 +66,7 @@ def test_get_has_api_key_false_when_empty(tmp_path: Path) -> None:
     cfg.embedding.backend = "dummy"
     cfg.embedding.dim = 32
     cfg.llm.api_key = ""  # no key
-    cfg.llm.model = "claude-opus-4-7"
+    cfg.llm.model = DEFAULT_LLM_MODEL
     save_config(v.root, cfg)
     app = create_app(v, cfg)
     client = TestClient(app)
@@ -87,18 +87,18 @@ def test_put_updates_model_and_keeps_existing_key(tmp_path: Path) -> None:
     # have to round-trip the secret to save other fields).
     r = client.put(
         "/api/llm/config",
-        json={"model": "claude-sonnet-4-6", "api_key": ""},
+        json={"model": "gpt-5.4-mini", "api_key": ""},
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["model"] == "claude-sonnet-4-6"
+    assert body["model"] == "gpt-5.4-mini"
     assert body["has_api_key"] is True  # existing key preserved
 
     # Verify by reading config file.
     from knowlet.config import load_config
 
     persisted = load_config(v.root)
-    assert persisted.llm.model == "claude-sonnet-4-6"
+    assert persisted.llm.model == "gpt-5.4-mini"
     assert persisted.llm.api_key == "starting-secret"
 
 
@@ -117,7 +117,7 @@ def test_put_overwrites_api_key_when_non_empty(tmp_path: Path) -> None:
 
 def test_put_partial_update(tmp_path: Path) -> None:
     """Only fields present in the payload should change."""
-    client, v, _cfg = _client(tmp_path)
+    client, _v, _cfg = _client(tmp_path)
     r = client.put(
         "/api/llm/config",
         json={"max_tokens": 4096},
@@ -126,7 +126,7 @@ def test_put_partial_update(tmp_path: Path) -> None:
     body = r.json()
     assert body["max_tokens"] == 4096
     # Other fields unchanged.
-    assert body["model"] == "claude-opus-4-7"
+    assert body["model"] == DEFAULT_LLM_MODEL
 
 
 # ----------------------------------------------------- /api/llm/recommended

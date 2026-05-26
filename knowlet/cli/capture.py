@@ -1,6 +1,6 @@
 """`knowlet capture` — CLI mirror of the web UI's CaptureBox flow.
 
-Per CLAUDE.md §3 (single source of truth / thin shells per interface)
+Per AGENTS.md §3 (single source of truth / thin shells per interface)
 + §E.4 (cross-interface check): every backend capability the web
 exposes should also be reachable from the CLI. The web side ships
 ``POST /api/capture/url`` / ``/file`` / ``/decide``; this is the CLI

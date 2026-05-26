@@ -82,21 +82,21 @@ Phase 3 每个 role slice 在 review 前,必须证明这 8 条都满足:
    - **Reorg planner** → 必须输出 manifest + diff 预览
 8. **可中断 + 可撤销** — 长链 AI 任务(mining run / reorg / lint)用户**随时可停**(取消按钮),已落地的写动作**可 undo**(走 `.knowlet/backups/` + `vault.events` rewind)。
 
-### §3 参考架构:Claude Code(后端工程)+ Cursor(集成 UX),默认照抄,例外才发明
+### §3 参考架构:成熟 agent 后端工程 + Cursor 集成 UX,默认照抄,例外才发明
 
-per 项目 memory `project_ai_design_borrow_from_claude_code`:knowlet AI 的工程模式默认 = 两个成熟产品的实践。Claude Code 教**怎么把 LLM 调出好结果**;Cursor 教**怎么把 AI 顺滑嵌进用户在编辑笔记的工作面板**。两者解决不同问题,knowlet 都需要。
+历史上本节以 Claude Code 作为 agent prompt 工程参考。2026-05-27 起运行/默认接入改为 Codex/GPT 5.5;保留的是成熟 agent 的工程模式,不是 Claude runtime 依赖。Cursor 仍作为**怎么把 AI 顺滑嵌进用户在编辑笔记的工作面板**的 UX 参考。
 
-**从 Claude Code 直接照抄(后端 / prompt 层)**:
+**从成熟 agent 直接照抄(后端 / prompt 层)**:
 - 7 层 prompt envelope 结构(ADR-0024 §3 已落)
 - `<system-reminder>` / `<example>` / `<task>` / `<rules>` 等 anchor tag
-- 多层级 memory(`~/.knowlet/wiki_schema.md` + `vault/.knowlet/wiki_schema.md`,跟 Claude Code 的 `~/.claude/CLAUDE.md` + 项目 CLAUDE.md 同构)
+- 多层级 memory(`~/.knowlet/wiki_schema.md` + `vault/.knowlet/wiki_schema.md`,跟 agent 全局规则 + 项目规则同构)
 - `Rule + Why` 强约定(memory 里每条规则必须带"为什么")
 - Slash command → per-role 专属 envelope 路由
 - Lazy tool loading(per ADR-0024 §3.4 提到的 ToolSearch 模式)
 - 行为规则用绝对句("ALWAYS X" / "NEVER Y")
 - 操作前先一句话说明判断依据(trust-building 进 prompt)
 
-**参考方式**:直接观察我们当前 Claude Code 运行环境(我们就在它里面跑),不是去抓网上泄漏版本。开发期通过 `~/.claude/`、`~/.claude/projects/<proj>/memory/`、当前 system prompt + tool catalog 直接观察 + 模仿。
+**参考方式**:直接观察我们当前 Codex/agent 运行环境,不是去抓网上泄漏版本。开发期通过 `~/.codex/`、项目 `AGENTS.md`、当前 system prompt + tool catalog 直接观察 + 模仿。
 
 **从 Cursor 直接照抄(集成 UX 层)**:
 - **选中文本 → 召唤 AI 自动带 context**(笔记里选一段 → 快捷键 → chat 已知道这段)
@@ -231,24 +231,26 @@ Chat 第一轮做了 retrieve 返回 5 篇笔记片段(2-3K tokens),第二轮历
 
 #### 9.5 cliproxyapi 路径专项
 
-用户(包括我们 dogfood)很可能通过 cliproxyapi 走 OAuth Claude 路径,而不是直连 Anthropic API。这条路径有几个区别要 knowlet 在设计上对齐:
+2026-05-27 更新:用户后续不再使用 Claude。dogfood 与默认配置切到本机 cliproxyapi 包装 Codex/ChatGPT auth,默认模型 `gpt-5.5`。
 
-| 维度 | 直连 Anthropic API | cliproxyapi → `claude -p` |
+用户(包括我们 dogfood)很可能通过 cliproxyapi 走本机 OAuth/CLI 路径,而不是直连官方 API。这条路径有几个区别要 knowlet 在设计上对齐:
+
+| 维度 | 直连 OpenAI-compatible API | cliproxyapi → Codex/ChatGPT auth |
 |---|---|---|
-| 凭证 | API key | OAuth Claude 订阅配额 |
-| 状态 | 服务端无状态(API 真)| `-p` 进程无状态(进程真),knowlet 仍发完整 history |
-| 用户配置漏入 | 无 | **`~/.claude/CLAUDE.md` + 项目 CLAUDE.md + skill 会注入**,可能污染 knowlet 输出 |
-| Claude 内置 tool | knowlet 不允许 LLM 直接动 vault | 同左 —— cliproxyapi 必须运行在禁 tool 模式;**knowlet 不依赖 LLM 内置 tool** |
-| Prompt cache | 完整支持(传 `cache_control`)| 取决于 cliproxyapi 是否透传 cache 字段;**有则赚,无则正常** |
-| 启动延迟 | 网络往返 | + 几百 ms 进程 spawn 开销 |
-| 模型固定 | API 调用方指定 | 只能用当前登录的 Claude 模型 |
+| 凭证 | API key | 本机 OAuth / ChatGPT 订阅配额 |
+| 状态 | 服务端无状态(API 真)| 代理层无状态,knowlet 仍发完整 history |
+| 用户配置漏入 | 无 | 可能受到本机 agent 配置影响;模型必须看到的 grounding/stance 仍放 user 消息 |
+| 内置 tool | knowlet 不允许 LLM 直接动 vault | 同左 —— knowlet 不依赖模型内置 tool,只依赖 OpenAI-compatible function calling |
+| Prompt cache | 取决于 provider | 取决于 cliproxyapi 是否透传 cache 字段;**有则赚,无则正常** |
+| 启动延迟 | 网络往返 | 代理/CLI 层可能增加少量延迟 |
+| 模型选择 | API 调用方指定 | 以 `/v1/models` 实际暴露的模型为准;当前 dogfood 用 `gpt-5.5` |
 
 **knowlet 的 design 必须同时兼容两条路径**:
-- 默认配置 = cliproxyapi(per global CLAUDE.md 上的 Settings 引导),零摩擦
+- 默认配置 = 本机 cliproxyapi + Codex/GPT 5.5,零摩擦 dogfood
 - Settings 允许配置直连 API(高级用户 / 不想要配置污染 / 要更稳的延迟)
-- envelope 设计 cache-friendly + 不依赖 Claude 内置 tool —— 两条路径都能跑
+- prompt/envelope 设计不依赖 provider 内置 tool —— 两条路径都能跑
 
-**配置污染兜底**:Phase 3 内 dogfood 阶段接受 `~/.claude/CLAUDE.md` 漏入(成本低、影响小);灰度前(Phase 4)必须实测 + 文档化此风险,或要求 cliproxyapi 增强为"isolated context 模式"。
+**配置污染兜底**:Phase 3 内 dogfood 阶段接受本机 agent 配置漏入(成本低、影响小);灰度前(Phase 4)必须实测 + 文档化此风险,或要求 cliproxyapi 增强为"isolated context 模式"。
 
 #### 9.6 关键设计纪律:LLM = 决策大脑,knowlet = 动手手脚
 
@@ -256,7 +258,7 @@ Chat 第一轮做了 retrieve 返回 5 篇笔记片段(2-3K tokens),第二轮历
 
 例:Editor advisor 输出 `{"recommended_folder": "concepts/rag/", "confidence": 0.8, "reason": "..."}`,knowlet UI 弹气泡让用户 accept,**用户点 accept 后 knowlet 自己做 `vault.move_note()`**。LLM 永远不直接动文件。
 
-这条是 ADR-0024 §C "auto-move 禁止" + ADR-0028 §2 第 6 条 "first-class tool 调用" 的合并表达。也是 cliproxyapi 路径下的硬保险 —— 即使 Claude 内置 tool 没禁,knowlet 也不会被它影响。
+这条是 ADR-0024 §C "auto-move 禁止" + ADR-0028 §2 第 6 条 "first-class tool 调用" 的合并表达。也是 cliproxyapi 路径下的硬保险 —— 即使模型/agent 有内置 tool,knowlet 也不会被它影响。
 
 ### §8 不做的事(显式划清)
 
@@ -274,7 +276,7 @@ Chat 第一轮做了 retrieve 返回 5 篇笔记片段(2-3K tokens),第二轮历
 - Phase 3 每个 role slice 在动手前有明确"完成标准" = §2 八条机制约束 + §1 模型档位 + §4 grounding 政策 + §6 失败契约。质量从"靠记忆 / 当下灵感"变成 30 秒查表。
 - 用户对 AI 输出有可解释性(citation / why / trace / replay) —— trust building 进产品骨架
 - 模型档位策略避免"用户用便宜模型 → 体验崩 → 怪 knowlet" 这条 churn 链
-- 借鉴 Claude Code 而不是发明新东西 —— 开发成本 -50%,质量底线 +∞
+- 借鉴成熟 agent 而不是发明新东西 —— 开发成本 -50%,质量底线 +∞
 
 **Negative / Risks**
 
@@ -288,7 +290,7 @@ Chat 第一轮做了 retrieve 返回 5 篇笔记片段(2-3K tokens),第二轮历
 - **方案 A:Phase 3 前置做完整 eval 框架** — 工程量大,Phase 3 单人开发期没数据可对比,主要会拖延所有 role 落地。**用户 2026-05-14 显式否决。** 推到 Phase 4 之前再做。
 - **方案 B:knowlet 内嵌 LLM(自带 Opus / 自带本地模型)** — 数据主权 ✅ 但商业模式重(替用户付 API 费 / 自训模型成本爆炸)。**否。** 用户带 = 数据主权 + 成本透明 + 用户选择权。
 - **方案 C:不区分模型档位,任何模型都暴露全部 AI feature** — silent failure 风险大,小红 / 新用户体验差。**否。** §1 显式画线 + 显式 degrade 提示是必须的。
-- **方案 D:发明 knowlet 自己的 prompt envelope / tag schema / memory 层级** — 重复造轮子,质量不一定更好。**否,per 项目 memory `project_ai_design_borrow_from_claude_code`**。
+- **方案 D:发明 knowlet 自己的 prompt envelope / tag schema / memory 层级** — 重复造轮子,质量不一定更好。**否,沿用项目 memory 里的成熟 agent 借鉴策略**。
 
 ## References
 
@@ -299,7 +301,7 @@ Chat 第一轮做了 retrieve 返回 5 篇笔记片段(2-3K tokens),第二轮历
 - [ADR-0023 §8 — Editor / Tidy / Reorg advisor 规约](./0023-llm-wiki-comparison-and-takeaways.md)
 - 项目 memory:
   - `project_knowlet_ai_value_is_curated_workflow.md`(差异化论点)
-  - `project_ai_design_borrow_from_claude_code.md`(借鉴策略)
+  - 成熟 agent prompt 工程借鉴策略
   - `feedback_knowlet_not_manual_authoring_centric.md`(用户场景定位)
   - `project_ai_rework_gated_on_kb_complete.md`(Phase 3 启动前置)
 

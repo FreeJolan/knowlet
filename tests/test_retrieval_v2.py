@@ -7,14 +7,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
 from knowlet.config import LLMConfig
 from knowlet.core.index import SearchHit
-from knowlet.core.llm import AssistantMessage, LLMClient
+from knowlet.core.llm import AssistantMessage
 from knowlet.core.retrieval.chunking import smart_chunk_markdown
 from knowlet.core.retrieval.expansion import (
     DEFAULT_RRF_K,
@@ -22,7 +21,6 @@ from knowlet.core.retrieval.expansion import (
     fuse_rrf,
 )
 from knowlet.core.retrieval.rerank import _parse_scores, llm_rerank
-
 
 # ----------------------------------------------- fake LLMClient
 
@@ -185,7 +183,7 @@ def test_rerank_uses_separate_rerank_model_when_configured() -> None:
     the rerank call. The original ``llm`` should not see the call."""
     hits = [_hit("a"), _hit("b")]
     llm = _FakeLLM(content='[{"id":0,"score":0.9},{"id":1,"score":0.1}]')
-    cfg = _cfg(rerank_model="claude-haiku-4-5")
+    cfg = _cfg(rerank_model="gpt-5.4-mini")
     # Patch the rerank module's LLMClient constructor so we observe
     # the model it would use without actually building a real client.
     from knowlet.core.retrieval import rerank as rerank_mod
@@ -210,7 +208,7 @@ def test_rerank_uses_separate_rerank_model_when_configured() -> None:
         )
     finally:
         rerank_mod.LLMClient = orig  # type: ignore[misc]
-    assert captured["model"] == "claude-haiku-4-5"
+    assert captured["model"] == "gpt-5.4-mini"
 
 
 def test_parse_scores_handles_code_fence() -> None:

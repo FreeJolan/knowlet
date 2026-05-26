@@ -15,23 +15,24 @@ from pydantic import BaseModel, Field
 
 CONFIG_FILENAME = "config.toml"
 VAULT_MARKER_DIR = ".knowlet"
+DEFAULT_LLM_BASE_URL = "http://127.0.0.1:8317/v1"
+DEFAULT_LLM_MODEL = "gpt-5.5"
 
 
 class LLMConfig(BaseModel):
     provider: str = "openai"
-    base_url: str = "https://api.openai.com/v1"
+    base_url: str = DEFAULT_LLM_BASE_URL
     api_key: str = ""
-    model: str = "claude-opus-4-7"
+    model: str = DEFAULT_LLM_MODEL
     max_tokens: int = 1024
-    # `None` means "let the provider pick its default." Claude 4.x models
-    # reject `temperature` outright; setting any value here forces the
-    # client into a 400-then-retry path on first call. Leave None unless
-    # the user explicitly wants determinism on a non-Claude provider.
+    # `None` means "let the provider pick its default." Some OpenAI-compatible
+    # backends reject `temperature` for specific models; setting any value here
+    # can force a 400-then-retry path on first call. Leave None unless the user
+    # explicitly wants determinism on a known-compatible provider.
     temperature: float | None = None
     # Optional independent model for LLM rerank (Phase 3 Stage 1).
     # Empty string = "use ``model``"; otherwise the rerank path uses this
-    # one (typically a cheaper / faster model — e.g. Haiku for rerank
-    # while Opus answers chat). Same base_url + api_key are used.
+    # one (typically a cheaper / faster model). Same base_url + api_key are used.
     rerank_model: str = ""
 
 
@@ -92,7 +93,7 @@ class SyncConfig(BaseModel):
     # they ride along with the vault and stay private to the
     # local machine if .knowlet/ is excluded from cloud sync (per
     # ADR-0006 §40 default).
-    token_path: str = ".knowlet/sync_credentials.json"
+    token_path: str = ".knowlet/sync_credentials.json"  # noqa: S105 - path, not a secret
 
 
 class KnowletConfig(BaseModel):

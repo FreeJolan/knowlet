@@ -222,8 +222,8 @@ def doctor(
 ) -> None:
     """Smoke-test the configured vault + LLM endpoint + embedding stack.
 
-    Useful when wiring up an OpenAI-compatible wrapper around Claude Code /
-    Codex / Ollama / etc. — confirms that knowlet can speak to the proxy and
+    Useful when wiring up an OpenAI-compatible wrapper around Codex /
+    Ollama / etc. — confirms that knowlet can speak to the proxy and
     that tool-calling works.
     """
     try:
@@ -254,6 +254,91 @@ def chat(
 ) -> None:
     """Start an interactive chat REPL backed by the vault."""
     run_chat(save_after=save_after, ensure_ready=_ensure_ready_or_wizard)
+
+
+# ------------------------------------------------------------------ discuss
+
+
+@app.command("discuss")
+def discuss(
+    note: Annotated[
+        str, typer.Argument(help="Note id, or a case-insensitive title substring.")
+    ],
+    message: Annotated[
+        str | None,
+        typer.Argument(help="Your message. Omit to drop into an interactive loop."),
+    ] = None,
+) -> None:
+    """Discuss a note with the AI, grounded in its content (Stage 4 P1).
+
+    This is the **no-UI verification path** for the discussion experience:
+    it drives the SAME grounded session + real LLM the web pane uses, so
+    it catches provider-specific behavior (e.g. a proxy that drops system
+    messages) that stub-based pytest can't — exercise this against a real
+    model whenever the grounding / stance / prompt-assembly changes.
+    """
+    from knowlet.chat.bootstrap import bootstrap_chat
+    from knowlet.chat.note_chat import (
+        build_grounded_turn,
+        build_note_chat_session,
+    )
+    from knowlet.core.events import ErrorEvent, ReplyChunkEvent
+
+    vault, cfg = _ensure_ready_or_wizard()
+    runtime, _ = bootstrap_chat(vault, cfg)
+    try:
+        meta = runtime.index.get_note_meta(note)
+        if meta is None:
+            rows = runtime.index.list_notes(limit=10_000, order="updated_at")
+            hits = [r for r in rows if note.lower() in (r.get("title") or "").lower()]
+            if not hits:
+                err_console.print(f"[red]no note matching {note!r}[/red]")
+                raise typer.Exit(code=1)
+            meta = hits[0]
+        path = Path(meta["path"])
+        if not path.is_absolute():
+            path = runtime.vault.notes_dir / path.name
+        note_obj = runtime.vault.read_note(path)
+        console.print(f"[dim]discussing: {note_obj.title}[/dim]")
+
+        history: list[dict[str, str]] = []
+
+        def one_turn(text: str) -> None:
+            # Mirrors the web pane: fresh session seeded with prior clean
+            # turns for conversation memory (A6); grounding + tone ride in
+            # the current grounded turn.
+            session = build_note_chat_session(
+                llm=runtime.session.llm,
+                registry=runtime.session.registry,
+                ctx=runtime.session.ctx,
+            )
+            session.history.extend(history)
+            grounded = build_grounded_turn(note_obj, text)
+            parts: list[str] = []
+            for ev in session.user_turn_stream(grounded):
+                if isinstance(ev, ReplyChunkEvent):
+                    parts.append(ev.text)
+                    print(ev.text, end="", flush=True)
+                elif isinstance(ev, ErrorEvent):
+                    err_console.print(f"\n[red]error: {ev.message}[/red]")
+            print()  # newline after the turn
+            history.append({"role": "user", "content": text})
+            history.append({"role": "assistant", "content": "".join(parts)})
+
+        if message is not None:
+            one_turn(message)
+        else:
+            console.print("[dim]type a message (empty line / Ctrl-D to quit)[/dim]")
+            while True:
+                try:
+                    line = Prompt.ask("[bold]你[/bold]")
+                except (EOFError, KeyboardInterrupt):
+                    break
+                if not line.strip():
+                    break
+                one_turn(line)
+    finally:
+        runtime.close()
 
 
 # ------------------------------------------------------------------ setup wizard

@@ -85,7 +85,7 @@ def config_set(
 
     Designed for scripts/agents and for users who don't want the wizard:
         knowlet config set llm.base_url http://127.0.0.1:8317/v1
-        knowlet config set llm.model claude-opus-4-7
+        knowlet config set llm.model gpt-5.5
         knowlet config set llm.api_key sk-...
     """
     vault = resolve_vault_or_die()

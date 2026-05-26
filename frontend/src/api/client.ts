@@ -204,6 +204,28 @@ export const updateNote = (
 ): Promise<NoteFull> =>
   request("PUT", `/api/notes/${encodeURIComponent(id)}`, payload);
 
+export interface ProposedEdit {
+  note_id: string;
+  old_body: string;
+  new_body: string;
+  changed: boolean;
+  reason: string;
+}
+
+// Phase 3 Stage 4 P3 — ask the AI for a minimal revision of a note.
+// Returns old + new body for the diff UI; never writes. The user
+// accepts the diff (P4), then the existing `updateNote` PUT does the
+// atomic write + backup (ADR-0018).
+export const proposeNoteEdit = (
+  noteId: string,
+  instruction: string,
+): Promise<ProposedEdit> =>
+  request(
+    "POST",
+    `/api/chat/note/${encodeURIComponent(noteId)}/propose-edit`,
+    { instruction },
+  );
+
 // Create a note via the existing POST /api/notes (sediment commit shape).
 // Phase 1 B will add a dedicated /api/notes/new for empty notes; for now
 // the UI uses this with empty body and Phase 1 A mkdir-then-edit.

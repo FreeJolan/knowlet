@@ -1,9 +1,9 @@
 """Thin wrapper over the OpenAI SDK for OpenAI-compatible endpoints.
 
 knowlet does not store or proxy LLM credentials anywhere outside the local
-config file. The same client speaks to OpenAI / Anthropic-via-compat /
-Ollama / OpenRouter — anything that implements the OpenAI Chat Completions
-shape with tool-calls.
+config file. The same client speaks to OpenAI / Codex-via-compat /
+Ollama / OpenRouter — anything that implements the OpenAI Chat
+Completions shape with tool-calls.
 
 Every call (sync ``chat`` and streaming ``chat_stream``) emits an
 ``ai.call`` audit event when an :class:`AuditEventStore` is provided
@@ -54,10 +54,9 @@ class AssistantMessage:
     raw: Any = None
 
 
-# Some models reject the `temperature` request param (Anthropic Claude 4.x —
-# Opus 4.7 / 4.6, Sonnet 4.6, Haiku 4.5, … — and likely future ones). Rather
-# than maintain a curated substring list that ages with every release, we
-# learn from a 400 once and cache the result per model id.
+# Some OpenAI-compatible backends reject the `temperature` request param for
+# particular models. Rather than maintain a curated substring list that ages
+# with every release, we learn from a 400 once and cache the result per model id.
 _no_temp_cache: set[str] = set()
 
 

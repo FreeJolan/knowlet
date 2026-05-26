@@ -96,7 +96,7 @@ See [ADR-0003](../decisions/0003-wedge-pivot-ai-memory-layer.en.md) "Explicitly 
 - Content recommendation / discovery / social
 - Tasks / calendar / Todo
 - Replicating AI Chat product features
-- knowlet's chat doesn't displace Claude / Cursor
+- knowlet's chat doesn't displace Codex / Cursor
 
 ## Stage 2 (V1 → V2)
 
@@ -106,7 +106,7 @@ User-demand-driven extensions (after gray and production):
 
 ## Stage 3 (V2 → V3)
 
-knowlet's atomic capabilities open as MCP server: Claude Desktop / Cursor / other MCP-compatible tools call knowlet directly. Memory layer across all AI tools.
+knowlet's atomic capabilities open as MCP server: Codex / Cursor / other MCP-compatible tools call knowlet directly. Memory layer across all AI tools.
 
 ## Stage 4 (long-term)
 

@@ -157,6 +157,30 @@ def test_stream_propagates_llm_failure_as_error_event(tmp_path: Path):
     assert "network gone" in err.message
 
 
+def test_stream_propagates_iterated_llm_failure_as_error_event(tmp_path: Path):
+    """Real LLM clients are generator functions: auth / network errors
+    often raise only when the stream is iterated, not when it is created.
+    The chat event stream must still yield an ErrorEvent instead of
+    leaking a traceback through the CLI."""
+    v, cfg = _ready_vault(tmp_path)
+    runtime, _ = bootstrap_chat(v, cfg)
+
+    class BoomDuringIterationLLM:
+        def chat_stream(self, *a, **kw):
+            raise RuntimeError("invalid credentials")
+            yield  # pragma: no cover - marks this as a generator
+
+    runtime.session.llm = BoomDuringIterationLLM()  # type: ignore[assignment]
+    try:
+        events = list(runtime.session.user_turn_stream("hi"))
+    finally:
+        runtime.close()
+    assert len(events) == 1
+    err = events[0]
+    assert isinstance(err, ErrorEvent)
+    assert "invalid credentials" in err.message
+
+
 def test_stream_iter_limit_yields_error(tmp_path: Path):
     v, cfg = _ready_vault(tmp_path)
     runtime, _ = bootstrap_chat(v, cfg)

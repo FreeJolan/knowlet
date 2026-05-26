@@ -1,11 +1,3 @@
-# knowlet — Legacy agent entrypoint
-
-> **Legacy compatibility file.** The current source of truth for agent
-> workflow is [`AGENTS.md`](./AGENTS.md). Read that file first. This file
-> remains only for older tools that still auto-load `CLAUDE.md`; roadmap
-> phase names in this file mean the workflow gates, not product roadmap
-> stages such as `B1 今日反思入口`.
-
 # knowlet — Collaboration workflow for AI agents
 
 This file is the **ordered workflow** for how AI agents (Codex or

@@ -378,7 +378,7 @@ Linter 跑得起 ≠ 应该主动跑。具体触发规则:
 - **ADR-0009** — mining drafts review queue(认知契约第一个 mechanism)
 - 项目 memory:
   - `project_knowlet_ai_value_is_curated_workflow.md` —— 差异化论点
-  - `project_ai_design_borrow_from_claude_code.md` —— 借鉴策略
+  - 成熟 agent prompt 工程借鉴策略
   - `feedback_knowlet_not_manual_authoring_centric.md` —— 用户场景定位
   - `project_ai_rework_gated_on_kb_complete.md` —— Phase 3 启动前置
 - 外部 references(本 ADR §1 引用的认知科学):

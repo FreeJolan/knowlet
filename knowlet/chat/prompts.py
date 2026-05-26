@@ -83,7 +83,7 @@ def build_chat_system_prompt(profile_body: str | None) -> str:
     """Assemble the chat system prompt, optionally embedding the user profile.
 
     The profile is embedded for backends that honor `role: "system"`. For
-    backends that ignore system prompts (some Claude-Code-via-proxy setups),
+    backends that ignore system prompts (some local-CLI-proxy setups),
     `get_user_profile` is also a tool, so the LLM can fetch it on demand —
     `register_default_registry` ensures both paths reach the same data.
     """

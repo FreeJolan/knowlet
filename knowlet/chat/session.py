@@ -106,27 +106,31 @@ class ChatSession:
                 yield ErrorEvent(message=f"LLM stream error: {exc}")
                 return
 
-            for ev in stream:
-                if isinstance(ev, ReplyChunkEvent):
-                    content_buf.append(ev.text)
-                    yield ev
-                elif isinstance(ev, ToolCallEvent):
-                    tool_calls.append(ToolCall(id=ev.id, name=ev.name, arguments=ev.arguments))
-                    yield ev
-                elif isinstance(ev, ReplyDoneEvent):
-                    final_text = "".join(content_buf)
-                    assistant_msg = AssistantMessage(content=final_text, tool_calls=tool_calls)
-                    self.history = messages_with_assistant(self.history, assistant_msg)
+            try:
+                for ev in stream:
+                    if isinstance(ev, ReplyChunkEvent):
+                        content_buf.append(ev.text)
+                        yield ev
+                    elif isinstance(ev, ToolCallEvent):
+                        tool_calls.append(ToolCall(id=ev.id, name=ev.name, arguments=ev.arguments))
+                        yield ev
+                    elif isinstance(ev, ReplyDoneEvent):
+                        final_text = "".join(content_buf)
+                        assistant_msg = AssistantMessage(content=final_text, tool_calls=tool_calls)
+                        self.history = messages_with_assistant(self.history, assistant_msg)
 
-                    if not tool_calls:
-                        yield TurnDoneEvent(final_text=final_text)
-                        return
+                        if not tool_calls:
+                            yield TurnDoneEvent(final_text=final_text)
+                            return
 
-                    results: list[tuple[str, dict[str, Any]]] = []
-                    for tc in tool_calls:
-                        payload = self.registry.dispatch(tc.name, tc.arguments, self.ctx)
-                        yield ToolResultEvent(id=tc.id, name=tc.name, payload=payload)
-                        results.append((tc.id, payload))
-                    self.history = messages_with_tool_results(self.history, results)
+                        results: list[tuple[str, dict[str, Any]]] = []
+                        for tc in tool_calls:
+                            payload = self.registry.dispatch(tc.name, tc.arguments, self.ctx)
+                            yield ToolResultEvent(id=tc.id, name=tc.name, payload=payload)
+                            results.append((tc.id, payload))
+                        self.history = messages_with_tool_results(self.history, results)
+            except Exception as exc:
+                yield ErrorEvent(message=f"LLM stream error: {exc}")
+                return
 
         yield ErrorEvent(message="tool loop iteration limit reached")

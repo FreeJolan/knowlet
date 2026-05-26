@@ -5,7 +5,7 @@
 > **会自己整理的个人知识库。**
 > *A personal knowledge base that organizes itself.*
 
-Knowlet 是一个先自用、后开源的 AI 长期记忆层 + 减负型 PKM。AI 替你承担总结、分类、沉淀、检索这些低 ROI 的整理工作,你保留意图、思考、判断;同时,任何 AI 工具(Claude / Cursor / 其他)在跟你对话时,都可以从这个知识库主动检索你的私人累积知识 —— 不仅在 knowlet 内可见,也在你所有的 AI 工作流中可见。
+Knowlet 是一个先自用、后开源的 AI 长期记忆层 + 减负型 PKM。AI 替你承担总结、分类、沉淀、检索这些低 ROI 的整理工作,你保留意图、思考、判断;同时,任何 AI 工具(Codex / Cursor / 其他)在跟你对话时,都可以从这个知识库主动检索你的私人累积知识 —— 不仅在 knowlet 内可见,也在你所有的 AI 工作流中可见。
 
 > Knowlet 已完成 MVP(M0 端到端 CLI / M1 用户上下文层 / M2 极简 web UI),处于"先自用"阶段,真实使用反馈会驱动后续路线。详见 [ADR-0007](./docs/decisions/0007-mvp-slice.md) 与 [`docs/design/mvp-slice.md`](./docs/design/mvp-slice.md)。
 
@@ -39,7 +39,7 @@ knowlet web               # 浏览器界面 — http://127.0.0.1:8765
 >
 > **升级方法**(所有路径通用):`cd /path/to/knowlet && git pull && uv sync --extra embed && uv tool install -e . --force`(末尾这条只 `uv tool install` 路径需要)。
 
-LLM 服务可以是任何兼容 OpenAI Chat Completions 协议的端点 —— 官方 OpenAI、OpenRouter、Ollama,或用社区开源 wrapper 把 Claude Code / Codex / Cursor 等工具暴露成 OpenAI 协议。详见 [ADR-0005](./docs/decisions/0005-llm-integration-strategy.md)。
+默认 LLM 路径是本机 `cliproxyapi` + Codex/GPT 5.5:`http://127.0.0.1:8317/v1` + `gpt-5.5`。LLM 服务仍可以是任何兼容 OpenAI Chat Completions 协议的端点 —— 官方 OpenAI、OpenRouter、Ollama,或用社区 wrapper 把 Codex / Cursor 类工具暴露成 OpenAI 协议。详见 [ADR-0005](./docs/decisions/0005-llm-integration-strategy.md)。
 
 ## 升级流程(数据安全)
 
@@ -112,7 +112,7 @@ knowlet 的差异本质是 **不自动化 Organize、Distill 永远走审批**�
 
 ## 文档索引
 
-- [`CLAUDE.md`](./CLAUDE.md) — **AI agent 协作准则**(Claude Code / Cursor / 其他 agent 进项目第一件事就是读这个)。包含工程纪律、UI 设计强制工作流、三角色 personas、不造轮子原则等。
+- [`AGENTS.md`](./AGENTS.md) — **AI agent 协作准则**(Codex / Cursor / 其他 agent 进项目第一件事就是读这个)。包含工程纪律、UI 设计强制工作流、roadmap 读取顺序、不造轮子原则等。`CLAUDE.md` 仅保留作旧工具兼容入口。
 - [`docs/`](./docs/) — 设计文档总入口
   - [`decisions/`](./docs/decisions/) — 架构决策记录(ADR)
   - [`design/`](./docs/design/) — 活文档:架构 / 用户 / 组织策略 / 技术栈 / 语音

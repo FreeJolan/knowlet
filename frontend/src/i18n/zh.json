@@ -480,7 +480,7 @@
     "apiKeyHide": "隐藏明文",
     "baseUrlLabel": "Base URL",
     "baseUrlPlaceholder": "例: https://api.openai.com/v1",
-    "baseUrlHelp": "OpenAI 兼容端点。常见: OpenAI / Anthropic 官方、OpenRouter、本地 cliproxyapi (http://127.0.0.1:8317/v1)、LM Studio (http://localhost:1234/v1) 等。",
+    "baseUrlHelp": "OpenAI 兼容端点。默认本地路径: cliproxyapi + Codex/GPT 5.5 (http://127.0.0.1:8317/v1)。其它常见选项: OpenAI、OpenRouter、LM Studio (http://localhost:1234/v1) 等。",
     "modelLabel": "Model",
     "modelPlaceholder": "填好上面两项后点 ↻ 加载列表;也可直接键入",
     "refreshModels": "刷新模型列表",

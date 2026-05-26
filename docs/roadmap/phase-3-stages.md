@@ -1,3 +1,10 @@
+> ⚠️ **已被取代(2026-05-24)** — 本 7-Stage 计划已被 [`ai-modes-roadmap.md`](./ai-modes-roadmap.md) 取代。
+> 经 2026-05-24 与用户的重定向讨论,这套 envelope 全家桶 / linter 全库扫 / reorg planner / tidy advisor /
+> vault health dashboard / 知识·资料二分 / anti-drift 队列 大部分被判为**伪需求或早产**(建立在发明的
+> persona 上,而非用户真实需求)。新方向 = need-driven 的 **modes**(Cursor-for-notes:grounded 对谈 +
+> stance + diff-accept)。**请按 `ai-modes-roadmap.md` 推进。** 本文件仅作历史参考。
+> 另注意:`AGENTS.md` 的 Phase A/B/C/D/E 是协作流程,不是本 repo 的产品 roadmap 阶段;不要用本文件里的旧 stage/slice 名称推断下一步。
+
 # Phase 3 — 7 Stage 推进计划(2026-05-16 重打包)
 
 > **状态**: 临时活文档,供按 stage 推进 + TuTu 任务跟踪。整个 Phase 3 完成后可与 `phase-3-slicing.md` 合并或归档。
@@ -64,7 +71,7 @@
 **满足 ADR**:
 - ADR-0029 §4.5 知识/资料 asymmetric distinction(完整兑现:per-source 默认表 + 升降级不对称 + structure-visible meta 原则 + permanent learnability hover)
 - ADR-0023 §2 wiki_schema(multi-level merge + co-evolution 主动机制)
-- ADR-0024 §3.4 借鉴 Claude Code 的 Rule + Why 模式(模板硬约定)
+- ADR-0024 §3.4 借鉴成熟 agent 的 Rule + Why 模式(模板硬约定)
 
 **工期**: 5-7 天
 

@@ -9,7 +9,7 @@ from knowlet.chat.bootstrap import (
     bootstrap_chat,
 )
 from knowlet.cli.chat_repl import _handle_slash
-from knowlet.config import KnowletConfig, save_config
+from knowlet.config import DEFAULT_LLM_MODEL, KnowletConfig, save_config
 from knowlet.core.note import Note, new_id
 from knowlet.core.vault import Vault
 
@@ -43,7 +43,7 @@ def test_bootstrap_returns_usable_runtime(tmp_path: Path):
 
     runtime, report = bootstrap_chat(v, cfg)
     try:
-        assert runtime.config.llm.model == "claude-opus-4-7"  # default model
+        assert runtime.config.llm.model == DEFAULT_LLM_MODEL
         assert runtime.index is not None
         assert runtime.session is not None
         # The reindex sweep should have indexed the note we just wrote.

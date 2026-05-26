@@ -24,12 +24,12 @@ knowlet 阶段一**不持有任何 LLM API key,不代理任何对话流量**。�
 
 支持的 provider 通过**统一的 OpenAI 兼容协议**接入:
 
-- 官方 OpenAI / Anthropic / Google
+- 官方 OpenAI / Google / 其他 OpenAI-compatible 服务
 - 兼容协议聚合服务(OpenRouter / Together / DeepInfra 等)
 - 本地推理(Ollama / LM Studio / vLLM 等)
 - 用户自托管的 LLM 服务
 
-已经订阅 Claude / ChatGPT 等会员的用户,可以通过开源工具(如 `claude-code-router`)把订阅服务封装成 OpenAI 兼容 endpoint,接入 knowlet。knowlet 不为这种封装做官方背书,但兼容这种用法。
+已经订阅 ChatGPT/Codex 等会员的用户,可以通过本机 `cliproxyapi` 或类似工具把订阅服务封装成 OpenAI 兼容 endpoint,接入 knowlet。knowlet 不为这种封装做官方背书,但兼容这种用法。
 
 ### 配置形态:阶段一就提供可视化 UI
 
@@ -42,8 +42,8 @@ LLM 配置是用户上手 knowlet 的第一步,不能依赖配置文件:
 
 挖掘任务(ADR-0003 场景 B)与对话中的实时联网,knowlet **优先使用 LLM provider 自身的原生 web search 能力**:
 
-- Claude API 的 `web_search` server-side tool
 - OpenAI Responses API 的 `web_search_preview` tool
+- 其它 provider 的 server-side search 能力
 - 类似 server-side search 能力的其他兼容 provider
 
 含义:
@@ -58,8 +58,8 @@ LLM 配置是用户上手 knowlet 的第一步,不能依赖配置文件:
 
 knowlet 在 LLM 配置 UI 给出**推荐能力等级**:
 
-- 推荐:支持 tool use + 长上下文 + 较强推理(Claude Opus / GPT-4 级别)
-- 可用但能力下降:中等推理 + tool use(Claude Haiku / GPT-3.5 级别)
+- 推荐:支持 tool use + 长上下文 + 较强推理(GPT 5.5 / GPT-4 级别)
+- 可用但能力下降:中等推理 + tool use(较小模型 / GPT-3.5 级别)
 - 不推荐:无 tool use 或 tool use 不稳定的本地小模型
 
 用户选弱模型时,UI 显式提示**"编排表现可能下降"**(对应 [ADR-0004](./0004-ai-compose-code-execute.md) 的"依赖模型能力下限"代价)。
@@ -80,14 +80,14 @@ knowlet 在 LLM 配置 UI 给出**推荐能力等级**:
 - **数据流向干净**:用户对话直接到用户选定的 provider,knowlet 不在中间
 - **运营负担低(阶段一)**:knowlet 不持有 API key 不付 LLM 费用
 - **完全 vendor-agnostic**:用户切换 LLM 不影响 knowlet 数据
-- **网页搜索零额外配置**:对绝大多数主流用户(Claude / OpenAI / OpenRouter)开箱即用
+- **网页搜索零额外配置**:对绝大多数主流用户(OpenAI / OpenRouter / 其它带 server-side search 的 provider)开箱即用
 - **与 ADR-0002 数据主权完全对齐**:用户对 LLM 选择拥有完全控制权
 
 ### 代价 / 约束
 
 - **首次配置非零摩擦**:用户要找 API key 并填入,但目标用户(知识工作者 / 程序员)可接受
 - **LLM provider 看得到对话**:用户与 provider 之间是直接连接,knowlet 不能加密代理
-  - 缓解(用户侧):选支持 zero-retention 的 API tier(Anthropic / OpenAI 都有),或用本地 Ollama
+  - 缓解(用户侧):选支持 zero-retention 的 API tier,或用本地 Ollama
   - knowlet 在文档中明确告知此事实,不掩盖
 - **挖掘任务在不支持 web search 的 provider 上不可用**:阶段一不补 fallback
   - 用户 workaround:换支持 web search 的 provider 用于挖掘任务,日常对话仍可用本地模型

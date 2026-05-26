@@ -77,9 +77,9 @@ Tagged by category + mapped to knowlet:
 
 **This table is the gate**: every new AI-feature RFC must locate itself on a row and confirm the category. `creative` rows are auto-rejected.
 
-### 3. System prompt layered architecture (borrowing Claude Code)
+### 3. System prompt layered architecture (borrowing mature agents)
 
-Claude Code's prompt engineering is one of the most mature current implementations. **knowlet borrows its design patterns directly rather than reinventing them.**
+Mature agents such as Codex and Claude Code have validated a set of stable prompt-engineering patterns. **knowlet borrows those design patterns directly rather than reinventing them**; the runtime default is no longer tied to Claude.
 
 #### 3.1 Envelope: 7-layer structure
 
@@ -149,20 +149,20 @@ Not every AI task needs all 7 layers. Per-role required / optional / skip mappin
 
 `profile` is mostly chat-only (affects conversational tone); `activity` is mostly lint/tidy (knows what user's been focused on).
 
-#### 3.4 Eight specific Claude Code design patterns to adopt
+#### 3.4 Eight specific mature-agent design patterns to adopt
 
-| Pattern | How Claude Code does it | knowlet adoption |
+| Pattern | How mature agents do it | knowlet adoption |
 |---|---|---|
 | **Tagged section delimiters** | `<system-reminder>` / `<example>` etc. with stable anchors | All 7 envelope layers use explicit tags |
-| **Multi-level schema merging** | `~/.claude/CLAUDE.md` + `./CLAUDE.md` + per-folder | `~/.knowlet/wiki_schema.md` (cross-vault) + `vault/.knowlet/wiki_schema.md` (per-vault); 3rd level optional |
-| **Rule + Why pattern** | Every CLAUDE.md rule includes "why this is so" | `wiki_schema.md` template requires `**Why:**` line per rule |
+| **Multi-level schema merging** | global agent rules + project `AGENTS.md` + per-folder rules | `~/.knowlet/wiki_schema.md` (cross-vault) + `vault/.knowlet/wiki_schema.md` (per-vault); 3rd level optional |
+| **Rule + Why pattern** | Each agent rule includes "why this is so" | `wiki_schema.md` template requires `**Why:**` line per rule |
 | **Lazy tool loading** | `ToolSearch` loads tool schemas on demand | knowlet vault tools (create_card / start_quiz / list_drafts / ...) injected per active role |
 | **Periodic system reminders** | State nudges | "you have 12 pending drafts" injected when entering review queue; "last lint 14 days ago" when entering lint |
 | **`<example>` blocks** | Critical behaviors include 1-2 examples | Structured-output roles (editor / linter / tidy / reorg) MUST include 1-2 examples |
 | **Slash command routing** | `/loop` `/init` `/review` each carry a tailored prompt | knowlet chat REPL `:user` `:lint` `:quiz` etc.; each slash triggers a role and **auto-assembles its envelope** |
 | **Absolute language for rules** | "ALWAYS X" / "NEVER Y" | knowlet ADR-0013 §1 reads as strong language in prompts |
 
-**Special norm** (borrowed from Claude Code's behavior, not a prompt rule): **state your reasoning in one sentence before acting**. Editor advisor announces "based on 5 RAG-related notes already in `concepts/rag/`, suggest there"; reorg planner says "detected 23 notes scattered across 4 folders sharing topic X." **This lets the user dialogue with the reasoning** — that's how trust-building gets built into the prompt.
+**Special norm** (borrowed from mature agent behavior, not a prompt rule): **state your reasoning in one sentence before acting**. Editor advisor announces "based on 5 RAG-related notes already in `concepts/rag/`, suggest there"; reorg planner says "detected 23 notes scattered across 4 folders sharing topic X." **This lets the user dialogue with the reasoning** — that's how trust-building gets built into the prompt.
 
 ### 4. Seven AI roles
 
@@ -225,7 +225,7 @@ knowlet's AI splits into 7 non-overlapping roles. Each has well-defined inputs /
 - **Unified gate criterion**: new AI features can no longer be added ad-hoc; must locate themselves on §1 / §2 tables
 - **Unified prompt architecture**: no more per-task prompt assembly hacks; the 7-layer envelope is the single assembly path
 - **Clear AI role boundaries**: 7 roles don't overlap; implementation can't accidentally cross
-- **Borrowed from Claude Code**: don't reinvent prompt engineering's mature patterns
+- **Borrowed from mature agents**: don't reinvent prompt engineering's mature patterns
 
 ### Negative
 
@@ -242,7 +242,7 @@ knowlet's AI splits into 7 non-overlapping roles. Each has well-defined inputs /
 - **Retrieval quality v2** (RRF fusion / LLM rerank / query expansion / smart chunking)
   Borrows the 4 design points from [qmd](https://github.com/tobi/qmd), reimplemented in our Python stack. **Don't adopt qmd directly** (cross-language / forced 2GB models / architecture mismatch). Workload ~3-4 days, Phase 2 backend polish candidate, gated on dogfood signal that retrieval quality is a bottleneck.
 - **An 8th AI role**: this ADR locks 7 roles. New role proposals must be high-bar ADR decisions, not ad-hoc additions
-- **Per-folder `wiki_schema.md` overrides**: Claude Code supports directory-tree merging; knowlet defaults to global + vault (2 levels); per-folder is opt-in only when user actively requests it
+- **Per-folder `wiki_schema.md` overrides**: mature agents support directory-tree rule merging; knowlet defaults to global + vault (2 levels); per-folder is opt-in only when user actively requests it
 - **AI-rewrite-Note-bodies toggle**: even with a settings opt-in, this is forbidden; `creative` work has no back doors
 
 ## References
@@ -252,4 +252,4 @@ knowlet's AI splits into 7 non-overlapping roles. Each has well-defined inputs /
 - [ADR-0013](./0013-knowledge-management-contract.en.md) — "User owns, LLM proposes" root principle
 - [ADR-0023](./0023-llm-wiki-comparison-and-takeaways.en.md) — LLM Wiki comparison; this ADR is its architectural foundation
 - ADR-0018 data durability (pending) — `vault.events` stream is the source of §3 derived layers
-- Claude Code prompt engineering (the borrowed reference; no single public spec doc, derived from observed behavior)
+- Mature agent prompt engineering (the borrowed reference; no single public spec doc, derived from Codex / Claude Code behavior)

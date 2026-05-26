@@ -108,8 +108,8 @@ _EN: dict[str, str] = {
     "config.llm.title": "LLM backend",
     "config.llm.intro": (
         "Point knowlet at any OpenAI-compatible HTTP service.\n"
-        "Examples: OpenAI, Anthropic-via-OpenAI shim, OpenRouter, Ollama, "
-        "or a local wrapper that fronts your AI tool of choice.\n"
+        "Examples: OpenAI, OpenRouter, Ollama, or a local wrapper that "
+        "fronts Codex / your AI tool of choice.\n"
         "knowlet does not proxy or store credentials beyond this file."
     ),
     "config.base_url.prompt": "base URL",
@@ -194,8 +194,8 @@ _EN: dict[str, str] = {
     "palette.empty": "No matches.",
     "palette.askai.empty": "Type a question after `>`",
     "palette.askai.sub": "One-shot answer · stays out of chat history",
-    "palette.askai.streaming": "claude · thinking…",
-    "palette.askai.done": "claude · answer",
+    "palette.askai.streaming": "codex · thinking…",
+    "palette.askai.done": "codex · answer",
     "palette.newnote.empty": "Type a title after `+`",
     "palette.newnote.sub": "Create a new note in the vault",
     "palette.kbd.move": "select",
@@ -346,7 +346,7 @@ _EN: dict[str, str] = {
     "rail.ai.empty.notitle": "(pick a note first)",
     "rail.ai.expand.title": "Open chat in focus mode",
     "rail.ai.label.you": "you",
-    "rail.ai.label.ai": "claude",
+    "rail.ai.label.ai": "codex",
     "rail.ai.composer.hint": "↵ send · ⇧↵ newline",
     # Footer
     "footer.inbox.label": "Inbox",
@@ -453,8 +453,8 @@ _ZH: dict[str, str] = {
     "config.llm.title": "LLM 后端",
     "config.llm.intro": (
         "把 knowlet 接到任意兼容 OpenAI 协议的 HTTP 服务。\n"
-        "示例:OpenAI、Anthropic-via-OpenAI 转接层、OpenRouter、Ollama、"
-        "或者把你常用 AI 工具暴露成 OpenAI 端点的本地 wrapper。\n"
+        "示例:OpenAI、OpenRouter、Ollama,或者把 Codex / 你常用 AI 工具"
+        "暴露成 OpenAI 端点的本地 wrapper。\n"
         "knowlet 不代理也不离开本地存储凭据。"
     ),
     "config.base_url.prompt": "base URL",
@@ -535,8 +535,8 @@ _ZH: dict[str, str] = {
     "palette.empty": "没有匹配项。",
     "palette.askai.empty": "在 > 后面输入问题",
     "palette.askai.sub": "单次回答 · 不会进对话记录",
-    "palette.askai.streaming": "claude · 思考中…",
-    "palette.askai.done": "claude · 回答",
+    "palette.askai.streaming": "codex · 思考中…",
+    "palette.askai.done": "codex · 回答",
     "palette.newnote.empty": "在 + 后面输入标题",
     "palette.newnote.sub": "在笔记库里创建一条新笔记",
     "palette.kbd.move": "选择",
@@ -686,7 +686,7 @@ _ZH: dict[str, str] = {
     "rail.ai.empty.notitle": "(先选一条笔记)",
     "rail.ai.expand.title": "进入全屏对话",
     "rail.ai.label.you": "你",
-    "rail.ai.label.ai": "claude",
+    "rail.ai.label.ai": "codex",
     "rail.ai.composer.hint": "⏎ 发送 · ⇧⏎ 换行",
     # 底栏
     "footer.inbox.label": "收件箱",

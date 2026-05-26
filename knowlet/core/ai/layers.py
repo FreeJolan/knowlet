@@ -13,7 +13,7 @@ Source-by-source notes:
 - ``wiki-schema`` does multi-level merge of
   ``$KNOWLET_HOME/wiki_schema.md`` (or ``~/.knowlet/wiki_schema.md``
   if not overridden) + ``vault/.knowlet/wiki_schema.md`` — per
-  ADR-0024 §3.4 borrowed from Claude Code's multi-level CLAUDE.md
+  ADR-0024 §3.4 borrowed from mature agents' multi-level rules-file
   merge. Per-vault wins by appending last.
 - ``vault-shape`` derives ``total_notes`` / top folders / max depth
   by walking :meth:`Vault.iter_note_paths` (cheap; no DB hit needed).
@@ -43,7 +43,7 @@ from knowlet.core.ai.envelope import (
 
 
 def knowlet_home() -> Path:
-    """User-level knowlet config dir, parallel to ``~/.claude/``.
+    """User-level knowlet config dir, parallel to ``~/.codex/``.
 
     Defaults to ``~/.knowlet/``. Override via ``KNOWLET_HOME`` env var
     (used by tests to avoid leaking the dev's real home into fixtures,
@@ -89,7 +89,7 @@ class WikiSchemaSource:
     """``vault/.knowlet/wiki_schema.md`` — vault writing conventions.
 
     Multi-level merge (Phase 3 Stage 2, per ADR-0024 §3.4 "borrowed
-    from Claude Code's multi-level CLAUDE.md merge"):
+    from mature agents' multi-level rules-file merge"):
 
     1. ``~/.knowlet/wiki_schema.md`` (global, cross-vault) — your
        writing conventions that apply to **every** vault you open
@@ -116,8 +116,8 @@ class WikiSchemaSource:
         srcs: list[str] = []
 
         # Global level. ``~/.knowlet/`` is the cross-vault dotdir,
-        # parallel to git's ``~/.gitconfig`` or Claude Code's user-level
-        # ``~/.claude/CLAUDE.md``. Optional — most users may only set
+        # parallel to git's ``~/.gitconfig`` or Codex's user-level
+        # ``~/.codex/AGENTS.md``. Optional — most users may only set
         # the per-vault file. Test fixtures override via ``KNOWLET_HOME``
         # so a developer's real ``~/.knowlet/`` doesn't bleed into
         # vault-scoped tests.

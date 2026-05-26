@@ -8,7 +8,7 @@ read on every chat session, surfaced to the LLM via two complementary paths:
 1. The chat system prompt embeds the body so compliant backends see it
    without any tool call.
 2. The `get_user_profile` atomic tool exposes the same content so backends
-   that ignore role:'system' (e.g., Claude-Code-via-proxy) can still reach
+   that ignore role:'system' (e.g., local-CLI-proxy paths) can still reach
    it via a function call.
 
 See ADR-0008 for why these two paths share a single backend function.

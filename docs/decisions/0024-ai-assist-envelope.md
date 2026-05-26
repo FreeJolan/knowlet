@@ -77,9 +77,9 @@
 
 **这张表是入闸标准**:任何新 AI 功能 RFC 必须先在这里找到行,确认类别没错;`creative` 行的功能直接拒。
 
-### 3. 系统 prompt 分层架构(借鉴 Claude Code)
+### 3. 系统 prompt 分层架构(借鉴成熟 agent)
 
-Claude Code 的 prompt 工程是当前最成熟的实现之一。**knowlet 直接借鉴它的设计模式,不重新发明**。
+Codex/Claude Code 等成熟 agent 的 prompt 工程已经验证了一批稳定模式。**knowlet 直接借鉴这些设计模式,不重新发明**,运行时默认不绑定 Claude。
 
 #### 3.1 Envelope 7 层结构
 
@@ -149,20 +149,20 @@ Claude Code 的 prompt 工程是当前最成熟的实现之一。**knowlet 直�
 
 `profile` 仅 chat 需要(影响对话语气);`activity` 主要 lint/tidy 用(看用户最近关注什么)。
 
-#### 3.4 借鉴 Claude Code 的 8 个具体设计
+#### 3.4 借鉴成熟 agent 的 8 个具体设计
 
-| 设计 | Claude Code 怎么做 | knowlet 落地 |
+| 设计 | 成熟 agent 怎么做 | knowlet 落地 |
 |---|---|---|
 | **Tag 切片 + 稳定 anchor** | `<system-reminder>` / `<example>` 等显式 tag | §3.1 的 7 层 envelope 全用显式 tag |
-| **多层级 schema 合并** | `~/.claude/CLAUDE.md` + `./CLAUDE.md` + 子目录 | `~/.knowlet/wiki_schema.md`(跨 vault)+ `vault/.knowlet/wiki_schema.md`(per-vault),三层用得上时启用 |
-| **Rule + Why 模式** | 每条 CLAUDE.md 规则带"为什么这样做" | wiki_schema.md 模板硬约定:每条规则必须带 `**Why:**` 行 |
+| **多层级 schema 合并** | 全局 agent 规则 + 项目 `AGENTS.md` + 子目录规则 | `~/.knowlet/wiki_schema.md`(跨 vault)+ `vault/.knowlet/wiki_schema.md`(per-vault),三层用得上时启用 |
+| **Rule + Why 模式** | 每条 agent 规则带"为什么这样做" | wiki_schema.md 模板硬约定:每条规则必须带 `**Why:**` 行 |
 | **Lazy tool loading** | `ToolSearch` 按需载入工具 schema | knowlet vault tools(create_card / start_quiz / list_drafts / ...)按当前 role 注入 |
 | **System reminder 周期注入** | 状态 nudge | review queue 进入时注入"你有 12 条 pending drafts";lint 时注入"上次 lint 14 天前" |
 | **`<example>` 一两条具体范例** | 关键 behavior 都附 example | 结构化输出场景(editor / linter / tidy / reorg)必须配 1-2 个 example |
 | **Slash command 路由** | `/loop` `/init` `/review` 各自带专门 prompt | knowlet chat REPL `:user` `:lint` `:quiz` 等;每个 slash 触发一个 role,**自动按该 role 组装 envelope** |
 | **行为规则用绝对句** | "ALWAYS X" / "NEVER Y" | knowlet ADR-0013 §1 翻译进 prompt 用强语气 |
 
-**特别一条**(借鉴 Claude Code 的 norm,不是 prompt 里的 rule):**操作前先用一句话说明判断依据**。Editor advisor 输出推荐位置前先说"基于 5 篇 RAG 相关笔记都在 `concepts/rag/`,建议放那";reorg planner 输出 plan 前先说"检测到 23 篇散在 4 个文件夹,共同主题是 X"。**让用户能直接和理由对话**,这是把 trust-building 做进 prompt 的核心。
+**特别一条**(借鉴成熟 agent 的 norm,不是 prompt 里的 rule):**操作前先用一句话说明判断依据**。Editor advisor 输出推荐位置前先说"基于 5 篇 RAG 相关笔记都在 `concepts/rag/`,建议放那";reorg planner 输出 plan 前先说"检测到 23 篇散在 4 个文件夹,共同主题是 X"。**让用户能直接和理由对话**,这是把 trust-building 做进 prompt 的核心。
 
 ### 4. 七个 AI Role
 
@@ -225,7 +225,7 @@ knowlet 的 AI 拆成 7 个互不重叠的 role。每个 role 有明确的输入
 - **入闸标准统一**:新 AI 功能不能再 ad-hoc 加;必须先在 §1 / §2 表里定位
 - **Prompt 架构统一**:不再每个新 AI 任务自己拼 prompt;7 层 envelope 是单一组装路径
 - **AI role 边界清晰**:7 个 role 互不重叠,实施时不会越界
-- **借鉴 Claude Code**:不重新发明 prompt 工程的成熟模式
+- **借鉴成熟 agent**:不重新发明 prompt 工程的成熟模式
 
 ### Negative
 
@@ -242,7 +242,7 @@ knowlet 的 AI 拆成 7 个互不重叠的 role。每个 role 有明确的输入
 - **Retrieval quality v2**(RRF 融合 / LLM 重排 / query 扩展 / 智能分块)
   借鉴 [qmd](https://github.com/tobi/qmd) 的 4 个设计点,在 Python 栈里重做。**不直接用 qmd**(跨语言 / 2GB 模型 / 架构方向反向)。工作量约 3-4 天,Phase 2 backend polish 候选,触发条件 = dogfood 期发现检索质量是瓶颈。
 - **第 8 个 AI role**:本 ADR 锁定 7 个 role。新 role 提议必须是高门槛 ADR 决策,而不是 ad-hoc 加
-- **Per-folder wiki_schema.md** 子目录覆盖:Claude Code 支持目录树合并,knowlet 默认只支持 global + vault 两层,per-folder 等用户主动要才做
+- **Per-folder wiki_schema.md** 子目录覆盖:成熟 agent 支持目录树规则合并,knowlet 默认只支持 global + vault 两层,per-folder 等用户主动要才做
 - **AI 替写 Note 正文 toggle**:即便 settings 里开启也不允许;`creative` 类工作不开后门
 
 ## References
@@ -252,4 +252,4 @@ knowlet 的 AI 拆成 7 个互不重叠的 role。每个 role 有明确的输入
 - [ADR-0013](./0013-knowledge-management-contract.md) — "用户拥有,LLM 提案" 根原则
 - [ADR-0023](./0023-llm-wiki-comparison-and-takeaways.md) — LLM Wiki 对比,本 ADR 是它的架构基础
 - ADR-0018 数据耐久性(待起草)— `vault.events` 流是 §3 派生层的来源
-- Claude Code prompt 工程(借鉴对象;无单一公开规范文档,从行为观察得出)
+- 成熟 agent prompt 工程(借鉴对象;无单一公开规范文档,从 Codex/Claude Code 等行为观察得出)

@@ -15,7 +15,7 @@ A dogfood side-question:
 
 > Does an OpenAI-compat LLM not have web search?
 
-**Answer**: OpenAI Chat Completions itself has **no native web search**; Claude via OpenAI-compat proxy **typically isn't piped through** either (server tools have no protocol mapping). That means knowlet's chat flows (M0 CLI / M2 web / M7.1 capsules / M7.2 URL discuss / M7.4 quiz) all hit a wall when asked about real-time information — the LLM only knows what was true at training cutoff.
+**Answer**: OpenAI Chat Completions itself has **no native web search**; local CLI/OAuth models routed through an OpenAI-compat proxy typically do not receive provider server tools either (there is no stable protocol mapping). That means knowlet's chat flows (M0 CLI / M2 web / M7.1 capsules / M7.2 URL discuss / M7.4 quiz) all hit a wall when asked about real-time information — the LLM only knows what was true at training cutoff.
 
 This ADR adds the backend-agnostic path: a local `web_search` tool, registered via LLM function-calling. Any OpenAI-compat backend gets search ability for free. Aligned with [feedback_backend_agnostic](memory) and [ADR-0008](./0008-cli-parity-discipline.en.md).
 
@@ -23,9 +23,9 @@ This ADR adds the backend-agnostic path: a local `web_search` tool, registered v
 
 ### 1. Implementation — local function-calling tool
 
-**Don't depend on** vendor-specific server tools (Claude `web_search_20250305`, OpenAI `gpt-4o-search-preview`, etc.). Reasons:
+**Don't depend on** vendor-specific server tools (OpenAI `web_search_preview`, Claude `web_search_20250305`, etc.). Reasons:
 
-- knowlet's LLM backend is a user-configured OpenAI-compat endpoint (default `claude-opus-4-7` via cliproxyapi). Server tools aren't visible at the protocol layer.
+- knowlet's LLM backend is a user-configured OpenAI-compat endpoint (current default: `gpt-5.5` via local cliproxyapi). Server tools aren't visible at the protocol layer.
 - Aligned with [feedback_backend_agnostic](memory) — no per-backend integrations.
 - LLM function-calling is **mandatory** in the OpenAI-compat protocol; every backend supports it.
 
@@ -200,7 +200,7 @@ M7.5.3  CLI smoke + dogfood docs (README + config docs)
 
 - Per-session running cap + UI usage monitor → later polish, after dogfood data
 - Auto-saving search results into the vault → not done (overlaps with M7.2 URL capture; users who want to keep something can use that flow)
-- Multilingual query switching → let the LLM decide (Claude already does context-aware language)
+- Multilingual query switching → let the LLM decide.
 - LLM auto-fetching binaries (PDF / video) → trafilatura doesn't handle them; fetch_url rejects non-HTML
 
 ## References

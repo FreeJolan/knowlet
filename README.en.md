@@ -5,7 +5,7 @@
 > **A personal knowledge base that organizes itself.**
 > *会自己整理的个人知识库。*
 
-Knowlet is an AI long-term memory layer + lower-burden PKM, built first for personal use and gradually opened to the public. AI takes over the low-ROI organization work — summarizing, classifying, sedimenting, retrieving — while you keep intent, thinking, and judgment. At the same time, any AI tool (Claude / Cursor / others) can actively retrieve from this knowledge base during a conversation — so the memory is visible not just inside knowlet, but across all your AI workflows.
+Knowlet is an AI long-term memory layer + lower-burden PKM, built first for personal use and gradually opened to the public. AI takes over the low-ROI organization work — summarizing, classifying, sedimenting, retrieving — while you keep intent, thinking, and judgment. At the same time, any AI tool (Codex / Cursor / others) can actively retrieve from this knowledge base during a conversation — so the memory is visible not just inside knowlet, but across all your AI workflows.
 
 > Knowlet's MVP is implemented (M0 end-to-end CLI / M1 user-context layer / M2 minimal web UI). It is in the "self-use first" phase; real-use feedback drives the roadmap. See [ADR-0007](./docs/decisions/0007-mvp-slice.en.md) and [`docs/design/mvp-slice.en.md`](./docs/design/mvp-slice.en.md).
 
@@ -39,7 +39,7 @@ knowlet web               # browser UI — http://127.0.0.1:8765
 >
 > **Upgrade** (all paths): `cd /path/to/knowlet && git pull && uv sync --extra embed && uv tool install -e . --force` (the trailing `uv tool install` only matters for that path).
 
-The LLM endpoint can be any OpenAI-Chat-Completions-compatible service — OpenAI, OpenRouter, Ollama, or an open-source community wrapper that exposes Claude Code / Codex / Cursor as an OpenAI endpoint. See [ADR-0005](./docs/decisions/0005-llm-integration-strategy.en.md).
+The default LLM path is local `cliproxyapi` + Codex/GPT 5.5: `http://127.0.0.1:8317/v1` + `gpt-5.5`. The endpoint can still be any OpenAI-Chat-Completions-compatible service — OpenAI, OpenRouter, Ollama, or a community wrapper that exposes Codex / Cursor-style tools as an OpenAI endpoint. See [ADR-0005](./docs/decisions/0005-llm-integration-strategy.en.md).
 
 ## Upgrade flow (data safety)
 
@@ -112,7 +112,7 @@ The three scenarios share **one user context** (goals / preferences / mistake pa
 
 ## Document Index
 
-- [`CLAUDE.md`](./CLAUDE.md) — **Collaboration guidelines for AI agents** (Claude Code / Cursor / others should read this first). Engineering discipline, the mandatory UI design workflow, the three personas, no-wheel-reinvention principle, and more.
+- [`AGENTS.md`](./AGENTS.md) — **Collaboration guidelines for AI agents** (Codex / Cursor / others should read this first). Engineering discipline, the mandatory UI design workflow, roadmap reading order, no-wheel-reinvention principle, and more. `CLAUDE.md` remains only as a legacy-tool compatibility entrypoint.
 - [`docs/`](./docs/) — Top-level entry to design documents
   - [`decisions/`](./docs/decisions/) — Architecture Decision Records (ADR)
   - [`design/`](./docs/design/) — Living docs: architecture / users / organization / tech stack / voice
