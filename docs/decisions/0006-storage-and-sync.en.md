@@ -135,8 +135,8 @@ Reasons:
 Knowlet documentation must clearly inform users:
 
 - **The LLM provider sees the user's conversation + RAG-hit Note fragments**. Direct connection; knowlet does not proxy or filter. Privacy is determined by the user's LLM choice. For complete privacy → use local Ollama; for low-risk online use → choose a zero-retention API tier.
-- **Stage 1 uses LLM provider's native web_search**: fetching is done by the provider's backend, **user IP is not exposed to fetched sites**.
-- **Stage 2 fallback fetching backend** (if implemented): requests originate from user's local machine, **user IP is exposed to fetched sites** (same as visiting in a browser). UI prompts explicitly when this is enabled.
+- **Prefer provider-hosted web_search when the capability profile proves it available**: fetching is done by the provider's backend, **user IP is not exposed to fetched sites**.
+- **Local fallback fetching backend** (ADR-0017 `web_search` / `fetch_url`): requests originate from user's local machine, **user IP is exposed to fetched sites** (same as visiting in a browser). UI prompts explicitly when this is enabled.
 - **Conversation raw payload is local-cache-only, auto-cleared after 30 days, never synced**.
 
 ## Consequences

@@ -2,8 +2,10 @@
 
 > **English** | [中文](./0017-llm-web-search-tool.md)
 
-- Status: Proposed
+- Status: Amended
 - Date: 2026-05-03
+
+> **2026-05-28 amendment**: This ADR is no longer the primary path; it is the **fallback path**. Local `cliproxyapi` + Codex/GPT 5.5 has been verified to trigger provider-hosted `web_search` through `/v1/responses` and return a `web_search_call`. Future work should prefer hosted search via the capability profile. The local `web_search` / `fetch_url` path described here remains useful for endpoints without Responses/hosted search, and for data-flow choices where the user explicitly wants Brave/Tavily/Searx/DDG.
 
 ## Context
 
@@ -15,21 +17,24 @@ A dogfood side-question:
 
 > Does an OpenAI-compat LLM not have web search?
 
-**Answer**: OpenAI Chat Completions itself has **no native web search**; local CLI/OAuth models routed through an OpenAI-compat proxy typically do not receive provider server tools either (there is no stable protocol mapping). That means knowlet's chat flows (M0 CLI / M2 web / M7.1 capsules / M7.2 URL discuss / M7.4 quiz) all hit a wall when asked about real-time information — the LLM only knows what was true at training cutoff.
+**Answer (original 2026-05-03 judgment)**: OpenAI Chat Completions itself has **no native web search**; local CLI/OAuth models routed through an OpenAI-compat proxy typically do not receive provider server tools either (there is no stable protocol mapping). That means a knowlet chat flow that only uses Chat Completions hits a wall when asked about real-time information — the LLM only knows what was true at training cutoff.
 
-This ADR adds the backend-agnostic path: a local `web_search` tool, registered via LLM function-calling. Any OpenAI-compat backend gets search ability for free. Aligned with [feedback_backend_agnostic](memory) and [ADR-0008](./0008-cli-parity-discipline.en.md).
+**Correction (2026-05-28)**: that judgment applies to the Chat Completions surface only; it must not be extrapolated to the whole endpoint. `cliproxyapi`'s Codex/GPT 5.5 compatibility layer also exposes `/v1/responses`, and Responses can carry hosted `web_search`. Current strategy: probe whether the endpoint supports Responses hosted search; use hosted search when available; otherwise fall back to this ADR's local path.
+
+This ADR keeps the backend-agnostic fallback path: a local `web_search` tool, registered via LLM function-calling, so OpenAI-compatible backends without hosted search can still search. Aligned with [feedback_backend_agnostic](memory) and [ADR-0008](./0008-cli-parity-discipline.en.md).
 
 ## Decision
 
-### 1. Implementation — local function-calling tool
+### 1. Implementation — local function-calling fallback tool
 
-**Don't depend on** vendor-specific server tools (OpenAI `web_search_preview`, Claude `web_search_20250305`, etc.). Reasons:
+**Do not make the local tool the only primary path**, and **do not assume every endpoint has a server tool**. Reasons:
 
-- knowlet's LLM backend is a user-configured OpenAI-compat endpoint (current default: `gpt-5.5` via local cliproxyapi). Server tools aren't visible at the protocol layer.
-- Aligned with [feedback_backend_agnostic](memory) — no per-backend integrations.
-- LLM function-calling is **mandatory** in the OpenAI-compat protocol; every backend supports it.
+- knowlet's LLM backend is a user-configured OpenAI-compatible endpoint (current default: `gpt-5.5` via local cliproxyapi). The same endpoint can expose both Chat Completions and Responses; capabilities cannot be inferred from provider name alone.
+- When Responses hosted `web_search` is available, prefer it: no second search API key, provider-side fetching.
+- When hosted search is unavailable, the local `web_search` / `fetch_url` fallback stays backend-agnostic and lets users explicitly choose Brave/Tavily/Searx/DDG data flow.
+- LLM function-calling is available on many OpenAI-compatible backends, but must still be probed via the capability profile; do not treat it as a protocol inevitability.
 
-Register a local `web_search(query)` tool in the existing `core/tools/_registry.py`, peer to vault tools.
+Register a local `web_search(query)` tool in the existing `core/tools/_registry.py`, peer to vault tools. After F0, the capability profile decides per turn whether to inject hosted tools, local tools, or neither.
 
 ### 2. Backend choice — Provider Protocol + progressive defaults
 
@@ -66,7 +71,7 @@ max_per_turn = 3
 
 ### 3. When the LLM searches — automatic function-calling
 
-Register `web_search(query: string, top_k: int = 5)` in the tool registry → the LLM **calls it on its own** when it detects a knowledge gap (function-calling protocol guarantees this).
+When the capability profile confirms that the endpoint supports Chat Completions tool calling, register `web_search(query: string, top_k: int = 5)` in the tool registry → the LLM can **choose to call it** when it detects a knowledge gap.
 
 **No mandatory prefix** (`>>search` etc.): breaks conversation flow, contradicts ADR-0012's "AI is a tool, not a ritual."
 
@@ -149,7 +154,7 @@ A "this month: X/Y" UI counter would be nice, but not in M7.5 scope (monitoring 
 - ✅ Web right-rail AI dock + chat focus mode
 - ✅ M7.1 capsule chat / M7.2 URL discuss (both go through chat session)
 - ❌ M7.4 quiz **not wired** (quiz uses a separate generation/grading prompt; quizzes don't need web search)
-- ✅ CLI `knowlet chat` REPL — auto-gets capability (zero extra work)
+- ✅ CLI `knowlet chat` REPL — gets the same local fallback capability through the capability profile
 - ❌ Cmd+K palette `>` ask-once **not wired** — ask-once is ephemeral one-shot; adding search would slow it and conflict with "quick question" intent
 
 ### 8. UI display
@@ -178,8 +183,8 @@ M7.5.3  CLI smoke + dogfood docs (README + config docs)
 ### Positive
 
 - knowlet can finally answer real-time questions ("latest LLM eval methods?" / "current transformers library version?")
-- Backend-agnostic — every OpenAI-compat LLM gets the capability
-- Progressive defaults: zero-setup works (DDG fallback), better quality is one Brave key away
+- Backend-agnostic fallback — any endpoint with working tool calling can get local search capability
+- Fallback progressive defaults: when hosted search is unavailable, zero-setup works (DDG fallback), better quality is one Brave key away
 - Two-stage search → fetch reuses M7.2 url_capture, no parallel implementation
 - Auto function-calling doesn't break conversation flow; tool traces let users see what the AI is doing
 

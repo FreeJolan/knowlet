@@ -141,12 +141,14 @@ CLI 模式 `knowlet chat` 没有"粘贴检测"概念;CLI 用户通过 `:capture 
 
 dogfood 期间用户 side-asked:OpenAI-compat 后端是否有原生 web search 能力。
 
-**答**:OpenAI Chat Completions 协议本身**没有**;Claude 经 OpenAI-compat 代理通常也**没接**(因为 server tools 没有协议映射)。
+**答(2026-05-03 原判断)**:OpenAI Chat Completions 协议本身**没有**;Claude 经 OpenAI-compat 代理通常也**没接**(因为 server tools 没有协议映射)。
+
+**2026-05-28 修正**:这只说明 Chat Completions surface,不能代表整个 endpoint。`cliproxyapi` + Codex/GPT 5.5 已验证 `/v1/responses` 可承载 hosted `web_search`;主动联网的最新决策见 [ADR-0017 amendment](./0017-llm-web-search-tool.md) 与 [ADR-0005 amendment](./0005-llm-integration-strategy.md)。
 
 **对 knowlet**:
 
 - M7.2 的 URL 录入是**用户主动给链接**,不是 LLM 主动搜
-- 如果未来要做"LLM 主动搜索网页",路径是**写本地 `web_search` tool**(类似已有 vault tools),走 LLM function calling,跟 OpenAI-compat 后端解耦,符合 [feedback_backend_agnostic](memory)
+- 如果未来要做"LLM 主动搜索网页",路径是**优先用 capability profile 证实可用的 hosted search;否则写本地 `web_search` tool fallback**(类似已有 vault tools),走 LLM function calling,跟 OpenAI-compat 后端解耦,符合 [feedback_backend_agnostic](memory)
 - 这是独立 feature,起单独 ADR-0017,不进 M7.2
 
 ### 8. Phase plan

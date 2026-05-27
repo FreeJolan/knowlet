@@ -31,6 +31,25 @@ knowlet 阶段一**不持有任何 LLM API key,不代理任何对话流量**。�
 
 已经订阅 ChatGPT/Codex 等会员的用户,可以通过本机 `cliproxyapi` 或类似工具把订阅服务封装成 OpenAI 兼容 endpoint,接入 knowlet。knowlet 不为这种封装做官方背书,但兼容这种用法。
 
+### Amendment 2026-05-28:能力由端点实测,不由 provider 标签决定
+
+用户配置时仍只需要填 endpoint URL / API key / 模型名。knowlet 不要求用户额外选择"OpenAI / cliproxyapi / Ollama / OpenRouter"这类 provider profile;这会把实现细节暴露给用户,也无法覆盖用户自建代理。
+
+运行时能力主体改为:
+
+```
+base_url + api_key/account + model + API surface
+```
+
+含义:
+
+- **模型名只提供初始假设**:例如 `gpt-5.5` 可被视为大概率支持 tool use / 长上下文 / 强推理,但不能单独证明当前 endpoint 暴露了哪些 tools。
+- **端点包装层同样重要**:同一个模型经官方 API、`cliproxyapi`、OpenRouter、本地网关转发时,可能暴露不同的 API surface 与 tool 能力。
+- **应用启动/设置测试/`knowlet doctor` 负责探测**:最少探测文本、流式、Chat Completions tool calling、Responses、hosted web search,并把结果缓存成 capability profile。
+- **失败归因要具体**:例如"模型可能支持 hosted search,但当前 endpoint 的 `/v1/responses` 不支持"比"GPT 5.5 不支持搜索"更准确。
+
+2026-05-28 本机 dogfood 事实:`cliproxyapi` + Codex/GPT 5.5 的 `/v1/chat/completions` 可做普通文本与基础工具协议兼容;`/v1/responses` 可触发 hosted `web_search` 并返回 `web_search_call`。因此后续 AI 底层重构优先让 knowlet 同时理解 Chat Completions 与 Responses。
+
 ### 配置形态:阶段一就提供可视化 UI
 
 LLM 配置是用户上手 knowlet 的第一步,不能依赖配置文件:
@@ -38,21 +57,21 @@ LLM 配置是用户上手 knowlet 的第一步,不能依赖配置文件:
 - **可视化设置面板**:endpoint URL / API key / 模型名 / 测试连接
 - 配置文件作为**额外**的导出 / 备份机制,给希望版本化配置的用户使用
 
-### 网页搜索优先使用 LLM provider 的原生 tool
+### 网页搜索:优先 hosted tool,本地 tool 作 fallback
 
-挖掘任务(ADR-0003 场景 B)与对话中的实时联网,knowlet **优先使用 LLM provider 自身的原生 web search 能力**:
+挖掘任务(ADR-0003 场景 B)与对话中的实时联网,knowlet **优先使用 capability profile 证实可用的 provider-hosted web search 能力**:
 
-- OpenAI Responses API 的 `web_search_preview` tool
+- OpenAI Responses API 的 `web_search` tool
 - 其它 provider 的 server-side search 能力
-- 类似 server-side search 能力的其他兼容 provider
+- 类似 server-side search 能力的其他兼容 endpoint / proxy
 
 含义:
 
 - 用户不需要再配第二个搜索 API key
 - 抓取由 LLM provider 后端完成,**用户 IP 不直接暴露给被抓站**
-- knowlet 不需要自建搜索基础设施
+- knowlet 不需要在主路径上自建搜索基础设施
 
-对**不支持原生 web search 的 provider**(部分本地模型、部分小厂),阶段一**不提供 fallback**,而是在 UI 显式标注"当前 LLM 不支持网页搜索,挖掘任务不可用"。Fallback 路径(knowlet 内置搜索后端 / SearXNG / Brave API 等)推迟到有真实需求时再做。
+对**不支持 hosted web search 的 endpoint**(部分本地模型、部分小厂、部分只实现 Chat Completions 的网关),knowlet 可以落到 [ADR-0017](./0017-llm-web-search-tool.md) 的本地 `web_search` / `fetch_url` fallback。若 hosted 与本地 fallback 都不可用,UI 才显式标注"当前 LLM 配置不支持网页搜索,相关任务不可用"。
 
 ### LLM 能力等级提示
 
@@ -89,14 +108,14 @@ knowlet 在 LLM 配置 UI 给出**推荐能力等级**:
 - **LLM provider 看得到对话**:用户与 provider 之间是直接连接,knowlet 不能加密代理
   - 缓解(用户侧):选支持 zero-retention 的 API tier,或用本地 Ollama
   - knowlet 在文档中明确告知此事实,不掩盖
-- **挖掘任务在不支持 web search 的 provider 上不可用**:阶段一不补 fallback
-  - 用户 workaround:换支持 web search 的 provider 用于挖掘任务,日常对话仍可用本地模型
+- **挖掘任务依赖 capability profile**:hosted search 优先;不支持时可走 ADR-0017 本地 fallback;两者都没有才不可用
+  - 用户 workaround:换支持 hosted search 的 endpoint 用于挖掘任务,日常对话仍可用本地模型
 - **OpenAI 兼容协议的统一性有限**:不同 provider 在 tool calling / streaming / 错误处理上存在细节差异
   - 工程上需要 provider-specific 适配层,但保持对外 API 统一
 
 ### 后续扩展点(不在本 ADR 承诺时间表)
 
-- knowlet 内置搜索后端作为 fallback
+- 更强的 knowlet 内置搜索后端 / 学术文献搜索 provider
 - 加密代理层
 - LLM 计费抽象的实际填充
 

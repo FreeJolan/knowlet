@@ -31,6 +31,25 @@ Supported providers connect via a **unified OpenAI-compatible protocol**:
 
 Users who already subscribe to ChatGPT/Codex can use local `cliproxyapi` or similar tools to wrap their subscription as an OpenAI-compatible endpoint and connect it to knowlet. Knowlet does not officially endorse such wrapping but is compatible with it.
 
+### Amendment 2026-05-28: Capabilities Are Probed From the Endpoint, Not Inferred From a Provider Label
+
+Users still configure only endpoint URL / API key / model name. Knowlet does not require an extra "OpenAI / cliproxyapi / Ollama / OpenRouter" provider-profile choice; that would expose implementation detail to the user and still fail for self-hosted proxies.
+
+The runtime capability subject is:
+
+```
+base_url + api_key/account + model + API surface
+```
+
+Implications:
+
+- **The model name only seeds an initial assumption**: for example, `gpt-5.5` can be treated as likely to support tool use / long context / strong reasoning, but it does not by itself prove which tools the configured endpoint exposes.
+- **The endpoint wrapper matters too**: the same model can expose different API surfaces and tool abilities through the official API, `cliproxyapi`, OpenRouter, or a local gateway.
+- **Settings tests / app startup / `knowlet doctor` probe the endpoint**: at minimum text, streaming, Chat Completions tool calling, Responses, and hosted web search; results are cached as a capability profile.
+- **Failure attribution should be specific**: "the model may support hosted search, but this endpoint's `/v1/responses` path does not" is more accurate than "GPT 5.5 does not support search."
+
+2026-05-28 local dogfood fact: `cliproxyapi` + Codex/GPT 5.5 supports normal text and basic tool-protocol compatibility through `/v1/chat/completions`; `/v1/responses` can trigger hosted `web_search` and return a `web_search_call`. The AI foundation refactor should therefore make knowlet understand both Chat Completions and Responses.
+
 ### Configuration Form: Visualized UI in Stage 1
 
 LLM configuration is the user's first step with knowlet; it cannot depend on a config file:
@@ -38,20 +57,21 @@ LLM configuration is the user's first step with knowlet; it cannot depend on a c
 - **Visualized settings panel**: endpoint URL / API key / model name / test connection
 - Config files serve as an **additional** export / backup mechanism for users who want to version their configuration
 
-### Web Search Prefers the LLM Provider's Native Tool
+### Web Search: Prefer Hosted Tools, Use Local Tools as Fallback
 
-For mining tasks (ADR-0003 Scenario B) and real-time web access during conversation, knowlet **prefers the LLM provider's own native web search capability**:
+For mining tasks (ADR-0003 Scenario B) and real-time web access during conversation, knowlet **prefers provider-hosted web search when the capability profile proves it is available**:
 
-- OpenAI Responses API's `web_search_preview` tool
+- OpenAI Responses API's `web_search` tool
 - Other providers with similar server-side search capability
+- Similar server-side search capability exposed by compatible endpoints / proxies
 
 Implications:
 
 - User does not need to configure a second search API key
 - Fetching is done by the LLM provider's backend; **the user's IP is not exposed to the fetched site**
-- No need for knowlet to build search infrastructure
+- No need for knowlet to build search infrastructure on the primary path
 
-For **providers without native web search** (some local models, some smaller vendors), stage 1 **does not provide a fallback**, but explicitly indicates in the UI: "Current LLM does not support web search; mining tasks unavailable." Fallback paths (knowlet's own search backend / SearXNG / Brave API, etc.) are deferred until a real need arises.
+For **endpoints without hosted web search** (some local models, smaller vendors, or gateways that only implement Chat Completions), knowlet can fall back to [ADR-0017](./0017-llm-web-search-tool.en.md)'s local `web_search` / `fetch_url` path. Only when both hosted search and local fallback are unavailable should the UI say "Current LLM configuration does not support web search; related tasks unavailable."
 
 ### LLM Capability Tier Hint
 
@@ -88,14 +108,14 @@ This is engineering preparation, not a stage 1 deliverable.
 - **LLM provider sees the conversation**: user-provider connection is direct; knowlet cannot encrypt-proxy
   - User-side mitigation: choose a zero-retention API tier; or use local Ollama
   - Knowlet documentation explicitly states this fact, no concealment
-- **Mining tasks unavailable on providers without web search**: stage 1 has no fallback
-  - Workaround: switch to a provider with web search for mining tasks; daily chat can still use local models
+- **Mining tasks depend on the capability profile**: hosted search first; ADR-0017 local fallback when hosted search is missing; unavailable only if both are absent
+  - Workaround: switch to an endpoint with hosted search for mining tasks; daily chat can still use local models
 - **OpenAI-compatible protocol's uniformity is limited**: providers differ in tool calling / streaming / error handling details
   - Engineering needs provider-specific adapter layers but maintains a unified external API
 
 ### Future Extensions (No Schedule Committed in This ADR)
 
-- Knowlet's own search backend as fallback
+- Stronger knowlet-owned search backends / scholarly-search providers
 - Encryption proxy layer
 - Actual filling of the LLM billing abstraction
 

@@ -39,7 +39,7 @@ knowlet web               # 浏览器界面 — http://127.0.0.1:8765
 >
 > **升级方法**(所有路径通用):`cd /path/to/knowlet && git pull && uv sync --extra embed && uv tool install -e . --force`(末尾这条只 `uv tool install` 路径需要)。
 
-默认 LLM 路径是本机 `cliproxyapi` + Codex/GPT 5.5:`http://127.0.0.1:8317/v1` + `gpt-5.5`。LLM 服务仍可以是任何兼容 OpenAI Chat Completions 协议的端点 —— 官方 OpenAI、OpenRouter、Ollama,或用社区 wrapper 把 Codex / Cursor 类工具暴露成 OpenAI 协议。详见 [ADR-0005](./docs/decisions/0005-llm-integration-strategy.md)。
+默认 LLM 路径是本机 `cliproxyapi` + Codex/GPT 5.5:`http://127.0.0.1:8317/v1` + `gpt-5.5`。LLM 服务仍可以是任何 OpenAI-compatible 端点 —— 官方 OpenAI、OpenRouter、Ollama,或用社区 wrapper 把 Codex / Cursor 类工具暴露成 OpenAI 协议。knowlet 会通过配置/doctor 探测端点支持的能力(文本、流式、tool calling、Responses、hosted web search),不要求用户手动声明 provider 来源。详见 [ADR-0005](./docs/decisions/0005-llm-integration-strategy.md) 与 [`docs/roadmap/ai-modes-roadmap.md`](./docs/roadmap/ai-modes-roadmap.md)。
 
 ## 升级流程(数据安全)
 

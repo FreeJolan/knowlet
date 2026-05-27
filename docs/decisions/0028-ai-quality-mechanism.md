@@ -5,6 +5,8 @@
 - Status: Accepted
 - Date: 2026-05-14
 
+> **2026-05-28 amendment**:本 ADR 仍作为 AI 输出质量约束,但不再定义当前执行顺序。当前执行顺序以 [`docs/roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md) 为准:阶段 B 已通过 dogfood,下一步先做 F0 AI 底层能力重构。默认运行时已迁移到 `cliproxyapi` + Codex/GPT 5.5;Claude 相关描述只保留为历史参考或成熟 agent 设计模式来源。
+
 ## Context
 
 ADR-0024 钉了 AI 能力的 envelope 结构(7 层 prompt)+ 7 个 role + 工作类别约束(mech / hybrid / creative)。它解决了"AI 该做什么、不该做什么、怎么分层组装上下文"。
@@ -146,7 +148,7 @@ Phase 3 每个 role slice 在 review 前,必须证明这 8 条都满足:
 - 不内置 cost dashboard 高级功能;但用户能 export `vault.events` 自己算
 
 **延迟**:
-- Chat first-token P50 ≤ 2s / P95 ≤ 5s(基于 Sonnet 4.6 在 cliproxyapi 上的实测基线)
+- Chat first-token P50 ≤ 2s / P95 ≤ 5s(2026-05-28 后需用 `cliproxyapi` + Codex/GPT 5.5 重新量测;旧 Sonnet 基线仅作历史参考)
 - Editor advisor 总响应 P95 ≤ 1.5s(debounce 1-2s + LLM ≤ 1.5s,用户感知 ≤ 3s)
 - Linter 全 vault 扫 P95 ≤ 30s for 1000 notes;期间必须有 progress bar
 

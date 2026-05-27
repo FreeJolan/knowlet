@@ -7,6 +7,8 @@
 
 > **2026-05-08 amendment**:Phase 1 D 追加(Obsidian-baseline UX 6 项缺口),原 8-12 周 → 10-14 周。详见 [`docs/roadmap/README.md` §"重写后的 Phase 计划"](../roadmap/README.md#重写后的-phase-计划)。触发原因:Phase 1 ABC 完成 + GATE 2 dogfood 通过后实测对比 Obsidian 仍有 6 个用户每天会撞到的 baseline 缺口(多 tab / 全文搜索面板 / Properties UI / 暗色 toggle / Outline 面板 / hover preview)。
 
+> **2026-05-28 amendment**:本 ADR 的 Phase 0-4 顺序已完成其"知识库优先"纠偏使命,但不再是 AI 主线的执行清单。当前 AI 工作请看 [`docs/roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md);阶段 B 已 dogfood 通过,下一步是 F0 AI 底层能力重构,不是旧 Phase 3 envelope 全家桶或直接 Quiz/E。
+
 ## Context
 
 [ADR-0012](./0012-notes-first-ai-optional.md) 把身份钉为"笔记软件 + AI 是可选增强";

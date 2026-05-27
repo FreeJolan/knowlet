@@ -8,6 +8,13 @@ Per-user / per-machine preferences live in `~/.codex/AGENTS.md` (not
 committed). Architectural decisions live in `docs/decisions/` (ADRs).
 This file covers **process**.
 
+Current roadmap pointer (2026-05-28): for AI product work, use
+`docs/roadmap/ai-modes-roadmap.md` as the source of truth. The old
+`docs/roadmap/phase-3-stages.md`, `docs/roadmap/phase-3-slicing.md`,
+and ADR-0021 Phase 3 envelope plan are historical context only. Stage B
+has passed dogfood; the next product step is F0 AI capability foundation
+refactor, not direct Quiz/E work.
+
 ---
 
 ## Personas — used at B.3

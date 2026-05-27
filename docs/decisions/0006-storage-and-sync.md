@@ -137,8 +137,8 @@ UI 立即可用,向量索引在后台填充,期间 RAG 命中率渐进上升。
 knowlet 文档需明确告知用户:
 
 - **LLM provider 看得到用户的对话 + RAG 命中的 Note 片段**。这是直接连接,knowlet 不代理也不过滤。隐私由用户的 LLM 选择决定。想完全私密 → 用本地 Ollama;想联网但低风险 → 选 zero-retention API tier。
-- **阶段一用 LLM provider 自带 web_search**:抓取由 provider 后端做,**用户 IP 不暴露给被抓站**。
-- **阶段二启用 fallback 抓取后端**(若实现):从用户本机发起请求,**用户 IP 会暴露给被抓站**(与用浏览器访问相同)。UI 在启用时显式提示。
+- **优先用 capability profile 证实可用的 provider-hosted web_search**:抓取由 provider 后端做,**用户 IP 不暴露给被抓站**。
+- **启用本地 fallback 抓取后端**(ADR-0017 `web_search` / `fetch_url`):从用户本机发起请求,**用户 IP 会暴露给被抓站**(与用浏览器访问相同)。UI 在启用时显式提示。
 - **对话 raw payload 仅本地缓存,30 天后自动清理,永不同步**。
 
 ## Consequences

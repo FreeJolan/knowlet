@@ -5,6 +5,7 @@
 - **取代**: [`phase-3-stages.md`](./phase-3-stages.md) 的 7-Stage 计划 + [`phase-3-slicing.md`](./phase-3-slicing.md) 的 slice 切分。那套（envelope 7 层 / linter 全库扫 / reorg planner / tidy advisor / vault health dashboard / 知识·资料二分 / anti-drift 队列）大部分被判为**伪需求或早产**——它们建立在发明的 persona（小红/小张/新用户）上,而非用户的真实需求。
 - **命名警告**:`AGENTS.md` 里的 Phase A/B/C/D/E 是 agent 工作流;本文件的 阶段 A/B/C/D/E 是产品 roadmap。问"下一阶段/Phase B"时,以本文件为准。
 - **当前默认 LLM(2026-05-27)**:本机 `cliproxyapi` + Codex/GPT 5.5(`http://127.0.0.1:8317/v1`, `gpt-5.5`)。历史文档里 Claude/Claude Code 相关内容只作当时参考,不再作为默认接入或 dogfood 路径。
+- **当前执行顺序(2026-05-28 重排)**:阶段 B 已由用户 dogfood 通过。主线暂不继续直接做阶段 E/Quiz;下一步先做**插队阶段 F0 — AI 底层能力重构**。原因:cliproxyapi/Codex 暴露了 Chat Completions 与 Responses、hosted tools、本地 tools、模型/端点能力探测之间的边界;如果不先把 capability layer 钉牢,后续 mode 会继续把 provider、model、tool 支持混成一团。
 - 根原则锚仍是 [ADR-0029](../decisions/0029-cognitive-contract.md):**用户是最后一个字节**（现由 diff-accept 兑现）、AI 是脚手架、输出可追溯。ADR-0029 衍生的**维护类机制**（anti-drift 队列 / dashboard / 知识资料二分）**推迟到有真实大 vault 信号再说**。
 
 ## 为什么重定向（2026-05-24 讨论）
@@ -66,7 +67,27 @@ knowlet AI = **Cursor-for-notes**。唯一不可替代价值 = grounded 对谈 +
 - [x] D1「查这篇」→ AI 报告错漏,指向具体段落（不改正文）— 2026-05-27 新增 `check_note` 核心 + `POST /api/chat/note/{id}/check` + `knowlet check-note`;单篇用户触发,报告-only,不改正文/不标 status
 - [x] D2 报告里的修正一键接 A 的 diff 流 — 2026-05-27 Discuss pane 新增“查这篇”;报告 finding 的“修正”复用 `propose-edit` → DiffReview → 用户应用;E2E + 真 `gpt-5.5` CLI dogfood + 截图 `/tmp/knowlet-d-check-note.png`
 
-## 阶段 E — 出题考我 quiz（need 4 下半,最低频,垫底）
+**2026-05-28 UI 修正**:用户 dogfood 后,"查这篇/改这篇"不再作为短标签快捷操作直接露出。Discuss pane 的入口改成**推荐用户输入的问题**:点击后等同用户发送一条诚实展示在聊天记录里的自然语言问题,再进入普通流式对谈。`check_note` / `propose-edit` 后端能力保留,但后续若要重新把 D 报告 UI 接回来,必须先经过 F0 的 tool/capability/event 层,不能再以绕过对话流的按钮体验回归。
+
+## 插队阶段 F0 — AI 底层能力重构（下一步）
+
+> 目标:把"模型是谁"、"端点怎么包了一层"、"API surface 是 Chat Completions 还是 Responses"、"hosted tool 与 knowlet 本地 tool 谁执行"拆开。用户填好 AI 配置后,knowlet 应该自动建立能力画像,而不是要求用户手动声明"我是 cliproxyapi / OpenAI / 某某 provider"。
+
+- [ ] F0.1 `CapabilityProfile`:以 `base_url + api_key/account + model + API surface` 为运行时能力主体;用模型已知信息做初始假设,再用 `doctor`/设置页探测验证并缓存结果
+- [ ] F0.2 Responses adapter:新增 `/v1/responses` 通路,能解析 output item、stream event、tool call、hosted `web_search`;Chat Completions 继续保留作基础文本/简单工具调用路径
+- [ ] F0.3 Tool registry v2:区分 provider-hosted tools(如 Responses `web_search`)与 knowlet-local tools(如 vault/search/fetch);应用负责执行本地 tools,provider 负责执行 hosted tools,每轮明确选择
+- [ ] F0.4 Prompt/事件统一:Discuss、Digest、Check-note、CLI 共享同一套 AI invocation/event generator;UI 渲染 tool trace/生成状态/Markdown,CLI 能真实走同一路径
+- [ ] F0.5 联网文献/资料路径:优先用 capability profile 中可用的 hosted web search;不可用时才落到 ADR-0017 的本地 `web_search`/`fetch_url` fallback。后续可在此之上加 `search_papers` 等领域工具
+- [ ] F0.6 设置与 doctor:用户只填 endpoint/key/model;`knowlet doctor` 与设置页显示"文本/流式/tool calling/Responses/hosted web_search"探测结果,失败时把问题限定到端点协议兼容而不是 prompt 猜测
+
+**F0 完成门槛**:
+
+- 本机 `cliproxyapi` + `gpt-5.5` 跑通 Chat Completions 与 Responses 两条最小路径
+- Responses hosted `web_search` 能在真实模型上触发,且 tool trace 可见
+- CLI 与 UI 至少各跑一条真实模型路径,不只靠 stub pytest
+- 文档/doctor 明确说明:能力由端点实测 + 模型已知信息共同决定,不能只看模型名
+
+## 阶段 E — 出题考我 quiz（need 4 下半,最低频,垫底;F0 后恢复）
 
 > 结构化状态机:定知识点 → 生成题+答案 → 逐题问答 → rubric 评分 → 记分板。复用已 ship 的 quiz/SRS 后端(M7.4)。
 
@@ -83,9 +104,9 @@ knowlet AI = **Cursor-for-notes**。唯一不可替代价值 = grounded 对谈 +
 
 ## 工期 & 排程
 
-**剩余粗估** ≈ **4.5–6.5 单人天**（E ≈ 3–5d · 收尾 ≈ 1.5d）。B/C/D 已完成。
+**剩余粗估** ≈ **8.5–12.5 单人天**（F0 ≈ 4–6d · E ≈ 3–5d · 收尾 ≈ 1.5d）。B/C/D 已完成,但 AI 底层能力要先补课。
 
-**建议顺序**:A/B/C/D 已完成 → E。A 是引擎必须先稳;E 是下一段主线。
+**建议顺序**:A/B/C/D 已完成 → **F0 AI 底层能力重构** → E。不要再根据旧 `phase-3-*` 文档或本文件旧版结论把 E 当成立刻下一步。
 
 ## 明确不做（旧计划里、用户场景没点到的）
 

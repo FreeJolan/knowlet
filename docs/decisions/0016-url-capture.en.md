@@ -142,12 +142,14 @@ CLI `knowlet chat` has no notion of "paste detection." CLI users can use `:captu
 
 During dogfood the user asked: does an OpenAI-compat backend have native web search?
 
-**Answer**: OpenAI Chat Completions protocol itself does **not**; Claude via OpenAI-compat proxy usually **doesn't pipe through** either (server tools have no protocol mapping).
+**Answer (original 2026-05-03 judgment)**: OpenAI Chat Completions protocol itself does **not**; Claude via OpenAI-compat proxy usually **doesn't pipe through** either (server tools have no protocol mapping).
+
+**2026-05-28 correction**: this only describes the Chat Completions surface, not the whole endpoint. `cliproxyapi` + Codex/GPT 5.5 has been verified to carry hosted `web_search` through `/v1/responses`; see the [ADR-0017 amendment](./0017-llm-web-search-tool.en.md) and [ADR-0005 amendment](./0005-llm-integration-strategy.en.md) for the current active-search decision.
 
 **For knowlet**:
 
 - M7.2's URL capture is **user-supplied URL**, not LLM-initiated search
-- Future "LLM searches the web" path = **write a local `web_search` tool** (like existing vault tools), via LLM function calling — backend-agnostic per [feedback_backend_agnostic](memory)
+- Future "LLM searches the web" path = **prefer hosted search when the capability profile proves it available; otherwise use a local `web_search` fallback** (like existing vault tools), via LLM function calling — backend-agnostic per [feedback_backend_agnostic](memory)
 - That's a separate feature → its own ADR-0017, not in M7.2
 
 ### 8. Phase plan

@@ -39,7 +39,7 @@ knowlet web               # browser UI — http://127.0.0.1:8765
 >
 > **Upgrade** (all paths): `cd /path/to/knowlet && git pull && uv sync --extra embed && uv tool install -e . --force` (the trailing `uv tool install` only matters for that path).
 
-The default LLM path is local `cliproxyapi` + Codex/GPT 5.5: `http://127.0.0.1:8317/v1` + `gpt-5.5`. The endpoint can still be any OpenAI-Chat-Completions-compatible service — OpenAI, OpenRouter, Ollama, or a community wrapper that exposes Codex / Cursor-style tools as an OpenAI endpoint. See [ADR-0005](./docs/decisions/0005-llm-integration-strategy.en.md).
+The default LLM path is local `cliproxyapi` + Codex/GPT 5.5: `http://127.0.0.1:8317/v1` + `gpt-5.5`. The endpoint can still be any OpenAI-compatible service — OpenAI, OpenRouter, Ollama, or a community wrapper that exposes Codex / Cursor-style tools as an OpenAI endpoint. Knowlet probes the configured endpoint for capabilities (text, streaming, tool calling, Responses, hosted web search), so users do not have to manually declare the provider source. See [ADR-0005](./docs/decisions/0005-llm-integration-strategy.en.md) and [`docs/roadmap/ai-modes-roadmap.md`](./docs/roadmap/ai-modes-roadmap.md).
 
 ## Upgrade flow (data safety)
 

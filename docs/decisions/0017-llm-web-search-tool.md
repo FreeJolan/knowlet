@@ -2,8 +2,10 @@
 
 > [English](./0017-llm-web-search-tool.en.md) | **中文**
 
-- Status: Proposed
+- Status: Amended
 - Date: 2026-05-03
+
+> **2026-05-28 amendment**:本 ADR 从"主路径"降级为**fallback 路径**。本机 `cliproxyapi` + Codex/GPT 5.5 已验证 `/v1/responses` 可触发 provider-hosted `web_search` 并返回 `web_search_call`;因此后续优先通过 capability profile 使用 hosted search。这里描述的本地 `web_search` / `fetch_url` 仍保留,用于不支持 Responses/hosted search 的 endpoint,以及需要用户自选 Brave/Tavily/Searx/DDG 的数据流场景。
 
 ## Context
 
@@ -15,21 +17,24 @@ dogfood 期间用户原 side-ask:
 
 > 现在通过 OpenAI 格式对接的 LLM,是不具备 web search 能力的吗
 
-**答**:OpenAI Chat Completions 协议本身**没有原生 web search**;经 OpenAI-compat 代理的本地 CLI/OAuth 模型通常也**没接** provider server tools(协议层没有稳定映射)。这意味着 knowlet 的所有 chat 流(M0 CLI / M2 web / M7.1 capsule / M7.2 URL discuss / M7.4 quiz)在**询问实时信息**时都会撞墙 —— LLM 只能基于训练截止前的知识答。
+**答(2026-05-03 原判断)**:OpenAI Chat Completions 协议本身**没有原生 web search**;经 OpenAI-compat 代理的本地 CLI/OAuth 模型通常也**没接** provider server tools(协议层没有稳定映射)。这意味着只走 Chat Completions 的 knowlet chat 流在**询问实时信息**时会撞墙 —— LLM 只能基于训练截止前的知识答。
 
-本 ADR **加一条 backend-agnostic 路径**:写本地 `web_search` tool,走 LLM function-calling 注册,任何 OpenAI-compat 后端都自动获得搜索能力。跟 [feedback_backend_agnostic](memory) + [ADR-0008](./0008-cli-parity-discipline.md) 的精神一致。
+**修正(2026-05-28)**:这个判断只适用于 Chat Completions surface,不能外推到整个 endpoint。`cliproxyapi` 的 Codex/GPT 5.5 兼容层同时暴露 `/v1/responses`,而 Responses 可以承载 hosted `web_search`。所以当前策略是:先探测 endpoint 是否支持 Responses hosted search;若支持,走 hosted search;若不支持,再走本 ADR 的本地 fallback。
+
+本 ADR **保留一条 backend-agnostic fallback 路径**:写本地 `web_search` tool,走 LLM function-calling 注册,让不支持 hosted search 的 OpenAI-compat 后端仍可获得搜索能力。跟 [feedback_backend_agnostic](memory) + [ADR-0008](./0008-cli-parity-discipline.md) 的精神一致。
 
 ## Decision
 
-### 1. 实现路径 — 本地 function-calling tool
+### 1. 实现路径 — 本地 function-calling fallback tool
 
-**不依赖** LLM 厂商的 server tool(OpenAI `web_search_preview` / Claude `web_search_20250305` / 等等)。原因:
+**不把本地工具作为唯一主路径**,也**不依赖所有 endpoint 都有 server tool**。原因:
 
-- knowlet 的 LLM 后端是用户配置的 OpenAI-compat endpoint(当前默认 `gpt-5.5` 经本机 cliproxyapi);server tools 在协议层不可见
-- 跟 [feedback_backend_agnostic](memory) 一致:不写 per-backend 集成
-- LLM function-calling 是 OpenAI-compat 协议的**必有**部分,任何后端都支持
+- knowlet 的 LLM 后端是用户配置的 OpenAI-compat endpoint(当前默认 `gpt-5.5` 经本机 cliproxyapi);同一 endpoint 可能同时有 Chat Completions 与 Responses,能力不能只靠 provider 名判断
+- Responses hosted `web_search` 可用时应优先使用,因为它不需要用户配置额外搜索 API key,且由 provider 后端完成抓取
+- hosted search 不可用时,本地 `web_search` / `fetch_url` fallback 保持 backend-agnostic,且让用户可显式选择 Brave/Tavily/Searx/DDG 的数据流
+- LLM function-calling 在许多 OpenAI-compat 后端可用,但仍需通过 capability profile 探测,不能当作协议必然项
 
-注册一个本地 `web_search(query)` tool 进现有 `core/tools/_registry.py`,跟 vault tools 同位。
+注册一个本地 `web_search(query)` tool 进现有 `core/tools/_registry.py`,跟 vault tools 同位。F0 后由 capability profile 决定每轮注入 hosted tool、本地 tool,或两者都不注入。
 
 ### 2. 后端选择 — Provider Protocol + 渐进式默认
 
@@ -66,7 +71,7 @@ max_per_turn = 3
 
 ### 3. LLM 何时调用搜索 — 自动 function-calling
 
-注册 `web_search(query: string, top_k: int = 5)` 进 tool registry → LLM 看到知识空缺时**自动调用**(function-calling 协议保证)。
+当 capability profile 确认当前 endpoint 支持 Chat Completions tool calling,注册 `web_search(query: string, top_k: int = 5)` 进 tool registry → LLM 看到知识空缺时可**自行选择调用**。
 
 **不做强制前缀**(`>>search` 等):打断对话流,跟 ADR-0012 "AI 是工具,不是仪式"基调矛盾。
 
@@ -149,7 +154,7 @@ UI 可以加个"本月已用 X/Y"读数,但不在 M7.5 范围内(monitoring 是�
 - ✅ Web 右栏 AI dock + chat focus mode
 - ✅ M7.1 capsule chat / M7.2 URL discuss(都走 chat session)
 - ✅ M7.4 quiz 不接(quiz 是单独的 generation/grading prompt,跟 chat session 解耦;quiz 内不需要搜索)
-- ✅ CLI `knowlet chat` REPL 自动获得能力(0 额外工作)
+- ✅ CLI `knowlet chat` REPL 通过同一 capability profile 获得本地 fallback 能力
 - ❌ Cmd+K palette `>` ask-once **不接** —— ask-once 是 ephemeral one-shot,加搜索语义会拖慢 + 跟"快速问一下"的设计意图相悖
 
 ### 8. UI 显示
@@ -178,8 +183,8 @@ M7.5.3  CLI smoke + dogfood 文档(README + config docs)
 ### Positive
 
 - knowlet 终于能回答实时问题("今年最新的 LLM 评估方法?", "transformers 库最新版本?")
-- backend-agnostic — 任何 OpenAI-compat LLM 都自动获得能力
-- 渐进式默认:零 setup 也能用(DDG fallback),想要质量去注册 Brave key
+- backend-agnostic fallback — 只要 endpoint 支持 tool calling,就能获得本地搜索能力
+- fallback 渐进式默认:hosted search 不可用时,零 setup 也能用(DDG fallback),想要质量去注册 Brave key
 - 二段式 search → fetch 复用 M7.2 url_capture 模块,无平行实现
 - 自动 function-calling 不打断用户的对话流;tool trace 让用户看清楚 AI 在做什么
 
