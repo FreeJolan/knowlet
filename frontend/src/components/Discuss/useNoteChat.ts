@@ -1,12 +1,10 @@
 /**
- * Hook driving a note-anchored discussion (Phase 3 Stage 4 P1).
+ * Hook driving note-anchored discussions.
  *
- * Reads the backend's `POST /api/chat/note/{id}/stream` ChatEvent SSE
- * via fetch + ReadableStream (no Vercel AI SDK — the existing SSE is
- * the single source of streaming truth per ADR-0008). Accumulates
- * `reply_chunk` events into the in-flight assistant message; surfaces
- * `error` events as an informed failure (never a silent stall, per the
- * failure-path discipline).
+ * Each note owns its own lightweight session bucket. Streams keep
+ * writing into the bucket they started from even if the user switches
+ * notes, so "look at another note" does not implicitly abort or
+ * cross-wire an answer.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -25,165 +23,251 @@ interface SSEEvent {
   message?: string;
 }
 
-export function useNoteChat(noteId: string | null) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [status, setStatus] = useState<ChatStatus>("idle");
-  const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  // Latest messages, readable synchronously inside `send` (to forward
-  // as history) without putting `messages` in the callback deps.
-  const messagesRef = useRef<ChatMessage[]>([]);
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
+interface NoteChatSession {
+  messages: ChatMessage[];
+  status: ChatStatus;
+  error: string | null;
+  abort: AbortController | null;
+  listeners: Set<() => void>;
+}
 
-  // A6: persist the per-note conversation in localStorage so closing the
-  // pane and reopening on the same note restores it. Load on note
-  // switch; save on every change.
+const sessions = new Map<string, NoteChatSession>();
+
+function storageKey(noteId: string) {
+  return `knowlet.discuss.${noteId}`;
+}
+
+function loadMessages(noteId: string): ChatMessage[] {
+  try {
+    const raw = window.localStorage.getItem(storageKey(noteId));
+    return raw ? (JSON.parse(raw) as ChatMessage[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMessages(noteId: string, messages: ChatMessage[]) {
+  try {
+    if (messages.length > 0) {
+      window.localStorage.setItem(storageKey(noteId), JSON.stringify(messages));
+    } else {
+      window.localStorage.removeItem(storageKey(noteId));
+    }
+  } catch {
+    /* localStorage unavailable / over quota — non-fatal */
+  }
+}
+
+function getSession(noteId: string): NoteChatSession {
+  const existing = sessions.get(noteId);
+  if (existing) return existing;
+  const created: NoteChatSession = {
+    messages: loadMessages(noteId),
+    status: "idle",
+    error: null,
+    abort: null,
+    listeners: new Set(),
+  };
+  sessions.set(noteId, created);
+  return created;
+}
+
+function notify(noteId: string) {
+  const session = sessions.get(noteId);
+  if (!session) return;
+  for (const listener of session.listeners) listener();
+}
+
+function updateSession(
+  noteId: string,
+  fn: (session: NoteChatSession) => void,
+) {
+  const session = getSession(noteId);
+  fn(session);
+  saveMessages(noteId, session.messages);
+  notify(noteId);
+}
+
+function dropEmptyAssistant(messages: ChatMessage[]): ChatMessage[] {
+  const last = messages[messages.length - 1];
+  if (last && last.role === "assistant" && last.content === "")
+    return messages.slice(0, -1);
+  return messages;
+}
+
+export function useNoteChat(noteId: string | null) {
+  const [, forceRender] = useState(0);
+  const activeNoteRef = useRef<string | null>(noteId);
+
   useEffect(() => {
+    activeNoteRef.current = noteId;
     if (!noteId) {
-      setMessages([]);
+      forceRender((n) => n + 1);
       return;
     }
-    try {
-      const raw = window.localStorage.getItem(`knowlet.discuss.${noteId}`);
-      setMessages(raw ? (JSON.parse(raw) as ChatMessage[]) : []);
-    } catch {
-      setMessages([]);
-    }
-    setError(null);
-    setStatus("idle");
+    const session = getSession(noteId);
+    const listener = () => forceRender((n) => n + 1);
+    session.listeners.add(listener);
+    forceRender((n) => n + 1);
+    return () => {
+      session.listeners.delete(listener);
+    };
   }, [noteId]);
 
-  useEffect(() => {
-    if (!noteId) return;
-    try {
-      if (messages.length > 0) {
-        window.localStorage.setItem(
-          `knowlet.discuss.${noteId}`,
-          JSON.stringify(messages),
-        );
-      } else {
-        window.localStorage.removeItem(`knowlet.discuss.${noteId}`);
-      }
-    } catch {
-      /* localStorage unavailable / over quota — non-fatal */
-    }
-  }, [noteId, messages]);
+  const activeSession = noteId ? getSession(noteId) : null;
+  const messages = activeSession?.messages ?? [];
+  const status = activeSession?.status ?? "idle";
+  const error = activeSession?.error ?? null;
 
-  const dropEmptyAssistant = (m: ChatMessage[]): ChatMessage[] => {
-    const last = m[m.length - 1];
-    if (last && last.role === "assistant" && last.content === "")
-      return m.slice(0, -1);
-    return m;
-  };
-
-  /** Abort an in-flight stream (P5 stop button binds here). */
-  const stop = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setStatus("idle");
-  }, []);
-
-  const send = useCallback(
-    async (text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed || !noteId || status === "streaming") return;
-      // Forward prior clean turns so the model has conversation memory
-      // (A6). The note grounding rides in the current turn server-side.
-      const history = messagesRef.current.filter((m) => m.content !== "");
-      setError(null);
-      // Optimistic echo: user bubble + an empty assistant bubble the
-      // stream fills in. Echo is client-side so it's deterministic.
-      setMessages((m) => [
-        ...m,
-        { role: "user", content: trimmed },
-        { role: "assistant", content: "" },
-      ]);
-      setStatus("streaming");
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
-      try {
-        const r = await fetch(
-          `/api/chat/note/${encodeURIComponent(noteId)}/stream`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: trimmed, history }),
-            signal: ctrl.signal,
-          },
-        );
-        if (!r.ok || !r.body) {
-          let detail = r.statusText;
-          try {
-            const d = (await r.json()) as { detail?: string };
-            if (d?.detail) detail = d.detail;
-          } catch {
-            // body wasn't JSON
-          }
-          setError(detail || "request failed");
-          setStatus("error");
-          setMessages(dropEmptyAssistant);
-          return;
-        }
-        const reader = r.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = "";
-        let streamError: string | null = null;
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          let idx: number;
-          while ((idx = buf.indexOf("\n\n")) !== -1) {
-            const block = buf.slice(0, idx).trim();
-            buf = buf.slice(idx + 2);
-            if (!block.startsWith("data:")) continue;
-            let ev: SSEEvent;
-            try {
-              ev = JSON.parse(block.slice(5).trim()) as SSEEvent;
-            } catch {
-              continue;
-            }
-            if (ev.type === "reply_chunk" && ev.text) {
-              const chunk = ev.text;
-              setMessages((m) => {
-                const copy = m.slice();
-                const last = copy[copy.length - 1];
-                if (last && last.role === "assistant")
-                  copy[copy.length - 1] = {
-                    ...last,
-                    content: last.content + chunk,
-                  };
-                return copy;
-              });
-            } else if (ev.type === "error") {
-              streamError = ev.message || "stream error";
-            }
-            // turn_done / reply_done / tool_* — nothing to render in P1.
-          }
-        }
-        if (streamError) {
-          setError(streamError);
-          setStatus("error");
-          setMessages(dropEmptyAssistant);
-        } else {
-          setStatus("idle");
-        }
-      } catch (e) {
-        if ((e as Error).name === "AbortError") {
-          setStatus("idle");
-          return;
-        }
-        setError((e as Error).message || "network error");
-        setStatus("error");
-        setMessages(dropEmptyAssistant);
-      } finally {
-        abortRef.current = null;
-      }
+  const appendUserMessage = useCallback(
+    (content: string, targetNoteId?: string) => {
+      const id = targetNoteId ?? activeNoteRef.current;
+      const text = content.trim();
+      if (!id || !text) return;
+      updateSession(id, (session) => {
+        session.error = null;
+        session.messages = [...session.messages, { role: "user", content: text }];
+      });
     },
-    [noteId, status],
+    [],
   );
 
-  return { messages, status, error, send, stop };
+  const appendAssistantMessage = useCallback(
+    (content: string, targetNoteId?: string) => {
+      const id = targetNoteId ?? activeNoteRef.current;
+      if (!id) return;
+      updateSession(id, (session) => {
+        session.messages = [
+          ...session.messages,
+          { role: "assistant", content },
+        ];
+      });
+    },
+    [],
+  );
+
+  const send = useCallback(async (text: string) => {
+    const id = activeNoteRef.current;
+    const trimmed = text.trim();
+    if (!trimmed || !id) return;
+    const session = getSession(id);
+    if (session.status === "streaming") return;
+    const history = session.messages.filter((m) => m.content !== "");
+    const ctrl = new AbortController();
+    updateSession(id, (s) => {
+      s.error = null;
+      s.status = "streaming";
+      s.abort = ctrl;
+      s.messages = [
+        ...s.messages,
+        { role: "user", content: trimmed },
+        { role: "assistant", content: "" },
+      ];
+    });
+    try {
+      const r = await fetch(`/api/chat/note/${encodeURIComponent(id)}/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: trimmed, history }),
+        signal: ctrl.signal,
+      });
+      if (!r.ok || !r.body) {
+        let detail = r.statusText;
+        try {
+          const d = (await r.json()) as { detail?: string };
+          if (d?.detail) detail = d.detail;
+        } catch {
+          // body was not JSON
+        }
+        updateSession(id, (s) => {
+          s.error = detail || "request failed";
+          s.status = "error";
+          s.abort = null;
+          s.messages = dropEmptyAssistant(s.messages);
+        });
+        return;
+      }
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let streamError: string | null = null;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf("\n\n")) !== -1) {
+          const block = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 2);
+          if (!block.startsWith("data:")) continue;
+          let ev: SSEEvent;
+          try {
+            ev = JSON.parse(block.slice(5).trim()) as SSEEvent;
+          } catch {
+            continue;
+          }
+          if (ev.type === "reply_chunk" && ev.text) {
+            const chunk = ev.text;
+            updateSession(id, (s) => {
+              const copy = s.messages.slice();
+              const last = copy[copy.length - 1];
+              if (last && last.role === "assistant") {
+                copy[copy.length - 1] = {
+                  ...last,
+                  content: last.content + chunk,
+                };
+                s.messages = copy;
+              }
+            });
+          } else if (ev.type === "error") {
+            streamError = ev.message || "stream error";
+          }
+        }
+      }
+      updateSession(id, (s) => {
+        s.abort = null;
+        if (streamError) {
+          s.error = streamError;
+          s.status = "error";
+          s.messages = dropEmptyAssistant(s.messages);
+        } else {
+          s.status = "idle";
+        }
+      });
+    } catch (e) {
+      if ((e as Error).name === "AbortError") {
+        updateSession(id, (s) => {
+          s.abort = null;
+          s.status = "idle";
+        });
+        return;
+      }
+      updateSession(id, (s) => {
+        s.error = (e as Error).message || "network error";
+        s.status = "error";
+        s.abort = null;
+        s.messages = dropEmptyAssistant(s.messages);
+      });
+    }
+  }, []);
+
+  const stop = useCallback(() => {
+    const id = activeNoteRef.current;
+    if (!id) return;
+    updateSession(id, (session) => {
+      session.abort?.abort();
+      session.abort = null;
+      session.status = "idle";
+    });
+  }, []);
+
+  return {
+    messages,
+    status,
+    error,
+    send,
+    stop,
+    appendUserMessage,
+    appendAssistantMessage,
+  };
 }

@@ -367,6 +367,8 @@ export function AppShell() {
     );
     return { defaultSize, minSize };
   }, [windowWidth]);
+  const discussCompactLayout = discussOpen && windowWidth < 900;
+  const railVisible = !railCollapsed && !(discussOpen && windowWidth < 900);
   // Reserved for Phase 1 B — when a tree mutation is in flight we may want
   // to mark the editor read-only so the user doesn't type into a stale
   // note that's about to be moved out from under them.
@@ -798,7 +800,10 @@ export function AppShell() {
           </div>
         </header>
         <div className="min-h-0 flex-1">
-          <ResizablePanelGroup direction="horizontal">
+          <ResizablePanelGroup
+            key={railVisible ? "with-right-rail" : "without-right-rail"}
+            direction="horizontal"
+          >
             <ResizablePanel
               defaultSize={sidebarSizes.defaultSize}
               minSize={sidebarSizes.minSize}
@@ -879,7 +884,7 @@ export function AppShell() {
             <ResizableHandle />
             <ResizablePanel
               defaultSize={
-                railCollapsed
+                !railVisible
                   ? 100 - sidebarSizes.defaultSize
                   : 100 - sidebarSizes.defaultSize - railSizes.defaultSize
               }
@@ -899,10 +904,19 @@ export function AppShell() {
                 />
                 <div className="min-h-0 flex-1">
                   {discussOpen && selectedNoteId ? (
-                    <ResizablePanelGroup direction="horizontal">
-                      <ResizablePanel minSize={30}>{noteOrDiff}</ResizablePanel>
+                    <ResizablePanelGroup
+                      key={discussCompactLayout ? "compact-discuss" : "wide-discuss"}
+                      direction="horizontal"
+                    >
+                      <ResizablePanel minSize={discussCompactLayout ? 32 : 30}>
+                        {noteOrDiff}
+                      </ResizablePanel>
                       <ResizableHandle />
-                      <ResizablePanel defaultSize={38} minSize={25} maxSize={60}>
+                      <ResizablePanel
+                        defaultSize={discussCompactLayout ? 52 : 38}
+                        minSize={discussCompactLayout ? 38 : 25}
+                        maxSize={70}
+                      >
                         <DiscussPane
                           noteId={selectedNoteId}
                           noteTitle={selectedNoteTitle}
@@ -923,7 +937,7 @@ export function AppShell() {
                 </div>
               </div>
             </ResizablePanel>
-            {!railCollapsed && (
+            {railVisible && (
               <>
                 <ResizableHandle />
                 <ResizablePanel

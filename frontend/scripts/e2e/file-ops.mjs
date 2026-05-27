@@ -32,6 +32,32 @@ try {
     await expectRow(page, "inner");
   });
 
+  await runTest("nested rows are not clipped by the tree viewport", async () => {
+    const row = await expectRow(page, "beta");
+    const hit = await row.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const target = document.elementFromPoint(centerX, centerY);
+      const targetRow = target?.closest?.('[role="treeitem"]');
+      return {
+        ok: targetRow === el || Boolean(target && el.contains(target)),
+        rowText: el.textContent?.trim() ?? "",
+        hitText: target?.textContent?.trim().slice(0, 120) ?? "",
+        rect: {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        },
+      };
+    });
+    assert(
+      hit.ok,
+      `nested row center should hit the row, got ${JSON.stringify(hit)}`,
+    );
+  });
+
   await runTest("new folder via toolbar (inline)", async () => {
     await page.click('button[aria-label="New folder"]');
     const input = page.locator('input[data-rename-input="true"]');

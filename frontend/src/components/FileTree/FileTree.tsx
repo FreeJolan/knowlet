@@ -682,6 +682,10 @@ export function FileTree({
     }
     return { hotMap, targetId };
   }, [data, openMap, ghostFolder]);
+  const visibleRowCount = useMemo(
+    () => countVisibleRows(data, openMap),
+    [data, openMap],
+  );
 
   if (tree.isLoading) {
     return <div className="p-4 text-sm text-muted-foreground">{t("tree.loading")}</div>;
@@ -790,9 +794,10 @@ export function FileTree({
             openByDefault={true}
             width="100%"
             // Content-height tells react-arborist's react-window to
-            // render every visible row. The wrapper does the
-            // scrolling; the Tree is just a static-height block.
-            height={data.length * 26 + 8}
+            // render every visible row. Count recursively rather than
+            // using top-level data.length; otherwise nested rows exist
+            // in the DOM but are clipped by the virtualizer viewport.
+            height={visibleRowCount * 26 + 8}
             rowHeight={26}
             indent={14}
             paddingTop={4}
@@ -903,6 +908,21 @@ const INDENT = 14;
 const ROW_LEFT_PAD = 8;
 const HOT_GUIDE = "rgba(91,122,156,.55)";
 const EMPTY_SET: Set<number> = new Set();
+
+function countVisibleRows(
+  nodes: TreeNodeData[],
+  openMap: Record<string, boolean>,
+): number {
+  let total = 0;
+  for (const node of nodes) {
+    total += 1;
+    const isOpen = openMap[node.id] === undefined ? true : openMap[node.id];
+    if (isOpen && node.children?.length) {
+      total += countVisibleRows(node.children, openMap);
+    }
+  }
+  return total;
+}
 
 function Row({
   node,

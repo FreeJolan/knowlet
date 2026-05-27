@@ -217,7 +217,9 @@ def test_note_grounding_and_tone_guidance_in_user_turn(tmp_path: Path):
         m["content"] for m in stub.seen_messages if m["role"] == "system"
     )
     assert "UNIQUE_GROUND_MARKER_42" in user_blob  # note in the user turn
-    assert "先判断这篇笔记是什么性质" in user_blob  # tone guidance in the user turn
+    assert "内部判断这篇笔记是什么性质" in user_blob  # tone guidance in the user turn
+    assert "不要把分类判断过程写给用户" in user_blob
+    assert "Markdown" in user_blob
     assert "UNIQUE_GROUND_MARKER_42" not in system_blob  # not only in system
 
 

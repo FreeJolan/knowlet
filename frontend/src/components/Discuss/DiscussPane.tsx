@@ -9,9 +9,10 @@
  * nothing is written from here.
  */
 
-import { ClipboardCheck, Pencil, Send, Square, X } from "lucide-react";
+import { ClipboardCheck, Pencil, Send, Sparkles, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import {
   checkNote,
@@ -23,6 +24,53 @@ import type { ApiError } from "@/api/types";
 import { Button } from "@/components/ui/button";
 
 import { useNoteChat } from "./useNoteChat";
+
+type SuggestionAction = "check" | "propose";
+
+const DISCUSS_SUGGESTIONS: Array<{
+  id: SuggestionAction;
+  label: string;
+  prompt: string;
+}> = [
+  {
+    id: "check",
+    label: "看看笔记是否有错漏",
+    prompt:
+      "帮我看看这篇笔记是否有不对的地方、关键遗漏或站不住的推理。请先指出问题，不要直接改正文。",
+  },
+  {
+    id: "propose",
+    label: "提出一版更清晰的改写",
+    prompt:
+      "请帮我基于这篇笔记提出一版更清晰但尽量少改动的修改建议，修改必须经过我确认后才能应用。",
+  },
+];
+
+function renderCheckReportMarkdown(report: CheckNoteReport): string {
+  if (report.findings.length === 0) {
+    return `### 检查结果\n\n${report.summary || "没有发现能定位到段落的明确错漏。"}`;
+  }
+  const lines = [`### 检查结果`, "", report.summary, ""];
+  for (const finding of report.findings) {
+    const location =
+      finding.paragraph !== null ? `第 ${finding.paragraph} 段` : "未定位段落";
+    lines.push(
+      `- **${finding.finding}**（${location}，${finding.severity}）`,
+      `  - 原文：${finding.quote ? `“${finding.quote}”` : "未提供短引"}`,
+      `  - 原因：${finding.why}`,
+      `  - 建议：${finding.suggestion}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function AssistantMarkdown({ content }: { content: string }) {
+  return (
+    <div className="kn-md prose-paper py-0" style={{ color: "var(--ink)" }}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    </div>
+  );
+}
 
 export function DiscussPane({
   noteId,
@@ -36,7 +84,15 @@ export function DiscussPane({
   /** P3: AI proposed a minimal revision — hand it up for the diff UI. */
   onProposeEdit?: (proposal: { oldBody: string; newBody: string }) => void;
 }) {
-  const { messages, status, error, send, stop } = useNoteChat(noteId);
+  const {
+    messages,
+    status,
+    error,
+    send,
+    stop,
+    appendUserMessage,
+    appendAssistantMessage,
+  } = useNoteChat(noteId);
   const [input, setInput] = useState("");
   const [proposing, setProposing] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -44,56 +100,84 @@ export function DiscussPane({
   const [proposeMsg, setProposeMsg] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const latestNoteIdRef = useRef<string | null>(noteId);
+  const [followTail, setFollowTail] = useState(true);
 
   useEffect(() => {
+    latestNoteIdRef.current = noteId;
     inputRef.current?.focus();
+    setFollowTail(true);
+    setCheckReport(null);
+    setProposeMsg(null);
   }, [noteId]);
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight });
-  }, [messages]);
+    if (el && followTail) el.scrollTo({ top: el.scrollHeight });
+  }, [messages, followTail]);
+
+  const handleMessageScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setFollowTail(distance < 40);
+  };
+
+  const busy = status === "streaming" || proposing || checking;
+
+  const focusComposerIfCurrent = (targetNoteId: string) => {
+    if (latestNoteIdRef.current === targetNoteId) inputRef.current?.focus();
+  };
 
   const submit = () => {
     if (input.trim() && status !== "streaming") {
+      setFollowTail(true);
       send(input);
       setInput("");
     }
   };
 
-  const doPropose = async () => {
-    const text = input.trim();
-    if (!text || !noteId || proposing) return;
-    setProposing(true);
+  const runSuggestion = async (action: SuggestionAction, prompt: string) => {
+    if (!noteId || busy) return;
+    setFollowTail(true);
+    setCheckReport(null);
     setProposeMsg(null);
+    appendUserMessage(prompt, noteId);
+    if (action === "check") {
+      setChecking(true);
+      try {
+        const res = await checkNote(noteId, { instruction: prompt });
+        if (latestNoteIdRef.current === noteId) setCheckReport(res);
+        appendAssistantMessage(renderCheckReportMarkdown(res), noteId);
+      } catch (e) {
+        const detail = (e as ApiError)?.detail ?? "出错了";
+        appendAssistantMessage(`检查失败：${detail}`, noteId);
+      } finally {
+        setChecking(false);
+        focusComposerIfCurrent(noteId);
+      }
+      return;
+    }
+    setProposing(true);
     try {
-      const res = await proposeNoteEdit(noteId, text);
+      const res = await proposeNoteEdit(noteId, prompt);
       if (res.changed) {
-        onProposeEdit?.({ oldBody: res.old_body, newBody: res.new_body });
-        setInput("");
+        if (latestNoteIdRef.current === noteId) {
+          onProposeEdit?.({ oldBody: res.old_body, newBody: res.new_body });
+        }
+        appendAssistantMessage(
+          "我提出了一版最小修改，已经打开 diff review。你确认后才会写入笔记。",
+          noteId,
+        );
       } else {
-        setProposeMsg(res.reason || "无可应用改动");
+        appendAssistantMessage(res.reason || "我没有找到值得应用的明确改动。", noteId);
       }
     } catch (e) {
       const detail = (e as ApiError)?.detail ?? "出错了";
-      setProposeMsg(`提议失败：${detail}`);
+      appendAssistantMessage(`提议失败：${detail}`, noteId);
     } finally {
       setProposing(false);
-    }
-  };
-
-  const doCheck = async () => {
-    if (!noteId || checking || status === "streaming") return;
-    setChecking(true);
-    setProposeMsg(null);
-    try {
-      const res = await checkNote(noteId, { standard_answer: input.trim() });
-      setCheckReport(res);
-    } catch (e) {
-      const detail = (e as ApiError)?.detail ?? "出错了";
-      setProposeMsg(`查这篇失败：${detail}`);
-    } finally {
-      setChecking(false);
+      focusComposerIfCurrent(noteId);
     }
   };
 
@@ -120,8 +204,6 @@ export function DiscussPane({
       setProposing(false);
     }
   };
-
-  const busy = status === "streaming" || proposing || checking;
 
   return (
     <div
@@ -163,15 +245,35 @@ export function DiscussPane({
       <div
         ref={scrollRef}
         data-testid="discuss-messages"
+        onScroll={handleMessageScroll}
         className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3"
       >
         {messages.length === 0 && !error && (
-          <div
-            data-testid="discuss-empty"
-            className="text-sm"
-            style={{ color: "var(--ink-mute)" }}
-          >
-            就这篇笔记问点什么——它已经读过你写的内容。
+          <div data-testid="discuss-empty" className="space-y-3">
+            <div className="text-sm" style={{ color: "var(--ink-mute)" }}>
+              就这篇笔记问点什么——它已经读过你写的内容。
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {DISCUSS_SUGGESTIONS.map((suggestion) => (
+                <Button
+                  key={suggestion.id}
+                  size="sm"
+                  variant="ghost"
+                  className="max-w-full min-w-0 shrink justify-start overflow-hidden"
+                  data-testid={`discuss-suggestion-${suggestion.id}`}
+                  disabled={busy || !noteId}
+                  onClick={() => runSuggestion(suggestion.id, suggestion.prompt)}
+                  title={suggestion.prompt}
+                >
+                  {suggestion.id === "check" ? (
+                    <ClipboardCheck className="size-3 shrink-0" />
+                  ) : (
+                    <Sparkles className="size-3 shrink-0" />
+                  )}
+                  <span className="min-w-0 truncate">{suggestion.label}</span>
+                </Button>
+              ))}
+            </div>
           </div>
         )}
         {messages.map((m, i) => (
@@ -182,11 +284,11 @@ export function DiscussPane({
             >
               {m.role === "user" ? "你" : "AI"}
             </div>
-            <div className="prose prose-sm max-w-none" style={{ color: "var(--ink)" }}>
+            <div className="max-w-none" style={{ color: "var(--ink)" }}>
               {m.role === "assistant" ? (
-                <ReactMarkdown>{m.content}</ReactMarkdown>
+                <AssistantMarkdown content={m.content} />
               ) : (
-                <p className="whitespace-pre-wrap">{m.content}</p>
+                <p className="whitespace-pre-wrap break-words">{m.content}</p>
               )}
             </div>
           </div>
@@ -238,31 +340,7 @@ export function DiscussPane({
           className="w-full resize-none rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none"
           style={{ borderColor: "var(--line)", color: "var(--ink)" }}
         />
-        <div className="mt-1 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              data-testid="discuss-check"
-              title="按输入里的标准答案/校准依据检查这篇笔记"
-              disabled={busy || !noteId}
-              onClick={doCheck}
-            >
-              <ClipboardCheck className="mr-1 size-3" />
-              {checking ? "…" : "查这篇"}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              data-testid="discuss-propose"
-              title="让 AI 按你的输入给出这篇笔记的最小修改，再由你审 diff"
-              disabled={!input.trim() || busy}
-              onClick={doPropose}
-            >
-              <Pencil className="mr-1 size-3" />
-              {proposing ? "…" : "改这篇"}
-            </Button>
-          </div>
+        <div className="mt-1 flex items-center justify-end gap-2">
           {status === "streaming" ? (
             <Button
               size="sm"
@@ -310,7 +388,7 @@ function CheckNoteReportView({
         className="mb-2 text-[10px] font-mono uppercase tracking-wide"
         style={{ color: "var(--ink-mute)" }}
       >
-        查这篇
+        检查结果
       </div>
       <div className="mb-3" style={{ color: "var(--ink)" }}>
         {report.summary}
