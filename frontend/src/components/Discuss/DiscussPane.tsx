@@ -9,13 +9,20 @@
  * nothing is written from here.
  */
 
-import { ClipboardCheck, Pencil, Send, Sparkles, Square, X } from "lucide-react";
+import {
+  ClipboardCheck,
+  Pencil,
+  RotateCcw,
+  Send,
+  Sparkles,
+  Square,
+  X,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import {
-  checkNote,
   proposeNoteEdit,
   type CheckNoteFinding,
   type CheckNoteReport,
@@ -46,28 +53,40 @@ const DISCUSS_SUGGESTIONS: Array<{
   },
 ];
 
-function renderCheckReportMarkdown(report: CheckNoteReport): string {
-  if (report.findings.length === 0) {
-    return `### 检查结果\n\n${report.summary || "没有发现能定位到段落的明确错漏。"}`;
-  }
-  const lines = [`### 检查结果`, "", report.summary, ""];
-  for (const finding of report.findings) {
-    const location =
-      finding.paragraph !== null ? `第 ${finding.paragraph} 段` : "未定位段落";
-    lines.push(
-      `- **${finding.finding}**（${location}，${finding.severity}）`,
-      `  - 原文：${finding.quote ? `“${finding.quote}”` : "未提供短引"}`,
-      `  - 原因：${finding.why}`,
-      `  - 建议：${finding.suggestion}`,
-    );
-  }
-  return lines.join("\n");
-}
-
 function AssistantMarkdown({ content }: { content: string }) {
   return (
     <div className="kn-md prose-paper py-0" style={{ color: "var(--ink)" }}>
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    </div>
+  );
+}
+
+function GeneratingIndicator() {
+  return (
+    <div
+      data-testid="discuss-generating"
+      role="status"
+      aria-live="polite"
+      className="inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs"
+      style={{
+        background: "var(--bg-1)",
+        borderColor: "var(--line)",
+        color: "var(--ink-mute)",
+      }}
+    >
+      <span>AI 正在生成</span>
+      <span className="flex items-center gap-1" aria-hidden="true">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="size-1.5 animate-bounce rounded-full"
+            style={{
+              animationDelay: `${i * 120}ms`,
+              background: "var(--ink-mute)",
+            }}
+          />
+        ))}
+      </span>
     </div>
   );
 }
@@ -90,12 +109,10 @@ export function DiscussPane({
     error,
     send,
     stop,
-    appendUserMessage,
-    appendAssistantMessage,
+    reset,
   } = useNoteChat(noteId);
   const [input, setInput] = useState("");
   const [proposing, setProposing] = useState(false);
-  const [checking, setChecking] = useState(false);
   const [checkReport, setCheckReport] = useState<CheckNoteReport | null>(null);
   const [proposeMsg, setProposeMsg] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -123,7 +140,10 @@ export function DiscussPane({
     setFollowTail(distance < 40);
   };
 
-  const busy = status === "streaming" || proposing || checking;
+  const busy = status === "streaming" || proposing;
+  const canReset = Boolean(
+    noteId && !proposing && (messages.length > 0 || error),
+  );
 
   const focusComposerIfCurrent = (targetNoteId: string) => {
     if (latestNoteIdRef.current === targetNoteId) inputRef.current?.focus();
@@ -137,48 +157,23 @@ export function DiscussPane({
     }
   };
 
-  const runSuggestion = async (action: SuggestionAction, prompt: string) => {
+  const runSuggestion = (prompt: string) => {
     if (!noteId || busy) return;
     setFollowTail(true);
     setCheckReport(null);
     setProposeMsg(null);
-    appendUserMessage(prompt, noteId);
-    if (action === "check") {
-      setChecking(true);
-      try {
-        const res = await checkNote(noteId, { instruction: prompt });
-        if (latestNoteIdRef.current === noteId) setCheckReport(res);
-        appendAssistantMessage(renderCheckReportMarkdown(res), noteId);
-      } catch (e) {
-        const detail = (e as ApiError)?.detail ?? "出错了";
-        appendAssistantMessage(`检查失败：${detail}`, noteId);
-      } finally {
-        setChecking(false);
-        focusComposerIfCurrent(noteId);
-      }
-      return;
-    }
-    setProposing(true);
-    try {
-      const res = await proposeNoteEdit(noteId, prompt);
-      if (res.changed) {
-        if (latestNoteIdRef.current === noteId) {
-          onProposeEdit?.({ oldBody: res.old_body, newBody: res.new_body });
-        }
-        appendAssistantMessage(
-          "我提出了一版最小修改，已经打开 diff review。你确认后才会写入笔记。",
-          noteId,
-        );
-      } else {
-        appendAssistantMessage(res.reason || "我没有找到值得应用的明确改动。", noteId);
-      }
-    } catch (e) {
-      const detail = (e as ApiError)?.detail ?? "出错了";
-      appendAssistantMessage(`提议失败：${detail}`, noteId);
-    } finally {
-      setProposing(false);
-      focusComposerIfCurrent(noteId);
-    }
+    send(prompt);
+    focusComposerIfCurrent(noteId);
+  };
+
+  const resetConversation = () => {
+    if (!noteId || !canReset) return;
+    reset(noteId);
+    setInput("");
+    setCheckReport(null);
+    setProposeMsg(null);
+    setFollowTail(true);
+    inputRef.current?.focus();
   };
 
   const doFixFinding = async (finding: CheckNoteFinding) => {
@@ -231,15 +226,28 @@ export function DiscussPane({
             {noteTitle || "—"}
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="关闭对谈"
-          data-testid="discuss-close"
-          onClick={onClose}
-        >
-          <X className="size-4" />
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="重置对话"
+            data-testid="discuss-reset"
+            title="重置当前笔记的对话"
+            disabled={!canReset}
+            onClick={resetConversation}
+          >
+            <RotateCcw className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="关闭对谈"
+            data-testid="discuss-close"
+            onClick={onClose}
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
       </div>
 
       <div
@@ -262,7 +270,7 @@ export function DiscussPane({
                   className="max-w-full min-w-0 shrink justify-start overflow-hidden"
                   data-testid={`discuss-suggestion-${suggestion.id}`}
                   disabled={busy || !noteId}
-                  onClick={() => runSuggestion(suggestion.id, suggestion.prompt)}
+                  onClick={() => runSuggestion(suggestion.prompt)}
                   title={suggestion.prompt}
                 >
                   {suggestion.id === "check" ? (
@@ -276,23 +284,38 @@ export function DiscussPane({
             </div>
           </div>
         )}
-        {messages.map((m, i) => (
-          <div key={i} data-testid={`discuss-message-${m.role}`} className="text-sm">
+        {messages.map((m, i) => {
+          const pendingAssistant =
+            m.role === "assistant" &&
+            m.content === "" &&
+            status === "streaming" &&
+            i === messages.length - 1;
+          return (
             <div
-              className="mb-1 text-[10px] font-mono uppercase tracking-wide"
-              style={{ color: "var(--ink-mute)" }}
+              key={i}
+              data-testid={`discuss-message-${m.role}`}
+              className="text-sm"
             >
-              {m.role === "user" ? "你" : "AI"}
+              <div
+                className="mb-1 text-[10px] font-mono uppercase tracking-wide"
+                style={{ color: "var(--ink-mute)" }}
+              >
+                {m.role === "user" ? "你" : "AI"}
+              </div>
+              <div className="max-w-none" style={{ color: "var(--ink)" }}>
+                {m.role === "assistant" ? (
+                  pendingAssistant ? (
+                    <GeneratingIndicator />
+                  ) : m.content ? (
+                    <AssistantMarkdown content={m.content} />
+                  ) : null
+                ) : (
+                  <p className="whitespace-pre-wrap break-words">{m.content}</p>
+                )}
+              </div>
             </div>
-            <div className="max-w-none" style={{ color: "var(--ink)" }}>
-              {m.role === "assistant" ? (
-                <AssistantMarkdown content={m.content} />
-              ) : (
-                <p className="whitespace-pre-wrap break-words">{m.content}</p>
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {error && (
           <div
             data-testid="discuss-error"

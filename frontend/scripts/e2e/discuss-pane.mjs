@@ -76,17 +76,28 @@ try {
   });
 
   await runTest("recommended question stays clickable and sends a fuller honest prompt", async () => {
-    await page.route("**/api/chat/note/*/check", (route) =>
-      route.fulfill({
+    let checkCalled = false;
+    let proposeCalled = false;
+    let streamedPrompt = "";
+    await page.route("**/api/chat/note/*/check", (route) => {
+      checkCalled = true;
+      return route.fulfill({ status: 500, body: "check endpoint should not be used" });
+    });
+    await page.route("**/api/chat/note/*/propose-edit", (route) => {
+      proposeCalled = true;
+      return route.fulfill({ status: 500, body: "propose endpoint should not be used" });
+    });
+    await page.route("**/api/chat/note/*/stream", async (route) => {
+      const body = await route.request().postDataJSON();
+      streamedPrompt = body.text;
+      await route.fulfill({
         status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          note_id: "x",
-          summary: "No concrete issues found.",
-          findings: [],
-        }),
-      }),
-    );
+        contentType: "text/event-stream",
+        body:
+          'data: {"type":"reply_chunk","text":"SUGGESTED_STREAM_REPLY"}\n\n' +
+          'data: {"type":"turn_done","final_text":"SUGGESTED_STREAM_REPLY"}\n\n',
+      });
+    });
     const chip = page.locator('[data-testid="discuss-suggestion-check"]');
     await chip.waitFor({ state: "visible", timeout: 3000 });
     const label = await chip.innerText();
@@ -130,9 +141,15 @@ try {
       await sent.waitFor({ state: "visible", timeout: 3000 });
       await page
         .locator('[data-testid="discuss-message-assistant"]')
-        .filter({ hasText: "No concrete issues found." })
+        .filter({ hasText: "SUGGESTED_STREAM_REPLY" })
         .first()
         .waitFor({ state: "visible", timeout: 3000 });
+      assert(
+        streamedPrompt.includes("帮我看看这篇笔记是否有不对的地方"),
+        `suggestion should send the full prompt through the chat stream: ${streamedPrompt}`,
+      );
+      assert(!checkCalled, "suggestion should not call the check-note endpoint");
+      assert(!proposeCalled, "suggestion should not call the propose-edit endpoint");
       await expectFocused(
         page,
         page.locator('[data-testid="discuss-input"]'),
@@ -141,7 +158,98 @@ try {
     } finally {
       await page.setViewportSize({ width: 1400, height: 900 });
       await page.unroute("**/api/chat/note/*/check");
+      await page.unroute("**/api/chat/note/*/propose-edit");
+      await page.unroute("**/api/chat/note/*/stream");
     }
+  });
+
+  await runTest("reset starts a fresh conversation for the current note only", async () => {
+    const reset = page.locator('[data-testid="discuss-reset"]');
+    await reset.waitFor({ state: "visible", timeout: 3000 });
+    await reset.click();
+    assert(
+      (await page
+        .locator('[data-testid="discuss-message-user"]')
+        .filter({ hasText: "帮我看看这篇笔记是否有不对的地方" })
+        .count()) === 0,
+      "reset clears the current note's visible chat history",
+    );
+    await page
+      .locator('[data-testid="discuss-suggestion-check"]')
+      .waitFor({ state: "visible", timeout: 3000 });
+    await page.locator('[data-testid="discuss-close"]').click();
+    await page.locator('[data-testid="header-discuss-button"]').click();
+    await page
+      .locator('[data-testid="discuss-suggestion-check"]')
+      .waitFor({ state: "visible", timeout: 3000 });
+    assert(
+      (await page
+        .locator('[data-testid="discuss-message-user"]')
+        .filter({ hasText: "帮我看看这篇笔记是否有不对的地方" })
+        .count()) === 0,
+      "reset removes persisted chat history for this note",
+    );
+
+    await page.route("**/api/chat/note/*/stream", async (route) => {
+      const body = await route.request().postDataJSON();
+      const text = body.text.includes("second keep")
+        ? "SECOND_KEEP"
+        : "RAG_THROWAWAY";
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body:
+          `data: {"type":"reply_chunk","text":"${text}"}\n\n` +
+          `data: {"type":"turn_done","final_text":"${text}"}\n\n`,
+      });
+    });
+    await page
+      .locator(".group")
+      .filter({ hasText: "Second Note" })
+      .first()
+      .click();
+    await page.locator('[data-testid="discuss-input"]').fill("second keep");
+    await page.locator('[data-testid="discuss-send"]').click();
+    await page
+      .locator('[data-testid="discuss-message-assistant"]')
+      .filter({ hasText: "SECOND_KEEP" })
+      .first()
+      .waitFor({ state: "visible", timeout: 3000 });
+
+    await page
+      .locator(".group")
+      .filter({ hasText: "RAG Notes" })
+      .first()
+      .click();
+    await page.locator('[data-testid="discuss-input"]').fill("rag throwaway");
+    await page.locator('[data-testid="discuss-send"]').click();
+    await page
+      .locator('[data-testid="discuss-message-assistant"]')
+      .filter({ hasText: "RAG_THROWAWAY" })
+      .first()
+      .waitFor({ state: "visible", timeout: 3000 });
+    await page.locator('[data-testid="discuss-reset"]').click();
+
+    await page
+      .locator(".group")
+      .filter({ hasText: "Second Note" })
+      .first()
+      .click();
+    await page
+      .locator('[data-testid="discuss-message-assistant"]')
+      .filter({ hasText: "SECOND_KEEP" })
+      .first()
+      .waitFor({ state: "visible", timeout: 3000 });
+    await page.locator('[data-testid="discuss-reset"]').click();
+    await page
+      .locator('[data-testid="discuss-suggestion-check"]')
+      .waitFor({ state: "visible", timeout: 3000 });
+    await page
+      .locator(".group")
+      .filter({ hasText: "RAG Notes" })
+      .first()
+      .click();
+    await page.unroute("**/api/chat/note/*/stream");
   });
 
   await runTest("assistant messages render GitHub-flavored Markdown", async () => {
@@ -161,6 +269,39 @@ try {
       .locator('[data-testid="discuss-message-assistant"] table')
       .first()
       .waitFor({ state: "visible", timeout: 3000 });
+    await page.unroute("**/api/chat/note/*/stream");
+  });
+
+  await runTest("sending shows a clear AI generation indicator before chunks arrive", async () => {
+    await page.route("**/api/chat/note/*/stream", async (route) => {
+      await new Promise((r) => setTimeout(r, 700));
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body:
+          'data: {"type":"reply_chunk","text":"INDICATOR_DONE"}\n\n' +
+          'data: {"type":"turn_done","final_text":"INDICATOR_DONE"}\n\n',
+      });
+    });
+    const input = page.locator('[data-testid="discuss-input"]');
+    await input.fill("show me that generation started");
+    await page.locator('[data-testid="discuss-send"]').click();
+    const indicator = page.locator('[data-testid="discuss-generating"]').first();
+    await indicator.waitFor({ state: "visible", timeout: 1000 });
+    const label = await indicator.innerText();
+    assert(
+      label.includes("AI 正在生成"),
+      `generation indicator should explain the in-flight state, got "${label}"`,
+    );
+    await page
+      .locator('[data-testid="discuss-message-assistant"]')
+      .filter({ hasText: "INDICATOR_DONE" })
+      .first()
+      .waitFor({ state: "visible", timeout: 3000 });
+    assert(
+      (await page.locator('[data-testid="discuss-generating"]').count()) === 0,
+      "generation indicator should disappear once the assistant has content",
+    );
     await page.unroute("**/api/chat/note/*/stream");
   });
 
@@ -317,153 +458,52 @@ try {
     await page.unroute("**/api/chat/note/*/stream");
   });
 
-  // ---------- P3 / P4: AI proposes a diff → review → accept/reject ----
-  // The proposal needs the LLM, so we mock /propose-edit at the network
-  // boundary for a deterministic diff. The ACCEPT write goes to the
-  // REAL backend (PUT /api/notes), so this exercises the actual atomic
-  // save end-to-end.
-
-  await runTest("P3/P4: 改这篇 shows a diff; 放弃 leaves the note unchanged", async () => {
+  await runTest("proposal recommendation also follows the normal chat stream", async () => {
     await page
       .locator(".group")
       .filter({ hasText: "Second Note" })
       .first()
       .click();
-    await page.route("**/api/chat/note/*/propose-edit", (route) =>
-      route.fulfill({
+    let proposeEditCalled = false;
+    let streamedPrompt = "";
+    await page.route("**/api/chat/note/*/propose-edit", (route) => {
+      proposeEditCalled = true;
+      return route.fulfill({ status: 500, body: "propose endpoint should not be used" });
+    });
+    await page.route("**/api/chat/note/*/stream", async (route) => {
+      const body = await route.request().postDataJSON();
+      streamedPrompt = body.text;
+      await route.fulfill({
         status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          note_id: "x",
-          old_body: "This second note should keep its own chat state.",
-          new_body:
-            "This second note should keep its own chat state, with clearer wording.",
-          changed: true,
-          reason: "",
-        }),
-      }),
-    );
-    await page.locator('[data-testid="discuss-suggestion-propose"]').click();
+        contentType: "text/event-stream",
+        body:
+          'data: {"type":"reply_chunk","text":"PROPOSE_SUGGESTION_REPLY"}\n\n' +
+          'data: {"type":"turn_done","final_text":"PROPOSE_SUGGESTION_REPLY"}\n\n',
+      });
+    });
+    const resetBeforeProposal = page.locator('[data-testid="discuss-reset"]');
+    if (await resetBeforeProposal.isEnabled()) await resetBeforeProposal.click();
     await page
-      .locator('[data-testid="diff-review"]')
-      .waitFor({ state: "visible", timeout: 4000 });
+      .locator('[data-testid="discuss-suggestion-propose"]')
+      .waitFor({ state: "visible", timeout: 3000 });
+    await page.locator('[data-testid="discuss-suggestion-propose"]').click();
     await page
       .locator('[data-testid="discuss-message-user"]')
       .filter({ hasText: "请帮我基于这篇笔记提出一版更清晰" })
       .first()
       .waitFor({ state: "visible", timeout: 3000 });
     await page
-      .locator('button[aria-label="接受这一块改动"]')
+      .locator('[data-testid="discuss-message-assistant"]')
+      .filter({ hasText: "PROPOSE_SUGGESTION_REPLY" })
       .first()
-      .waitFor({ state: "visible", timeout: 1000 });
-    const diffText = await page.locator('[data-testid="diff-review"]').innerText();
+      .waitFor({ state: "visible", timeout: 3000 });
     assert(
-      !diffText.includes("Accept") && !diffText.includes("Reject"),
-      `chunk controls should not leak English labels: got "${diffText}"`,
+      streamedPrompt.includes("请帮我基于这篇笔记提出一版更清晰"),
+      `proposal suggestion should send the full prompt through the chat stream: ${streamedPrompt}`,
     );
-    // 放弃 → diff dismissed, note untouched.
-    await page.locator('[data-testid="diff-reject"]').click();
-    await page.waitForTimeout(300);
-    assert(
-      (await page.locator('[data-testid="diff-review"]').count()) === 0,
-      "diff dismissed after 放弃",
-    );
-    const tree = await (await page.request.get(`${baseURL}/api/tree`)).json();
-    const noteId = tree.notes.find((n) => n.title === "Second Note").id;
-    const nf = await (
-      await page.request.get(`${baseURL}/api/notes/${noteId}`)
-    ).json();
-    assert(
-      !nf.body.includes("clearer wording"),
-      `放弃 must not write to the note: body=${JSON.stringify(nf.body)}`,
-    );
-  });
-
-  await runTest("P4: 应用 writes the accepted edit through the real save", async () => {
-    await page
-      .locator(".group")
-      .filter({ hasText: "Third Note" })
-      .first()
-      .click();
-    await page.locator('[data-testid="discuss-suggestion-propose"]').click();
-    await page
-      .locator('[data-testid="diff-review"]')
-      .waitFor({ state: "visible", timeout: 4000 });
-    await page.locator('[data-testid="diff-apply"]').click();
-    await page
-      .locator('[data-testid="diff-review"]')
-      .waitFor({ state: "detached", timeout: 4000 })
-      .catch(() => {});
-    await page.waitForTimeout(500);
-    const tree = await (await page.request.get(`${baseURL}/api/tree`)).json();
-    const noteId = tree.notes.find((n) => n.title === "Third Note").id;
-    const nf = await (
-      await page.request.get(`${baseURL}/api/notes/${noteId}`)
-    ).json();
-    assert(
-      nf.body.includes("clearer wording"),
-      `应用 must persist the accepted body: got ${JSON.stringify(nf.body)}`,
-    );
-  });
-
-  await runTest("D1/D2: 查这篇 shows a report and fix enters diff review", async () => {
-    await page
-      .locator(".group")
-      .filter({ hasText: "Fourth Note" })
-      .first()
-      .click();
-    await page.route("**/api/chat/note/*/check", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          note_id: "x",
-          summary: "One omission found.",
-          findings: [
-            {
-              severity: "medium",
-              paragraph: 1,
-              quote: "RAG retrieves relevant chunks",
-              finding: "The note omits reranking.",
-              why: "The standard answer says reranking happens before generation.",
-              suggestion: "Mention reranking before generation.",
-              fix_instruction: "Add reranking between retrieval and generation.",
-              confidence: 0.82,
-            },
-          ],
-        }),
-      }),
-    );
-    await page.route("**/api/chat/note/*/propose-edit", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          note_id: "x",
-          old_body:
-            "RAG retrieves relevant chunks, reranks them, then generates an answer.",
-          new_body:
-            "RAG retrieves relevant chunks, reranks them carefully, then generates an answer.",
-          changed: true,
-          reason: "",
-        }),
-      }),
-    );
-    await page.locator('[data-testid="discuss-suggestion-check"]').click();
-    await page
-      .locator('[data-testid="check-note-report"]')
-      .waitFor({ state: "visible", timeout: 4000 });
-    const reportText = await page.locator('[data-testid="check-note-report"]').innerText();
-    assert(reportText.includes("omits reranking"), `report text: ${reportText}`);
-    assert(reportText.includes("paragraph 1"), `report points to paragraph: ${reportText}`);
-
-    await page.locator('[data-testid="check-note-fix-0"]').click();
-    await page
-      .locator('[data-testid="diff-review"]')
-      .waitFor({ state: "visible", timeout: 4000 });
-    await page.locator('[data-testid="diff-reject"]').click();
-    await page.unroute("**/api/chat/note/*/check");
+    assert(!proposeEditCalled, "proposal suggestion should not call propose-edit");
     await page.unroute("**/api/chat/note/*/propose-edit");
+    await page.unroute("**/api/chat/note/*/stream");
   });
 
   await runTest("A6: conversation persists across pane close/reopen", async () => {

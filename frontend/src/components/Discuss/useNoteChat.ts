@@ -261,12 +261,25 @@ export function useNoteChat(noteId: string | null) {
     });
   }, []);
 
+  const reset = useCallback((targetNoteId?: string) => {
+    const id = targetNoteId ?? activeNoteRef.current;
+    if (!id) return;
+    updateSession(id, (session) => {
+      session.abort?.abort();
+      session.abort = null;
+      session.status = "idle";
+      session.error = null;
+      session.messages = [];
+    });
+  }, []);
+
   return {
     messages,
     status,
     error,
     send,
     stop,
+    reset,
     appendUserMessage,
     appendAssistantMessage,
   };
