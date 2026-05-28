@@ -973,6 +973,38 @@ function LLMConfigPanel(): React.ReactNode {
                     {t("llm.testPreview")}: {testMut.data.preview}
                   </div>
                 )}
+                {testMut.data.capabilities && (
+                  <div
+                    className="mt-2 space-y-1"
+                    data-testid="llm-capability-profile"
+                  >
+                    <div className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                      {t("llm.capabilities")}
+                    </div>
+                    {testMut.data.capabilities.checks.map((check) => (
+                      <div
+                        key={check.name}
+                        className="flex items-start gap-1.5"
+                        data-testid={`llm-capability-${check.name}`}
+                      >
+                        {check.ok ? (
+                          <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-emerald-600" />
+                        ) : (
+                          <ShieldAlert className="mt-0.5 size-3 shrink-0 text-amber-600" />
+                        )}
+                        <div className="min-w-0">
+                          <div style={{ color: "var(--ink)" }}>
+                            {capabilityLabel(check.name, t)}
+                          </div>
+                          <div className="break-words text-muted-foreground">
+                            {check.detail}
+                            {check.latency_ms ? ` · ${check.latency_ms}ms` : ""}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             ) : (
               <div className="text-destructive">
@@ -984,6 +1016,23 @@ function LLMConfigPanel(): React.ReactNode {
       </div>
     </Section>
   );
+}
+
+function capabilityLabel(name: string, t: (k: string) => string): string {
+  switch (name) {
+    case "chat_completions":
+      return t("llm.capabilityChat");
+    case "streaming":
+      return t("llm.capabilityStreaming");
+    case "chat_tools":
+      return t("llm.capabilityTools");
+    case "responses":
+      return t("llm.capabilityResponses");
+    case "hosted_web_search":
+      return t("llm.capabilityHostedSearch");
+    default:
+      return name;
+  }
 }
 
 function ApiKeyStatusRow({

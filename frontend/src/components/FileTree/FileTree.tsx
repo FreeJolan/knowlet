@@ -120,6 +120,8 @@ function renameFolderInTree(root: TreeFolder, path: string, newName: string): Tr
 type PendingCreate = {
   kind: "note" | "folder";
   parentPath: string;
+  name?: string;
+  submitting?: boolean;
   /** When set, the eventual createBlankNote call uses this template. */
   templateId?: string | null;
 };
@@ -558,12 +560,22 @@ export function FileTree({
     }
     setDuplicateError(null);
     if (pendingCreate.kind === "note") {
+      setPendingCreate({
+        ...pendingCreate,
+        name: trimmed,
+        submitting: true,
+      });
       createNoteM.mutate({
         title: trimmed,
         folder: pendingCreate.parentPath,
         templateId: pendingCreate.templateId ?? null,
       });
     } else {
+      setPendingCreate({
+        ...pendingCreate,
+        name: trimmed,
+        submitting: true,
+      });
       const path = pendingCreate.parentPath
         ? `${pendingCreate.parentPath}/${trimmed}`
         : trimmed;
@@ -623,6 +635,8 @@ export function FileTree({
     return injectPending(base, {
       kind: pendingCreate.kind,
       parentPath: injectionPath,
+      name: pendingCreate.name,
+      submitting: pendingCreate.submitting,
     });
   }, [tree.data, pendingCreate, rootFolderPath]);
 
@@ -1097,7 +1111,11 @@ function Row({
           // Pending row (no noteId yet) — no toggle, just placeholder.
           <FileText className="size-4 shrink-0 text-muted-foreground" />
         )}
-        {node.isEditing || isPending ? (
+        {isPending && node.data.submitting ? (
+          <span className="flex-1 truncate rounded-sm border border-transparent px-1 text-muted-foreground">
+            {node.data.name || t("tree.untitled")}
+          </span>
+        ) : node.isEditing || isPending ? (
           <InlineEditInput
             initial={node.data.name}
             placeholder={

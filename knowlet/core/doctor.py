@@ -143,6 +143,26 @@ def run_doctor_checks(
         except Exception as exc:
             fail("llm tool-calling", f"{type(exc).__name__}: {exc}")
 
+        try:
+            from knowlet.core.ai.capabilities import probe_capabilities
+
+            profile = probe_capabilities(llm, include_hosted_web_search=True)
+            for check in profile.checks:
+                if check.name in {"chat_completions", "chat_tools"}:
+                    continue
+                label = f"llm capability / {check.name}"
+                detail = (
+                    f"{check.detail} ({check.latency_ms}ms)"
+                    if check.latency_ms
+                    else check.detail
+                )
+                if check.ok:
+                    ok(label, detail)
+                else:
+                    warn(label, detail)
+        except Exception as exc:
+            warn("llm capability profile", f"{type(exc).__name__}: {exc}")
+
     return results
 
 

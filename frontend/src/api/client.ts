@@ -532,6 +532,21 @@ export interface LLMTestResult {
   preview?: string;
   model?: string;
   error?: string;
+  capabilities?: CapabilityProfile;
+}
+
+export interface CapabilityCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+  latency_ms: number;
+  error?: string | null;
+}
+
+export interface CapabilityProfile {
+  model: string;
+  checks: CapabilityCheck[];
+  supported: Record<string, boolean>;
 }
 
 export const getLLMConfig = (): Promise<LLMConfigSummary> =>

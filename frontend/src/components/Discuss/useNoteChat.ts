@@ -9,18 +9,32 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type ChatRole = "user" | "assistant";
+import { summarizeToolPayload } from "./ToolTrace";
+
+export type ChatRole = "user" | "assistant" | "tool";
+export interface ChatToolTrace {
+  id: string;
+  name: string;
+  status: "calling" | "done" | "error";
+  arguments: Record<string, unknown>;
+  resultSummary?: string;
+}
 export interface ChatMessage {
   role: ChatRole;
   content: string;
+  tool?: ChatToolTrace;
 }
 export type ChatStatus = "idle" | "streaming" | "error";
 
-interface SSEEvent {
+export interface ChatSSEEvent {
   type: string;
+  id?: string;
+  name?: string;
+  arguments?: Record<string, unknown>;
+  payload?: unknown;
   text?: string;
   final_text?: string;
-  message?: string;
+  message?: unknown;
 }
 
 interface NoteChatSession {
@@ -29,6 +43,33 @@ interface NoteChatSession {
   error: string | null;
   abort: AbortController | null;
   listeners: Set<() => void>;
+}
+
+export function formatErrorDetail(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value.map(formatErrorDetail).join("; ");
+  }
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.msg === "string") return obj.msg;
+    if (typeof obj.message === "string") return obj.message;
+    if (typeof obj.error === "string") return obj.error;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value ?? "stream error");
+}
+
+export function chatHistoryForRequest(messages: ChatMessage[]): ChatMessage[] {
+  return messages.filter(
+    (m) =>
+      (m.role === "user" || m.role === "assistant") &&
+      m.content.trim() !== "",
+  );
 }
 
 const sessions = new Map<string, NoteChatSession>();
@@ -95,6 +136,91 @@ function dropEmptyAssistant(messages: ChatMessage[]): ChatMessage[] {
   return messages;
 }
 
+export function upsertToolCall(
+  messages: ChatMessage[],
+  ev: ChatSSEEvent,
+): ChatMessage[] {
+  const name = ev.name || "tool";
+  const id = ev.id || `${name}-${Date.now()}`;
+  const toolMessage: ChatMessage = {
+    role: "tool",
+    content: name,
+    tool: {
+      id,
+      name,
+      status: "calling",
+      arguments: ev.arguments ?? {},
+    },
+  };
+  const pending = messages[messages.length - 1];
+  const insertAt =
+    pending?.role === "assistant" && pending.content === ""
+      ? messages.length - 1
+      : messages.length;
+  return [
+    ...messages.slice(0, insertAt),
+    toolMessage,
+    ...messages.slice(insertAt),
+  ];
+}
+
+export function applyToolResult(
+  messages: ChatMessage[],
+  ev: ChatSSEEvent,
+): ChatMessage[] {
+  const id = ev.id || "";
+  const name = ev.name || "tool";
+  const resultSummary = summarizeToolPayload(name, ev.payload);
+  let updated = false;
+  const next = messages.map((message) => {
+    if (
+      message.role !== "tool" ||
+      !message.tool ||
+      updated ||
+      (id && message.tool.id !== id)
+    ) {
+      return message;
+    }
+    updated = true;
+    const failed =
+      !!ev.payload &&
+      typeof ev.payload === "object" &&
+      typeof (ev.payload as Record<string, unknown>).error === "string";
+    return {
+      ...message,
+      tool: {
+        ...message.tool,
+        status: failed ? ("error" as const) : ("done" as const),
+        resultSummary,
+      },
+    };
+  });
+  if (updated) return next;
+  const inserted = upsertToolCall(messages, {
+    type: "tool_call",
+    id,
+    name,
+    arguments: {},
+  });
+  let fixed = false;
+  return inserted.map((message) => {
+    if (fixed || message.role !== "tool" || message.tool?.id !== id) {
+      return message;
+    }
+    fixed = true;
+    return {
+      ...message,
+      tool: message.tool
+        ? {
+            ...message.tool,
+            status: "done" as const,
+            resultSummary,
+          }
+        : message.tool,
+    };
+  });
+}
+
 export function useNoteChat(noteId: string | null) {
   const [, forceRender] = useState(0);
   const activeNoteRef = useRef<string | null>(noteId);
@@ -152,7 +278,7 @@ export function useNoteChat(noteId: string | null) {
     if (!trimmed || !id) return;
     const session = getSession(id);
     if (session.status === "streaming") return;
-    const history = session.messages.filter((m) => m.content !== "");
+    const history = chatHistoryForRequest(session.messages);
     const ctrl = new AbortController();
     updateSession(id, (s) => {
       s.error = null;
@@ -174,8 +300,8 @@ export function useNoteChat(noteId: string | null) {
       if (!r.ok || !r.body) {
         let detail = r.statusText;
         try {
-          const d = (await r.json()) as { detail?: string };
-          if (d?.detail) detail = d.detail;
+          const d = (await r.json()) as { detail?: unknown };
+          if (d?.detail) detail = formatErrorDetail(d.detail);
         } catch {
           // body was not JSON
         }
@@ -200,9 +326,9 @@ export function useNoteChat(noteId: string | null) {
           const block = buf.slice(0, idx).trim();
           buf = buf.slice(idx + 2);
           if (!block.startsWith("data:")) continue;
-          let ev: SSEEvent;
+          let ev: ChatSSEEvent;
           try {
-            ev = JSON.parse(block.slice(5).trim()) as SSEEvent;
+            ev = JSON.parse(block.slice(5).trim()) as ChatSSEEvent;
           } catch {
             continue;
           }
@@ -219,8 +345,16 @@ export function useNoteChat(noteId: string | null) {
                 s.messages = copy;
               }
             });
+          } else if (ev.type === "tool_call") {
+            updateSession(id, (s) => {
+              s.messages = upsertToolCall(s.messages, ev);
+            });
+          } else if (ev.type === "tool_result") {
+            updateSession(id, (s) => {
+              s.messages = applyToolResult(s.messages, ev);
+            });
           } else if (ev.type === "error") {
-            streamError = ev.message || "stream error";
+            streamError = formatErrorDetail(ev.message || "stream error");
           }
         }
       }

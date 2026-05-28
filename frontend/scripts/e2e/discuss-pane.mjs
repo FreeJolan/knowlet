@@ -252,6 +252,223 @@ try {
     await page.unroute("**/api/chat/note/*/stream");
   });
 
+  await runTest("chat uses right-side markdown user bubbles and left-side assistant turns", async () => {
+    const reset = page.locator('[data-testid="discuss-reset"]');
+    if (await reset.isEnabled()) await reset.click();
+    await page.route("**/api/chat/note/*/stream", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: [
+          {
+            type: "tool_call",
+            id: "call_layout",
+            name: "search_notes",
+            arguments: { query: "RAG", limit: 1 },
+          },
+          {
+            type: "tool_result",
+            id: "call_layout",
+            name: "search_notes",
+            payload: { results: [{ title: "RAG Notes", id: "n1" }] },
+          },
+          {
+            type: "reply_chunk",
+            text: "**Found** one useful note.\n\n| Note | Why |\n| --- | --- |\n| RAG | grounded |",
+          },
+          { type: "turn_done", final_text: "done" },
+        ]
+          .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+          .join(""),
+      }),
+    );
+    await page
+      .locator('[data-testid="discuss-input"]')
+      .fill("**User asks**\n\n- with markdown");
+    await page.locator('[data-testid="discuss-send"]').click();
+
+    const userBubble = page
+      .locator('[data-testid="discuss-user-bubble"]')
+      .filter({ hasText: "User asks" })
+      .first();
+    await userBubble.waitFor({ state: "visible", timeout: 3000 });
+    await userBubble.locator("strong").filter({ hasText: "User asks" }).waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await userBubble.locator("li").filter({ hasText: "with markdown" }).waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+
+    const assistant = page
+      .locator('[data-testid="discuss-message-assistant"]')
+      .filter({ hasText: "Found" })
+      .first();
+    await assistant.locator("strong").filter({ hasText: "Found" }).waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await assistant.locator("table").waitFor({ state: "visible", timeout: 3000 });
+
+    const tracePanel = page.locator('[data-testid="discuss-trace-panel"]').first();
+    await tracePanel.waitFor({ state: "visible", timeout: 3000 });
+    assert(
+      (await tracePanel.evaluate((el) => !el.open)) === true,
+      "completed tool trace should auto-collapse once the final answer is visible",
+    );
+    await page.locator('[data-testid="discuss-trace-toggle"]').first().click();
+    await page
+      .locator('[data-testid="tool-trace-search_notes"]')
+      .first()
+      .waitFor({ state: "visible", timeout: 3000 });
+
+    const assistantText = (await assistant.innerText()).trim();
+    assert(
+      !assistantText.startsWith("AI"),
+      `assistant turn should not need a visible AI label: "${assistantText}"`,
+    );
+    const userText = (
+      await page.locator('[data-testid="discuss-message-user"]').first().innerText()
+    ).trim();
+    assert(
+      !userText.startsWith("你"),
+      `user turn should rely on right-side bubble layout, not a visible label: "${userText}"`,
+    );
+
+    const geometry = await page.evaluate(() => {
+      const messages = document.querySelector('[data-testid="discuss-messages"]');
+      const user = document.querySelector('[data-testid="discuss-user-bubble"]');
+      const assistantTurn = document.querySelector(
+        '[data-testid="discuss-message-assistant"]',
+      );
+      const trace = document.querySelector('[data-testid="discuss-trace-panel"]');
+      const box = (el) => el?.getBoundingClientRect();
+      const mb = box(messages);
+      const ub = box(user);
+      const ab = box(assistantTurn);
+      const tb = box(trace);
+      return {
+        messageRight: mb?.right ?? 0,
+        userLeft: ub?.left ?? 0,
+        userRight: ub?.right ?? 0,
+        assistantLeft: ab?.left ?? 0,
+        traceLeft: tb?.left ?? 0,
+      };
+    });
+    assert(
+      geometry.userLeft > geometry.assistantLeft + 40,
+      `user bubble should sit to the right of assistant turns: ${JSON.stringify(geometry)}`,
+    );
+    assert(
+      geometry.messageRight - geometry.userRight < 24,
+      `user bubble should align to the right edge: ${JSON.stringify(geometry)}`,
+    );
+    assert(
+      geometry.traceLeft < geometry.userLeft,
+      `tool trace should stay in the assistant/left lane: ${JSON.stringify(geometry)}`,
+    );
+
+    await page.locator('[data-testid="discuss-reset"]').click();
+    await page.unroute("**/api/chat/note/*/stream");
+  });
+
+  await runTest("tool calls and results render as visible trace items", async () => {
+    let requestCount = 0;
+    const histories = [];
+    await page.route("**/api/chat/note/*/stream", async (route) => {
+      requestCount += 1;
+      const body = await route.request().postDataJSON();
+      histories.push(body.history ?? []);
+      if (requestCount === 1) {
+        return route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body:
+          'data: {"type":"tool_call","id":"call_1","name":"search_notes","arguments":{"query":"RAG","limit":1}}\n\n' +
+          'data: {"type":"tool_result","id":"call_1","name":"search_notes","payload":{"results":[{"title":"RAG Notes","id":"n1"}]}}\n\n' +
+          'data: {"type":"reply_chunk","text":"工具查完了。"}\n\n' +
+          'data: {"type":"turn_done","final_text":"工具查完了。"}\n\n',
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body:
+          'data: {"type":"reply_chunk","text":"SECOND_AFTER_TOOL"}\n\n' +
+          'data: {"type":"turn_done","final_text":"SECOND_AFTER_TOOL"}\n\n',
+      });
+    });
+    await page.locator('[data-testid="discuss-input"]').fill("use tool trace");
+    await page.locator('[data-testid="discuss-send"]').click();
+    const tracePanel = page.locator('[data-testid="discuss-trace-panel"]').first();
+    await tracePanel.waitFor({ state: "visible", timeout: 3000 });
+    assert(
+      (await tracePanel.innerText()).includes("已完成 1 个工具"),
+      "completed tool trace should summarize the hidden process",
+    );
+    await page.locator('[data-testid="discuss-trace-toggle"]').first().click();
+    const trace = page.locator('[data-testid="tool-trace-search_notes"]').first();
+    await trace.waitFor({ state: "visible", timeout: 3000 });
+    assert(
+      (await trace.innerText()).includes("search_notes"),
+      "tool trace should show the tool name",
+    );
+    assert(
+      (await trace.innerText()).includes("RAG Notes"),
+      "tool trace should summarize the tool result",
+    );
+    await page
+      .locator('[data-testid="discuss-message-assistant"]')
+      .filter({ hasText: "工具查完了" })
+      .first()
+      .waitFor({ state: "visible", timeout: 3000 });
+    await page.locator('[data-testid="discuss-input"]').fill("after tool trace");
+    await page.locator('[data-testid="discuss-send"]').click();
+    await page
+      .locator('[data-testid="discuss-message-assistant"]')
+      .filter({ hasText: "SECOND_AFTER_TOOL" })
+      .first()
+      .waitFor({ state: "visible", timeout: 3000 });
+    assert(
+      histories[1].every((m) => m.role === "user" || m.role === "assistant"),
+      `follow-up history must not send tool trace messages: ${JSON.stringify(histories[1])}`,
+    );
+    await page.locator('[data-testid="discuss-reset"]').click();
+    await page.unroute("**/api/chat/note/*/stream");
+  });
+
+  await runTest("structured stream errors render as text instead of crashing", async () => {
+    await page.route("**/api/chat/note/*/stream", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body:
+          "data: " +
+          JSON.stringify({
+            type: "error",
+            message: {
+              type: "literal_error",
+              loc: ["body", "history", 0, "role"],
+              msg: "Input should be 'user' or 'assistant'",
+              input: "tool",
+              ctx: { expected: "'user' or 'assistant'" },
+            },
+          }) +
+          "\n\n",
+      }),
+    );
+    await page.locator('[data-testid="discuss-input"]').fill("structured error");
+    await page.locator('[data-testid="discuss-send"]').click();
+    await page
+      .locator('[data-testid="discuss-error"]')
+      .filter({ hasText: "Input should be 'user' or 'assistant'" })
+      .first()
+      .waitFor({ state: "visible", timeout: 3000 });
+    await page.locator('[data-testid="discuss-reset"]').click();
+    await page.unroute("**/api/chat/note/*/stream");
+  });
+
   await runTest("assistant messages render GitHub-flavored Markdown", async () => {
     await page.route("**/api/chat/note/*/stream", (route) =>
       route.fulfill({
@@ -290,7 +507,7 @@ try {
     await indicator.waitFor({ state: "visible", timeout: 1000 });
     const label = await indicator.innerText();
     assert(
-      label.includes("AI 正在生成"),
+      label.includes("正在生成"),
       `generation indicator should explain the in-flight state, got "${label}"`,
     );
     await page

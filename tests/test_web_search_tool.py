@@ -38,6 +38,13 @@ def _ctx(tmp_path: Path, web_search_cfg: WebSearchConfig) -> ToolContext:
     )
 
 
+def _ctx_with_llm_key(tmp_path: Path, web_search_cfg: WebSearchConfig) -> ToolContext:
+    ctx = _ctx(tmp_path, web_search_cfg)
+    ctx.config.llm.api_key = "stub-key"
+    ctx.config.llm.model = "gpt-5.5"
+    return ctx
+
+
 # -------------------------------------------------- web_search tool
 
 
@@ -66,6 +73,41 @@ def test_web_search_returns_results_via_provider(tmp_path: Path, monkeypatch):
     assert out["budget_remaining"] == 2  # max_per_turn=3, used 1
     # And the per_turn counter is updated.
     assert ctx.per_turn["web_search"] == 1
+
+
+def test_web_search_auto_prefers_hosted_search_over_ddg_failure(
+    tmp_path: Path, monkeypatch
+):
+    """Regression for real dogfood failure: auto mode used DDG IA, which
+    can SSL-fail or return sparse results even though cliproxyapi/Codex
+    exposes hosted Responses web_search. Hosted search should win first."""
+    monkeypatch.setattr(
+        web_search_tool,
+        "_hosted_web_search",
+        lambda llm_cfg, query, *, top_k: [
+            web_search_tool.SearchResult(
+                title="LangChain",
+                url="https://github.com/langchain-ai/langchain",
+                snippet="LangChain GitHub repository",
+                rank=0,
+            )
+        ],
+    )
+
+    def ddg_should_not_run(self, url, **kw):
+        raise AssertionError("DDG fallback should not run when hosted search succeeds")
+
+    monkeypatch.setattr(httpx.Client, "get", ddg_should_not_run)
+    ctx = _ctx_with_llm_key(tmp_path, WebSearchConfig())
+    out = web_search_tool.TOOL.handler(
+        {"query": "LangChain GitHub stars langchain langchain", "top_k": 3},
+        ctx,
+    )
+
+    assert out["provider"] == "hosted_web_search"
+    assert out["count"] == 1
+    assert out["results"][0]["url"] == "https://github.com/langchain-ai/langchain"
+    assert "error" not in out
 
 
 def test_web_search_empty_query_returns_error(tmp_path: Path):

@@ -524,7 +524,13 @@
     "testNeedsKey": "先保存 API key 再测试",
     "testOk": "连接成功 · {{latency}}ms",
     "testFailed": "连接失败",
-    "testPreview": "响应预览"
+    "testPreview": "响应预览",
+    "capabilities": "能力探测",
+    "capabilityChat": "Chat Completions 文本",
+    "capabilityStreaming": "流式输出",
+    "capabilityTools": "Chat Completions 工具调用",
+    "capabilityResponses": "Responses API",
+    "capabilityHostedSearch": "Hosted web search"
   },
   "vaultPortability": {
     "label": "Vault 导入导出",

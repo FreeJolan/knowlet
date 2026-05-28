@@ -25,6 +25,10 @@ const env = await setupTestEnv({
 });
 const { page, baseURL, teardown } = env;
 
+function treeRow(title) {
+  return page.locator('[role="tree"] .group').filter({ hasText: title }).first();
+}
+
 try {
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await page.waitForTimeout(500);
@@ -40,7 +44,7 @@ try {
   });
 
   await runTest("right-click Rename input gets focus + KEEPS it through menu close", async () => {
-    const row = page.locator(".group").filter({ hasText: "alpha" }).first();
+    const row = treeRow("alpha");
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Rename" }).click();
     const input = page.locator('input[data-rename-input="true"]');
@@ -142,7 +146,7 @@ try {
     async () => {
       // Pre-condition: select a different row so arborist has a focused
       // node that, if it received an Enter, would enter edit mode.
-      const labRow = page.locator(".group").filter({ hasText: "lab" }).first();
+      const labRow = treeRow("lab");
       await labRow.click();
       await page.waitForTimeout(100);
 
@@ -172,10 +176,10 @@ try {
       // Earlier tests may have collapsed the `lab` folder — make sure
       // alpha is reachable before we right-click it.
       if (!(await hasRow(page, "alpha"))) {
-        await page.locator(".group").filter({ hasText: "lab" }).first().click();
+        await treeRow("lab").click();
         await page.waitForTimeout(150);
       }
-      const row = page.locator(".group").filter({ hasText: "alpha" }).first();
+      const row = treeRow("alpha");
       await row.click({ button: "right" });
       await page.getByRole("menuitem", { name: "Rename" }).click();
       const input = page.locator('input[data-rename-input="true"]');
@@ -195,11 +199,11 @@ try {
 
   await runTest("F2 on focused row enters rename mode", async () => {
     if (!(await hasRow(page, "alpha"))) {
-      await page.locator(".group").filter({ hasText: "lab" }).first().click();
+      await treeRow("lab").click();
       await page.waitForTimeout(150);
     }
     // Click alpha to focus it (in arborist's terms).
-    await page.locator(".group").filter({ hasText: "alpha" }).first().click();
+    await treeRow("alpha").click();
     await page.waitForTimeout(150);
     await page.keyboard.press("F2");
     const input = page.locator('input[data-rename-input="true"]');
@@ -244,17 +248,17 @@ try {
       // the stale cached note. Fix: optimistic patch on both caches.
       // Open lab/alpha first.
       if (!(await hasRow(page, "alpha"))) {
-        await page.locator(".group").filter({ hasText: "lab" }).first().click();
+        await treeRow("lab").click();
         await page.waitForTimeout(150);
       }
-      await page.locator(".group").filter({ hasText: "alpha" }).first().click();
+      await treeRow("alpha").click();
       await page.waitForTimeout(300);
       const titleH1 = page.locator('[data-testid="note-title"]').first();
       await titleH1.waitFor({ state: "visible", timeout: 2000 });
       const before = (await titleH1.textContent()) ?? "";
       assert(/alpha/.test(before), `setup: h1 should show alpha, got "${before}"`);
       // Rename via right-click → Rename.
-      await page.locator(".group").filter({ hasText: "alpha" }).first().click({ button: "right" });
+      await treeRow("alpha").click({ button: "right" });
       await page.getByRole("menuitem", { name: "Rename" }).click();
       const input = page.locator('input[data-rename-input="true"]');
       await input.waitFor({ state: "visible", timeout: 2000 });

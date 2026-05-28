@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import ReactMarkdown from "react-markdown";
 
 import {
   approveDraft,
@@ -30,7 +29,7 @@ import {
   type DraftSummary,
   type ProposedEdit,
 } from "@/api/client";
-import { DiffReview } from "@/components/Discuss";
+import { ChatTranscript, DiffReview } from "@/components/Discuss";
 import { QK } from "@/lib/queryClient";
 
 import { useDraftChat } from "./useDraftChat";
@@ -543,30 +542,18 @@ function DraftDiscussion({ draftId }: { draftId: string }) {
       >
         {t("digest.discuss")}
       </div>
-      <div className="max-h-48 space-y-3 overflow-y-auto px-3 py-3">
+      <div className="max-h-48 space-y-4 overflow-y-auto px-3 py-3">
         {messages.length === 0 && !error && (
           <div className="text-xs text-muted-foreground">
             {t("digest.chatEmpty")}
           </div>
         )}
-        {messages.map((m, i) => (
-          <div
-            key={`${m.role}-${i}`}
-            data-testid={`digest-message-${m.role}`}
-            className="text-sm"
-          >
-            <div className="mb-1 text-[10px] font-mono uppercase tracking-wide text-muted-foreground">
-              {m.role === "user" ? t("digest.you") : "AI"}
-            </div>
-            {m.role === "assistant" ? (
-              <div className="prose prose-sm max-w-none">
-                <ReactMarkdown>{m.content}</ReactMarkdown>
-              </div>
-            ) : (
-              <p className="whitespace-pre-wrap">{m.content}</p>
-            )}
-          </div>
-        ))}
+        <ChatTranscript
+          messages={messages}
+          status={status}
+          testPrefix="digest"
+          generatingLabel={t("digest.working")}
+        />
         {error && (
           <div className="text-xs" style={{ color: "var(--danger, #c0392b)" }}>
             {error}

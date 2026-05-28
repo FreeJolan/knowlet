@@ -20,6 +20,8 @@ export type TreeNodeData = {
   updatedAt: string;
   /** Pending only: where to drop the new entity. */
   pendingParent?: string;
+  /** Pending only: true after the user submitted and before the backend returns. */
+  submitting?: boolean;
   children?: TreeNodeData[];
 };
 
@@ -32,16 +34,22 @@ export const PENDING_FOLDER_ID = "__pending_folder__";
  */
 export function injectPending(
   data: TreeNodeData[],
-  pending: { kind: "note" | "folder"; parentPath: string },
+  pending: {
+    kind: "note" | "folder";
+    parentPath: string;
+    name?: string;
+    submitting?: boolean;
+  },
 ): TreeNodeData[] {
   const placeholder: TreeNodeData = {
     id: pending.kind === "note" ? PENDING_NOTE_ID : PENDING_FOLDER_ID,
-    name: "",
+    name: pending.name ?? "",
     kind: pending.kind === "note" ? "pending-note" : "pending-folder",
     folderPath: "",
     noteId: "",
     updatedAt: "",
     pendingParent: pending.parentPath,
+    submitting: pending.submitting ?? false,
   };
   if (!pending.parentPath) {
     return [placeholder, ...data];

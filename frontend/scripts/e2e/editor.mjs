@@ -35,7 +35,7 @@ async function getNoteByTitle(title) {
 }
 
 async function clickRow(title) {
-  const row = page.locator(".group").filter({ hasText: title }).first();
+  const row = page.locator('[role="tree"] .group').filter({ hasText: title }).first();
   await row.waitFor({ state: "visible", timeout: 3000 });
   await row.click();
 }
@@ -176,6 +176,10 @@ try {
     assert(
       a.body.includes("italic *me*"),
       `selection wrapped with * — got "${a.body.slice(0, 80)}"`,
+    );
+    assert(
+      (await page.locator('[data-testid="drafts-focus-mode"]').count()) === 0,
+      "editor Cmd+I must not bubble into the global Drafts shortcut",
     );
   });
 

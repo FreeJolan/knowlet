@@ -12,8 +12,8 @@ Current roadmap pointer (2026-05-28): for AI product work, use
 `docs/roadmap/ai-modes-roadmap.md` as the source of truth. The old
 `docs/roadmap/phase-3-stages.md`, `docs/roadmap/phase-3-slicing.md`,
 and ADR-0021 Phase 3 envelope plan are historical context only. Stage B
-has passed dogfood; the next product step is F0 AI capability foundation
-refactor, not direct Quiz/E work.
+has passed dogfood; the inserted F0 AI capability foundation refactor
+has met its current gate. The next product step is Stage E/Quiz.
 
 ---
 

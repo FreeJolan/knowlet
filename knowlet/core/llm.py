@@ -54,6 +54,14 @@ class AssistantMessage:
     raw: Any = None
 
 
+@dataclass
+class ResponsesMessage:
+    """Minimal normalized wrapper for the OpenAI Responses API surface."""
+
+    content: str
+    raw: Any = None
+
+
 # Some OpenAI-compatible backends reject the `temperature` request param for
 # particular models. Rather than maintain a curated substring list that ages
 # with every release, we learn from a 400 once and cache the result per model id.
@@ -107,9 +115,7 @@ class LLMClient:
         if self.audit_store is None:
             return
         try:
-            prompt_chars = sum(
-                len((m.get("content") or "")) for m in messages
-            )
+            prompt_chars = sum(len(m.get("content") or "") for m in messages)
             last_user = next(
                 (
                     m.get("content") or ""
@@ -140,7 +146,7 @@ class LLMClient:
                     payload=payload,
                 )
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.debug("ai.call audit emit failed", exc_info=True)
 
     # ----------------------------------------------- chat (sync)
@@ -205,7 +211,7 @@ class LLMClient:
                 tool_calls=tool_calls,
                 raw=resp,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             error_repr = repr(exc)[:500]
             raise
         finally:
@@ -308,7 +314,7 @@ class LLMClient:
                 yield ToolCallEvent(id=slot["id"], name=slot["name"], arguments=args)
 
             yield ReplyDoneEvent(final_text="".join(content_buf))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             error_repr = repr(exc)[:500]
             raise
         finally:
@@ -321,6 +327,122 @@ class LLMClient:
                 stream=True,
                 error=error_repr,
             )
+
+    # ----------------------------------------------- responses (sync)
+
+    def responses(
+        self,
+        input_text: str,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        max_output_tokens: int | None = None,
+        role: str | None = None,
+    ) -> ResponsesMessage:
+        """Call the Responses API when the configured endpoint exposes it.
+
+        This is intentionally a thin, optional surface beside Chat
+        Completions. Older OpenAI-compatible endpoints may not implement
+        `/v1/responses`; callers should treat failure as a capability result,
+        not as proof that the model itself lacks the feature.
+        """
+        client = self._ensure()
+        responses_api = getattr(client, "responses", None)
+        if responses_api is None:
+            raise RuntimeError("OpenAI SDK does not expose responses API")
+
+        kwargs: dict[str, Any] = {
+            "model": self.cfg.model,
+            "input": input_text,
+        }
+        if max_output_tokens is not None:
+            kwargs["max_output_tokens"] = max_output_tokens
+        if tools:
+            kwargs["tools"] = tools
+
+        started = time.monotonic()
+        error_repr: str | None = None
+        output_text = ""
+        raw_resp: Any = None
+        try:
+            try:
+                resp = responses_api.create(**kwargs)
+            except BadRequestError as exc:
+                # Some compatible gateways implement Responses but reject
+                # OpenAI's newer max_output_tokens name. Retry once without it.
+                if "max_output_tokens" in kwargs and "max_output_tokens" in str(exc):
+                    kwargs.pop("max_output_tokens", None)
+                    resp = responses_api.create(**kwargs)
+                else:
+                    raise
+            raw_resp = resp
+            output_text = response_output_text(resp)
+            return ResponsesMessage(content=output_text, raw=resp)
+        except Exception as exc:
+            error_repr = repr(exc)[:500]
+            raise
+        finally:
+            self._emit_call_audit(
+                role=role or "responses",
+                messages=[{"role": "user", "content": input_text}],
+                output_text=output_text,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                tool_calls_count=(
+                    1
+                    if raw_resp is not None
+                    and response_has_output_type(raw_resp, "web_search_call")
+                    else 0
+                ),
+                stream=False,
+                error=error_repr,
+            )
+
+
+def _to_plain(obj: Any) -> Any:
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if isinstance(obj, dict):
+        return obj
+    return getattr(obj, "__dict__", obj)
+
+
+def response_output_text(resp: Any) -> str:
+    """Extract final text from OpenAI Responses objects or compatible dicts."""
+    text = getattr(resp, "output_text", None)
+    if isinstance(text, str) and text:
+        return text
+
+    data = _to_plain(resp)
+    if not isinstance(data, dict):
+        return ""
+    out: list[str] = []
+    for item in data.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        for content in item.get("content") or []:
+            if not isinstance(content, dict):
+                continue
+            value = content.get("text") or content.get("output_text")
+            if isinstance(value, str):
+                out.append(value)
+    return "".join(out)
+
+
+def response_has_output_type(resp: Any, type_name: str) -> bool:
+    """Return True when a Responses payload contains an output item type."""
+    data = _to_plain(resp)
+    if not isinstance(data, dict):
+        return False
+
+    def visit(value: Any) -> bool:
+        if isinstance(value, dict):
+            if value.get("type") == type_name:
+                return True
+            return any(visit(v) for v in value.values())
+        if isinstance(value, list):
+            return any(visit(v) for v in value)
+        return False
+
+    return visit(data.get("output") or data)
 
 
 def messages_with_assistant(

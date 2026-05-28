@@ -8,14 +8,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { ChatMessage, ChatStatus } from "@/components/Discuss";
-
-interface SSEEvent {
-  type: string;
-  text?: string;
-  final_text?: string;
-  message?: string;
-}
+import {
+  applyToolResult,
+  chatHistoryForRequest,
+  formatErrorDetail,
+  type ChatMessage,
+  type ChatSSEEvent,
+  type ChatStatus,
+  upsertToolCall,
+} from "@/components/Discuss";
 
 export function useDraftChat(draftId: string | null) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -76,7 +77,7 @@ export function useDraftChat(draftId: string | null) {
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || !draftId || status === "streaming") return;
-      const history = messagesRef.current.filter((m) => m.content !== "");
+      const history = chatHistoryForRequest(messagesRef.current);
       setError(null);
       setMessages((m) => [
         ...m,
@@ -99,8 +100,8 @@ export function useDraftChat(draftId: string | null) {
         if (!r.ok || !r.body) {
           let detail = r.statusText;
           try {
-            const d = (await r.json()) as { detail?: string };
-            if (d?.detail) detail = d.detail;
+            const d = (await r.json()) as { detail?: unknown };
+            if (d?.detail) detail = formatErrorDetail(d.detail);
           } catch {
             // body was not JSON
           }
@@ -122,9 +123,9 @@ export function useDraftChat(draftId: string | null) {
             const block = buf.slice(0, idx).trim();
             buf = buf.slice(idx + 2);
             if (!block.startsWith("data:")) continue;
-            let ev: SSEEvent;
+            let ev: ChatSSEEvent;
             try {
-              ev = JSON.parse(block.slice(5).trim()) as SSEEvent;
+              ev = JSON.parse(block.slice(5).trim()) as ChatSSEEvent;
             } catch {
               continue;
             }
@@ -140,8 +141,12 @@ export function useDraftChat(draftId: string | null) {
                   };
                 return copy;
               });
+            } else if (ev.type === "tool_call") {
+              setMessages((m) => upsertToolCall(m, ev));
+            } else if (ev.type === "tool_result") {
+              setMessages((m) => applyToolResult(m, ev));
             } else if (ev.type === "error") {
-              streamError = ev.message || "stream error";
+              streamError = formatErrorDetail(ev.message || "stream error");
             }
           }
         }

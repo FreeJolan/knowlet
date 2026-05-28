@@ -19,8 +19,6 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
 import {
   proposeNoteEdit,
@@ -30,6 +28,7 @@ import {
 import type { ApiError } from "@/api/types";
 import { Button } from "@/components/ui/button";
 
+import { ChatTranscript } from "./ChatTranscript";
 import { useNoteChat } from "./useNoteChat";
 
 type SuggestionAction = "check" | "propose";
@@ -52,44 +51,6 @@ const DISCUSS_SUGGESTIONS: Array<{
       "请帮我基于这篇笔记提出一版更清晰但尽量少改动的修改建议，修改必须经过我确认后才能应用。",
   },
 ];
-
-function AssistantMarkdown({ content }: { content: string }) {
-  return (
-    <div className="kn-md prose-paper py-0" style={{ color: "var(--ink)" }}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-    </div>
-  );
-}
-
-function GeneratingIndicator() {
-  return (
-    <div
-      data-testid="discuss-generating"
-      role="status"
-      aria-live="polite"
-      className="inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs"
-      style={{
-        background: "var(--bg-1)",
-        borderColor: "var(--line)",
-        color: "var(--ink-mute)",
-      }}
-    >
-      <span>AI 正在生成</span>
-      <span className="flex items-center gap-1" aria-hidden="true">
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            className="size-1.5 animate-bounce rounded-full"
-            style={{
-              animationDelay: `${i * 120}ms`,
-              background: "var(--ink-mute)",
-            }}
-          />
-        ))}
-      </span>
-    </div>
-  );
-}
 
 export function DiscussPane({
   noteId,
@@ -254,7 +215,7 @@ export function DiscussPane({
         ref={scrollRef}
         data-testid="discuss-messages"
         onScroll={handleMessageScroll}
-        className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3"
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3"
       >
         {messages.length === 0 && !error && (
           <div data-testid="discuss-empty" className="space-y-3">
@@ -284,38 +245,11 @@ export function DiscussPane({
             </div>
           </div>
         )}
-        {messages.map((m, i) => {
-          const pendingAssistant =
-            m.role === "assistant" &&
-            m.content === "" &&
-            status === "streaming" &&
-            i === messages.length - 1;
-          return (
-            <div
-              key={i}
-              data-testid={`discuss-message-${m.role}`}
-              className="text-sm"
-            >
-              <div
-                className="mb-1 text-[10px] font-mono uppercase tracking-wide"
-                style={{ color: "var(--ink-mute)" }}
-              >
-                {m.role === "user" ? "你" : "AI"}
-              </div>
-              <div className="max-w-none" style={{ color: "var(--ink)" }}>
-                {m.role === "assistant" ? (
-                  pendingAssistant ? (
-                    <GeneratingIndicator />
-                  ) : m.content ? (
-                    <AssistantMarkdown content={m.content} />
-                  ) : null
-                ) : (
-                  <p className="whitespace-pre-wrap break-words">{m.content}</p>
-                )}
-              </div>
-            </div>
-          );
-        })}
+        <ChatTranscript
+          messages={messages}
+          status={status}
+          testPrefix="discuss"
+        />
         {error && (
           <div
             data-testid="discuss-error"

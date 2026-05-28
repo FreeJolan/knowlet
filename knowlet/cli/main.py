@@ -9,6 +9,7 @@ own module under `knowlet.cli.*`; the chat REPL implementation lives in
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -284,7 +285,13 @@ def discuss(
         build_grounded_turn,
         build_note_chat_session,
     )
-    from knowlet.core.events import ErrorEvent, ReplyChunkEvent
+    from knowlet.core.events import (
+        ErrorEvent,
+        ReplyChunkEvent,
+        ToolCallEvent,
+        ToolResultEvent,
+        TurnDoneEvent,
+    )
 
     vault, cfg = _ensure_ready_or_wizard()
     runtime, _ = bootstrap_chat(vault, cfg)
@@ -321,6 +328,20 @@ def discuss(
                 if isinstance(ev, ReplyChunkEvent):
                     parts.append(ev.text)
                     print(ev.text, end="", flush=True)
+                elif isinstance(ev, ToolCallEvent):
+                    args_preview = json.dumps(ev.arguments, ensure_ascii=False)[:120]
+                    console.print(f"[dim]· {ev.name}({args_preview})[/dim]")
+                elif isinstance(ev, ToolResultEvent):
+                    if isinstance(ev.payload, dict) and "error" in ev.payload:
+                        console.print(f"[dim]  → {ev.name} error: {ev.payload['error']}[/dim]")
+                    else:
+                        count = ev.payload.get("count") if isinstance(ev.payload, dict) else None
+                        tail = f" ({count} hits)" if count is not None else ""
+                        console.print(f"[dim]  → {ev.name}{tail}[/dim]")
+                elif isinstance(ev, TurnDoneEvent):
+                    if ev.final_text and not parts:
+                        parts.append(ev.final_text)
+                        print(ev.final_text, end="", flush=True)
                 elif isinstance(ev, ErrorEvent):
                     err_console.print(f"\n[red]error: {ev.message}[/red]")
             print()  # newline after the turn

@@ -307,14 +307,14 @@ export function assertEqual(actual, expected, msg) {
 
 /** Wait until `selector` is visible AND its first element's text matches. */
 export async function expectRow(page, text, timeoutMs = 3000) {
-  const loc = page.locator(".group").filter({ hasText: text }).first();
+  const loc = page.locator('[role="tree"] .group').filter({ hasText: text }).first();
   await loc.waitFor({ state: "visible", timeout: timeoutMs });
   return loc;
 }
 
 /** True if the tree contains a row with this exact text. */
 export async function hasRow(page, text) {
-  const count = await page.locator(".group").filter({ hasText: text }).count();
+  const count = await page.locator('[role="tree"] .group').filter({ hasText: text }).count();
   return count > 0;
 }
 

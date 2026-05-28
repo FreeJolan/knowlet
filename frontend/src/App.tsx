@@ -5,6 +5,17 @@ import { AppShell } from "@/components/AppShell/AppShell";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/queryClient";
 
+function isTextEditingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    target.isContentEditable ||
+    Boolean(target.closest('[contenteditable="true"], .cm-editor'))
+  );
+}
+
 export default function App() {
   // Global keyboard shortcuts. Mirrors VS Code:
   //   ⌘P     → quick switcher (files mode)
@@ -45,7 +56,13 @@ export default function App() {
         window.dispatchEvent(new CustomEvent("knowlet:open-capture"));
       }
       // Phase 3 Stage 3 §3.5 — ⌘I opens Drafts focus mode.
-      if (meta && !e.shiftKey && !e.altKey && key === "i") {
+      if (
+        meta &&
+        !e.shiftKey &&
+        !e.altKey &&
+        key === "i" &&
+        !isTextEditingTarget(e.target)
+      ) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("knowlet:open-drafts"));
       }

@@ -48,7 +48,7 @@ Implications:
 - **Settings tests / app startup / `knowlet doctor` probe the endpoint**: at minimum text, streaming, Chat Completions tool calling, Responses, and hosted web search; results are cached as a capability profile.
 - **Failure attribution should be specific**: "the model may support hosted search, but this endpoint's `/v1/responses` path does not" is more accurate than "GPT 5.5 does not support search."
 
-2026-05-28 local dogfood fact: `cliproxyapi` + Codex/GPT 5.5 supports normal text and basic tool-protocol compatibility through `/v1/chat/completions`; `/v1/responses` can trigger hosted `web_search` and return a `web_search_call`. The AI foundation refactor should therefore make knowlet understand both Chat Completions and Responses.
+2026-05-28 local dogfood fact: `cliproxyapi` + Codex/GPT 5.5 supports normal text and basic tool-protocol compatibility through `/v1/chat/completions`; `/v1/responses` can trigger hosted `web_search` and return a `web_search_call`. F0 has met its current gate: knowlet probes and displays a capability profile, Chat Completions remains the streaming conversation and local-tool loop path, and Responses handles the minimal text / hosted-web-search capability path.
 
 ### Configuration Form: Visualized UI in Stage 1
 

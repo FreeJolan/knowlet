@@ -5,7 +5,7 @@
 - Status: Accepted
 - Date: 2026-05-14
 
-> **2026-05-28 amendment**:本 ADR 仍作为 AI 输出质量约束,但不再定义当前执行顺序。当前执行顺序以 [`docs/roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md) 为准:阶段 B 已通过 dogfood,下一步先做 F0 AI 底层能力重构。默认运行时已迁移到 `cliproxyapi` + Codex/GPT 5.5;Claude 相关描述只保留为历史参考或成熟 agent 设计模式来源。
+> **2026-05-28 amendment**:本 ADR 仍作为 AI 输出质量约束,但不再定义当前执行顺序。当前执行顺序以 [`docs/roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md) 为准:阶段 B 已通过 dogfood,F0 AI 底层能力重构已达到当前门槛,下一步是阶段 E/Quiz。默认运行时已迁移到 `cliproxyapi` + Codex/GPT 5.5;Claude 相关描述只保留为历史参考或成熟 agent 设计模式来源。
 
 ## Context
 

@@ -6147,7 +6147,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             response = client.models.list()
             models = [{"id": m.id} for m in response.data]
             return {"models": models}
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return {"models": [], "error": repr(exc)[:300]}
 
     @app.post("/api/llm/test")
@@ -6189,7 +6189,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 messages=[{"role": "user", "content": prompt}],
                 tools=None,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return {
                 "ok": False,
                 "error": repr(exc)[:500],
@@ -6202,11 +6202,33 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             if hasattr(response, "content")
             else str(response)[:120]
         )
+        try:
+            from knowlet.core.ai.capabilities import probe_capabilities
+
+            capabilities = probe_capabilities(
+                client,
+                include_hosted_web_search=True,
+            ).to_dict()
+        except Exception as exc:
+            capabilities = {
+                "model": effective.model,
+                "checks": [
+                    {
+                        "name": "capability_profile",
+                        "ok": False,
+                        "detail": f"{type(exc).__name__}: {exc}",
+                        "latency_ms": 0,
+                        "error": repr(exc)[:500],
+                    }
+                ],
+                "supported": {},
+            }
         return {
             "ok": True,
             "latency_ms": latency_ms,
             "preview": preview,
             "model": effective.model,
+            "capabilities": capabilities,
         }
 
     # ---------------- profile ----------------

@@ -48,7 +48,7 @@ base_url + api_key/account + model + API surface
 - **应用启动/设置测试/`knowlet doctor` 负责探测**:最少探测文本、流式、Chat Completions tool calling、Responses、hosted web search,并把结果缓存成 capability profile。
 - **失败归因要具体**:例如"模型可能支持 hosted search,但当前 endpoint 的 `/v1/responses` 不支持"比"GPT 5.5 不支持搜索"更准确。
 
-2026-05-28 本机 dogfood 事实:`cliproxyapi` + Codex/GPT 5.5 的 `/v1/chat/completions` 可做普通文本与基础工具协议兼容;`/v1/responses` 可触发 hosted `web_search` 并返回 `web_search_call`。因此后续 AI 底层重构优先让 knowlet 同时理解 Chat Completions 与 Responses。
+2026-05-28 本机 dogfood 事实:`cliproxyapi` + Codex/GPT 5.5 的 `/v1/chat/completions` 可做普通文本与基础工具协议兼容;`/v1/responses` 可触发 hosted `web_search` 并返回 `web_search_call`。F0 已落地当前门槛:knowlet 会探测并展示 capability profile,Chat Completions 继续承担流式对谈与本地工具循环,Responses 承担最小文本/hosted web_search 能力验证与 hosted search 优先路径。
 
 ### 配置形态:阶段一就提供可视化 UI
 

@@ -525,7 +525,13 @@
     "testNeedsKey": "Save your API key first to test",
     "testOk": "Connected · {{latency}}ms",
     "testFailed": "Connection failed",
-    "testPreview": "Preview"
+    "testPreview": "Preview",
+    "capabilities": "Capability probe",
+    "capabilityChat": "Chat Completions text",
+    "capabilityStreaming": "Streaming output",
+    "capabilityTools": "Chat Completions tool calls",
+    "capabilityResponses": "Responses API",
+    "capabilityHostedSearch": "Hosted web search"
   },
   "vaultPortability": {
     "label": "Vault portability",
