@@ -1,6 +1,6 @@
 # Stage C v2 — 资讯审阅与入库
 
-- Status: Active implementation (C4-C8 complete; C9 pending)
+- Status: Implemented through C9 (Source config → Raw Info review → Draft diff → commit)
 - Date: 2026-05-30
 - Roadmap: [`../roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md)
 
@@ -311,21 +311,28 @@ Prompt 需要明确引导:
 生成 Note Draft 后,用户可以继续和 AI 讨论草稿。AI 在合适时调用工具
 提出草稿修改。
 
-建议工具:
+已实现工具:
 
-- `propose_note_draft_edit`:基于用户要求和对话历史提出草稿 diff。
-- `accept_draft_diff`:接受当前 diff。
-- `reject_draft_diff`:撤回当前 diff。
+- `propose_current_draft_edit`:基于用户要求、当前 Draft、Raw Info 和对话历史提出草稿 diff。
 - `accept_all_draft_diff`:全部接受当前 diff。
 - `reject_all_draft_diff`:全部撤回当前 diff。
+- `commit_note_draft`:将当前 Draft 明确落库为正式 Note。
 
 Diff 规则:
 
 - AI 不能静默覆盖草稿。
 - 修改过程仍走 Diff Review。
 - 用户可以手动编辑右侧草稿内容和 metadata。
+- 接受前 diff 暂存在 Draft metadata 中;正式 Note 不会被写入。
 - 用户明确说"接受所有修改"时,AI 可以调用 accept-all tool。
 - 用户明确说"撤回/拒绝所有修改"时,AI 可以调用 reject-all tool。
+- 如果用户手动保存 Draft 正文,未决 diff 会被清空,避免旧 diff 覆盖新正文。
+
+API:
+
+- `POST /api/drafts/{draft_id}/diff`:生成草稿 diff proposal。
+- `POST /api/drafts/{draft_id}/diff/accept`:接受当前 diff。
+- `POST /api/drafts/{draft_id}/diff/reject`:撤回当前 diff。
 
 ## 落库
 
@@ -346,7 +353,13 @@ Diff 规则:
 - 用户明确说"帮我落库这份笔记 / 保存为正式笔记 / 放入知识库"时,
   AI 可以调用 `commit_note_draft`。
 - 用户没有明确确认时,AI 不能主动落库。
-- commit 后 Raw Info 标记为已纳入,Note Draft 标记为已提交,正式 Note 写入 vault。
+- commit 前若仍有未处理 diff,系统会阻止落库并要求先接受或撤回。
+- commit 后 Raw Info 标记为已纳入,Note Draft 从草稿列表移除,正式 Note 写入 vault 并刷新索引。
+
+API:
+
+- `POST /api/drafts/{draft_id}/commit`:落库 Draft 并返回正式 Note id/path。
+- `POST /api/drafts/{draft_id}/approve`:兼容旧 approve 入口,内部复用同一 commit helper。
 
 ## 实现切片
 
@@ -376,7 +389,7 @@ Diff 规则:
   - 知识/资料判断。
 
 - **C9 Draft diff + commit**
-  - 草稿 diff 修正。
-  - accept/reject all tools。
-  - `commit_note_draft`。
-  - 正式入库后的索引刷新和跳转。
+  - 草稿 diff 修正已接入 Review overlay 和 conversation tools。
+  - accept/reject all tools 已接入 UI、API、CLI。
+  - `commit_note_draft` 已接入 UI、API、CLI/tool registry。
+  - 正式入库后的索引刷新和跳转已完成。

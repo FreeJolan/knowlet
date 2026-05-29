@@ -14,7 +14,7 @@ from knowlet.config import KnowletConfig, save_config
 from knowlet.core.digest_items import RawInfo, RawInfoStore
 from knowlet.core.digest_pull import maybe_auto_pull_digest_sources, pull_digest_sources
 from knowlet.core.digest_sources import DigestSource, DigestSourceStore
-from knowlet.core.drafts import DraftStore
+from knowlet.core.drafts import Draft, DraftStore
 from knowlet.core.events import ReplyChunkEvent, ReplyDoneEvent
 from knowlet.core.llm import AssistantMessage
 from knowlet.core.mining.sources import SourceItem
@@ -491,6 +491,170 @@ def test_create_note_draft_from_info_tool_uses_current_raw_info(tmp_path):
     assert loaded is not None
     assert loaded.status == "drafted"
     assert loaded.note_draft_id == draft.id
+
+
+def test_raw_info_draft_diff_api_accepts_or_rejects_without_note_write(tmp_path):
+    vault, cfg = _ready_vault(tmp_path)
+    draft_store = DraftStore(vault.drafts_dir)
+    draft_store.save(
+        Draft(
+            title="Trace draft",
+            body="Tool traces are mixed into the answer.",
+            tags=["agents"],
+            kind="knowledge",
+            folder="ai/research",
+        )
+    )
+    saved = draft_store.all_drafts()[0]
+    item = RawInfo(
+        source_id="source-1",
+        source_name="Research Feed",
+        source_kind="rss",
+        item_key="rss:item",
+        title="Trace article",
+        url="https://example.com/trace",
+        summary="A trace article.",
+        status="drafted",
+        note_draft_id=saved.id,
+    )
+    RawInfoStore(vault.digest_items_dir).save(item)
+    client = TestClient(create_app(vault, cfg))
+    runtime = client.app.state.web_state.runtime_or_init()
+    runtime.llm = ScriptedLLM(
+        [
+            {"new_body": "Tool traces should be separate from the final answer."},
+            {"new_body": "Tool traces should be visible, separate, and reviewable."},
+        ]
+    )
+    runtime.ctx.llm = runtime.llm
+
+    proposed = client.post(
+        f"/api/drafts/{saved.id}/diff",
+        json={"instruction": "make this clearer"},
+    )
+
+    assert proposed.status_code == 200, proposed.text
+    proposal = proposed.json()
+    assert proposal["kind"] == "draft_edit_proposal"
+    assert proposal["draft_id"] == saved.id
+    assert proposal["changed"] is True
+    assert proposal["old_body"] == "Tool traces are mixed into the answer."
+    assert proposal["new_body"] == "Tool traces should be separate from the final answer."
+    stored = DraftStore(vault.drafts_dir).get(saved.id)
+    assert stored is not None
+    assert stored.body == "Tool traces are mixed into the answer."
+    assert stored.pending_diff_body == "Tool traces should be separate from the final answer."
+    assert len(list(vault.iter_note_paths())) == 0
+
+    rejected = client.post(f"/api/drafts/{saved.id}/diff/reject")
+    assert rejected.status_code == 200, rejected.text
+    after_reject = DraftStore(vault.drafts_dir).get(saved.id)
+    assert after_reject is not None
+    assert after_reject.body == "Tool traces are mixed into the answer."
+    assert after_reject.pending_diff_body is None
+    loaded = RawInfoStore(vault.digest_items_dir).get(item.id)
+    assert loaded is not None
+    assert loaded.status == "drafted"
+
+    proposed_again = client.post(
+        f"/api/drafts/{saved.id}/diff",
+        json={"instruction": "make this more complete"},
+    )
+    assert proposed_again.status_code == 200, proposed_again.text
+    accepted = client.post(f"/api/drafts/{saved.id}/diff/accept")
+    assert accepted.status_code == 200, accepted.text
+    after_accept = DraftStore(vault.drafts_dir).get(saved.id)
+    assert after_accept is not None
+    assert after_accept.body == "Tool traces should be visible, separate, and reviewable."
+    assert after_accept.pending_diff_body is None
+    assert len(list(vault.iter_note_paths())) == 0
+
+
+def test_current_draft_tools_propose_accept_reject_and_commit(tmp_path):
+    vault, cfg = _ready_vault(tmp_path)
+    vault.mkdir_folder("ai/research")
+    draft = Draft(
+        title="Trace draft",
+        body="Tool traces are mixed into the answer.",
+        tags=["agents"],
+        kind="knowledge",
+        folder="ai/research",
+    )
+    DraftStore(vault.drafts_dir).save(draft)
+    item = RawInfo(
+        source_id="source-1",
+        source_name="Research Feed",
+        source_kind="rss",
+        item_key="rss:item",
+        title="Trace article",
+        url="https://example.com/trace",
+        summary="A trace article.",
+        status="drafted",
+        note_draft_id=draft.id,
+    )
+    RawInfoStore(vault.digest_items_dir).save(item)
+    client = TestClient(create_app(vault, cfg))
+    runtime = client.app.state.web_state.runtime_or_init()
+    runtime.llm = ScriptedLLM(
+        [
+            {"new_body": "Tool traces should be separate from the final answer."},
+            {"new_body": "Tool traces should be visible, separate, and reviewable."},
+        ]
+    )
+    runtime.ctx.llm = runtime.llm
+    runtime.ctx.current_draft_id = draft.id
+    dirty_notes: list[str] = []
+    runtime.ctx.mark_note_dirty = dirty_notes.append
+
+    first = runtime.registry.dispatch(
+        "propose_current_draft_edit",
+        {"instruction": "make the draft clearer"},
+        runtime.ctx,
+    )
+    assert first["kind"] == "draft_edit_proposal"
+    assert first["draft_id"] == draft.id
+    assert DraftStore(vault.drafts_dir).get(draft.id).pending_diff_body is not None  # type: ignore[union-attr]
+
+    rejected = runtime.registry.dispatch("reject_all_draft_diff", {}, runtime.ctx)
+    assert rejected["rejected"] is True
+    assert DraftStore(vault.drafts_dir).get(draft.id).pending_diff_body is None  # type: ignore[union-attr]
+
+    second = runtime.registry.dispatch(
+        "propose_current_draft_edit",
+        {"instruction": "make the draft complete"},
+        runtime.ctx,
+    )
+    assert second["changed"] is True
+    accepted = runtime.registry.dispatch("accept_all_draft_diff", {}, runtime.ctx)
+    assert accepted["accepted"] is True
+    assert DraftStore(vault.drafts_dir).get(draft.id).body == (  # type: ignore[union-attr]
+        "Tool traces should be visible, separate, and reviewable."
+    )
+
+    committed = runtime.registry.dispatch("commit_note_draft", {}, runtime.ctx)
+    assert committed["note_id"] == draft.id
+    assert dirty_notes == [draft.id]
+    assert DraftStore(vault.drafts_dir).get(draft.id) is None
+    loaded = RawInfoStore(vault.digest_items_dir).get(item.id)
+    assert loaded is not None
+    assert loaded.status == "included"
+    assert loaded.note_id == draft.id
+    meta = runtime.index.get_note_meta(draft.id)
+    assert meta is not None
+    assert "Trace draft" in meta["title"]
+
+
+def test_commit_note_draft_rejects_empty_body_without_deleting_draft(tmp_path):
+    vault, cfg = _ready_vault(tmp_path)
+    draft = Draft(title="Empty draft", body="", kind="reference")
+    DraftStore(vault.drafts_dir).save(draft)
+    client = TestClient(create_app(vault, cfg))
+
+    res = client.post(f"/api/drafts/{draft.id}/commit")
+
+    assert res.status_code == 400, res.text
+    assert DraftStore(vault.drafts_dir).get(draft.id) is not None
+    assert len(list(vault.iter_note_paths())) == 0
 
 
 def test_digest_cli_run_pulls_v2_source(tmp_path, monkeypatch):

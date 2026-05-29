@@ -68,12 +68,59 @@ def drafts_approve(
     _draft_approve_or_reject(draft_id, approve=True)
 
 
+@app.command("commit")
+def drafts_commit(
+    draft_id: Annotated[str, typer.Argument(help="Draft id (or 8-char prefix).")],
+) -> None:
+    """Alias for approve: commit a reviewed draft as a formal Note."""
+    _draft_approve_or_reject(draft_id, approve=True)
+
+
 @app.command("reject")
 def drafts_reject(
     draft_id: Annotated[str, typer.Argument(help="Draft id (or 8-char prefix).")],
 ) -> None:
     """Delete a draft."""
     _draft_approve_or_reject(draft_id, approve=False)
+
+
+@app.command("accept-diff")
+def drafts_accept_diff(
+    draft_id: Annotated[str, typer.Argument(help="Draft id (or 8-char prefix).")],
+) -> None:
+    """Accept the pending diff on a draft without committing it."""
+    from knowlet.core.draft_flow import DraftFlowError, accept_draft_diff
+    from knowlet.core.drafts import DraftStore
+
+    vault = resolve_vault_or_die()
+    store = DraftStore(vault.drafts_dir)
+    try:
+        draft = accept_draft_diff(store, draft_id)
+    except KeyError:
+        err_console.print(f"[red]draft not found:[/red] {draft_id}")
+        raise typer.Exit(code=1) from None
+    except DraftFlowError as exc:
+        err_console.print(f"[red]cannot accept diff:[/red] {exc}")
+        raise typer.Exit(code=1) from None
+    console.print(f"[green]accepted diff[/green] {draft.id[:8]}…")
+
+
+@app.command("reject-diff")
+def drafts_reject_diff(
+    draft_id: Annotated[str, typer.Argument(help="Draft id (or 8-char prefix).")],
+) -> None:
+    """Reject the pending diff on a draft without deleting it."""
+    from knowlet.core.draft_flow import reject_draft_diff
+    from knowlet.core.drafts import DraftStore
+
+    vault = resolve_vault_or_die()
+    store = DraftStore(vault.drafts_dir)
+    try:
+        draft = reject_draft_diff(store, draft_id)
+    except KeyError:
+        err_console.print(f"[red]draft not found:[/red] {draft_id}")
+        raise typer.Exit(code=1) from None
+    console.print(f"[green]rejected diff[/green] {draft.id[:8]}…")
 
 
 @app.command("edit")
@@ -134,6 +181,8 @@ def drafts_kind(
 
 
 def _draft_approve_or_reject(draft_id: str, *, approve: bool) -> None:
+    from knowlet.core.digest_items import RawInfoStore
+    from knowlet.core.draft_flow import DraftFlowError, commit_note_draft
     from knowlet.core.drafts import DraftStore
     from knowlet.core.embedding import make_backend
     from knowlet.core.index import Index
@@ -153,15 +202,17 @@ def _draft_approve_or_reject(draft_id: str, *, approve: bool) -> None:
     idx = Index(vault.db_path, backend)
     idx.connect()
     try:
-        note = draft.to_note()
-        path = vault.write_note(note)
-        note.path = path
-        idx.upsert_note(
-            note,
-            chunk_size=cfg.retrieval.chunk_size,
-            chunk_overlap=cfg.retrieval.chunk_overlap,
+        result = commit_note_draft(
+            vault=vault,
+            index=idx,
+            config=cfg,
+            drafts=store,
+            draft_id=draft.id,
+            raw_infos=RawInfoStore(vault.digest_items_dir),
         )
+    except DraftFlowError as exc:
+        err_console.print(f"[red]cannot approve draft:[/red] {exc}")
+        raise typer.Exit(code=1) from None
     finally:
         idx.close()
-    store.delete(draft.id)
-    console.print(f"[green]approved[/green] → {path}")
+    console.print(f"[green]approved[/green] → {result.path}")

@@ -171,6 +171,14 @@ class DraftUpdate(BaseModel):
     folder: str | None = None
 
 
+class DraftDiffRequest(BaseModel):
+    instruction: str = ""
+
+
+class DraftDiffAcceptRequest(BaseModel):
+    final_body: str | None = None
+
+
 class NoteKindUpdate(BaseModel):
     """Payload for POST /api/notes/{id}/kind (Phase 3 Stage 2).
 
@@ -902,6 +910,8 @@ class DraftSummary(BaseModel):
     # follow-up GET /api/drafts/{id}. knowlet's soft-limit is 20
     # drafts so the payload stays small in practice.
     body: str = ""
+    pending_diff_base: str | None = None
+    pending_diff_body: str | None = None
 
 
 class DraftFull(DraftSummary):
@@ -913,6 +923,31 @@ class RawInfoDraftResponse(BaseModel):
     raw_info: RawInfoSummary
     draft: DraftFull
     rationale: str = ""
+
+
+class DraftDiffResponse(BaseModel):
+    kind: str = "draft_edit_proposal"
+    draft_id: str
+    title: str
+    old_body: str
+    new_body: str
+    changed: bool
+    reason: str = ""
+    summary: str = ""
+    draft: DraftFull
+
+
+class DraftDiffMutationResponse(BaseModel):
+    draft: DraftFull
+    accepted: bool = False
+    rejected: bool = False
+
+
+class DraftCommitResponse(BaseModel):
+    note_id: str
+    path: str
+    title: str
+    raw_info_id: str | None = None
 
 
 # ----------------------------------------------------------------- runtime singleton
@@ -3647,7 +3682,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         Raw Info is read-only source material. This endpoint lets the user
         discuss it before deciding whether to settle it into a note draft.
         """
-        from knowlet.chat.raw_info_chat import build_raw_info_grounded_turn
+        from knowlet.chat.raw_info_chat import (
+            build_raw_info_grounded_turn,
+            wants_accept_all_draft_diff,
+            wants_commit_note_draft,
+            wants_current_draft_edit_proposal,
+            wants_reject_all_draft_diff,
+        )
         from knowlet.chat.session import ChatSession
         from knowlet.core.digest_items import RawInfoStore
 
@@ -3666,7 +3707,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             per_turn={},
             llm=runtime.llm,
             current_raw_info_id=item.id,
+            current_draft_id=item.note_draft_id,
+            mark_note_dirty=_mark_note_dirty_for_push,
         )
+        draft = runtime.ctx.drafts.get(item.note_draft_id) if item.note_draft_id else None
         session = ChatSession(
             llm=runtime.llm,
             registry=runtime.session.registry,
@@ -3674,10 +3718,64 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         )
         for m in req.history:
             session.history.append({"role": m.role, "content": m.content})
-        grounded = build_raw_info_grounded_turn(item, req.text)
+        grounded = build_raw_info_grounded_turn(item, req.text, draft=draft)
+
+        def direct_draft_tool() -> tuple[str, dict[str, Any]] | None:
+            if draft is None:
+                return None
+            if wants_accept_all_draft_diff(req.text):
+                return "accept_all_draft_diff", {}
+            if wants_reject_all_draft_diff(req.text):
+                return "reject_all_draft_diff", {}
+            if wants_commit_note_draft(req.text):
+                return "commit_note_draft", {}
+            if wants_current_draft_edit_proposal(req.text):
+                instruction = req.text
+                if req.history:
+                    prior = "\n".join(f"{m.role}: {m.content}" for m in req.history[-6:])
+                    instruction = f"此前对话:\n{prior}\n\n当前草稿修改请求:{req.text}"
+                return "propose_current_draft_edit", {"instruction": instruction}
+            return None
+
+        def draft_tool_reply(name: str, payload: dict[str, Any]) -> str:
+            if isinstance(payload.get("error"), str):
+                return f"操作失败: {payload['error']}"
+            if name == "propose_current_draft_edit":
+                if payload.get("changed") is False:
+                    return str(payload.get("summary") or "没有可应用到草稿的改动。")
+                return "我已经准备好一版草稿 diff,你可以审阅后接受或放弃。"
+            if name == "accept_all_draft_diff":
+                return "已接受这次草稿 diff,目前只更新了草稿,还没有落库为正式笔记。"
+            if name == "reject_all_draft_diff":
+                return "已撤回这次草稿 diff,草稿正文保持不变。"
+            if name == "commit_note_draft":
+                return "已把这份草稿落库为正式笔记。"
+            return "工具操作已完成。"
 
         def event_source() -> Iterator[str]:
             try:
+                direct = direct_draft_tool()
+                if direct is not None:
+                    name, arguments = direct
+                    call_id = f"direct_{name}"
+                    call = ToolCallEvent(id=call_id, name=name, arguments=arguments)
+                    yield f"data: {json.dumps(event_to_dict(call), ensure_ascii=False)}\n\n"
+                    payload = session.registry.dispatch(name, arguments, session.ctx)
+                    result = ToolResultEvent(id=call_id, name=name, payload=payload)
+                    yield (
+                        "data: "
+                        f"{json.dumps(event_to_dict(result), ensure_ascii=False)}\n\n"
+                    )
+                    text = draft_tool_reply(name, payload)
+                    yield (
+                        "data: "
+                        f"{json.dumps(event_to_dict(ReplyChunkEvent(text=text)), ensure_ascii=False)}\n\n"
+                    )
+                    yield (
+                        "data: "
+                        f"{json.dumps(event_to_dict(TurnDoneEvent(final_text=text)), ensure_ascii=False)}\n\n"
+                    )
+                    return
                 for event in session.user_turn_stream(grounded):
                     payload = json.dumps(event_to_dict(event), ensure_ascii=False)
                     yield f"data: {payload}\n\n"
@@ -5938,6 +6036,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             is_stale=d.is_stale,
             is_warn_age=d.is_warn_age,
             body=d.body,
+            pending_diff_base=d.pending_diff_base,
+            pending_diff_body=d.pending_diff_body,
         )
 
     @app.get("/api/drafts", response_model=list[DraftSummary])
@@ -6244,6 +6344,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             d.title = payload.title.strip() or d.title
         if payload.body is not None:
             d.body = payload.body
+            d.pending_diff_base = None
+            d.pending_diff_body = None
         if payload.tags is not None:
             d.tags = [str(tag).strip().lstrip("#") for tag in payload.tags if str(tag).strip()]
         if payload.kind is not None:
@@ -6253,28 +6355,162 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         runtime.ctx.drafts.save(d)
         return DraftFull(**_draft_summary(d).model_dump())
 
+    @app.post("/api/drafts/{draft_id}/diff", response_model=DraftDiffResponse)
+    def propose_draft_diff_endpoint(
+        draft_id: str,
+        payload: DraftDiffRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> DraftDiffResponse:
+        from knowlet.chat.draft_tools import _propose_current_draft_edit
+
+        ctx = replace(
+            runtime.ctx,
+            per_turn={},
+            llm=runtime.llm,
+            current_draft_id=draft_id,
+        )
+        result = _propose_current_draft_edit(
+            {"draft_id": draft_id, "instruction": payload.instruction},
+            ctx,
+        )
+        if isinstance(result.get("error"), str):
+            detail = str(result["error"])
+            code = (
+                status.HTTP_404_NOT_FOUND
+                if detail.startswith("draft not found")
+                else status.HTTP_502_BAD_GATEWAY
+            )
+            raise HTTPException(status_code=code, detail=detail)
+        draft = runtime.ctx.drafts.get(draft_id)
+        if draft is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"draft not found: {draft_id}",
+            )
+        return DraftDiffResponse(
+            kind=str(result.get("kind") or "draft_edit_proposal"),
+            draft_id=str(result.get("draft_id") or draft_id),
+            title=str(result.get("title") or draft.title),
+            old_body=str(result.get("old_body") or draft.body),
+            new_body=str(result.get("new_body") or draft.body),
+            changed=result.get("changed") is True,
+            reason=str(result.get("reason") or ""),
+            summary=str(result.get("summary") or ""),
+            draft=DraftFull(**_draft_summary(draft).model_dump()),
+        )
+
+    @app.post("/api/drafts/{draft_id}/diff/accept", response_model=DraftDiffMutationResponse)
+    def accept_draft_diff_endpoint(
+        draft_id: str,
+        payload: DraftDiffAcceptRequest | None = None,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> DraftDiffMutationResponse:
+        from knowlet.core.draft_flow import DraftFlowError, accept_draft_diff
+
+        try:
+            draft = accept_draft_diff(
+                runtime.ctx.drafts,
+                draft_id,
+                final_body=payload.final_body if payload else None,
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"draft not found: {draft_id}",
+            ) from exc
+        except DraftFlowError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        return DraftDiffMutationResponse(
+            draft=DraftFull(**_draft_summary(draft).model_dump()),
+            accepted=True,
+        )
+
+    @app.post("/api/drafts/{draft_id}/diff/reject", response_model=DraftDiffMutationResponse)
+    def reject_draft_diff_endpoint(
+        draft_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> DraftDiffMutationResponse:
+        from knowlet.core.draft_flow import reject_draft_diff
+
+        try:
+            draft = reject_draft_diff(runtime.ctx.drafts, draft_id)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"draft not found: {draft_id}",
+            ) from exc
+        return DraftDiffMutationResponse(
+            draft=DraftFull(**_draft_summary(draft).model_dump()),
+            rejected=True,
+        )
+
+    @app.post("/api/drafts/{draft_id}/commit", response_model=DraftCommitResponse)
+    def commit_draft_endpoint(
+        draft_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> DraftCommitResponse:
+        from knowlet.core.digest_items import RawInfoStore
+        from knowlet.core.draft_flow import DraftFlowError, commit_note_draft
+
+        try:
+            result = commit_note_draft(
+                vault=runtime.vault,
+                index=runtime.index,
+                config=runtime.config,
+                drafts=runtime.ctx.drafts,
+                draft_id=draft_id,
+                raw_infos=RawInfoStore(runtime.vault.digest_items_dir),
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"draft not found: {draft_id}",
+            ) from exc
+        except DraftFlowError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        _mark_note_dirty_for_push(result.note_id)
+        return DraftCommitResponse(
+            note_id=result.note_id,
+            path=str(result.path),
+            title=result.title,
+            raw_info_id=result.raw_info.id if result.raw_info is not None else None,
+        )
+
     @app.post("/api/drafts/{draft_id}/approve")
     def approve_draft_endpoint(
         draft_id: str,
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> dict[str, Any]:
-        d = runtime.ctx.drafts.get(draft_id)
-        if d is None:
+        from knowlet.core.digest_items import RawInfoStore
+        from knowlet.core.draft_flow import DraftFlowError, commit_note_draft
+
+        try:
+            result = commit_note_draft(
+                vault=runtime.vault,
+                index=runtime.index,
+                config=runtime.config,
+                drafts=runtime.ctx.drafts,
+                draft_id=draft_id,
+                raw_infos=RawInfoStore(runtime.vault.digest_items_dir),
+            )
+        except KeyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"draft not found: {draft_id}",
-            )
-        note = d.to_note()
-        path = runtime.vault.write_note(note, folder=d.folder)
-        note.path = path
-        _mark_note_dirty_for_push(note.id)
-        runtime.index.upsert_note(
-            note,
-            chunk_size=runtime.config.retrieval.chunk_size,
-            chunk_overlap=runtime.config.retrieval.chunk_overlap,
-        )
-        runtime.ctx.drafts.delete(d.id)
-        return {"note_id": note.id, "path": str(path)}
+            ) from exc
+        except DraftFlowError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        _mark_note_dirty_for_push(result.note_id)
+        return {"note_id": result.note_id, "path": str(result.path)}
 
     @app.post("/api/drafts/{draft_id}/reject")
     def reject_draft_endpoint(

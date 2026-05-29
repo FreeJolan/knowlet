@@ -94,7 +94,7 @@ def test_digest_help():
 
 def test_drafts_help():
     out = _help("drafts")
-    for cmd in ("list", "show", "approve", "reject"):
+    for cmd in ("list", "show", "approve", "commit", "reject", "accept-diff", "reject-diff"):
         assert cmd in out
 
 

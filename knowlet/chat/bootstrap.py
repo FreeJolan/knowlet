@@ -16,6 +16,12 @@ from knowlet.chat.current_note_tools import (
     CHECK_CURRENT_NOTE_TOOL,
     PROPOSE_CURRENT_NOTE_EDIT_TOOL,
 )
+from knowlet.chat.draft_tools import (
+    ACCEPT_ALL_DRAFT_DIFF_TOOL,
+    COMMIT_NOTE_DRAFT_TOOL,
+    PROPOSE_CURRENT_DRAFT_EDIT_TOOL,
+    REJECT_ALL_DRAFT_DIFF_TOOL,
+)
 from knowlet.chat.log import prune_old
 from knowlet.chat.prompts import build_chat_system_prompt
 from knowlet.chat.raw_info_tools import CREATE_NOTE_DRAFT_FROM_INFO_TOOL
@@ -174,6 +180,10 @@ def bootstrap_chat(
     registry.register(CHECK_CURRENT_NOTE_TOOL)
     registry.register(PROPOSE_CURRENT_NOTE_EDIT_TOOL)
     registry.register(CREATE_NOTE_DRAFT_FROM_INFO_TOOL)
+    registry.register(PROPOSE_CURRENT_DRAFT_EDIT_TOOL)
+    registry.register(ACCEPT_ALL_DRAFT_DIFF_TOOL)
+    registry.register(REJECT_ALL_DRAFT_DIFF_TOOL)
+    registry.register(COMMIT_NOTE_DRAFT_TOOL)
     cards = CardStore(vault.cards_dir)
     tasks = TaskStore(vault.tasks_dir)
     drafts = DraftStore(vault.drafts_dir)

@@ -237,6 +237,10 @@ try {
   });
 
   await runTest("review mode can settle Raw Info into a note draft", async () => {
+    let rejectCalled = false;
+    let acceptCalled = false;
+    let commitCalled = false;
+    let revisionCount = 0;
     await page.route("**/api/drafts/01C8DRAFTFROMRAWINFO", async (route) => {
       if (route.request().method() !== "PUT") return route.fallback();
       const body = route.request().postDataJSON();
@@ -260,6 +264,145 @@ try {
           is_stale: false,
           is_warn_age: false,
         }),
+      });
+    });
+    await page.route("**/api/chat/raw-info/*/stream", async (route) => {
+      revisionCount += 1;
+      const newBody =
+        revisionCount === 1
+          ? "## Core\n\nTool traces should be visible but separate from the final answer."
+          : "## Core\n\nTool traces should be visible, separate from the final answer, and easy to review.";
+      const events = [
+        {
+          type: "tool_call",
+          id: `draft_edit_${revisionCount}`,
+          name: "propose_current_draft_edit",
+          arguments: { instruction: "make the draft clearer" },
+        },
+        {
+          type: "tool_result",
+          id: `draft_edit_${revisionCount}`,
+          name: "propose_current_draft_edit",
+          payload: {
+            kind: "draft_edit_proposal",
+            draft_id: "01C8DRAFTFROMRAWINFO",
+            title: "Tool Trace Notes",
+            changed: true,
+            old_body:
+              "## Core\n\nTool traces should be visible but separate from the final answer.",
+            new_body: newBody,
+            summary: "Draft diff is ready for review.",
+          },
+        },
+        {
+          type: "reply_chunk",
+          text: "I prepared a draft diff you can review.",
+        },
+        {
+          type: "turn_done",
+          final_text: "I prepared a draft diff you can review.",
+        },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+      });
+    });
+    await page.route("**/api/drafts/01C8DRAFTFROMRAWINFO/diff/reject", async (route) => {
+      rejectCalled = true;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          draft: {
+            id: "01C8DRAFTFROMRAWINFO",
+            title: "Tool Trace Notes",
+            body: "## Core\n\nTool traces should be visible but separate from the final answer.",
+            source: "https://example.com/agent-trace",
+            tags: ["agents", "notes"],
+            kind: "knowledge",
+            folder: "ai/notes",
+            task_id: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            age_days: 0,
+            is_stale: false,
+            is_warn_age: false,
+          },
+          rejected: true,
+        }),
+      });
+    });
+    await page.route("**/api/drafts/01C8DRAFTFROMRAWINFO/diff/accept", async (route) => {
+      acceptCalled = true;
+      const body = route.request().postDataJSON();
+      assert(
+        body.final_body.includes("easy to review"),
+        "accept sends the edited proposal body",
+      );
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          draft: {
+            id: "01C8DRAFTFROMRAWINFO",
+            title: "Tool Trace Notes",
+            body: body.final_body,
+            source: "https://example.com/agent-trace",
+            tags: ["agents", "notes"],
+            kind: "knowledge",
+            folder: "ai/notes",
+            task_id: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            age_days: 0,
+            is_stale: false,
+            is_warn_age: false,
+          },
+          accepted: true,
+        }),
+      });
+    });
+    await page.route("**/api/drafts/01C8DRAFTFROMRAWINFO/commit", async (route) => {
+      commitCalled = true;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          note_id: "01C9NOTEFROMDRAFT",
+          path: "/tmp/knowlet/notes/ai/notes/tool-trace-notes.md",
+          title: "Tool Trace Notes",
+          raw_info_id: "01C6TODAYRAWINFO000001",
+        }),
+      });
+    });
+    await page.route("**/api/notes/01C9NOTEFROMDRAFT", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "01C9NOTEFROMDRAFT",
+          title: "Tool Trace Notes",
+          path: "/tmp/knowlet/notes/ai/notes/tool-trace-notes.md",
+          folder: "ai/notes",
+          tags: ["agents", "notes"],
+          aliases: [],
+          source: "https://example.com/agent-trace",
+          kind: "knowledge",
+          body: "## Core\n\nTool traces should be visible, separate from the final answer, and easy to review.",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          frontmatter_status: "valid",
+          frontmatter_corruption: null,
+        }),
+      });
+    });
+    await page.route("**/api/notes/01C9NOTEFROMDRAFT/backlinks", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
       });
     });
     await page.route("**/api/digest/items/*/draft", async (route) => {
@@ -323,6 +466,42 @@ try {
     const updated = await page.locator('[data-testid="digest-draft-result"]').textContent();
     assert(updatedTitle === "Tool Trace Notes", "updated draft title is visible");
     assert(updatedFolder === "ai/notes", "updated draft folder is visible");
+    await page
+      .locator('[data-testid="digest-review-chat-input"]')
+      .fill("Please revise the draft so the final note is clearer.");
+    await page.locator('[data-testid="digest-review-chat-send"]').click();
+    await page.locator('[data-testid="diff-review"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="diff-reject"]').click();
+    assert(rejectCalled, "reject diff endpoint is called");
+    await page.locator('[data-testid="diff-review"]').waitFor({
+      state: "detached",
+      timeout: 3000,
+    });
+
+    await page
+      .locator('[data-testid="digest-review-chat-input"]')
+      .fill("Try one more draft revision and make it reviewable.");
+    await page.locator('[data-testid="digest-review-chat-send"]').click();
+    await page.locator('[data-testid="diff-review"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="diff-apply"]').click();
+    assert(acceptCalled, "accept diff endpoint is called");
+    await page
+      .locator('[data-testid="digest-draft-body-preview"]')
+      .filter({ hasText: "easy to review" })
+      .waitFor({ state: "visible", timeout: 3000 });
+
+    await page.locator('[data-testid="digest-draft-commit"]').click();
+    assert(commitCalled, "commit endpoint is called");
+    await page.locator('[data-testid="digest-draft-committed"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
     await page.locator('[data-testid="digest-review-close"]').click();
   });
 

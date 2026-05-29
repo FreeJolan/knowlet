@@ -10,10 +10,48 @@ import {
   upsertToolCall,
 } from "@/components/Discuss";
 
+export interface DraftEditProposal {
+  id: string;
+  draftId: string;
+  title?: string;
+  oldBody: string;
+  newBody: string;
+  changed: boolean;
+  reason?: string;
+  summary?: string;
+}
+
+function draftProposalFromToolResult(ev: ChatSSEEvent): DraftEditProposal | null {
+  if (ev.name !== "propose_current_draft_edit") return null;
+  const payload = ev.payload;
+  if (!payload || typeof payload !== "object") return null;
+  const obj = payload as Record<string, unknown>;
+  const draftId = typeof obj.draft_id === "string" ? obj.draft_id : "";
+  if (
+    !draftId ||
+    typeof obj.old_body !== "string" ||
+    typeof obj.new_body !== "string"
+  ) {
+    return null;
+  }
+  const proposal: DraftEditProposal = {
+    id: ev.id || `draft-proposal-${Date.now()}`,
+    draftId,
+    oldBody: obj.old_body,
+    newBody: obj.new_body,
+    changed: obj.changed === true,
+  };
+  if (typeof obj.title === "string") proposal.title = obj.title;
+  if (typeof obj.reason === "string") proposal.reason = obj.reason;
+  if (typeof obj.summary === "string") proposal.summary = obj.summary;
+  return proposal;
+}
+
 export function useRawInfoChat(infoId: string | null) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [proposal, setProposal] = useState<DraftEditProposal | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
 
@@ -35,6 +73,7 @@ export function useRawInfoChat(infoId: string | null) {
       setMessages([]);
     }
     setError(null);
+    setProposal(null);
     setStatus("idle");
   }, [infoId]);
 
@@ -138,6 +177,8 @@ export function useRawInfoChat(infoId: string | null) {
             } else if (ev.type === "tool_call") {
               setMessages((m) => upsertToolCall(m, ev));
             } else if (ev.type === "tool_result") {
+              const draftProposal = draftProposalFromToolResult(ev);
+              if (draftProposal) setProposal(draftProposal);
               setMessages((m) => applyToolResult(m, ev));
             } else if (ev.type === "error") {
               streamError = formatErrorDetail(ev.message || "stream error");
@@ -166,5 +207,7 @@ export function useRawInfoChat(infoId: string | null) {
     [infoId, status],
   );
 
-  return { messages, status, error, send, stop };
+  const clearProposal = useCallback(() => setProposal(null), []);
+
+  return { messages, status, error, proposal, send, stop, clearProposal };
 }

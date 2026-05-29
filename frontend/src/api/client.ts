@@ -717,6 +717,8 @@ export interface DraftSummary {
   age_days?: number;
   is_stale?: boolean;
   is_warn_age?: boolean;
+  pending_diff_base?: string | null;
+  pending_diff_body?: string | null;
 }
 
 export const listDrafts = (): Promise<DraftSummary[]> =>
@@ -828,6 +830,48 @@ export const createRawInfoDraft = (
   payload: { history?: Array<{ role: string; content: string }> },
 ): Promise<RawInfoDraftResult> =>
   request("POST", `/api/digest/items/${encodeURIComponent(id)}/draft`, payload);
+
+export interface DraftDiffProposal {
+  kind: "draft_edit_proposal";
+  draft_id: string;
+  title: string;
+  old_body: string;
+  new_body: string;
+  changed: boolean;
+  reason?: string;
+  summary?: string;
+  draft: DraftSummary;
+}
+
+export const proposeDraftDiff = (
+  id: string,
+  payload: { instruction?: string },
+): Promise<DraftDiffProposal> =>
+  request("POST", `/api/drafts/${encodeURIComponent(id)}/diff`, {
+    instruction: payload.instruction ?? "",
+  });
+
+export const acceptDraftDiff = (
+  id: string,
+  payload: { final_body?: string },
+): Promise<{ draft: DraftSummary; accepted: boolean }> =>
+  request("POST", `/api/drafts/${encodeURIComponent(id)}/diff/accept`, {
+    final_body: payload.final_body ?? null,
+  });
+
+export const rejectDraftDiff = (
+  id: string,
+): Promise<{ draft: DraftSummary; rejected: boolean }> =>
+  request("POST", `/api/drafts/${encodeURIComponent(id)}/diff/reject`);
+
+export const commitNoteDraft = (
+  id: string,
+): Promise<{
+  note_id: string;
+  path: string;
+  title: string;
+  raw_info_id?: string | null;
+}> => request("POST", `/api/drafts/${encodeURIComponent(id)}/commit`);
 
 export const getDigestStatus = (): Promise<DigestStatus> =>
   request("GET", "/api/digest/status");

@@ -5,7 +5,7 @@
 - **取代**: [`phase-3-stages.md`](./phase-3-stages.md) 的 7-Stage 计划 + [`phase-3-slicing.md`](./phase-3-slicing.md) 的 slice 切分。那套（envelope 7 层 / linter 全库扫 / reorg planner / tidy advisor / vault health dashboard / 知识·资料二分 / anti-drift 队列）大部分被判为**伪需求或早产**——它们建立在发明的 persona（小红/小张/新用户）上,而非用户的真实需求。
 - **命名警告**:`AGENTS.md` 里的 Phase A/B/C/D/E 是 agent 工作流;本文件的 阶段 A/B/C/D/E 是产品 roadmap。问"下一阶段/Phase B"时,以本文件为准。
 - **当前默认 LLM(2026-05-27)**:本机 `cliproxyapi` + Codex/GPT 5.5(`http://127.0.0.1:8317/v1`, `gpt-5.5`)。历史文档里 Claude/Claude Code 相关内容只作当时参考,不再作为默认接入或 dogfood 路径。
-- **当前执行顺序(2026-05-30 二次重排)**:阶段 B 已由用户 dogfood 通过;随后插队的 **F0 — AI 底层能力重构** 已完成当前门槛。Stage C 的第一版 digest/drafts 已验证基础通路,但用户 dogfood 后确认需要升级为 **Stage C v2 — 资讯审阅与入库**:RSS / Prompt Source → 只读资讯 → 对话审阅 → 沉淀草稿 → Diff 修正 → 用户确认落库。下一步优先实现 C4-C9;完成资讯相关内容后,直接进入 **Phase 3.5 桌面端客户端**。阶段 E/Quiz 暂缓到桌面端之后再评估。
+- **当前执行顺序(2026-05-30 二次重排)**:阶段 B 已由用户 dogfood 通过;随后插队的 **F0 — AI 底层能力重构** 已完成当前门槛。Stage C 的第一版 digest/drafts 已验证基础通路,用户 dogfood 后升级的 **Stage C v2 — 资讯审阅与入库** 已完成 C4-C9:RSS / Prompt Source → 只读资讯 → 对话审阅 → 沉淀草稿 → Diff 修正 → 用户确认落库。下一步直接进入 **Phase 3.5 桌面端客户端**。阶段 E/Quiz 暂缓到桌面端之后再评估。
 - 根原则锚仍是 [ADR-0029](../decisions/0029-cognitive-contract.md):**用户是最后一个字节**（现由 diff-accept 兑现）、AI 是脚手架、输出可追溯。ADR-0029 衍生的**维护类机制**（anti-drift 队列 / dashboard / 知识资料二分）**推迟到有真实大 vault 信号再说**。
 
 ## 为什么重定向（2026-05-24 讨论）
@@ -78,7 +78,7 @@ knowlet AI = **Cursor-for-notes**。唯一不可替代价值 = grounded 对谈 +
 - [x] C6 Digest inbox v2:取消 today/week;改为 Raw Info inbox;支持按时间或来源分组;右上角显示拉取状态,超过 200 pending 显示暂停提示;保留只读详情,批阅/对话进入 C7。focused E2E + tsc/lint 已通过,截图 `/tmp/knowlet-c6-digest-inbox.png`。
 - [x] C7 Review mode:大浮窗批阅;左侧只读 Raw Info,右侧对话流;支持从顶部开始或从指定卡片开始;新增 Raw Info 专属 chat stream,讨论后条目标记为 `discussed`。focused E2E/pytest 已通过,截图 `/tmp/knowlet-c7-review-mode.png`。
 - [x] C8 Create draft + draft tools:`create_note_draft_from_info`;接入目录树、标签体系、相似笔记等 Library Context;生成标题、正文、tags、类型、建议目录。2026-05-30:Raw Info review overlay 新增“沉淀为笔记草稿”;后端 `POST /api/digest/items/{id}/draft` + Tool 同源;失败不写 Draft;生成后可在入库前调整标题、tags、kind、folder。
-- [ ] C9 Draft diff + commit:草稿修正走 Diff;支持全部接受/全部撤回;对话可驱动 accept/reject/commit tools;用户确认后落库为正式 Note。
+- [x] C9 Draft diff + commit:草稿修正走 Diff;支持全部接受/全部撤回;对话可驱动 `propose_current_draft_edit` / `accept_all_draft_diff` / `reject_all_draft_diff` / `commit_note_draft`;用户确认后落库为正式 Note。2026-05-30:新增 Draft pending diff 持久化、UI DiffReview、API/CLI/tool parity、真 `gpt-5.5` dogfood 和生产构建浏览器 dogfood,截图 `/tmp/knowlet-c9-draft-commit-dogfood.png`。
 
 _死掉不做:网站订阅 / 通用爬站 / RSS-Bridge / anti-drift 队列 / 自动归档 / 知识资料强制二次确认。_
 

@@ -24,16 +24,20 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  acceptDraftDiff,
+  commitNoteDraft,
   createRawInfoDraft,
   getDigestStatus,
   listRawInfoItems,
   pullDigestSources,
+  rejectDraftDiff,
   updateDraft,
   type DigestStatus,
   type RawInfoDraftResult,
   type RawInfoSummary,
 } from "@/api/client";
-import { ChatTranscript, chatHistoryForRequest } from "@/components/Discuss";
+import { ChatTranscript, DiffReview, chatHistoryForRequest } from "@/components/Discuss";
+import { QK } from "@/lib/queryClient";
 
 import { useRawInfoChat } from "./useRawInfoChat";
 
@@ -54,6 +58,7 @@ interface DigestGroup {
 export function DigestFocusMode({
   open,
   onClose,
+  onOpenNote,
 }: Props): React.ReactElement | null {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -303,6 +308,7 @@ export function DigestFocusMode({
           activeId={reviewId}
           onChangeItem={setReviewId}
           onClose={() => setReviewId(null)}
+          onOpenNote={onOpenNote}
         />
       )}
     </div>
@@ -555,11 +561,13 @@ function ReviewOverlay({
   activeId,
   onChangeItem,
   onClose,
+  onOpenNote,
 }: {
   items: RawInfoSummary[];
   activeId: string;
   onChangeItem: (id: string) => void;
   onClose: () => void;
+  onOpenNote?: (noteId: string, opts?: { discuss?: boolean }) => void;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -570,9 +578,16 @@ function ReviewOverlay({
   const item = items[index] ?? null;
   const previous = index > 0 ? items[index - 1] : null;
   const next = index >= 0 && index < items.length - 1 ? items[index + 1] : null;
-  const { messages, status, error, send, stop } = useRawInfoChat(item?.id ?? null);
+  const { messages, status, error, proposal, send, stop, clearProposal } = useRawInfoChat(
+    item?.id ?? null,
+  );
   const [input, setInput] = useState("");
   const [draftResult, setDraftResult] = useState<RawInfoDraftResult | null>(null);
+  const [pendingDiff, setPendingDiff] = useState<typeof proposal>(null);
+  const [commitResult, setCommitResult] = useState<{
+    note_id: string;
+    title: string;
+  } | null>(null);
   const [draftEdit, setDraftEdit] = useState({
     title: "",
     tags: "",
@@ -590,6 +605,7 @@ function ReviewOverlay({
     },
     onSuccess: (result) => {
       setDraftResult(result);
+      setCommitResult(null);
       setDraftEdit({
         title: result.draft.title,
         tags: result.draft.tags.join(", "),
@@ -633,12 +649,77 @@ function ReviewOverlay({
     },
   });
 
+  const acceptDiffMut = useMutation({
+    mutationFn: async (finalBody: string) => {
+      if (!pendingDiff) throw new Error("No draft diff to accept");
+      return acceptDraftDiff(pendingDiff.draftId, { final_body: finalBody });
+    },
+    onSuccess: (result) => {
+      setDraftResult((current) => (current ? { ...current, draft: result.draft } : current));
+      setPendingDiff(null);
+      clearProposal();
+      setDraftError(null);
+    },
+    onError: (err) => {
+      setDraftError(err instanceof Error ? err.message : t("digest.draftDiffFailed"));
+    },
+  });
+
+  const rejectDiffMut = useMutation({
+    mutationFn: async () => {
+      if (!pendingDiff) throw new Error("No draft diff to reject");
+      return rejectDraftDiff(pendingDiff.draftId);
+    },
+    onSuccess: (result) => {
+      setDraftResult((current) => (current ? { ...current, draft: result.draft } : current));
+      setPendingDiff(null);
+      clearProposal();
+      setDraftError(null);
+    },
+    onError: (err) => {
+      setDraftError(err instanceof Error ? err.message : t("digest.draftDiffFailed"));
+    },
+  });
+
+  const commitMut = useMutation({
+    mutationFn: async () => {
+      if (!draftResult) throw new Error("No draft to commit");
+      return commitNoteDraft(draftResult.draft.id);
+    },
+    onSuccess: (result) => {
+      setCommitResult({ note_id: result.note_id, title: result.title });
+      setPendingDiff(null);
+      clearProposal();
+      void qc.invalidateQueries({ queryKey: ["digest-items"] });
+      void qc.invalidateQueries({ queryKey: ["digest-status"] });
+      void qc.invalidateQueries({ queryKey: ["drafts"] });
+      void qc.invalidateQueries({ queryKey: QK.tree });
+      onOpenNote?.(result.note_id);
+    },
+    onError: (err) => {
+      setDraftError(err instanceof Error ? err.message : t("digest.commitFailed"));
+    },
+  });
+
   useEffect(() => {
     setInput("");
     setDraftResult(null);
+    setPendingDiff(null);
+    setCommitResult(null);
     setDraftEdit({ title: "", tags: "", kind: "reference", folder: "" });
     setDraftError(null);
-  }, [item?.id]);
+    clearProposal();
+  }, [clearProposal, item?.id]);
+
+  useEffect(() => {
+    if (!proposal) return;
+    if (proposal.changed) {
+      setPendingDiff(proposal);
+    } else {
+      setDraftError(proposal.reason || proposal.summary || t("digest.noDraftDiff"));
+      clearProposal();
+    }
+  }, [clearProposal, proposal, t]);
 
   if (!item) return null;
 
@@ -811,6 +892,13 @@ function ReviewOverlay({
                     {draftResult.rationale}
                   </div>
                 )}
+                <div
+                  className="mt-3 max-h-32 overflow-y-auto rounded border px-2 py-1.5 text-xs whitespace-pre-wrap"
+                  style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+                  data-testid="digest-draft-body-preview"
+                >
+                  {draftResult.draft.body || t("digest.emptyDraftBody")}
+                </div>
                 <button
                   type="button"
                   disabled={!draftChanged || saveDraftMut.isPending}
@@ -821,6 +909,48 @@ function ReviewOverlay({
                 >
                   {saveDraftMut.isPending ? t("digest.savingDraft") : t("digest.saveDraft")}
                 </button>
+                <button
+                  type="button"
+                  disabled={
+                    commitMut.isPending ||
+                    Boolean(pendingDiff) ||
+                    !draftResult.draft.title.trim() ||
+                    !draftResult.draft.body?.trim()
+                  }
+                  onClick={() => commitMut.mutate()}
+                  className="ml-2 mt-3 rounded border px-2 py-1 text-xs disabled:opacity-50"
+                  style={{
+                    borderColor: "var(--accent)",
+                    background: "var(--accent-soft, rgba(91,122,156,0.14))",
+                  }}
+                  data-testid="digest-draft-commit"
+                >
+                  {commitMut.isPending ? t("digest.committingDraft") : t("digest.commitDraft")}
+                </button>
+                {commitResult && (
+                  <div
+                    className="mt-2 rounded border px-2 py-1.5 text-xs"
+                    style={{ borderColor: "var(--accent)", background: "var(--accent-tint)" }}
+                    data-testid="digest-draft-committed"
+                  >
+                    {t("digest.draftCommitted", { title: commitResult.title })}
+                  </div>
+                )}
+                {pendingDiff && (
+                  <div
+                    className="mt-3 h-[420px] overflow-hidden rounded-md border"
+                    style={{ borderColor: "var(--line)" }}
+                    data-testid="digest-draft-diff-panel"
+                  >
+                    <DiffReview
+                      oldBody={pendingDiff.oldBody}
+                      newBody={pendingDiff.newBody}
+                      saving={acceptDiffMut.isPending || rejectDiffMut.isPending}
+                      onAccept={(finalBody) => acceptDiffMut.mutate(finalBody)}
+                      onReject={() => rejectDiffMut.mutate()}
+                    />
+                  </div>
+                )}
               </div>
             )}
             {draftError && (

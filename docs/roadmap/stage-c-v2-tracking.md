@@ -1,6 +1,6 @@
 # Stage C v2 Tracking — 资讯审阅与入库
 
-- Status: Active implementation
+- Status: C4-C9 implemented and verified
 - Started: 2026-05-30
 - Design: [`../design/stage-c-digest-inbox.md`](../design/stage-c-digest-inbox.md)
 
@@ -52,14 +52,14 @@ P5 Create note draft from info
     Final assertion: a Note Draft exists, raw info remains read-only, and user can edit draft metadata before commit.
 
 P6 Draft diff tools
-    □ implemented   □ tested   □ dogfooded
+    ☑ implemented   ☑ tested   ✓ dogfooded
     Entry state: review mode has a generated note draft.
     Happy path: user asks AI to revise draft; AI proposes a diff and user accepts or rejects all.
     Branch: user says reject/撤回 all or closes the diff mid-review; draft body does not silently change.
     Final assertion: accepted diff mutates only the draft; rejected diff leaves it unchanged.
 
 P7 Commit note draft
-    □ implemented   □ tested   □ dogfooded
+    ☑ implemented   ☑ tested   ✓ dogfooded
     Entry state: note draft is ready in review mode.
     Happy path: user clicks Commit or asks AI to commit; note is written to the selected folder, indexed, and opened.
     Branch: missing title/body/folder or write failure blocks commit without deleting the draft.
@@ -118,6 +118,8 @@ P7 Commit note draft
 - P3 Digest inbox v2 → `tests/test_digest_pull.py:269` status API, `frontend/scripts/e2e/digest-list.mjs:123` Raw Info list/group/detail/empty/overflow paths ☑
 - P4 Review mode → `tests/test_digest_pull.py:299` Raw Info chat stream + discussed state, `frontend/scripts/e2e/digest-list.mjs:191` review from header/chat/next/close, `frontend/scripts/e2e/digest-list.mjs:228` review from specific card ☑
 - P5 Create note draft from info → `tests/test_digest_pull.py:332` API creates Draft with library context + metadata update, `tests/test_digest_pull.py:423` invalid LLM payload writes nothing, `tests/test_digest_pull.py:450` `create_note_draft_from_info` tool uses current Raw Info, `frontend/scripts/e2e/digest-list.mjs:239` review overlay creates a Draft and edits metadata ☑
+- P6 Draft diff tools → `tests/test_digest_pull.py:531` draft diff API proposes without writing Note, `tests/test_digest_pull.py:549` reject keeps Draft body unchanged, `tests/test_digest_pull.py:564` accept mutates only Draft, `tests/test_digest_pull.py:607` conversation tool proposes/rejects/accepts current Draft, `frontend/scripts/e2e/digest-list.mjs:469` review chat opens DiffReview and can reject/accept all ☑
+- P7 Commit note draft → `tests/test_digest_pull.py:632` `commit_note_draft` tool writes Note, indexes it, deletes Draft, and marks Raw Info included, `tests/test_digest_pull.py:650` empty-body commit blocks without deleting Draft, `frontend/scripts/e2e/digest-list.mjs:499` review overlay commit writes and opens the Note, `tests/test_cli.py` exposes `drafts commit`, `drafts accept-diff`, and `drafts reject-diff` commands ☑
 
 ## E.3 Dogfood Log
 
@@ -155,3 +157,18 @@ P7 Commit note draft
   - Browser dogfood: production build served from temp vault `/var/folders/5x/snmbmx3s5h372_xpld7c2mlh0000gn/T/knowlet-c8-ui-dogfood-ttre8wdj`; Digest → Start review → Settle as note draft created visible draft metadata. Probes: result panel background `rgb(244, 240, 232)`, center hit target resolved to `digest-settle-draft`, active element `BODY`, browser logs had no errors/warnings.
   - Screenshot: `/tmp/knowlet-c8-draft-dogfood.png`
   - UX check: review overlay now has "Settle as note draft"; generated drafts show title/tags/kind/folder metadata and can save metadata changes before commit. `create_note_draft_from_info` is also registered as a tool, so conversation-driven settlement can use the same backend path.
+- P6 Draft diff tools:
+  - Red tests: `tests/test_digest_pull.py::test_raw_info_draft_diff_api_accepts_or_rejects_without_note_write` initially failed with `405 Method Not Allowed`; `tests/test_digest_pull.py::test_current_draft_tools_propose_accept_reject_and_commit` initially failed because `propose_current_draft_edit` was not registered; `frontend/scripts/e2e/digest-list.mjs` initially timed out waiting for `[data-testid="diff-review"]`.
+  - Focused green: `uv run pytest tests/test_digest_pull.py::test_raw_info_draft_diff_api_accepts_or_rejects_without_note_write tests/test_digest_pull.py::test_current_draft_tools_propose_accept_reject_and_commit tests/test_digest_pull.py::test_commit_note_draft_rejects_empty_body_without_deleting_draft` → 3 passed; `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-list.mjs` → passed.
+  - Related green: `uv run pytest tests/test_digest_pull.py tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py` → 42 passed; `uv run pytest tests/test_web_note_chat.py tests/test_drafts_stage3.py tests/test_web_capture_flow.py` → 36 passed; `uv run pytest tests/test_architecture.py tests/test_bootstrap_and_slash.py` → 130 passed.
+  - Full backend/frontend: `uv run pytest tests/` → 999 passed; `cd frontend && npm run lint --silent` → passed; `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run build --silent` → passed.
+  - Real model dogfood: temp vault `/var/folders/5x/snmbmx3s5h372_xpld7c2mlh0000gn/T/knowlet-c9-dogfood-k5hilqng`, `cliproxyapi` + `gpt-5.5`; `propose_current_draft_edit` returned `changed=True`, `accept_all_draft_diff` returned `accepted=True`, and the accepted Draft body was updated before any Note write.
+  - Browser dogfood: production build served from temp vault `/var/folders/5x/snmbmx3s5h372_xpld7c2mlh0000gn/T/knowlet-c9-ui-dogfood-XXXXXX.uguV4aDKI8`; Digest → Start review → Settle as note draft worked. Browser plugin text input was blocked by its virtual clipboard limitation, so the interactive typed diff branch was covered by Playwright E2E and real-model tool dogfood instead.
+- P7 Commit note draft:
+  - Red test: `tests/test_digest_pull.py::test_commit_note_draft_rejects_empty_body_without_deleting_draft` initially failed with `405 Method Not Allowed`.
+  - CLI parity: `uv run pytest tests/test_cli.py tests/test_digest_pull.py::test_current_draft_tools_propose_accept_reject_and_commit` → 19 passed; `drafts commit` is an alias for approve and shares the same commit helper, while `accept-diff` / `reject-diff` expose draft diff lifecycle controls.
+  - Real model dogfood: after accepting the GPT-5.5 draft diff, `commit_note_draft` wrote `/private/var/folders/5x/snmbmx3s5h372_xpld7c2mlh0000gn/T/knowlet-c9-dogfood-k5hilqng/notes/ai/agents/01KSTHDEPJQ4D773D6Q62SQZAW.md`, indexed title `Agent Trace Review`, deleted the Draft, and marked Raw Info `included`.
+  - Browser dogfood: production build path Digest → Start review → Settle as note draft → Commit note showed `Committed "Agent trace review patterns"`; API confirmed Raw Info status `included` with `note_id=01KSTHGTEZHWZ0QEPADMNRDABJ`.
+  - UI probes: review overlay background `rgb(244, 240, 232)`, `document.elementFromPoint(center)` resolved to `digest-settle-draft`, active element `BODY`, and browser console had no new errors/warnings.
+  - Screenshot: `/tmp/knowlet-c9-draft-commit-dogfood.png`
+  - UX check: AI/tool-driven draft lifecycle now has the same boundary as the UI: propose diff → review → accept/reject all → explicit commit. Commit is blocked if a pending diff exists or title/body are missing, so Raw Info cannot silently enter the vault.

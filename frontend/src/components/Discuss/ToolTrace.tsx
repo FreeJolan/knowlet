@@ -25,6 +25,19 @@ export function summarizeToolPayload(name: string, payload: unknown): string {
       ? obj.summary
       : "已生成可审阅的修改提案";
   }
+  if (obj.kind === "draft_edit_proposal") {
+    if (obj.changed === false) {
+      return typeof obj.reason === "string" && obj.reason
+        ? obj.reason
+        : "没有可应用到草稿的改动";
+    }
+    return typeof obj.summary === "string" && obj.summary
+      ? obj.summary
+      : "已生成可审阅的草稿 diff";
+  }
+  if (obj.kind === "draft_diff_accepted") return "已接受草稿 diff";
+  if (obj.kind === "draft_diff_rejected") return "已撤回草稿 diff";
+  if (obj.kind === "note_draft_committed") return "已落库为正式笔记";
   if (Array.isArray(obj.findings) && typeof obj.summary === "string") {
     return `${obj.findings.length} 个发现 · ${obj.summary}`;
   }

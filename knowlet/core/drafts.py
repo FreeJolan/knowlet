@@ -87,6 +87,10 @@ class Draft:
     # Stage C v2 Raw Info settlement writes this so the later commit step can
     # place the final Note without asking the model again.
     folder: str | None = None
+    # Stage C v2 C9 — pending human-reviewed draft diff. The draft body remains
+    # unchanged until the user accepts; reject simply clears these fields.
+    pending_diff_base: str | None = None
+    pending_diff_body: str | None = None
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
     schema_version: int = DRAFT_SCHEMA_VERSION
@@ -145,6 +149,9 @@ class Draft:
             meta["task_id"] = self.task_id
         if self.folder is not None:
             meta["folder"] = self.folder
+        if self.pending_diff_base is not None and self.pending_diff_body is not None:
+            meta["pending_diff_base"] = self.pending_diff_base
+            meta["pending_diff_body"] = self.pending_diff_body
         post = frontmatter.Post(self.body, **meta)
         return str(frontmatter.dumps(post))
 
@@ -172,6 +179,16 @@ class Draft:
             source=meta.get("source"),
             task_id=meta.get("task_id"),
             folder=str(meta["folder"]) if meta.get("folder") is not None else None,
+            pending_diff_base=(
+                str(meta["pending_diff_base"])
+                if meta.get("pending_diff_base") is not None
+                else None
+            ),
+            pending_diff_body=(
+                str(meta["pending_diff_body"])
+                if meta.get("pending_diff_body") is not None
+                else None
+            ),
             created_at=str(meta.get("created_at") or now_iso()),
             updated_at=str(meta.get("updated_at") or now_iso()),
             schema_version=schema_version,

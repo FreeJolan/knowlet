@@ -47,6 +47,12 @@ class ToolContext:
     # Raw-Info review sessions set this so the model can settle "this item"
     # into a note draft without the user copying an internal id into chat.
     current_raw_info_id: str | None = None
+    # Draft review sessions set this so the model can revise / accept / commit
+    # "this draft" after Raw Info has been settled.
+    current_draft_id: str | None = None
+    # Web sessions can pass a sync dirty-marker so tool-driven writes have the
+    # same downstream sync behavior as button/API writes. CLI/MCP leave it unset.
+    mark_note_dirty: Callable[[str], None] | None = None
 
 
 @dataclass

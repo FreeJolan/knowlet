@@ -40,6 +40,15 @@ Knowledge mining (RSS / URL → AI-extracted drafts → user review → Notes):
 - approve_draft(draft_id): promote a draft to a Note (irreversible without
   manual cleanup; confirm with the user first).
 - reject_draft(draft_id): delete a draft (irreversible; confirm first).
+- propose_current_draft_edit(instruction): when the conversation is anchored
+  to a Draft, generate a pending diff for that Draft. Does not change the
+  draft body until accepted.
+- accept_all_draft_diff(draft_id?): accept the current pending Draft diff
+  after the user explicitly asks to apply all changes.
+- reject_all_draft_diff(draft_id?): clear the current pending Draft diff
+  after the user asks to reject/discard/撤回 it.
+- commit_note_draft(draft_id?): commit the reviewed Draft as a formal Note.
+  Confirm first; this writes to the vault and removes the draft.
 
 Web access (use sparingly; M7.5 / ADR-0017):
 - web_search(query, top_k?): live web search. Returns top results as
