@@ -77,7 +77,7 @@ knowlet AI = **Cursor-for-notes**。唯一不可替代价值 = grounded 对谈 +
 - [x] C5 Pull + normalize pipeline:每日首次在线/跨日在线自动拉取;RSS/Prompt Source 结构化处理;seen-set 去重;未处理资讯超过 200 条暂停拉取并记录 source pause 状态;新增 Raw Info 存储/API/CLI。focused pytest + ruff + tsc 已通过;本地一条 RSS + `gpt-5.5` 真模型 dogfood 创建 Raw Info,第二次运行去重为 `new=0`。
 - [x] C6 Digest inbox v2:取消 today/week;改为 Raw Info inbox;支持按时间或来源分组;右上角显示拉取状态,超过 200 pending 显示暂停提示;保留只读详情,批阅/对话进入 C7。focused E2E + tsc/lint 已通过,截图 `/tmp/knowlet-c6-digest-inbox.png`。
 - [x] C7 Review mode:大浮窗批阅;左侧只读 Raw Info,右侧对话流;支持从顶部开始或从指定卡片开始;新增 Raw Info 专属 chat stream,讨论后条目标记为 `discussed`。focused E2E/pytest 已通过,截图 `/tmp/knowlet-c7-review-mode.png`。
-- [ ] C8 Create draft + draft tools:`create_note_draft_from_info`;接入目录树、标签体系、相似笔记等 Library Context;生成标题、正文、tags、类型、建议目录。
+- [x] C8 Create draft + draft tools:`create_note_draft_from_info`;接入目录树、标签体系、相似笔记等 Library Context;生成标题、正文、tags、类型、建议目录。2026-05-30:Raw Info review overlay 新增“沉淀为笔记草稿”;后端 `POST /api/digest/items/{id}/draft` + Tool 同源;失败不写 Draft;生成后可在入库前调整标题、tags、kind、folder。
 - [ ] C9 Draft diff + commit:草稿修正走 Diff;支持全部接受/全部撤回;对话可驱动 accept/reject/commit tools;用户确认后落库为正式 Note。
 
 _死掉不做:网站订阅 / 通用爬站 / RSS-Bridge / anti-drift 队列 / 自动归档 / 知识资料强制二次确认。_

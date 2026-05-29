@@ -18,6 +18,7 @@ from knowlet.chat.current_note_tools import (
 )
 from knowlet.chat.log import prune_old
 from knowlet.chat.prompts import build_chat_system_prompt
+from knowlet.chat.raw_info_tools import CREATE_NOTE_DRAFT_FROM_INFO_TOOL
 from knowlet.chat.session import ChatSession
 from knowlet.config import KnowletConfig, save_config
 from knowlet.core.card_store import CardStore
@@ -172,6 +173,7 @@ def bootstrap_chat(
     registry = default_registry()
     registry.register(CHECK_CURRENT_NOTE_TOOL)
     registry.register(PROPOSE_CURRENT_NOTE_EDIT_TOOL)
+    registry.register(CREATE_NOTE_DRAFT_FROM_INFO_TOOL)
     cards = CardStore(vault.cards_dir)
     tasks = TaskStore(vault.tasks_dir)
     drafts = DraftStore(vault.drafts_dir)

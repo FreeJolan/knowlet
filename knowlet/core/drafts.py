@@ -83,6 +83,10 @@ class Draft:
     tags: list[str] = field(default_factory=list)
     source: str | None = None
     task_id: str | None = None  # mining-task id that produced this draft, if any
+    # Suggested destination under ``notes/``. Empty / None means vault root.
+    # Stage C v2 Raw Info settlement writes this so the later commit step can
+    # place the final Note without asking the model again.
+    folder: str | None = None
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
     schema_version: int = DRAFT_SCHEMA_VERSION
@@ -139,6 +143,8 @@ class Draft:
             meta["source"] = self.source
         if self.task_id:
             meta["task_id"] = self.task_id
+        if self.folder is not None:
+            meta["folder"] = self.folder
         post = frontmatter.Post(self.body, **meta)
         return str(frontmatter.dumps(post))
 
@@ -165,6 +171,7 @@ class Draft:
             tags=list(meta.get("tags") or []),
             source=meta.get("source"),
             task_id=meta.get("task_id"),
+            folder=str(meta["folder"]) if meta.get("folder") is not None else None,
             created_at=str(meta.get("created_at") or now_iso()),
             updated_at=str(meta.get("updated_at") or now_iso()),
             schema_version=schema_version,
@@ -183,6 +190,7 @@ class Draft:
             created_at=self.created_at,
             updated_at=now_iso(),
             kind=self.kind,
+            folder=self.folder,
         )
 
 

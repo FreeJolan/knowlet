@@ -14,9 +14,11 @@ from knowlet.config import KnowletConfig, save_config
 from knowlet.core.digest_items import RawInfo, RawInfoStore
 from knowlet.core.digest_pull import maybe_auto_pull_digest_sources, pull_digest_sources
 from knowlet.core.digest_sources import DigestSource, DigestSourceStore
+from knowlet.core.drafts import DraftStore
 from knowlet.core.events import ReplyChunkEvent, ReplyDoneEvent
 from knowlet.core.llm import AssistantMessage
 from knowlet.core.mining.sources import SourceItem
+from knowlet.core.note import Note
 from knowlet.core.vault import Vault
 from knowlet.web.server import create_app
 
@@ -325,6 +327,170 @@ def test_raw_info_chat_stream_marks_item_discussed(tmp_path):
     loaded = RawInfoStore(vault.digest_items_dir).get(item.id)
     assert loaded is not None
     assert loaded.status == "discussed"
+
+
+def test_raw_info_draft_api_creates_review_draft_with_library_context(tmp_path):
+    vault, cfg = _ready_vault(tmp_path)
+    vault.mkdir_folder("ai/research")
+    existing = Note(
+        id="01C8EXISTINGNOTE000001",
+        title="Agent systems map",
+        body="Existing note about agent tool traces.",
+        tags=["agents", "tooling"],
+    )
+    existing.path = vault.write_note(existing, folder="ai/research")
+    item = RawInfo(
+        source_id="source-1",
+        source_name="Research Feed",
+        source_kind="rss",
+        item_key="rss:item",
+        title="LangChain trace article",
+        url="https://example.com/langchain-trace",
+        summary="An article about separating tool trace from final answer.",
+        key_points=["trace is not final answer", "tools should remain visible"],
+        suggested_tags=["agents"],
+        status="discussed",
+    )
+    RawInfoStore(vault.digest_items_dir).save(item)
+    client = TestClient(create_app(vault, cfg))
+    runtime = client.app.state.web_state.runtime_or_init()
+    runtime.llm = ScriptedLLM(
+        [
+            {
+                "title": "Tool Trace Separation",
+                "body": "## 核心\n\n工具调用轨迹应该和最终答案分开展示。\n",
+                "tags": ["agents", "tooling", "langchain"],
+                "kind": "knowledge",
+                "folder": "ai/research",
+                "rationale": "The discussion added durable design judgement.",
+            }
+        ]
+    )
+    runtime.ctx.llm = runtime.llm
+
+    res = client.post(
+        f"/api/digest/items/{item.id}/draft",
+        json={
+            "history": [
+                {"role": "user", "content": "这对我们工具 trace UI 有什么启发?"},
+                {"role": "assistant", "content": "可以把 trace 和 answer 分开。"},
+            ]
+        },
+    )
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    draft = payload["draft"]
+    assert draft["title"] == "Tool Trace Separation"
+    assert draft["kind"] == "knowledge"
+    assert draft["folder"] == "ai/research"
+    assert "langchain" in draft["tags"]
+    stored_draft = DraftStore(vault.drafts_dir).get(draft["id"])
+    assert stored_draft is not None
+    assert stored_draft.folder == "ai/research"
+    assert stored_draft.source == "https://example.com/langchain-trace"
+    loaded = RawInfoStore(vault.digest_items_dir).get(item.id)
+    assert loaded is not None
+    assert loaded.status == "drafted"
+    assert loaded.note_draft_id == draft["id"]
+    assert len(list(vault.iter_note_paths())) == 1
+    prompt = runtime.llm.messages[0][-1]["content"]
+    assert "Existing tags" in prompt
+    assert "agents" in prompt
+    assert "ai/research" in prompt
+    assert "资料" in prompt and "知识" in prompt
+
+    updated = client.put(
+        f"/api/drafts/{draft['id']}",
+        json={
+            "title": "Tool Trace Notes",
+            "tags": ["agents", "notes"],
+            "kind": "reference",
+            "folder": "ai/notes",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    updated_payload = updated.json()
+    assert updated_payload["title"] == "Tool Trace Notes"
+    assert updated_payload["tags"] == ["agents", "notes"]
+    assert updated_payload["kind"] == "reference"
+    assert updated_payload["folder"] == "ai/notes"
+    stored_draft = DraftStore(vault.drafts_dir).get(draft["id"])
+    assert stored_draft is not None
+    assert stored_draft.folder == "ai/notes"
+
+
+def test_raw_info_draft_api_rejects_invalid_llm_payload_without_writing(tmp_path):
+    vault, cfg = _ready_vault(tmp_path)
+    item = RawInfo(
+        source_id="source-1",
+        source_name="Research Feed",
+        source_kind="rss",
+        item_key="rss:item",
+        title="Invalid draft target",
+        url="https://example.com/invalid",
+        summary="A raw info item.",
+    )
+    RawInfoStore(vault.digest_items_dir).save(item)
+    client = TestClient(create_app(vault, cfg))
+    runtime = client.app.state.web_state.runtime_or_init()
+    runtime.llm = ScriptedLLM([{"title": "", "body": "", "tags": [], "kind": "maybe"}])
+    runtime.ctx.llm = runtime.llm
+
+    res = client.post(f"/api/digest/items/{item.id}/draft", json={"history": []})
+
+    assert res.status_code == 502, res.text
+    assert DraftStore(vault.drafts_dir).all_drafts() == []
+    loaded = RawInfoStore(vault.digest_items_dir).get(item.id)
+    assert loaded is not None
+    assert loaded.status == "unprocessed"
+    assert loaded.note_draft_id is None
+
+
+def test_create_note_draft_from_info_tool_uses_current_raw_info(tmp_path):
+    vault, cfg = _ready_vault(tmp_path)
+    item = RawInfo(
+        source_id="source-1",
+        source_name="Prompt Watch",
+        source_kind="prompt",
+        item_key="prompt:item",
+        title="Prompt-sourced update",
+        url="https://example.com/prompt-update",
+        summary="A prompt source candidate.",
+    )
+    RawInfoStore(vault.digest_items_dir).save(item)
+    client = TestClient(create_app(vault, cfg))
+    runtime = client.app.state.web_state.runtime_or_init()
+    runtime.llm = ScriptedLLM(
+        [
+            {
+                "title": "Prompt Source Reference",
+                "body": "Reference draft body.",
+                "tags": ["prompt-source"],
+                "kind": "reference",
+                "folder": "",
+                "rationale": "No deep discussion yet, so this is reference material.",
+            }
+        ]
+    )
+    runtime.ctx.llm = runtime.llm
+    runtime.ctx.current_raw_info_id = item.id
+
+    result = runtime.registry.dispatch(
+        "create_note_draft_from_info",
+        {"discussion_summary": "用户尚未深入讨论,只是想先留存。"},
+        runtime.ctx,
+    )
+
+    assert result["kind"] == "raw_info_note_draft"
+    assert result["info_id"] == item.id
+    draft = DraftStore(vault.drafts_dir).get(result["draft_id"])
+    assert draft is not None
+    assert draft.kind == "reference"
+    loaded = RawInfoStore(vault.digest_items_dir).get(item.id)
+    assert loaded is not None
+    assert loaded.status == "drafted"
+    assert loaded.note_draft_id == draft.id
 
 
 def test_digest_cli_run_pulls_v2_source(tmp_path, monkeypatch):

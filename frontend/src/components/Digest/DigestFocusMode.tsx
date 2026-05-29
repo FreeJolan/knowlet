@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  CheckCircle2,
   Clock,
   ExternalLink,
   RefreshCw,
@@ -23,13 +24,16 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  createRawInfoDraft,
   getDigestStatus,
   listRawInfoItems,
   pullDigestSources,
+  updateDraft,
   type DigestStatus,
+  type RawInfoDraftResult,
   type RawInfoSummary,
 } from "@/api/client";
-import { ChatTranscript } from "@/components/Discuss";
+import { ChatTranscript, chatHistoryForRequest } from "@/components/Discuss";
 
 import { useRawInfoChat } from "./useRawInfoChat";
 
@@ -558,6 +562,7 @@ function ReviewOverlay({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const qc = useQueryClient();
   const index = Math.max(
     0,
     items.findIndex((item) => item.id === activeId),
@@ -567,12 +572,82 @@ function ReviewOverlay({
   const next = index >= 0 && index < items.length - 1 ? items[index + 1] : null;
   const { messages, status, error, send, stop } = useRawInfoChat(item?.id ?? null);
   const [input, setInput] = useState("");
+  const [draftResult, setDraftResult] = useState<RawInfoDraftResult | null>(null);
+  const [draftEdit, setDraftEdit] = useState({
+    title: "",
+    tags: "",
+    kind: "reference" as "knowledge" | "reference",
+    folder: "",
+  });
+  const [draftError, setDraftError] = useState<string | null>(null);
+
+  const draftMut = useMutation({
+    mutationFn: async () => {
+      if (!item) throw new Error("No Raw Info item selected");
+      return createRawInfoDraft(item.id, {
+        history: chatHistoryForRequest(messages),
+      });
+    },
+    onSuccess: (result) => {
+      setDraftResult(result);
+      setDraftEdit({
+        title: result.draft.title,
+        tags: result.draft.tags.join(", "),
+        kind: result.draft.kind,
+        folder: result.draft.folder ?? "",
+      });
+      setDraftError(null);
+      void qc.invalidateQueries({ queryKey: ["digest-items"] });
+      void qc.invalidateQueries({ queryKey: ["digest-status"] });
+    },
+    onError: (err) => {
+      setDraftError(err instanceof Error ? err.message : t("digest.draftFailed"));
+    },
+  });
+
+  const saveDraftMut = useMutation({
+    mutationFn: async () => {
+      if (!draftResult) throw new Error("No draft to save");
+      return updateDraft(draftResult.draft.id, {
+        title: draftEdit.title,
+        tags: draftEdit.tags
+          .split(",")
+          .map((tag) => tag.trim().replace(/^#/, ""))
+          .filter(Boolean),
+        kind: draftEdit.kind,
+        folder: draftEdit.folder,
+      });
+    },
+    onSuccess: (draft) => {
+      setDraftResult((current) => (current ? { ...current, draft } : current));
+      setDraftEdit({
+        title: draft.title,
+        tags: draft.tags.join(", "),
+        kind: draft.kind,
+        folder: draft.folder ?? "",
+      });
+      setDraftError(null);
+    },
+    onError: (err) => {
+      setDraftError(err instanceof Error ? err.message : t("digest.draftSaveFailed"));
+    },
+  });
 
   useEffect(() => {
     setInput("");
+    setDraftResult(null);
+    setDraftEdit({ title: "", tags: "", kind: "reference", folder: "" });
+    setDraftError(null);
   }, [item?.id]);
 
   if (!item) return null;
+
+  const draftChanged =
+    draftResult !== null &&
+    (draftEdit.title.trim() !== draftResult.draft.title ||
+      draftEdit.tags.trim() !== draftResult.draft.tags.join(", ") ||
+      draftEdit.kind !== draftResult.draft.kind ||
+      draftEdit.folder.trim() !== (draftResult.draft.folder ?? ""));
 
   const submit = () => {
     if (input.trim() && status !== "streaming") {
@@ -648,6 +723,111 @@ function ReviewOverlay({
             )}
             <DetailBlock label={t("digest.whyItMatters")} value={item.why_it_matters} />
             <DetailBlock label={t("digest.excerpt")} value={item.content_excerpt} />
+            <button
+              type="button"
+              disabled={draftMut.isPending || status === "streaming"}
+              onClick={() => draftMut.mutate()}
+              className="inline-flex items-center gap-1.5 rounded border px-3 py-2 text-xs disabled:opacity-50"
+              style={{ borderColor: "var(--accent)", color: "var(--ink)" }}
+              data-testid="digest-settle-draft"
+            >
+              <Sparkles className="size-3.5" />
+              {draftMut.isPending ? t("digest.creatingDraft") : t("digest.settleDraft")}
+            </button>
+            {draftResult && (
+              <div
+                className="rounded-md border p-3 text-sm"
+                style={{ borderColor: "var(--line)", background: "var(--bg)" }}
+                data-testid="digest-draft-result"
+              >
+                <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <CheckCircle2 className="size-3.5" />
+                  {t("digest.draftCreated")}
+                </div>
+                <div className="space-y-2" data-testid="digest-draft-metadata">
+                  <label className="block text-[11px] text-muted-foreground">
+                    {t("digest.draftTitle")}
+                    <input
+                      data-testid="digest-draft-title-input"
+                      value={draftEdit.title}
+                      onChange={(e) =>
+                        setDraftEdit((current) => ({ ...current, title: e.target.value }))
+                      }
+                      className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
+                      style={{ borderColor: "var(--line)" }}
+                    />
+                  </label>
+                  <label className="block text-[11px] text-muted-foreground">
+                    {t("digest.draftTags")}
+                    <input
+                      data-testid="digest-draft-tags-input"
+                      value={draftEdit.tags}
+                      onChange={(e) =>
+                        setDraftEdit((current) => ({ ...current, tags: e.target.value }))
+                      }
+                      className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
+                      style={{ borderColor: "var(--line)" }}
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block text-[11px] text-muted-foreground">
+                      {t("digest.draftKind")}
+                      <select
+                        data-testid="digest-draft-kind-select"
+                        value={draftEdit.kind}
+                        onChange={(e) =>
+                          setDraftEdit((current) => ({
+                            ...current,
+                            kind: e.target.value as "knowledge" | "reference",
+                          }))
+                        }
+                        className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
+                        style={{ borderColor: "var(--line)" }}
+                      >
+                        <option value="knowledge">knowledge</option>
+                        <option value="reference">reference</option>
+                      </select>
+                    </label>
+                    <label className="block text-[11px] text-muted-foreground">
+                      {t("digest.draftFolder")}
+                      <input
+                        data-testid="digest-draft-folder-input"
+                        value={draftEdit.folder}
+                        onChange={(e) =>
+                          setDraftEdit((current) => ({ ...current, folder: e.target.value }))
+                        }
+                        placeholder={t("digest.rootFolder")}
+                        className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
+                        style={{ borderColor: "var(--line)" }}
+                      />
+                    </label>
+                  </div>
+                </div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {draftResult.draft.kind} · {draftResult.draft.folder || t("digest.rootFolder")}
+                </div>
+                {draftResult.rationale && (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    {draftResult.rationale}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  disabled={!draftChanged || saveDraftMut.isPending}
+                  onClick={() => saveDraftMut.mutate()}
+                  className="mt-3 rounded border px-2 py-1 text-xs disabled:opacity-50"
+                  style={{ borderColor: "var(--line)" }}
+                  data-testid="digest-draft-save"
+                >
+                  {saveDraftMut.isPending ? t("digest.savingDraft") : t("digest.saveDraft")}
+                </button>
+              </div>
+            )}
+            {draftError && (
+              <div className="text-xs" style={{ color: "var(--danger, #c0392b)" }}>
+                {draftError}
+              </div>
+            )}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2 border-t p-4" style={{ borderColor: "var(--line)" }}>
             <button

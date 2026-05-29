@@ -236,6 +236,96 @@ try {
     await page.locator('[data-testid="digest-review-close"]').click();
   });
 
+  await runTest("review mode can settle Raw Info into a note draft", async () => {
+    await page.route("**/api/drafts/01C8DRAFTFROMRAWINFO", async (route) => {
+      if (route.request().method() !== "PUT") return route.fallback();
+      const body = route.request().postDataJSON();
+      assert(body.title === "Tool Trace Notes", "draft metadata update sends title");
+      assert(body.folder === "ai/notes", "draft metadata update sends folder");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "01C8DRAFTFROMRAWINFO",
+          title: "Tool Trace Notes",
+          body: "## Core\n\nTool traces should be visible but separate from the final answer.",
+          source: "https://example.com/agent-trace",
+          tags: ["agents", "notes"],
+          kind: "knowledge",
+          folder: "ai/notes",
+          task_id: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          age_days: 0,
+          is_stale: false,
+          is_warn_age: false,
+        }),
+      });
+    });
+    await page.route("**/api/digest/items/*/draft", async (route) => {
+      const request = route.request();
+      const body = request.postDataJSON();
+      assert(Array.isArray(body.history), "draft request forwards discussion history");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          raw_info: {
+            ...rawInfo({
+              id: "01C6TODAYRAWINFO000001",
+              title: "Agent trace design",
+              url: "https://example.com/agent-trace",
+            }),
+            status: "drafted",
+            note_draft_id: "01C8DRAFTFROMRAWINFO",
+          },
+          draft: {
+            id: "01C8DRAFTFROMRAWINFO",
+            title: "Tool Trace Separation",
+            body: "## Core\n\nTool traces should be visible but separate from the final answer.",
+            source: "https://example.com/agent-trace",
+            tags: ["agents", "tooling"],
+            kind: "knowledge",
+            folder: "ai/research",
+            task_id: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            age_days: 0,
+            is_stale: false,
+            is_warn_age: false,
+          },
+          rationale: "The discussion turned this into durable knowledge.",
+        }),
+      });
+    });
+    await page.locator('[data-testid="digest-card-01C6TODAYRAWINFO000001"]').click();
+    await page.locator('[data-testid="digest-start-review"]').click();
+    await page.locator('[data-testid="digest-review-overlay"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-settle-draft"]').click();
+    await page.locator('[data-testid="digest-draft-result"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    const titleValue = await page.locator('[data-testid="digest-draft-title-input"]').inputValue();
+    const result = await page.locator('[data-testid="digest-draft-result"]').textContent();
+    assert(titleValue === "Tool Trace Separation", "created draft title is visible");
+    assert(result.includes("knowledge"), "created draft kind is visible");
+    assert(result.includes("ai/research"), "created draft folder is visible");
+    await page.locator('[data-testid="digest-draft-title-input"]').fill("Tool Trace Notes");
+    await page.locator('[data-testid="digest-draft-tags-input"]').fill("agents, notes");
+    await page.locator('[data-testid="digest-draft-folder-input"]').fill("ai/notes");
+    await page.locator('[data-testid="digest-draft-save"]').click();
+    const updatedTitle = await page.locator('[data-testid="digest-draft-title-input"]').inputValue();
+    const updatedFolder = await page.locator('[data-testid="digest-draft-folder-input"]').inputValue();
+    const updated = await page.locator('[data-testid="digest-draft-result"]').textContent();
+    assert(updatedTitle === "Tool Trace Notes", "updated draft title is visible");
+    assert(updatedFolder === "ai/notes", "updated draft folder is visible");
+    await page.locator('[data-testid="digest-review-close"]').click();
+  });
+
   await runTest("no console errors during populated inbox suite", () => {
     assertConsoleClean(env);
   });

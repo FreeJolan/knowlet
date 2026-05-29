@@ -44,6 +44,9 @@ class ToolContext:
     # operate on "the note I'm currently discussing" without exposing a
     # separate UI button.
     current_note_id: str | None = None
+    # Raw-Info review sessions set this so the model can settle "this item"
+    # into a note draft without the user copying an internal id into chat.
+    current_raw_info_id: str | None = None
 
 
 @dataclass

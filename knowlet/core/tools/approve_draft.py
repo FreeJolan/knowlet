@@ -22,7 +22,7 @@ def _handler(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
         }
 
     note = draft.to_note()
-    path = ctx.vault.write_note(note)
+    path = ctx.vault.write_note(note, folder=draft.folder)
     note.path = path
     ctx.index.upsert_note(
         note,

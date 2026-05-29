@@ -20,9 +20,12 @@ def build_raw_info_grounded_turn(item: RawInfo, user_text: str) -> str:
 You are discussing one read-only Raw Info item in Knowlet's digest review flow.
 Do not claim that the item has been edited or saved as a note. If the user asks
 to change it, explain that the next step is to settle it into an editable note
-draft first.
+draft first. If the user asks to settle/save/turn this item into a note draft,
+call the create_note_draft_from_info tool. That tool creates a Draft only; it
+does not commit a formal Note.
 
 Raw Info:
+- ID: {item.id}
 - Title: {item.title}
 - Source: {item.source_name} ({item.source_kind})
 - Original URL: {item.url}

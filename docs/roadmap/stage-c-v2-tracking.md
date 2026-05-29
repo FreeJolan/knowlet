@@ -45,7 +45,7 @@ P4 Review mode
     Final assertion: raw info is not directly editable and conversation remains anchored to the selected item.
 
 P5 Create note draft from info
-    □ implemented   □ tested   □ dogfooded
+    ☑ implemented   ☑ tested   ✓ dogfooded
     Entry state: user is reviewing a raw info item.
     Happy path: user clicks Settle as note draft or asks AI to do it; AI receives raw info, discussion history, and library context, then returns title/body/tags/kind/folder/source.
     Branch: LLM or schema validation fails; no draft is written and the user sees a retryable error.
@@ -117,6 +117,7 @@ P7 Commit note draft
 - P2 Pull + normalize pipeline → `tests/test_digest_pull.py:59` RSS normalize + seen-set, `tests/test_digest_pull.py:136` Prompt Source JSON wrapper, `tests/test_digest_pull.py:187` 200 pending pause, `tests/test_digest_pull.py:226` API pull/list, `tests/test_digest_pull.py:330` CLI pull, `tests/test_digest_pull.py:375` CLI limit regression, `tests/test_digest_pull.py:432` daily auto-pull ☑
 - P3 Digest inbox v2 → `tests/test_digest_pull.py:269` status API, `frontend/scripts/e2e/digest-list.mjs:123` Raw Info list/group/detail/empty/overflow paths ☑
 - P4 Review mode → `tests/test_digest_pull.py:299` Raw Info chat stream + discussed state, `frontend/scripts/e2e/digest-list.mjs:191` review from header/chat/next/close, `frontend/scripts/e2e/digest-list.mjs:228` review from specific card ☑
+- P5 Create note draft from info → `tests/test_digest_pull.py:332` API creates Draft with library context + metadata update, `tests/test_digest_pull.py:423` invalid LLM payload writes nothing, `tests/test_digest_pull.py:450` `create_note_draft_from_info` tool uses current Raw Info, `frontend/scripts/e2e/digest-list.mjs:239` review overlay creates a Draft and edits metadata ☑
 
 ## E.3 Dogfood Log
 
@@ -145,3 +146,12 @@ P7 Commit note draft
   - Lint/type/full backend: `uv run ruff check knowlet/chat/raw_info_chat.py knowlet/web/server.py tests/test_digest_pull.py` → passed; `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run lint --silent` → passed; `uv run pytest tests/` → 989 passed.
   - UX check: header "Start review" opens the overlay, card "Review from here" starts at that card, right-side chat uses `/api/chat/raw-info/{id}/stream`, and Next/Close preserve a consistent selected item.
   - Screenshot: `/tmp/knowlet-c7-review-mode.png`
+- P5 Create note draft from info:
+  - Red test: `tests/test_digest_pull.py::test_raw_info_draft_api_creates_review_draft_with_library_context` initially failed with `405 Method Not Allowed`; `frontend/scripts/e2e/digest-list.mjs` initially failed because `digest-settle-draft` did not exist.
+  - Focused green: `uv run pytest tests/test_digest_pull.py::test_raw_info_draft_api_creates_review_draft_with_library_context tests/test_digest_pull.py::test_raw_info_draft_api_rejects_invalid_llm_payload_without_writing tests/test_digest_pull.py::test_create_note_draft_from_info_tool_uses_current_raw_info` → 3 passed; `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-list.mjs` → passed.
+  - Related green: `uv run pytest tests/test_digest_pull.py tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py` → 39 passed; `uv run pytest tests/test_web_note_chat.py tests/test_drafts_stage3.py tests/test_web_capture_flow.py` → 36 passed; `uv run pytest tests/` → 994 passed; `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run lint --silent` → passed; `cd frontend && npm run build --silent` → passed.
+  - E2E green: `cd frontend && node scripts/e2e/digest-list.mjs` → passed; `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-sources.mjs` → passed.
+  - Real model dogfood: temp vault `/var/folders/5x/snmbmx3s5h372_xpld7c2mlh0000gn/T/knowlet-c8-dogfood-dr6njlmy`, `cliproxyapi` + `gpt-5.5` generated Draft `01KSTFXYB119KF3XHSGNSQ01AT`, selected folder `ai/agents`, marked Raw Info `drafted`.
+  - Browser dogfood: production build served from temp vault `/var/folders/5x/snmbmx3s5h372_xpld7c2mlh0000gn/T/knowlet-c8-ui-dogfood-ttre8wdj`; Digest → Start review → Settle as note draft created visible draft metadata. Probes: result panel background `rgb(244, 240, 232)`, center hit target resolved to `digest-settle-draft`, active element `BODY`, browser logs had no errors/warnings.
+  - Screenshot: `/tmp/knowlet-c8-draft-dogfood.png`
+  - UX check: review overlay now has "Settle as note draft"; generated drafts show title/tags/kind/folder metadata and can save metadata changes before commit. `create_note_draft_from_info` is also registered as a tool, so conversation-driven settlement can use the same backend path.

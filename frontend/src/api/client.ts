@@ -710,6 +710,7 @@ export interface DraftSummary {
   tags: string[];
   kind: "knowledge" | "reference";
   task_id?: string | null;
+  folder?: string | null;
   created_at: string;
   updated_at: string;
   /** computed by backend: days elapsed since created_at */
@@ -816,6 +817,18 @@ export interface DigestStatus {
 export const listRawInfoItems = (): Promise<RawInfoSummary[]> =>
   request("GET", "/api/digest/items");
 
+export interface RawInfoDraftResult {
+  raw_info: RawInfoSummary;
+  draft: DraftSummary;
+  rationale: string;
+}
+
+export const createRawInfoDraft = (
+  id: string,
+  payload: { history?: Array<{ role: string; content: string }> },
+): Promise<RawInfoDraftResult> =>
+  request("POST", `/api/digest/items/${encodeURIComponent(id)}/draft`, payload);
+
 export const getDigestStatus = (): Promise<DigestStatus> =>
   request("GET", "/api/digest/status");
 
@@ -839,7 +852,9 @@ export const updateDraft = (
   payload: {
     title?: string;
     body?: string;
+    tags?: string[];
     kind?: "knowledge" | "reference";
+    folder?: string;
   },
 ): Promise<DraftSummary> =>
   request("PUT", `/api/drafts/${id}`, payload);

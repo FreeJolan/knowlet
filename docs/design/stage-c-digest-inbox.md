@@ -1,6 +1,6 @@
 # Stage C v2 — 资讯审阅与入库
 
-- Status: Draft design, ready for implementation planning
+- Status: Active implementation (C4-C8 complete; C9 pending)
 - Date: 2026-05-30
 - Roadmap: [`../roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md)
 
@@ -249,6 +249,18 @@ Raw Info 本身不可直接修改。用户如果想改内容,必须先沉淀为 
 - brief rationale。
 
 生成后进入草稿 Review 状态。用户可以手动修改标题、正文、tags、目录、类型。
+
+当前实现(2026-05-30):
+
+- UI:审阅浮窗左侧提供"沉淀为笔记草稿"按钮。
+- API:`POST /api/digest/items/{info_id}/draft`。
+- Tool:`create_note_draft_from_info`,可在 Raw Info review chat 中基于当前
+  Raw Info 省略 `info_id` 调用。
+- 生成 Draft 后更新 Raw Info 为 `drafted` 并写入 `note_draft_id`;不会写入
+ 正式 Note。
+- 用户可在草稿结果卡中调整 title、tags、kind、folder,通过既有
+  `PUT /api/drafts/{draft_id}` 保存元数据。
+- AI 输出 JSON schema 校验失败时返回错误,不写 Draft,不改变 Raw Info 状态。
 
 ## 隐藏知识: Library Context
 

@@ -16,6 +16,7 @@ import json
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -165,7 +166,9 @@ class DraftUpdate(BaseModel):
 
     title: str | None = None
     body: str | None = None
+    tags: list[str] | None = None
     kind: Literal["knowledge", "reference"] | None = None
+    folder: str | None = None
 
 
 class NoteKindUpdate(BaseModel):
@@ -312,6 +315,12 @@ class NoteChatRequest(BaseModel):
     memory (A6); the grounding rides in the current turn, not history."""
 
     text: str = Field(..., description="user message")
+    history: list[NoteChatMessage] = Field(default_factory=list)
+
+
+class RawInfoDraftRequest(BaseModel):
+    """Body for POST /api/digest/items/{id}/draft (Stage C v2 C8)."""
+
     history: list[NoteChatMessage] = Field(default_factory=list)
 
 
@@ -877,6 +886,7 @@ class DraftSummary(BaseModel):
     tags: list[str]
     source: str | None = None
     task_id: str | None = None
+    folder: str | None = None
     created_at: str
     updated_at: str
     # Phase 3 Stage 3 — ADR-0029 §4.5 kind on drafts.
@@ -897,6 +907,12 @@ class DraftSummary(BaseModel):
 class DraftFull(DraftSummary):
     """Same shape as DraftSummary now that body lives there. Kept
     as a distinct type for API back-compat."""
+
+
+class RawInfoDraftResponse(BaseModel):
+    raw_info: RawInfoSummary
+    draft: DraftFull
+    rationale: str = ""
 
 
 # ----------------------------------------------------------------- runtime singleton
@@ -3645,10 +3661,16 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         if item.status in ("unprocessed", "viewed"):
             item.status = "discussed"
             store.save(item)
+        session_ctx = replace(
+            runtime.session.ctx,
+            per_turn={},
+            llm=runtime.llm,
+            current_raw_info_id=item.id,
+        )
         session = ChatSession(
             llm=runtime.llm,
             registry=runtime.session.registry,
-            ctx=runtime.session.ctx,
+            ctx=session_ctx,
         )
         for m in req.history:
             session.history.append({"role": m.role, "content": m.content})
@@ -5908,6 +5930,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             tags=d.tags,
             source=d.source,
             task_id=d.task_id,
+            folder=d.folder,
             created_at=d.created_at,
             updated_at=d.updated_at,
             kind=d.kind,
@@ -6113,6 +6136,50 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         store = RawInfoStore(runtime.vault.digest_items_dir)
         return [_raw_info_summary(item) for item in store.list()]
 
+    @app.post("/api/digest/items/{info_id}/draft", response_model=RawInfoDraftResponse)
+    def create_raw_info_draft_endpoint(
+        info_id: str,
+        req: RawInfoDraftRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> RawInfoDraftResponse:
+        """Settle one read-only Raw Info item into a reviewable Draft.
+
+        This does not create a formal Note. The resulting Draft remains under
+        ``drafts/`` for user review / later diff / commit.
+        """
+        from knowlet.chat.digest_draft import (
+            RawInfoDraftError,
+            create_note_draft_from_info,
+        )
+        from knowlet.core.digest_items import RawInfoStore
+
+        store = RawInfoStore(runtime.vault.digest_items_dir)
+        try:
+            result = create_note_draft_from_info(
+                llm=runtime.llm,
+                vault=runtime.vault,
+                index=runtime.index,
+                drafts=runtime.ctx.drafts,
+                item_store=store,
+                info_id=info_id,
+                history=[m.model_dump() for m in req.history],
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"raw info not found: {info_id}",
+            ) from exc
+        except RawInfoDraftError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=str(exc),
+            ) from exc
+        return RawInfoDraftResponse(
+            raw_info=_raw_info_summary(result.item),
+            draft=DraftFull(**_draft_summary(result.draft).model_dump()),
+            rationale=result.rationale,
+        )
+
     @app.get("/api/digest/drafts", response_model=list[DraftSummary])
     def list_digest_drafts_endpoint(
         period: Literal["today", "week", "all"] = "today",
@@ -6177,8 +6244,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             d.title = payload.title.strip() or d.title
         if payload.body is not None:
             d.body = payload.body
+        if payload.tags is not None:
+            d.tags = [str(tag).strip().lstrip("#") for tag in payload.tags if str(tag).strip()]
         if payload.kind is not None:
             d.kind = payload.kind
+        if payload.folder is not None:
+            d.folder = payload.folder.strip().strip("/")
         runtime.ctx.drafts.save(d)
         return DraftFull(**_draft_summary(d).model_dump())
 
@@ -6194,7 +6265,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail=f"draft not found: {draft_id}",
             )
         note = d.to_note()
-        path = runtime.vault.write_note(note)
+        path = runtime.vault.write_note(note, folder=d.folder)
         note.path = path
         _mark_note_dirty_for_push(note.id)
         runtime.index.upsert_note(
