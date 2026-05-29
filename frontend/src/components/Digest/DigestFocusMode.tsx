@@ -49,6 +49,17 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { QK } from "@/lib/queryClient";
 
 import { DigestFolderCommitDialog } from "./DigestFolderCommitDialog";
@@ -744,6 +755,7 @@ function ReviewOverlay({
   const [draftSaveState, setDraftSaveState] = useState<DraftSaveState>("idle");
   const [draftEditorRevision, setDraftEditorRevision] = useState(0);
   const [reviewTransition, setReviewTransition] = useState<ReviewTransition | null>(null);
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const autosaveTimerRef = useRef<number | null>(null);
   const savedIdleTimerRef = useRef<number | null>(null);
   const latestSaveSeqRef = useRef(0);
@@ -1019,6 +1031,7 @@ function ReviewOverlay({
     onSuccess: (result) => {
       clearAutosaveTimer();
       clearSavedIdleTimer();
+      setDiscardConfirmOpen(false);
       setPendingDiff(null);
       clearProposal();
       beginReviewTransition("discard", result.id, () => {
@@ -1040,6 +1053,7 @@ function ReviewOverlay({
     setPendingDiff(null);
     setCommitResult(null);
     setFolderDialogOpen(false);
+    setDiscardConfirmOpen(false);
     setStageTab("raw");
     setDraftEdit({ title: "", tags: "", kind: "reference", folder: "", body: "" });
     setDraftError(null);
@@ -1169,6 +1183,45 @@ function ReviewOverlay({
   }
 
   const hasExistingDraft = Boolean(draftResult || item.note_draft_id);
+  const isReviewBusy = status === "streaming" || Boolean(reviewTransition);
+  const commitDisabledReason =
+    !draftResult
+      ? t("digest.commitDraftTooltipNoDraft")
+      : status === "streaming"
+        ? t("digest.actionTooltipWaitForAi")
+        : reviewTransition
+          ? t("digest.actionTooltipTransition")
+          : commitMut.isPending
+            ? t("digest.committingDraft")
+            : pendingDiff
+              ? t("digest.commitDraftTooltipPendingDiff")
+              : draftWaitingForSave
+                ? t("digest.commitDraftTooltipSaving")
+                : !draftEdit.title.trim() || !draftEdit.body.trim()
+                  ? t("digest.commitDraftTooltipEmpty")
+                  : null;
+  const commitDisabled = Boolean(commitDisabledReason);
+  const discardDisabledReason =
+    status === "streaming"
+      ? t("digest.actionTooltipWaitForAi")
+      : reviewTransition
+        ? t("digest.actionTooltipTransition")
+        : discardMut.isPending
+          ? t("digest.discarding")
+          : null;
+  const discardDisabled = Boolean(discardDisabledReason);
+  const previousDisabledReason =
+    !previous
+      ? t("digest.previousTooltipUnavailable")
+      : isReviewBusy || discardMut.isPending
+        ? t("digest.actionTooltipTransition")
+        : null;
+  const nextDisabledReason =
+    !next
+      ? t("digest.nextTooltipUnavailable")
+      : isReviewBusy || discardMut.isPending
+        ? t("digest.actionTooltipTransition")
+        : null;
 
   const submit = () => {
     if (input.trim() && status !== "streaming") {
@@ -1328,37 +1381,6 @@ function ReviewOverlay({
                                 onRetry={() => startDraftSave()}
                               />
                             </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                disabled={
-                                  commitMut.isPending ||
-                                  Boolean(pendingDiff) ||
-                                  draftWaitingForSave ||
-                                  !draftEdit.title.trim() ||
-                                  !draftEdit.body.trim()
-                                }
-                                onClick={() => setFolderDialogOpen(true)}
-                                className="rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
-                                style={{
-                                  borderColor: "var(--accent)",
-                                  background: "var(--accent-soft, rgba(91,122,156,0.14))",
-                                }}
-                                data-testid="digest-draft-commit"
-                              >
-                                {commitMut.isPending ? t("digest.committingDraft") : t("digest.commitDraft")}
-                              </button>
-                              <DigestFolderCommitDialog
-                                open={folderDialogOpen}
-                                recommendedFolder={draftEdit.folder}
-                                committing={commitMut.isPending}
-                                onOpenChange={setFolderDialogOpen}
-                                onConfirm={(folder) => {
-                                  setFolderDialogOpen(false);
-                                  commitMut.mutate(folder);
-                                }}
-                              />
-                            </div>
                           </div>
                           {commitResult && (
                             <div
@@ -1403,56 +1425,163 @@ function ReviewOverlay({
             <div
               className="flex flex-wrap items-center justify-between gap-2 border-t p-4"
               style={{ borderColor: "var(--line)" }}
+              data-testid="digest-review-footer"
             >
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={
-                    !previous ||
-                    status === "streaming" ||
-                    Boolean(reviewTransition) ||
-                    discardMut.isPending
-                  }
-                  onClick={() => previous && onChangeItem(previous.id)}
-                  className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
-                  style={{ borderColor: "var(--line)" }}
-                  data-testid="digest-review-prev"
+                <ReviewActionTooltip
+                  label={previousDisabledReason ?? t("digest.previousTooltip")}
+                  triggerTestId="digest-review-prev-tooltip-trigger"
+                  contentTestId="digest-review-prev-tooltip"
                 >
-                  <ArrowLeft className="size-3.5" />
-                  {t("digest.previous")}
-                </button>
-                <button
-                  type="button"
-                  disabled={status === "streaming" || Boolean(reviewTransition) || discardMut.isPending}
-                  onClick={() => {
-                    clearAutosaveTimer();
-                    clearSavedIdleTimer();
-                    discardMut.mutate(item.id);
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
-                  style={{ borderColor: "var(--line)" }}
-                  data-testid="digest-review-discard"
-                >
-                  <Trash2 className="size-3.5" />
-                  {discardMut.isPending ? t("digest.discarding") : t("digest.discard")}
-                </button>
+                  <button
+                    type="button"
+                    disabled={
+                      !previous ||
+                      status === "streaming" ||
+                      Boolean(reviewTransition) ||
+                      discardMut.isPending
+                    }
+                    onClick={() => previous && onChangeItem(previous.id)}
+                    className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:pointer-events-none disabled:opacity-50"
+                    style={{ borderColor: "var(--line)" }}
+                    data-testid="digest-review-prev"
+                  >
+                    <ArrowLeft className="size-3.5" />
+                    {t("digest.previous")}
+                  </button>
+                </ReviewActionTooltip>
               </div>
-              <button
-                type="button"
-                disabled={
-                  !next ||
-                  status === "streaming" ||
-                  Boolean(reviewTransition) ||
-                  discardMut.isPending
-                }
-                onClick={() => next && onChangeItem(next.id)}
-                className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
-                style={{ borderColor: "var(--line)" }}
-                data-testid="digest-review-next"
-              >
-                {t("digest.next")}
-                <ArrowRight className="size-3.5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <TooltipProvider delayDuration={350}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        className="inline-flex"
+                        data-testid="digest-review-discard-tooltip-trigger"
+                      >
+                        <Popover
+                          open={discardConfirmOpen}
+                          onOpenChange={(nextOpen) => {
+                            if (!discardDisabled) setDiscardConfirmOpen(nextOpen);
+                          }}
+                        >
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              disabled={discardDisabled}
+                              className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:pointer-events-none disabled:opacity-50"
+                              style={{ borderColor: "var(--line)" }}
+                              data-testid="digest-review-discard"
+                            >
+                              <Trash2 className="size-3.5" />
+                              {discardMut.isPending ? t("digest.discarding") : t("digest.discard")}
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            side="top"
+                            align="center"
+                            sideOffset={8}
+                            className="z-[120] w-64 rounded-md border p-3 text-xs"
+                            style={{
+                              borderColor: "var(--line)",
+                              background: "var(--bg-1)",
+                              color: "var(--ink)",
+                            }}
+                            data-testid="digest-discard-confirm-popover"
+                          >
+                            <div className="font-medium">{t("digest.discardConfirmTitle")}</div>
+                            <p className="leading-relaxed text-muted-foreground">
+                              {t("digest.discardConfirmDescription")}
+                            </p>
+                            <div className="mt-2 flex justify-end gap-2">
+                              <button
+                                type="button"
+                                className="rounded border px-2 py-1"
+                                style={{ borderColor: "var(--line)" }}
+                                onClick={() => setDiscardConfirmOpen(false)}
+                                data-testid="digest-discard-cancel"
+                              >
+                                {t("digest.cancel")}
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded border px-2 py-1"
+                                style={{
+                                  borderColor: "var(--line)",
+                                  background: "var(--bg)",
+                                }}
+                                onClick={() => {
+                                  clearAutosaveTimer();
+                                  clearSavedIdleTimer();
+                                  discardMut.mutate(item.id);
+                                }}
+                                data-testid="digest-discard-confirm"
+                              >
+                                {t("digest.discardConfirm")}
+                              </button>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" data-testid="digest-review-discard-tooltip">
+                      {discardDisabledReason ?? t("digest.discardTooltip")}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <ReviewActionTooltip
+                  label={commitDisabledReason ?? t("digest.commitDraftTooltipReady")}
+                  triggerTestId="digest-draft-commit-tooltip-trigger"
+                  contentTestId="digest-draft-commit-tooltip"
+                >
+                  <button
+                    type="button"
+                    disabled={commitDisabled}
+                    onClick={() => setFolderDialogOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:pointer-events-none disabled:opacity-50"
+                    style={{
+                      borderColor: "var(--accent)",
+                      background: "var(--accent-soft, rgba(91,122,156,0.14))",
+                    }}
+                    data-testid="digest-draft-commit"
+                  >
+                    <BookOpen className="size-3.5" />
+                    {commitMut.isPending ? t("digest.committingDraft") : t("digest.commitDraft")}
+                  </button>
+                </ReviewActionTooltip>
+                <DigestFolderCommitDialog
+                  open={folderDialogOpen}
+                  recommendedFolder={draftEdit.folder}
+                  committing={commitMut.isPending}
+                  onOpenChange={setFolderDialogOpen}
+                  onConfirm={(folder) => {
+                    setFolderDialogOpen(false);
+                    commitMut.mutate(folder);
+                  }}
+                />
+                <ReviewActionTooltip
+                  label={nextDisabledReason ?? t("digest.nextTooltip")}
+                  triggerTestId="digest-review-next-tooltip-trigger"
+                  contentTestId="digest-review-next-tooltip"
+                >
+                  <button
+                    type="button"
+                    disabled={
+                      !next ||
+                      status === "streaming" ||
+                      Boolean(reviewTransition) ||
+                      discardMut.isPending
+                    }
+                    onClick={() => next && onChangeItem(next.id)}
+                    className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:pointer-events-none disabled:opacity-50"
+                    style={{ borderColor: "var(--line)" }}
+                    data-testid="digest-review-next"
+                  >
+                    {t("digest.next")}
+                    <ArrowRight className="size-3.5" />
+                  </button>
+                </ReviewActionTooltip>
+              </div>
             </div>
           </section>
         </ResizablePanel>
@@ -1534,6 +1663,33 @@ function ReviewOverlay({
   );
 }
 
+function ReviewActionTooltip({
+  children,
+  label,
+  triggerTestId,
+  contentTestId,
+}: {
+  children: React.ReactElement;
+  label: string;
+  triggerTestId: string;
+  contentTestId: string;
+}) {
+  return (
+    <TooltipProvider delayDuration={350}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex" data-testid={triggerTestId}>
+            {children}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" data-testid={contentTestId}>
+          {label}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 function DraftAutosaveStatus({
   state,
   onRetry,
@@ -1598,16 +1754,20 @@ function ReviewTransitionOverlay({
       data-kind={transition.kind}
       data-target={target}
       data-duration-ms={REVIEW_TRANSITION_MS}
+      data-motion="shrink-then-horizontal"
+      data-distance="compact"
+      data-scale="large"
     >
-      <div className="pointer-events-none relative h-72 w-full max-w-4xl">
+      <div className="pointer-events-none relative h-80 w-full max-w-3xl">
         <div
-          className="digest-review-transition-snapshot absolute left-1/2 top-1/2 w-[min(52vw,440px)] -translate-x-1/2 -translate-y-1/2 rounded-md border p-4 shadow-lg"
+          className="digest-review-transition-snapshot absolute left-[30%] top-1/2 w-[min(58vw,520px)] -translate-x-1/2 -translate-y-1/2 rounded-md border p-5 shadow-xl"
           style={{
             borderColor: "var(--line)",
             background: "var(--card-paper)",
             color: "var(--ink)",
           }}
           data-testid="digest-review-transition-snapshot"
+          data-scale-lock="true"
         >
           <div className="text-[11px] font-mono uppercase text-muted-foreground">
             {isCommit ? t("digest.transitionArchiveLabel") : t("digest.transitionDiscardLabel")}
@@ -1619,19 +1779,31 @@ function ReviewTransitionOverlay({
           <div className="mt-2 h-2 w-3/5 rounded-full" style={{ background: "var(--line-soft)" }} />
         </div>
         <div
-          className="digest-review-transition-target absolute right-[8%] top-1/2 flex size-24 -translate-y-1/2 items-center justify-center rounded-full border shadow-sm"
+          className="digest-review-transition-target absolute right-[20%] top-1/2 flex size-32 -translate-y-1/2 items-center justify-center rounded-full border shadow-md"
           style={{
             borderColor: isCommit ? "var(--good)" : "var(--line)",
             background: "var(--bg-1)",
             color: isCommit ? "var(--good)" : "var(--ink-soft)",
           }}
           data-testid="digest-review-transition-target"
+          data-position="center-right"
         >
           <TargetIcon className="size-9" />
         </div>
+        {!isCommit && (
+          <div
+            className="digest-review-transition-burst absolute right-[20%] top-1/2 size-32 -translate-y-1/2"
+            data-testid="digest-review-transition-burst"
+            aria-hidden="true"
+          >
+            <span />
+            <span />
+            <span />
+          </div>
+        )}
         {isCommit && (
           <div
-            className="digest-review-transition-complete absolute bottom-4 right-[7%] flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs"
+            className="digest-review-transition-complete absolute right-[calc(20%+8.5rem)] top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs"
             style={{
               borderColor: "var(--good)",
               background: "rgb(94 135 87 / 0.12)",

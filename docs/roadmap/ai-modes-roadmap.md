@@ -84,6 +84,7 @@ knowlet AI = **Cursor-for-notes**。唯一不可替代价值 = grounded 对谈 +
 - [x] C12 Directory-confirmed commit queue:草稿页不再裸落库;改为"选取目录并落库"→目录树确认→commit API 携带目标 folder。已有草稿不重复生成,进入该条默认 Draft 阶段;commit/舍弃自动推进队列,空队列显示跨栏空状态;Review 初始布局改 6:4。focused E2E + focused pytest + lint/tsc/build 已通过。
 - [x] C13 Draft autosave / initial completion transition:草稿标题、tags、kind、folder、正文停止编辑后短间隔 autosave;footer 显示保存中/已保存/保存失败,失败时阻止落库并可重试;commit 后显示完成过渡再推进队列。focused E2E + 全量 E2E(45/45) + lint/tsc/build + 全量 pytest 已通过,截图 `/tmp/knowlet-c13-autosave-saved.png`, `/tmp/knowlet-c13-commit-transition.png`。
 - [x] C14 Review action consolidation + destination animation:草稿页去掉"撤回本次改动"/"保存草稿"按钮,批阅页去掉"跳过";上一条/下一条只浏览不处理。新增"舍弃"终态(API/CLI/Tool),会标记 Raw Info 为 `discarded` 并删除关联 Draft;落库/舍弃均使用 2 秒去向动画,落库进入知识库标记并显示绿色完成,舍弃进入中性垃圾箱标记且不使用红色。
+- [x] C15 Safer terminal actions + refined animation:批阅底部操作稳定为上一条 / 舍弃 / 选取目录并落库 / 下一条;落库保留 disabled 原位和 hover 原因;舍弃新增二次确认气泡;落库/舍弃动画改为快速缩小到固定尺寸后水平移动,目标收拢且更大,落库显示绿色完成,舍弃显示中性气泡破裂。
 
 _死掉不做:网站订阅 / 通用爬站 / RSS-Bridge / anti-drift 队列 / 自动归档 / 知识资料强制二次确认。_
 

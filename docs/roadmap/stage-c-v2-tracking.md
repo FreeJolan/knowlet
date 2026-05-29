@@ -127,6 +127,13 @@ P16 Destination animation
     Branch: the final queue item is processed; the transition resolves into the cross-pane empty state.
     Final assertion: commit uses a library marker and green done sign; discard uses a neutral trash marker, no red completion state, and no completion button.
 
+P17 Safer terminal controls
+    ☑ implemented   ☑ tested   ✓ dogfooded
+    Entry state: review mode is open with Raw Info or Note Draft active.
+    Happy path: the footer keeps Discard and Commit immediately left of Next; unsupported operations remain visible but disabled with hover explanations.
+    Branch: user clicks Discard; a confirmation bubble opens above the button, cancel/escape/outside click closes it, and only explicit confirm performs discard.
+    Final assertion: commit/discard are hard to miss, hard to misfire, and terminal animations use compact larger foreground motion.
+
 ## B.3 Persona Walkthrough
 
 - **新用户 / P1**: I open Digest and need the source setup to be right there because it is required for the workflow. I need the UI to make RSS vs Prompt obvious and reject website subscription wording.
@@ -147,7 +154,7 @@ P16 Destination animation
 
 - **新用户 / P11-P13**: I expect my edits to be safe without understanding a save button, and I need the UI to show that the item was processed before it disappears. I get stuck if commit silently jumps away or if a failed autosave still allows final commit.
 - **小红 / P11-P13**: I may edit title/tags/folder over a few seconds and want a calm "saved" signal. I get stuck if commit silently jumps away or if a failed autosave still allows final commit.
-- **小张 / P11-P13**: I want to triage quickly: edit, let autosave catch up, then commit or discard and move on. I get stuck if autosave remounts the editor, loses focus, or queue transition feels like a hard cut.
+- **小张 / P11-P17**: I want to triage quickly: edit, let autosave catch up, then commit or discard and move on. I get stuck if autosave remounts the editor, terminal controls move around, or queue transition feels like a hard cut.
 
 - **新用户 / P14-P16**: I can browse with Previous/Next without accidentally processing an item. When I choose Commit or Discard, I see where the item went.
 - **小红 / P14-P16**: I do not need to decide between "save", "revert", and "commit"; saving is background behavior and the terminal actions are clear. Discard feels neutral rather than punitive.
@@ -235,10 +242,11 @@ P16 Destination animation
 - P10 Directory-confirmed commit queue → `tests/test_digest_pull.py:666` commit API honors a folder override, `frontend/scripts/e2e/digest-list.mjs:241` review layout starts near 6:4, `frontend/scripts/e2e/digest-list.mjs:565` existing Draft suppresses duplicate generation, `frontend/scripts/e2e/digest-list.mjs:685` folder dialog cancel does not commit and confirm sends the selected folder, `frontend/scripts/e2e/digest-list.mjs:704` commit advances to the next item and selects the right stage, `frontend/scripts/e2e/digest-list.mjs:745` discarding the last review item shows a cross-pane empty state ☑
 - P11 Draft autosave status → `frontend/scripts/e2e/digest-list.mjs:575` initial status, `frontend/scripts/e2e/digest-list.mjs:577` simulated save failure blocks commit, `frontend/scripts/e2e/digest-list.mjs:587` metadata/body edit autosaves through `PUT /api/drafts/{id}`, and `frontend/scripts/e2e/digest-list.mjs:647` later autosave clears the dirty state before diff/commit ☑
 - P12 Session-level draft revert → ⏸ superseded by C14; no current visible affordance by product decision
-- P13 Review completion transition → `frontend/scripts/e2e/digest-list.mjs:704` commit shows transition before next item ☑
-- P14 Review controls consolidation → `frontend/scripts/e2e/digest-list.mjs:576` no revert button, `frontend/scripts/e2e/digest-list.mjs:580` no manual save button, `frontend/scripts/e2e/digest-list.mjs:584` no skip button, `frontend/scripts/e2e/digest-list.mjs:588` discard button exists ☑
-- P15 Discard Raw Info → `tests/test_digest_pull.py:690` API marks `discarded` and deletes linked Draft, `tests/test_digest_pull.py:727` Tool uses current Raw Info, `tests/test_digest_pull.py:763` CLI parity, `tests/test_cli.py:89` CLI help exposes `digest discard`, `frontend/scripts/e2e/digest-list.mjs:756` UI discard action ☑
-- P16 Destination animation → `frontend/scripts/e2e/digest-list.mjs:704` commit transition uses library target and 2000ms duration, `frontend/scripts/e2e/digest-list.mjs:716` commit shows green completion sign, `frontend/scripts/e2e/digest-list.mjs:757` discard transition uses neutral discard target and 2000ms duration, `frontend/scripts/e2e/digest-list.mjs:769` discard has no green completion badge ☑
+- P13 Review completion transition → `frontend/scripts/e2e/digest-list.mjs:726` commit shows transition before next item ☑
+- P14 Review controls consolidation → `frontend/scripts/e2e/digest-list.mjs:576` no revert button, `frontend/scripts/e2e/digest-list.mjs:580` no manual save button, `frontend/scripts/e2e/digest-list.mjs:783` no skip button, `frontend/scripts/e2e/digest-list.mjs:786` discard button exists ☑
+- P15 Discard Raw Info → `tests/test_digest_pull.py:690` API marks `discarded` and deletes linked Draft, `tests/test_digest_pull.py:727` Tool uses current Raw Info, `tests/test_digest_pull.py:763` CLI parity, `tests/test_cli.py:89` CLI help exposes `digest discard`, `frontend/scripts/e2e/digest-list.mjs:800` UI discard confirmation action ☑
+- P16 Destination animation → `frontend/scripts/e2e/digest-list.mjs:726` commit transition uses library target and 2000ms duration, `frontend/scripts/e2e/digest-list.mjs:733` snapshot locks final scale before horizontal travel, `frontend/scripts/e2e/digest-list.mjs:746` commit shows green completion sign, `frontend/scripts/e2e/digest-list.mjs:802` discard transition uses neutral discard target and 2000ms duration, `frontend/scripts/e2e/digest-list.mjs:814` discard has no green completion badge, `frontend/scripts/e2e/digest-list.mjs:818` discard shows neutral burst feedback ☑
+- P17 Safer terminal controls → `frontend/scripts/e2e/digest-list.mjs:260` footer order keeps Discard/Commit immediately before Next, `frontend/scripts/e2e/digest-list.mjs:274` commit is disabled before draft generation, `frontend/scripts/e2e/digest-list.mjs:278` disabled commit hover explains why, `frontend/scripts/e2e/digest-list.mjs:786` first discard click opens confirmation, `frontend/scripts/e2e/digest-list.mjs:795` cancel closes it, and `frontend/scripts/e2e/digest-list.mjs:800` explicit confirm performs discard ☑
 
 ## E.3 Dogfood Log
 
@@ -332,3 +340,11 @@ P16 Destination animation
   - UI probes: commit transition `data-kind=commit`, `data-target=library`, `data-duration-ms=2000`, green completion sign present; discard transition `data-kind=discard`, `data-target=discard`, `data-duration-ms=2000`, completion sign absent, target color `rgb(94, 91, 83)`; review workspace background `rgb(244, 240, 232)`, center hit target `digest-review-transition`, active element `BODY`, referenced CSS vars defined, browser console had no errors/warnings.
   - Screenshots: `/tmp/knowlet-c14-commit-destination.png`, `/tmp/knowlet-c14-discard-destination.png`
   - UX check: Review browsing no longer implies processing; Raw Info only leaves the queue through commit or discard, and the two terminal paths have distinct destination feedback.
+
+- P17 Safer terminal controls + refined destination animation:
+  - Red test: `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-list.mjs` first failed waiting for `digest-review-footer`, `digest-discard-confirm-popover`, and refined transition attributes, because the old UI still placed commit in the Draft footer and Discard executed immediately.
+  - Focused green: `cd frontend && node scripts/e2e/digest-list.mjs` → passed; `cd frontend && npm run e2e` → 45/45 suites passed; `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run lint --silent` → passed; `cd frontend && npm run build --silent` → passed with existing Vite chunk-size warning.
+  - Browser dogfood: production build served at `http://127.0.0.1:8765`; seeded C15 Raw Info/Draft, then ran Digest → Start review → commit drafted item → compact large library transition, followed by Discard → confirmation bubble cancel → confirmation bubble confirm → neutral burst transition.
+  - UI probes: footer order `Previous → Discard → Commit → Next`; commit transition `data-motion=shrink-then-horizontal`, `data-distance=compact`, `data-scale=large`, `data-scale-lock=true`, `data-position=center-right`, green completion present; discard first click produced no transition, cancel preserved the item, confirm produced neutral burst with no completion badge; review workspace background `rgb(244, 240, 232)`, center hit target correct, active element `BODY`, referenced CSS vars defined, browser console had no errors/warnings.
+  - Screenshots: `/tmp/knowlet-c15-review-controls.png`, `/tmp/knowlet-c15-commit-transition.png`, `/tmp/knowlet-c15-discard-confirm.png`, `/tmp/knowlet-c15-discard-transition.png`
+  - UX check: Terminal actions are now visible in one stable action cluster, but irreversible-ish Discard is no longer one-click; the destination animation reads more like a foreground state transition and less like a tiny background flourish.

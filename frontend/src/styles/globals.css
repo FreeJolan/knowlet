@@ -238,29 +238,29 @@
 @keyframes digest-review-snapshot-to-target {
   0% {
     opacity: 0.98;
-    transform: translate(-62%, -50%) scale(1);
+    transform: translate(-54%, -50%) scale(1.04);
   }
-  35% {
-    opacity: 0.94;
-    transform: translate(-50%, -50%) scale(0.72);
+  24% {
+    opacity: 0.96;
+    transform: translate(-50%, -50%) scale(0.62);
   }
   76% {
-    opacity: 0.74;
-    transform: translate(18%, -50%) scale(0.34);
+    opacity: 0.88;
+    transform: translate(68%, -50%) scale(0.62);
   }
   100% {
     opacity: 0;
-    transform: translate(42%, -50%) scale(0.08);
+    transform: translate(86%, -50%) scale(0.62);
   }
 }
 
 @keyframes digest-review-target-receive {
   0%,
-  52% {
+  58% {
     transform: translateY(-50%) scale(0.92);
   }
-  78% {
-    transform: translateY(-50%) scale(1.05);
+  80% {
+    transform: translateY(-50%) scale(1.08);
   }
   100% {
     transform: translateY(-50%) scale(1);
@@ -269,14 +269,46 @@
 
 @keyframes digest-review-complete-fade {
   0%,
-  68% {
+  72% {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(-50%) translateX(8px) scale(0.92);
   }
   86%,
   100% {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(-50%) translateX(0) scale(1);
+  }
+}
+
+@keyframes digest-review-burst {
+  0%,
+  72% {
+    opacity: 0;
+    transform: translateY(-50%) scale(0.68);
+  }
+  82% {
+    opacity: 0.72;
+    transform: translateY(-50%) scale(0.98);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-50%) scale(1.22);
+  }
+}
+
+@keyframes digest-review-burst-dot {
+  0%,
+  72% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+  84% {
+    opacity: 0.72;
+    transform: translate(var(--burst-x), var(--burst-y)) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(var(--burst-x) * 1.35), calc(var(--burst-y) * 1.35)) scale(0.62);
   }
 }
 
@@ -290,6 +322,39 @@
 
 .digest-review-transition-complete {
   animation: digest-review-complete-fade 2000ms ease-out forwards;
+}
+
+.digest-review-transition-burst {
+  animation: digest-review-burst 2000ms ease-out forwards;
+  border: 1px solid rgb(94 91 83 / 0.42);
+  border-radius: 9999px;
+}
+
+.digest-review-transition-burst span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0.55rem;
+  height: 0.55rem;
+  border: 1px solid rgb(94 91 83 / 0.5);
+  border-radius: 9999px;
+  background: rgb(244 240 232 / 0.72);
+  animation: digest-review-burst-dot 2000ms ease-out forwards;
+}
+
+.digest-review-transition-burst span:nth-child(1) {
+  --burst-x: -2rem;
+  --burst-y: -2.1rem;
+}
+
+.digest-review-transition-burst span:nth-child(2) {
+  --burst-x: 2.2rem;
+  --burst-y: -1.3rem;
+}
+
+.digest-review-transition-burst span:nth-child(3) {
+  --burst-x: 0.9rem;
+  --burst-y: 2.15rem;
 }
 
 /* Phase 1 B body / editor stack. Sans-serif so CJK glyphs (PingFang SC,

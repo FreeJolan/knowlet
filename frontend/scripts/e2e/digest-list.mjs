@@ -257,6 +257,28 @@ try {
       (await page.locator('[data-testid="digest-review-stage-tab-draft"]').getAttribute("aria-disabled")) === "true",
       "Draft tab is disabled before draft generation",
     );
+    const footerOrder = await page
+      .locator('[data-testid="digest-review-footer"]')
+      .evaluate((footer) =>
+        Array.from(
+          footer.querySelectorAll(
+            '[data-testid="digest-review-prev"], [data-testid="digest-review-discard"], [data-testid="digest-draft-commit"], [data-testid="digest-review-next"]',
+          ),
+        ).map((el) => el.getAttribute("data-testid")),
+      );
+    assert(
+      footerOrder.join(" > ") ===
+        "digest-review-prev > digest-review-discard > digest-draft-commit > digest-review-next",
+      `review actions keep discard/commit immediately before next, got ${footerOrder.join(" > ")}`,
+    );
+    assert(
+      await page.locator('[data-testid="digest-draft-commit"]').isDisabled(),
+      "commit action is present but disabled before a draft exists",
+    );
+    await page.locator('[data-testid="digest-draft-commit-tooltip-trigger"]').hover();
+    await page.locator('[data-testid="digest-draft-commit-tooltip"]').filter({
+      hasText: "Create a note draft first",
+    }).waitFor({ state: "visible", timeout: 3000 });
     const paneRatio = await page.locator('[data-testid="digest-review-workspace"]').evaluate(() => {
       const left = document.querySelector('[data-testid="digest-review-left-pane"]');
       const right = document.querySelector('[data-testid="digest-review-chat-pane"]');
@@ -702,12 +724,20 @@ try {
     await page.locator('[data-testid="digest-folder-confirm"]').click();
     assert(commitCalled, "commit endpoint is called");
     const commitTransition = page.locator(
-      '[data-testid="digest-review-transition"][data-kind="commit"][data-target="library"][data-duration-ms="2000"]',
+      '[data-testid="digest-review-transition"][data-kind="commit"][data-target="library"][data-duration-ms="2000"][data-motion="shrink-then-horizontal"][data-distance="compact"][data-scale="large"]',
     );
     await commitTransition.waitFor({
       state: "visible",
       timeout: 3000,
     });
+    assert(
+      (await page.locator('[data-testid="digest-review-transition-snapshot"]').getAttribute("data-scale-lock")) === "true",
+      "snapshot locks its final size before horizontal travel",
+    );
+    assert(
+      (await page.locator('[data-testid="digest-review-transition-target"]').getAttribute("data-position")) === "center-right",
+      "target icon is pulled toward the center",
+    );
     await page.waitForTimeout(1000);
     assert(
       await commitTransition.isVisible(),
@@ -754,8 +784,23 @@ try {
       "skip button is removed from review mode",
     );
     await page.locator('[data-testid="digest-review-discard"]').click();
+    await page.locator('[data-testid="digest-discard-confirm-popover"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    assert(
+      (await page.locator('[data-testid="digest-review-transition"]').count()) === 0,
+      "first discard click only opens confirmation",
+    );
+    await page.locator('[data-testid="digest-discard-cancel"]').click();
+    await page.locator('[data-testid="digest-discard-confirm-popover"]').waitFor({
+      state: "detached",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-review-discard"]').click();
+    await page.locator('[data-testid="digest-discard-confirm"]').click();
     const discardTransition = page.locator(
-      '[data-testid="digest-review-transition"][data-kind="discard"][data-target="discard"][data-duration-ms="2000"]',
+      '[data-testid="digest-review-transition"][data-kind="discard"][data-target="discard"][data-duration-ms="2000"][data-motion="shrink-then-horizontal"][data-distance="compact"][data-scale="large"]',
     );
     await discardTransition.waitFor({
       state: "visible",
@@ -770,6 +815,10 @@ try {
       (await page.locator('[data-testid="digest-review-transition-complete"]').count()) === 0,
       "discard transition avoids a green completion badge",
     );
+    await page.locator('[data-testid="digest-review-transition-burst"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
     await page.locator('[data-testid="digest-review-empty-state"]').waitFor({
       state: "visible",
       timeout: 5000,

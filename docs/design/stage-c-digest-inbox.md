@@ -1,6 +1,6 @@
 # Stage C v2 — 资讯审阅与入库
 
-- Status: Implemented through C14 (Source config → Raw Info review → Draft diff → commit → workspace polish → note-like draft surface → directory-confirmed commit queue → autosave → discard/commit destination transitions)
+- Status: Implemented through C15 (Source config → Raw Info review → Draft diff → commit → workspace polish → note-like draft surface → directory-confirmed commit queue → autosave → discard/commit destination transitions → safer terminal actions)
 - Date: 2026-05-30
 - Roadmap: [`../roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md)
 
@@ -452,6 +452,13 @@ API:
   - 批阅 footer 去掉"跳过";上一条/下一条只做浏览,不改变处理状态。
   - 新增"舍弃"终态操作:Raw Info 标为 `discarded`,关联 Draft 会删除。
   - 落库/舍弃动画统一为 2 秒去向动画:内容快照先缩小到中央,再进入知识库或中性垃圾箱标记。
+
+- **C15 Safer terminal actions + refined destination animation**
+  - 批阅 footer 稳定为:左侧上一条;右侧舍弃、选取目录并落库、下一条。
+  - 不支持的终态操作保留原位但 disabled,hover 解释原因,避免用户误判为卡住。
+  - 舍弃需要二次确认:首次点击只打开按钮上方的小气泡,确认后才执行 API / Tool 对应的处理。
+  - 落库/舍弃动画改为"快速缩小到固定尺寸 → 水平移动到目标 → 终态反馈";两端向中心收拢,快照和目标更大。
+  - 落库触碰目标后在图标左侧显示绿色完成标记;舍弃触碰目标后显示中性气泡破裂效果。
 
 - **C8 Create draft + draft tools**
   - `create_note_draft_from_info`。
