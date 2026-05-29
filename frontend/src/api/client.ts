@@ -728,6 +728,44 @@ export const listDigestDrafts = (
 ): Promise<DraftSummary[]> =>
   request("GET", `/api/digest/drafts?period=${encodeURIComponent(period)}`);
 
+export interface DigestSourceSummary {
+  id: string;
+  name: string;
+  kind: "rss" | "prompt";
+  enabled: boolean;
+  url?: string | null;
+  prompt?: string | null;
+  created_at: string;
+  updated_at: string;
+  last_pull_at?: string | null;
+  last_success_at?: string | null;
+  last_error?: string | null;
+}
+
+export interface DigestSourcePayload {
+  name: string;
+  kind: "rss" | "prompt";
+  enabled?: boolean;
+  url?: string | null;
+  prompt?: string | null;
+}
+
+export const listDigestSources = (): Promise<DigestSourceSummary[]> =>
+  request("GET", "/api/digest/sources");
+
+export const createDigestSource = (
+  payload: DigestSourcePayload,
+): Promise<DigestSourceSummary> => request("POST", "/api/digest/sources", payload);
+
+export const updateDigestSource = (
+  id: string,
+  payload: DigestSourcePayload,
+): Promise<DigestSourceSummary> =>
+  request("PUT", `/api/digest/sources/${encodeURIComponent(id)}`, payload);
+
+export const deleteDigestSource = (id: string): Promise<{ ok: boolean }> =>
+  request("DELETE", `/api/digest/sources/${encodeURIComponent(id)}`);
+
 export const approveDraft = (id: string): Promise<{ note_id: string }> =>
   request("POST", `/api/drafts/${id}/approve`);
 

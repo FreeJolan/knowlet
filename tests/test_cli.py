@@ -88,7 +88,7 @@ def test_mining_help():
 
 def test_digest_help():
     out = _help("digest")
-    for cmd in ("list", "add", "remove", "run"):
+    for cmd in ("list", "add", "enable", "disable", "remove", "run"):
         assert cmd in out
 
 
@@ -132,8 +132,9 @@ def test_mining_add_options_parse():
 
 def test_digest_add_options_parse():
     out = _help("digest", "add")
-    for opt in ("--name", "--rss", "--url", "--every", "--cron", "--output-language"):
+    for opt in ("--name", "--rss", "--prompt"):
         assert opt in out
+    assert "--url" not in out
 
 
 def test_config_set_takes_two_arguments():

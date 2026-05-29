@@ -801,6 +801,28 @@ class TaskFull(TaskSummary):
     output_language: str | None = None
 
 
+class DigestSourceCreate(BaseModel):
+    name: str
+    kind: Literal["rss", "prompt"]
+    enabled: bool = True
+    url: str | None = None
+    prompt: str | None = None
+
+
+class DigestSourceSummary(BaseModel):
+    id: str
+    name: str
+    kind: Literal["rss", "prompt"]
+    enabled: bool
+    url: str | None = None
+    prompt: str | None = None
+    created_at: str
+    updated_at: str
+    last_pull_at: str | None = None
+    last_success_at: str | None = None
+    last_error: str | None = None
+
+
 class DraftSummary(BaseModel):
     id: str
     title: str
@@ -5733,6 +5755,110 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         return [
             _draft_summary(d) for d in runtime.ctx.drafts.all_drafts()
         ]
+
+    # ---------------- digest sources / drafts ----------------
+
+    def _digest_source_summary(source: Any) -> DigestSourceSummary:
+        return DigestSourceSummary(
+            id=source.id,
+            name=source.name,
+            kind=source.kind,
+            enabled=source.enabled,
+            url=source.url if source.kind == "rss" else None,
+            prompt=source.prompt if source.kind == "prompt" else None,
+            created_at=source.created_at,
+            updated_at=source.updated_at,
+            last_pull_at=source.last_pull_at,
+            last_success_at=source.last_success_at,
+            last_error=source.last_error,
+        )
+
+    def _digest_source_store(runtime: ChatRuntime):
+        from knowlet.core.digest_sources import DigestSourceStore
+
+        return DigestSourceStore(runtime.vault.digest_sources_dir)
+
+    def _source_from_payload(payload: DigestSourceCreate):
+        from knowlet.core.digest_sources import DigestSource
+
+        if payload.kind == "rss":
+            return DigestSource(
+                name=payload.name,
+                kind="rss",
+                url=(payload.url or "").strip(),
+                enabled=payload.enabled,
+            )
+        return DigestSource(
+            name=payload.name,
+            kind="prompt",
+            prompt=(payload.prompt or "").strip(),
+            enabled=payload.enabled,
+        )
+
+    @app.get("/api/digest/sources", response_model=list[DigestSourceSummary])
+    def list_digest_sources_endpoint(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[DigestSourceSummary]:
+        store = _digest_source_store(runtime)
+        return [_digest_source_summary(source) for source in store.list()]
+
+    @app.post("/api/digest/sources", response_model=DigestSourceSummary)
+    def create_digest_source_endpoint(
+        payload: DigestSourceCreate,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> DigestSourceSummary:
+        store = _digest_source_store(runtime)
+        source = _source_from_payload(payload)
+        try:
+            store.save(source)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        return _digest_source_summary(source)
+
+    @app.put("/api/digest/sources/{source_id}", response_model=DigestSourceSummary)
+    def update_digest_source_endpoint(
+        source_id: str,
+        payload: DigestSourceCreate,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> DigestSourceSummary:
+        store = _digest_source_store(runtime)
+        existing = store.get(source_id)
+        if existing is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"digest source not found: {source_id}",
+            )
+        existing.name = payload.name
+        existing.kind = payload.kind
+        existing.enabled = payload.enabled
+        existing.url = (payload.url or "").strip() if payload.kind == "rss" else None
+        existing.prompt = (
+            (payload.prompt or "").strip() if payload.kind == "prompt" else None
+        )
+        try:
+            store.save(existing)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        return _digest_source_summary(existing)
+
+    @app.delete("/api/digest/sources/{source_id}")
+    def delete_digest_source_endpoint(
+        source_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> dict[str, Any]:
+        store = _digest_source_store(runtime)
+        if not store.delete(source_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"digest source not found: {source_id}",
+            )
+        return {"ok": True}
 
     @app.get("/api/digest/drafts", response_model=list[DraftSummary])
     def list_digest_drafts_endpoint(

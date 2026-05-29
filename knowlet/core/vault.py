@@ -17,6 +17,8 @@ PROFILE_FILENAME = "me.md"
 CARDS_DIR = "cards"
 TASKS_DIR = "tasks"
 DRAFTS_DIR = "drafts"
+DIGEST_DIR = "digest"
+DIGEST_SOURCES_DIR = "sources"
 INDEX_DB = "index.sqlite"
 CONVERSATIONS_DIR = "conversations"
 BACKUPS_DIR = "backups"
@@ -165,6 +167,10 @@ class Vault:
         return self.root / DRAFTS_DIR
 
     @property
+    def digest_sources_dir(self) -> Path:
+        return self.state_dir / DIGEST_DIR / DIGEST_SOURCES_DIR
+
+    @property
     def state_dir(self) -> Path:
         return self.root / VAULT_MARKER_DIR
 
@@ -188,6 +194,7 @@ class Vault:
         self.tasks_dir.mkdir(parents=True, exist_ok=True)
         self.drafts_dir.mkdir(parents=True, exist_ok=True)
         self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.digest_sources_dir.mkdir(parents=True, exist_ok=True)
         self.conversations_dir.mkdir(parents=True, exist_ok=True)
         self.backups_dir.mkdir(parents=True, exist_ok=True)
         # Phase 3 Stage 2 — write a starter wiki_schema.md if none

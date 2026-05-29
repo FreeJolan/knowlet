@@ -14,60 +14,43 @@ from knowlet.cli._common import (
     resolve_vault_or_die,
 )
 from knowlet.cli.mining import _render_run_report
-from knowlet.core.digest import build_digest_task, is_digest_task, list_digest_tasks
-from knowlet.core.mining.task import Schedule, SourceSpec
+from knowlet.core.digest import is_digest_task, list_digest_tasks
+from knowlet.core.digest_sources import DigestSource, DigestSourceStore
 from knowlet.core.mining.task_store import TaskStore
 
 app = typer.Typer(help="Information digest sources and intake runs.", no_args_is_help=True)
 
 
-def _parse_sources(rss: str | None, url: str | None) -> list[SourceSpec]:
-    sources: list[SourceSpec] = []
-    if rss:
-        sources.extend(SourceSpec(type="rss", url=u.strip()) for u in rss.split(",") if u.strip())
-    if url:
-        sources.extend(SourceSpec(type="url", url=u.strip()) for u in url.split(",") if u.strip())
-    return sources
-
-
-def _schedule(every: str | None, cron: str | None) -> Schedule:
-    if every and cron:
-        err_console.print("[red]use --every OR --cron, not both[/red]")
-        raise typer.Exit(code=2)
-    return Schedule(every=every, cron=cron)
+def _source_store() -> DigestSourceStore:
+    vault = resolve_vault_or_die()
+    return DigestSourceStore(vault.digest_sources_dir)
 
 
 @app.command("list")
 def digest_list() -> None:
     """List configured digest sources."""
-    vault = resolve_vault_or_die()
-    store = TaskStore(vault.tasks_dir)
-    tasks = list_digest_tasks(store)
-    if not tasks:
+    sources = _source_store().list()
+    if not sources:
         console.print("[dim]no digest sources yet — `knowlet digest add` to create one[/dim]")
         return
     table = Table(show_header=True, header_style="bold")
     table.add_column("id", style="dim", no_wrap=True)
     table.add_column("name")
-    table.add_column("schedule")
-    table.add_column("sources")
+    table.add_column("kind")
+    table.add_column("source")
     table.add_column("on?", style="dim")
-    for task in tasks:
-        sched = (
-            (task.schedule.every and f"every {task.schedule.every}")
-            or (task.schedule.cron and f"cron {task.schedule.cron}")
-            or "—"
-        )
-        srcs = ", ".join(
-            source.url[:40] + ("…" if len(source.url) > 40 else "")
-            for source in task.sources
-        )
+    table.add_column("last error")
+    for source in sources:
+        value = source.url if source.kind == "rss" else source.prompt
+        value = (value or "").replace("\n", " ")
+        preview = value[:48] + ("…" if len(value) > 48 else "")
         table.add_row(
-            task.id[:8] + "…",
-            task.name,
-            sched,
-            srcs,
-            "yes" if task.enabled else "no",
+            source.id[:8] + "…",
+            source.name,
+            source.kind,
+            preview,
+            "yes" if source.enabled else "no",
+            source.last_error or "—",
         )
     console.print(table)
 
@@ -77,68 +60,82 @@ def digest_add(
     name: Annotated[str, typer.Option("--name", help="Human-readable source name.")],
     rss: Annotated[
         str | None,
-        typer.Option("--rss", help="RSS / Atom feed URL (repeatable via comma)."),
+        typer.Option("--rss", help="RSS / Atom feed URL."),
     ] = None,
-    url: Annotated[
+    prompt: Annotated[
         str | None,
-        typer.Option("--url", help="Plain URL fetch (repeatable via comma)."),
-    ] = None,
-    every: Annotated[
-        str | None,
-        typer.Option("--every", help="Interval like '1h' / '6h' / '1d'."),
-    ] = "1d",
-    cron: Annotated[
-        str | None,
-        typer.Option("--cron", help="5-field cron expression (e.g. '0 9 * * *')."),
-    ] = None,
-    output_language: Annotated[
-        str | None,
-        typer.Option(
-            "--output-language",
-            help="'en' | 'zh' | 'none' (skip translation). Default: cfg.general.language.",
-        ),
+        typer.Option("--prompt", help="Prompt Source instruction."),
     ] = None,
     enabled: Annotated[
         bool,
         typer.Option("--enabled/--disabled", help="Whether the scheduler should run it."),
     ] = True,
 ) -> None:
-    """Create a digest source backed by a scheduled MiningTask."""
-    sources = _parse_sources(rss, url)
-    if not sources:
-        err_console.print("[red]at least one --rss or --url is required[/red]")
+    """Create an RSS Source or Prompt Source for the Stage C v2 inbox."""
+    if bool(rss) == bool(prompt):
+        err_console.print("[red]use exactly one of --rss or --prompt[/red]")
         raise typer.Exit(code=2)
 
     vault = resolve_vault_or_die()
-    cfg = load_config_or_default(vault)
-    if output_language is None:
-        resolved_lang = cfg.general.language
-    elif output_language.lower() in ("none", "off", "source"):
-        resolved_lang = None
+    if rss:
+        source = DigestSource(name=name, kind="rss", url=rss.strip(), enabled=enabled)
     else:
-        resolved_lang = output_language
+        source = DigestSource(
+            name=name,
+            kind="prompt",
+            prompt=(prompt or "").strip(),
+            enabled=enabled,
+        )
 
-    task = build_digest_task(
-        name=name,
-        sources=sources,
-        schedule=_schedule(every, cron),
-        output_language=resolved_lang,
-        enabled=enabled,
-    )
-    problems = task.validate()
+    problems = source.validate()
     if problems:
         err_console.print(f"[red]invalid digest source:[/red] {'; '.join(problems)}")
         raise typer.Exit(code=2)
-    path = TaskStore(vault.tasks_dir).save(task)
+    path = DigestSourceStore(vault.digest_sources_dir).save(source)
     console.print(f"[green]created digest source[/green] → {path}")
+
+
+def _set_enabled(source_id: str, enabled: bool) -> None:
+    store = _source_store()
+    source = store.get(source_id)
+    if source is None:
+        err_console.print(f"[red]digest source not found:[/red] {source_id}")
+        raise typer.Exit(code=1)
+    source.enabled = enabled
+    store.save(source)
+    console.print(
+        f"[green]{'enabled' if enabled else 'disabled'}[/green] {source.id[:8]}…"
+    )
+
+
+@app.command("enable")
+def digest_enable(
+    source_id: Annotated[str, typer.Argument(help="Digest source id.")],
+) -> None:
+    """Enable a digest source."""
+    _set_enabled(source_id, True)
+
+
+@app.command("disable")
+def digest_disable(
+    source_id: Annotated[str, typer.Argument(help="Digest source id.")],
+) -> None:
+    """Disable a digest source."""
+    _set_enabled(source_id, False)
 
 
 @app.command("remove")
 def digest_remove(
-    source_id: Annotated[str, typer.Argument(help="Digest source id (or 8-char prefix).")],
+    source_id: Annotated[str, typer.Argument(help="Digest source id.")],
 ) -> None:
-    """Remove a digest source. Drafts it produced stay in drafts/."""
+    """Remove a digest source."""
     vault = resolve_vault_or_die()
+    source_store = DigestSourceStore(vault.digest_sources_dir)
+    if source_store.delete(source_id):
+        console.print(f"[green]removed[/green] {source_id}")
+        return
+
+    # Back-compat for Stage C v1 digest tasks created before source v2.
     store = TaskStore(vault.tasks_dir)
     task = store.get(source_id)
     if task is None or not is_digest_task(task):

@@ -29,6 +29,7 @@
     "tabs": {
       "appearance": "外观",
       "ai": "AI",
+      "digest": "Digest",
       "sync": "同步",
       "vault": "Vault",
       "advanced": "高级"
@@ -39,6 +40,24 @@
       "dark": "深色",
       "system": "跟随系统",
       "systemHint": "当前系统偏好:{{resolved}}。"
+    },
+    "digest": {
+      "title": "资讯来源",
+      "kindRss": "RSS",
+      "kindPrompt": "Prompt",
+      "nameLabel": "名称",
+      "rssUrlLabel": "RSS / Atom URL",
+      "promptLabel": "Prompt",
+      "add": "添加来源",
+      "saving": "保存中…",
+      "empty": "还没有配置资讯来源。",
+      "enabled": "启用",
+      "disabled": "停用",
+      "enable": "启用",
+      "disable": "停用",
+      "remove": "删除",
+      "saveFailed": "资讯来源保存失败。",
+      "deleteFailed": "资讯来源删除失败。"
     },
     "advanced": {
       "aiCallTitle": "AI 调用记录",

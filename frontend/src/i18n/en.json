@@ -29,6 +29,7 @@
     "tabs": {
       "appearance": "Appearance",
       "ai": "AI",
+      "digest": "Digest",
       "sync": "Sync",
       "vault": "Vault",
       "advanced": "Advanced"
@@ -39,6 +40,24 @@
       "dark": "Dark",
       "system": "Follow system",
       "systemHint": "System preference is currently {{resolved}}."
+    },
+    "digest": {
+      "title": "Digest sources",
+      "kindRss": "RSS",
+      "kindPrompt": "Prompt",
+      "nameLabel": "Name",
+      "rssUrlLabel": "RSS / Atom URL",
+      "promptLabel": "Prompt",
+      "add": "Add source",
+      "saving": "Saving…",
+      "empty": "No digest sources configured.",
+      "enabled": "enabled",
+      "disabled": "disabled",
+      "enable": "Enable",
+      "disable": "Disable",
+      "remove": "Remove",
+      "saveFailed": "Could not save digest source.",
+      "deleteFailed": "Could not remove digest source."
     },
     "advanced": {
       "aiCallTitle": "AI call trace",

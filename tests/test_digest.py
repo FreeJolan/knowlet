@@ -20,6 +20,7 @@ from knowlet.core.digest import (
     is_digest_task,
     list_digest_tasks,
 )
+from knowlet.core.digest_sources import DigestSourceStore
 from knowlet.core.drafts import Draft, DraftStore
 from knowlet.core.mining.scheduler import MiningScheduler
 from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
@@ -115,23 +116,21 @@ def test_digest_cli_add_list_remove_round_trip(tmp_path, monkeypatch):
             "Daily AI",
             "--rss",
             "https://example.com/feed.xml",
-            "--every",
-            "6h",
         ],
     )
     assert created.exit_code == 0, created.stdout
-    tasks = list_digest_tasks(TaskStore(vault.tasks_dir))
-    assert len(tasks) == 1
-    assert tasks[0].name == "Daily AI"
-    assert tasks[0].schedule.every == "6h"
+    sources = DigestSourceStore(vault.digest_sources_dir).list()
+    assert len(sources) == 1
+    assert sources[0].name == "Daily AI"
+    assert sources[0].kind == "rss"
 
     listed = runner.invoke(app, ["digest", "list"])
     assert listed.exit_code == 0, listed.stdout
     assert "Daily AI" in listed.stdout
 
-    removed = runner.invoke(app, ["digest", "remove", tasks[0].id[:8]])
+    removed = runner.invoke(app, ["digest", "remove", sources[0].id])
     assert removed.exit_code == 0, removed.stdout
-    assert list_digest_tasks(TaskStore(vault.tasks_dir)) == []
+    assert DigestSourceStore(vault.digest_sources_dir).list() == []
 
 
 def test_web_digest_drafts_filters_by_digest_task_and_period(tmp_path):

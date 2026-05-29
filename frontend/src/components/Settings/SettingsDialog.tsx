@@ -22,9 +22,15 @@ import {
   Loader2,
   Monitor,
   Moon,
+  Newspaper,
+  Plus,
+  Power,
   RefreshCw,
+  Rss,
   ShieldAlert,
+  Sparkles,
   Sun,
+  Trash2,
   Upload,
   Zap,
 } from "lucide-react";
@@ -34,6 +40,8 @@ import { useTranslation } from "react-i18next";
 import {
   cancelConnect,
   commitImport,
+  createDigestSource,
+  deleteDigestSource,
   disconnect as apiDisconnect,
   exportVaultUrl,
   getAuthStatus,
@@ -41,17 +49,21 @@ import {
   getProviderModels,
   getSyncMode,
   listAICallEvents,
+  listDigestSources,
   listMiningTasks,
   previewImport,
   setSyncMode as apiSetSyncMode,
   startConnect,
   testLLM,
   type AICallEvent,
+  type DigestSourcePayload,
+  type DigestSourceSummary,
   type ImportReportPayload,
   type MiningTaskSummary,
   type SyncAuthStatus,
   type SyncModeResponse,
   updateLLMConfig,
+  updateDigestSource,
 } from "@/api/client";
 import {
   Dialog,
@@ -96,11 +108,18 @@ export function SettingsDialog({ open, onClose }: Props) {
   // Left-sidebar tabs (per Cursor / VS Code / Linear Settings UX).
   // Adding new categories = add a row here; the content area picks
   // the right panel via the discriminated union below.
-  type SettingsTab = "appearance" | "ai" | "sync" | "vault" | "advanced";
+  type SettingsTab =
+    | "appearance"
+    | "ai"
+    | "digest"
+    | "sync"
+    | "vault"
+    | "advanced";
   const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
   const tabs: { key: SettingsTab; label: string; icon: typeof Sun }[] = [
     { key: "appearance", label: t("settings.tabs.appearance"), icon: Sun },
     { key: "ai", label: t("settings.tabs.ai"), icon: Zap },
+    { key: "digest", label: t("settings.tabs.digest"), icon: Newspaper },
     { key: "sync", label: t("settings.tabs.sync"), icon: Cloud },
     { key: "vault", label: t("settings.tabs.vault"), icon: Download },
     // Power-user trace / diagnostics; intentionally last per VS Code-style
@@ -197,6 +216,8 @@ export function SettingsDialog({ open, onClose }: Props) {
 
             {activeTab === "ai" && <LLMConfigPanel />}
 
+            {activeTab === "digest" && <DigestSourcePanel />}
+
             {activeTab === "sync" && (
               <>
                 <DriveAuthPanel />
@@ -221,6 +242,353 @@ export function SettingsDialog({ open, onClose }: Props) {
       </DialogContent>
     </Dialog>
   );
+}
+
+function DigestSourcePanel(): React.ReactNode {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const [kind, setKind] = useState<"rss" | "prompt">("rss");
+  const [name, setName] = useState("");
+  const [rssUrl, setRssUrl] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const sources = useQuery({
+    queryKey: ["digest-sources"],
+    queryFn: listDigestSources,
+    staleTime: 10_000,
+  });
+
+  const resetForm = () => {
+    setName("");
+    setRssUrl("");
+    setPrompt("");
+    setError(null);
+  };
+
+  const createMut = useMutation({
+    mutationFn: createDigestSource,
+    onSuccess: () => {
+      resetForm();
+      void qc.invalidateQueries({ queryKey: ["digest-sources"] });
+    },
+    onError: (err) => setError(apiErrorMessage(err, t("settings.digest.saveFailed"))),
+  });
+
+  const updateMut = useMutation({
+    mutationFn: (args: { id: string; payload: DigestSourcePayload }) =>
+      updateDigestSource(args.id, args.payload),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["digest-sources"] });
+    },
+    onError: (err) => setError(apiErrorMessage(err, t("settings.digest.saveFailed"))),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: deleteDigestSource,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["digest-sources"] });
+    },
+    onError: (err) => setError(apiErrorMessage(err, t("settings.digest.deleteFailed"))),
+  });
+
+  const submit = () => {
+    setError(null);
+    const payload: DigestSourcePayload =
+      kind === "rss"
+        ? {
+            name: name.trim(),
+            kind: "rss",
+            url: rssUrl.trim(),
+            enabled: true,
+          }
+        : {
+            name: name.trim(),
+            kind: "prompt",
+            prompt: prompt.trim(),
+            enabled: true,
+          };
+    createMut.mutate(payload);
+  };
+
+  const busy = createMut.isPending || updateMut.isPending || deleteMut.isPending;
+
+  return (
+    <Section title={t("settings.digest.title")}>
+      <div className="w-full space-y-4" data-testid="digest-source-panel">
+        <div
+          className="rounded-md border p-3"
+          style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+        >
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <SourceKindButton
+              active={kind === "rss"}
+              icon={<Rss className="size-3.5" />}
+              label={t("settings.digest.kindRss")}
+              onClick={() => {
+                setKind("rss");
+                setError(null);
+              }}
+              testId="digest-source-kind-rss"
+            />
+            <SourceKindButton
+              active={kind === "prompt"}
+              icon={<Sparkles className="size-3.5" />}
+              label={t("settings.digest.kindPrompt")}
+              onClick={() => {
+                setKind("prompt");
+                setError(null);
+              }}
+              testId="digest-source-kind-prompt"
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <label className="grid gap-1 text-xs">
+              <span className="text-muted-foreground">
+                {t("settings.digest.nameLabel")}
+              </span>
+              <input
+                data-testid="digest-source-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none"
+                style={{ borderColor: "var(--line)" }}
+              />
+            </label>
+
+            {kind === "rss" ? (
+              <label className="grid gap-1 text-xs">
+                <span className="text-muted-foreground">
+                  {t("settings.digest.rssUrlLabel")}
+                </span>
+                <input
+                  data-testid="digest-source-rss-url"
+                  value={rssUrl}
+                  onChange={(e) => setRssUrl(e.target.value)}
+                  className="rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none"
+                  style={{ borderColor: "var(--line)" }}
+                  placeholder="https://example.com/feed.xml"
+                />
+              </label>
+            ) : (
+              <label className="grid gap-1 text-xs">
+                <span className="text-muted-foreground">
+                  {t("settings.digest.promptLabel")}
+                </span>
+                <textarea
+                  data-testid="digest-source-prompt"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  rows={3}
+                  className="resize-none rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none"
+                  style={{ borderColor: "var(--line)" }}
+                />
+              </label>
+            )}
+          </div>
+
+          {error && (
+            <div
+              className="mt-2 text-xs"
+              style={{ color: "var(--danger, #c0392b)" }}
+              data-testid="digest-source-error"
+            >
+              {error}
+            </div>
+          )}
+
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              onClick={submit}
+              disabled={busy}
+              data-testid="digest-source-add"
+              className="inline-flex items-center gap-1.5 rounded border px-3 py-1.5 text-xs disabled:opacity-50"
+              style={{
+                borderColor: "var(--accent)",
+                background: "var(--accent-tint-2)",
+              }}
+            >
+              <Plus className="size-3.5" />
+              {createMut.isPending
+                ? t("settings.digest.saving")
+                : t("settings.digest.add")}
+            </button>
+          </div>
+        </div>
+
+        <div
+          className="rounded-md border"
+          style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+        >
+          {!sources.data && (
+            <div className="p-3 text-[11px] text-muted-foreground">
+              {t("settings.advanced.loading")}
+            </div>
+          )}
+          {sources.data && sources.data.length === 0 && (
+            <div className="p-3 text-[11px] text-muted-foreground">
+              {t("settings.digest.empty")}
+            </div>
+          )}
+          {sources.data?.map((source) => (
+            <DigestSourceRow
+              key={source.id}
+              source={source}
+              busy={busy}
+              onToggle={() =>
+                updateMut.mutate({
+                  id: source.id,
+                  payload: sourcePayloadFromSummary(source, !source.enabled),
+                })
+              }
+              onRemove={() => deleteMut.mutate(source.id)}
+            />
+          ))}
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function SourceKindButton({
+  active,
+  icon,
+  label,
+  onClick,
+  testId,
+}: {
+  active: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  testId: string;
+}): React.ReactNode {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      data-testid={testId}
+      className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs"
+      style={{
+        borderColor: active ? "var(--accent)" : "var(--line)",
+        background: active ? "var(--accent-tint-2)" : "transparent",
+      }}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function DigestSourceRow({
+  source,
+  busy,
+  onToggle,
+  onRemove,
+}: {
+  source: DigestSourceSummary;
+  busy: boolean;
+  onToggle: () => void;
+  onRemove: () => void;
+}): React.ReactNode {
+  const { t } = useTranslation();
+  const value = source.kind === "rss" ? source.url : source.prompt;
+  return (
+    <div
+      className="flex items-start justify-between gap-3 border-b px-3 py-2 text-xs last:border-b-0"
+      style={{ borderColor: "var(--line)" }}
+      data-testid={`digest-source-row-${source.id}`}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">{source.name}</span>
+          <span
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px]"
+            style={{ background: "var(--accent-tint-2)" }}
+          >
+            {source.kind === "rss" ? (
+              <Rss className="size-3" />
+            ) : (
+              <Sparkles className="size-3" />
+            )}
+            {source.kind}
+          </span>
+          <span className="text-muted-foreground">
+            {source.enabled
+              ? t("settings.digest.enabled")
+              : t("settings.digest.disabled")}
+          </span>
+        </div>
+        <div className="mt-1 truncate text-[11px] text-muted-foreground">
+          {value || "—"}
+        </div>
+        {source.last_error && (
+          <div className="mt-1 text-[11px]" style={{ color: "var(--danger, #c0392b)" }}>
+            {source.last_error}
+          </div>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <button
+          type="button"
+          onClick={onToggle}
+          disabled={busy}
+          title={
+            source.enabled
+              ? t("settings.digest.disable")
+              : t("settings.digest.enable")
+          }
+          data-testid={`digest-source-toggle-${source.id}`}
+          className="rounded border p-1 disabled:opacity-50"
+          style={{ borderColor: "var(--line)" }}
+        >
+          <Power className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={busy}
+          title={t("settings.digest.remove")}
+          data-testid={`digest-source-remove-${source.id}`}
+          className="rounded border p-1 disabled:opacity-50"
+          style={{ borderColor: "var(--line)" }}
+        >
+          <Trash2 className="size-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function sourcePayloadFromSummary(
+  source: DigestSourceSummary,
+  enabled: boolean,
+): DigestSourcePayload {
+  return source.kind === "rss"
+    ? {
+        name: source.name,
+        kind: "rss",
+        enabled,
+        url: source.url ?? "",
+      }
+    : {
+        name: source.name,
+        kind: "prompt",
+        enabled,
+        prompt: source.prompt ?? "",
+      };
+}
+
+function apiErrorMessage(err: unknown, fallback: string): string {
+  if (err && typeof err === "object" && "detail" in err) {
+    const detail = (err as { detail?: unknown }).detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) return fallback;
+  }
+  return fallback;
 }
 
 function DriveAuthPanel(): React.ReactNode {
