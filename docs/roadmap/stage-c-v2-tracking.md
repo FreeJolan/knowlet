@@ -1,6 +1,6 @@
 # Stage C v2 Tracking — 资讯审阅与入库
 
-- Status: C4-C12 implemented and verified
+- Status: C4-C13 implemented and verified
 - Started: 2026-05-30
 - Design: [`../design/stage-c-digest-inbox.md`](../design/stage-c-digest-inbox.md)
 
@@ -86,6 +86,27 @@ P10 Directory-confirmed commit queue
     Branch: user cancels the folder dialog or skips the last item; cancel must not commit, and an empty queue must replace both panes with one empty state.
     Final assertion: `POST /api/drafts/{id}/commit` receives the selected folder, committed/skipped items leave the current review queue, existing drafts cannot be regenerated, and the next item opens at Raw Info or Draft according to its state.
 
+P11 Draft autosave status
+    ☑ implemented   ☑ tested   ✓ dogfooded
+    Entry state: review mode has a generated or reused Note Draft and the Draft stage is active.
+    Happy path: user edits title/tags/kind/folder/body, stops typing briefly, and the draft autosaves without requiring a manual save click.
+    Branch: save fails; commit stays blocked, the tiny status line shows a retryable failure state, and later edits can save successfully.
+    Final assertion: `PUT /api/drafts/{id}` receives the latest draft edit, the footer shows saving/saved/error states, and the editor does not remount on every successful autosave.
+
+P12 Session-level draft revert
+    ☑ implemented   ☑ tested   ✓ dogfooded
+    Entry state: user opens a Note Draft in review mode.
+    Happy path: user makes several autosaved metadata/body edits, then chooses to revert changes made since opening this draft.
+    Branch: a pending diff exists; the revert action is blocked until the diff is accepted or rejected.
+    Final assertion: the draft returns to its open-session baseline and that reverted state is autosaved.
+
+P13 Review completion transition
+    ☑ implemented   ☑ tested   ✓ dogfooded
+    Entry state: user commits a draft through the folder dialog or skips a Raw Info item.
+    Happy path: after commit/skip, the workspace shows a brief completion transition before moving to the next item or empty queue state.
+    Branch: user finishes the final queue item; the transition resolves into the cross-pane empty state.
+    Final assertion: the processed item is visually marked as complete during the transition and then removed from the active review queue.
+
 ## B.3 Persona Walkthrough
 
 - **新用户 / P1**: I open Digest and need the source setup to be right there because it is required for the workflow. I need the UI to make RSS vs Prompt obvious and reject website subscription wording.
@@ -103,6 +124,10 @@ P10 Directory-confirmed commit queue
 - **新用户 / P10**: I need one more confirmation before my draft becomes a real note, especially where it will be stored. I get stuck if the "commit" button writes immediately without showing the vault structure.
 - **小红 / P10**: I want the app to start from the AI's recommended folder but still let me put the note somewhere else. I get stuck if canceling the picker already committed, or if the queue stays on an item I just finished.
 - **小张 / P10**: I want to process several items quickly: commit or skip should advance, and already drafted items should reopen at the Draft stage. I get stuck if the app lets me accidentally create a second draft for the same Raw Info.
+
+- **新用户 / P11-P13**: I expect my edits to be safe without understanding a save button, and I need the UI to show that the item was processed before it disappears. I get stuck if commit silently jumps away or if a failed autosave still allows final commit.
+- **小红 / P11-P13**: I may edit title/tags/folder over a few seconds and want a calm "saved" signal. I get stuck if "undo" only handles the last keystroke instead of the changes I made since opening this draft.
+- **小张 / P11-P13**: I want to triage quickly: edit, let autosave catch up, revert the whole session if I dislike the direction, then commit/skip and move on. I get stuck if autosave remounts the editor, loses focus, or queue transition feels like a hard cut.
 
 ## B.4 Build Or Borrow
 
@@ -124,6 +149,16 @@ P10 Directory-confirmed commit queue
   project's existing Radix Dialog stack, backed by `@radix-ui/react-dialog 1.1.15`
   (npm package modified 2025-12-24; version published 2025-08-13), through local
   `Dialog` wrappers.
+- Draft autosave debounce: considered `use-debounce 10.1.1` (npm package
+  modified 2026-03-29), but rejected because the draft surface needs the same
+  lightweight local timer pattern as `NoteView` and no cross-component debounce
+  abstraction.
+- Draft session revert: considered `use-undo 1.2.0` (npm package modified
+  2026-03-25), but rejected because the requested scope is not a full undo
+  stack; it is a single open-session baseline plus explicit revert.
+- Review completion animation: considered `motion 12.40.0` / `framer-motion
+  12.40.0` (npm package modified 2026-05-21), but rejected for this small
+  transition; CSS/Tailwind state classes are enough and avoid a new dependency.
 
 ## C.1 Similar Code Read
 
@@ -134,6 +169,8 @@ P10 Directory-confirmed commit queue
 - Frontend settings pattern: `frontend/src/components/Settings/SettingsDialog.tsx`
 - Existing E2E shape: `frontend/scripts/e2e/digest-list.mjs`
 - Digest-source workbench E2E shape: `frontend/scripts/e2e/digest-sources.mjs`
+- Main note autosave/status pattern: `frontend/src/components/NoteView/NoteView.tsx`
+- Draft note-like surface: `frontend/src/components/Digest/DigestDraftNoteSurface.tsx`
 
 ## C.2 Exact Verification Commands
 
@@ -150,6 +187,8 @@ P10 Directory-confirmed commit queue
   - `uv run pytest tests/test_web_note_chat.py tests/test_quick_actions.py tests/test_drafts_stage3.py tests/test_web_capture_flow.py tests/test_ai_envelope.py tests/test_sync_state.py tests/test_sync_oauth.py` → 98 passed.
   - `cd frontend && npx tsc --noEmit` → passed.
   - `git status --short` → clean.
+- C13 pre-change focused baseline:
+  - `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-list.mjs` → passed.
 
 ## E.1 Path × Test Reconciliation
 
@@ -161,8 +200,11 @@ P10 Directory-confirmed commit queue
 - P6 Draft diff tools → `tests/test_digest_pull.py:531` draft diff API proposes without writing Note, `tests/test_digest_pull.py:549` reject keeps Draft body unchanged, `tests/test_digest_pull.py:564` accept mutates only Draft, `tests/test_digest_pull.py:607` conversation tool proposes/rejects/accepts current Draft, `frontend/scripts/e2e/digest-list.mjs:469` review chat opens DiffReview and can reject/accept all ☑
 - P7 Commit note draft → `tests/test_digest_pull.py:634` `commit_note_draft` tool writes Note, honors an optional folder, indexes it, deletes Draft, and marks Raw Info included, `tests/test_digest_pull.py:653` empty-body commit blocks without deleting Draft, `frontend/scripts/e2e/digest-list.mjs:499` review overlay commit writes and opens the Note, `tests/test_cli.py` exposes `drafts commit`, `drafts accept-diff`, and `drafts reject-diff` commands ☑
 - P8 Digest workspace polish → `frontend/scripts/e2e/digest-sources.mjs:21` general Settings lacks Digest tab, `frontend/scripts/e2e/digest-sources.mjs:38` source config is in Digest, `frontend/scripts/e2e/digest-list.mjs:191` review is full-screen with Raw Info/Draft stages, `frontend/scripts/e2e/digest-list.mjs:470` Draft stage enables and auto-selects after generation ☑
-- P9 Draft note surface → `frontend/scripts/e2e/digest-list.mjs:496` Draft note surface appears, `frontend/scripts/e2e/digest-list.mjs:517` title/tags/kind/properties editing, `frontend/scripts/e2e/digest-list.mjs:532` preview toggle, `frontend/scripts/e2e/digest-list.mjs:539` draft save, `frontend/scripts/e2e/digest-list.mjs:556` diff reject and `frontend/scripts/e2e/digest-list.mjs:571` diff accept still return to the draft surface before commit ☑
-- P10 Directory-confirmed commit queue → `tests/test_digest_pull.py:666` commit API honors a folder override, `frontend/scripts/e2e/digest-list.mjs:241` review layout starts near 6:4, `frontend/scripts/e2e/digest-list.mjs:541` existing Draft suppresses duplicate generation, `frontend/scripts/e2e/digest-list.mjs:616` folder dialog cancel does not commit and confirm sends the selected folder, `frontend/scripts/e2e/digest-list.mjs:635` commit advances to the next item and selects the right stage, `frontend/scripts/e2e/digest-list.mjs:658` skipping the last review item shows a cross-pane empty state ☑
+- P9 Draft note surface → `frontend/scripts/e2e/digest-list.mjs:545` Draft note surface appears, `frontend/scripts/e2e/digest-list.mjs:549` title/tags/kind/properties render, `frontend/scripts/e2e/digest-list.mjs:648` preview toggle, `frontend/scripts/e2e/digest-list.mjs:671` diff reject and `frontend/scripts/e2e/digest-list.mjs:686` diff accept still return to the draft surface before commit ☑
+- P10 Directory-confirmed commit queue → `tests/test_digest_pull.py:666` commit API honors a folder override, `frontend/scripts/e2e/digest-list.mjs:241` review layout starts near 6:4, `frontend/scripts/e2e/digest-list.mjs:565` existing Draft suppresses duplicate generation, `frontend/scripts/e2e/digest-list.mjs:696` folder dialog cancel does not commit and confirm sends the selected folder, `frontend/scripts/e2e/digest-list.mjs:715` commit advances to the next item and selects the right stage, `frontend/scripts/e2e/digest-list.mjs:751` skipping the last review item shows a cross-pane empty state ☑
+- P11 Draft autosave status → `frontend/scripts/e2e/digest-list.mjs:575` initial status, `frontend/scripts/e2e/digest-list.mjs:577` simulated save failure blocks commit, `frontend/scripts/e2e/digest-list.mjs:587` metadata/body edit autosaves through `PUT /api/drafts/{id}`, and `frontend/scripts/e2e/digest-list.mjs:647` later autosave clears the dirty state before diff/commit ☑
+- P12 Session-level draft revert → `frontend/scripts/e2e/digest-list.mjs:616` revert button returns title/folder/tags/kind/body to the opened Draft baseline and autosaves that baseline ☑
+- P13 Review completion transition → `frontend/scripts/e2e/digest-list.mjs:715` commit shows transition before next item, `frontend/scripts/e2e/digest-list.mjs:751` skip shows transition before empty queue ☑
 
 ## E.3 Dogfood Log
 
@@ -235,9 +277,17 @@ P10 Directory-confirmed commit queue
 - P10 Directory-confirmed commit queue:
   - Red tests: `tests/test_digest_pull.py::test_commit_note_draft_can_override_target_folder` first failed before commit accepted a folder override; `frontend/scripts/e2e/digest-list.mjs` first failed against the old build because the Draft footer still committed directly and the review queue did not expose the new empty-state branch.
   - Focused green: `uv run pytest tests/test_digest_pull.py tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py` → 43 passed; `cd frontend && node scripts/e2e/digest-list.mjs` → passed; `cd frontend && node scripts/e2e/digest-sources.mjs` → passed.
-  - Related green: `uv run pytest tests/` → 1000 passed; `cd frontend && npm run lint --silent` → passed; `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run build --silent` → passed with the existing large-chunk warning.
+  - Related green: `uv run pytest tests/` → 1000 passed; `cd frontend && npm run lint --silent` → passed; `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run build --silent` → passed with the existing large-chunk warning; `cd frontend && npm run e2e` → 45/45 suites passed.
   - Browser dogfood: production build served from `/tmp/knowlet-stage-c-demo-vault`; Digest → Start review opened an existing-draft item directly at the Draft stage, "选取目录并落库" opened the folder tree with `ai/agents` selected, cancel left the item uncommitted, reopening and selecting `library/final` committed the note and advanced to the next existing-draft item.
   - Vault probe: Raw Info `Agent trace 与最终回答分层设计` became `included`, formal note was written at `/tmp/knowlet-stage-c-demo-vault/notes/library/final/01KSTNEEBZW1RJ94CV7RAYC3H5.md`, and the source Draft file was removed from `/tmp/knowlet-stage-c-demo-vault/drafts/`.
   - UI probes: review workspace background `rgb(244, 240, 232)`, folder dialog background `rgb(251, 248, 241)`, review layout ratio `0.599998...`, dialog center hit target `digest-folder-option-library-final`, post-commit center hit target `digest-draft-preview`, active element `BODY` after commit, referenced CSS variables (`--bg`, `--bg-1`, `--line`, `--accent`, `--ink`) defined in `frontend/src/styles/globals.css`, and browser console had no errors/warnings.
   - Screenshots: `/tmp/knowlet-c12-folder-commit.png`, `/tmp/knowlet-c12-after-commit-next-draft.png`
   - UX check: commit is no longer a bare destructive-looking footer action; users get an explicit directory confirmation, queue progress continues after commit/skip, and Raw Info with an existing Draft no longer invites duplicate draft generation.
+- P11-P13 Draft autosave / session revert / completion transition:
+  - Red test: `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-list.mjs` first failed waiting for `[data-testid="digest-draft-autosave-state"][data-state="idle"]` and `[data-testid="digest-review-transition"][data-kind="skip"]`, because the old draft footer still had no autosave status, no session revert, and no transition layer.
+  - Focused green: `cd frontend && node scripts/e2e/digest-list.mjs` → passed; `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-sources.mjs` → passed; `uv run pytest tests/test_digest_pull.py tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py` → 43 passed.
+  - Related green: `uv run pytest tests/` → 1000 passed; `cd frontend && npm run lint --silent` → passed; `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run build --silent` → passed with the existing large-chunk warning; `cd frontend && npm run e2e` → 45/45 suites passed.
+  - Browser dogfood: production build served at `http://127.0.0.1:8765`; fresh Playwright context with deterministic Raw Info/Draft API stubs exercised Digest → Start review → Settle as note draft → edit title/body → autosave saved → revert session → autosave baseline → choose folder and commit → transition before queue advance.
+  - UI probes: review workspace background `rgb(244, 240, 232)`, autosave state `saved`, transition kind `commit`, `document.elementFromPoint(center)` resolved to `digest-review-transition`, active element `BODY`, referenced CSS variables (`--bg`, `--bg-1`, `--line`, `--accent`, `--ink`) were defined, and browser console had no errors/warnings.
+  - Screenshots: `/tmp/knowlet-c13-autosave-saved.png`, `/tmp/knowlet-c13-revert-session.png`, `/tmp/knowlet-c13-commit-transition.png`
+  - UX check: Draft edits no longer rely on a prominent manual save path; failed saves visibly block commit, reverting means "since I opened this draft" rather than "last keystroke", and commit/skip now feel like a processed item moving out of the queue rather than a hard jump.

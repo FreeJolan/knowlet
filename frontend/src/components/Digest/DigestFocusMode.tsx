@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  CheckCircle2,
   Clock,
   ExternalLink,
   FileText,
@@ -20,9 +21,10 @@ import {
   SlidersHorizontal,
   Sparkles,
   Square,
+  Undo2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -59,6 +61,26 @@ interface Props {
 }
 
 type GroupMode = "time" | "source";
+
+const DRAFT_AUTOSAVE_DEBOUNCE_MS = 500;
+const DRAFT_SAVED_IDLE_MS = 1200;
+const REVIEW_TRANSITION_MS = 650;
+
+type DraftSaveState = "idle" | "dirty" | "saving" | "saved" | "error";
+
+type DraftEdit = {
+  title: string;
+  tags: string;
+  kind: "knowledge" | "reference";
+  folder: string;
+  body: string;
+};
+
+type ReviewTransition = {
+  kind: "commit" | "skip";
+  title: string;
+  nextTitle: string | null;
+};
 
 interface DigestGroup {
   id: string;
@@ -633,6 +655,43 @@ function StageTabButton({
   );
 }
 
+function draftToEdit(draft: RawInfoDraftResult["draft"]): DraftEdit {
+  return {
+    title: draft.title,
+    tags: draft.tags.join(", "),
+    kind: draft.kind,
+    folder: draft.folder ?? "",
+    body: draft.body ?? "",
+  };
+}
+
+function normalizeDraftEdit(edit: DraftEdit) {
+  return {
+    title: edit.title,
+    body: edit.body,
+    tags: normalizeDraftTags(edit.tags),
+    kind: edit.kind,
+    folder: edit.folder,
+  };
+}
+
+function normalizeDraftTags(value: string): string[] {
+  return value
+    .split(",")
+    .map((tag) => tag.trim().replace(/^#/, ""))
+    .filter(Boolean);
+}
+
+function sameDraftEdit(a: DraftEdit, b: DraftEdit): boolean {
+  return (
+    a.title.trim() === b.title.trim() &&
+    normalizeDraftTags(a.tags).join("\0") === normalizeDraftTags(b.tags).join("\0") &&
+    a.kind === b.kind &&
+    a.folder.trim() === b.folder.trim() &&
+    a.body === b.body
+  );
+}
+
 function ReviewOverlay({
   items,
   activeId,
@@ -680,23 +739,125 @@ function ReviewOverlay({
     body: "",
   });
   const [draftError, setDraftError] = useState<string | null>(null);
+  const [draftSaveState, setDraftSaveState] = useState<DraftSaveState>("idle");
+  const [draftEditorRevision, setDraftEditorRevision] = useState(0);
+  const [reviewTransition, setReviewTransition] = useState<ReviewTransition | null>(null);
+  const autosaveTimerRef = useRef<number | null>(null);
+  const savedIdleTimerRef = useRef<number | null>(null);
+  const latestSaveSeqRef = useRef(0);
+  const transitionTimerRef = useRef<number | null>(null);
+  const delayedTransitionTimerRef = useRef<number | null>(null);
+  const draftEditRef = useRef<DraftEdit>(draftEdit);
+  const draftResultRef = useRef<RawInfoDraftResult | null>(draftResult);
+  const draftSaveStateRef = useRef<DraftSaveState>(draftSaveState);
+  const openedDraftBaselineRef = useRef<DraftEdit | null>(null);
   const existingDraft = useQuery({
     queryKey: ["draft", item?.note_draft_id],
     queryFn: () => getDraft(item?.note_draft_id ?? ""),
     enabled: Boolean(item?.note_draft_id),
   });
 
-  const advanceAfterProcessed = (processedId: string) => {
-    const currentIndex = reviewItems.findIndex((candidate) => candidate.id === processedId);
-    const remaining = reviewItems.filter((candidate) => candidate.id !== processedId);
-    const nextItem =
-      remaining[currentIndex] ??
-      remaining[Math.max(0, currentIndex - 1)] ??
-      remaining[0] ??
-      null;
-    setProcessedIds((current) => new Set(current).add(processedId));
-    if (nextItem) onChangeItem(nextItem.id);
-  };
+  useEffect(() => {
+    draftEditRef.current = draftEdit;
+  }, [draftEdit]);
+
+  useEffect(() => {
+    draftResultRef.current = draftResult;
+  }, [draftResult]);
+
+  useEffect(() => {
+    draftSaveStateRef.current = draftSaveState;
+  }, [draftSaveState]);
+
+  const clearAutosaveTimer = useCallback(() => {
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+  }, []);
+
+  const clearSavedIdleTimer = useCallback(() => {
+    if (savedIdleTimerRef.current !== null) {
+      window.clearTimeout(savedIdleTimerRef.current);
+      savedIdleTimerRef.current = null;
+    }
+  }, []);
+
+  const clearTransitionTimer = useCallback(() => {
+    if (transitionTimerRef.current !== null) {
+      window.clearTimeout(transitionTimerRef.current);
+      transitionTimerRef.current = null;
+    }
+  }, []);
+
+  const clearDelayedTransitionTimer = useCallback(() => {
+    if (delayedTransitionTimerRef.current !== null) {
+      window.clearTimeout(delayedTransitionTimerRef.current);
+      delayedTransitionTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(
+    () => () => {
+      clearAutosaveTimer();
+      clearSavedIdleTimer();
+      clearTransitionTimer();
+      clearDelayedTransitionTimer();
+    },
+    [
+      clearAutosaveTimer,
+      clearDelayedTransitionTimer,
+      clearSavedIdleTimer,
+      clearTransitionTimer,
+    ],
+  );
+
+  const advanceAfterProcessed = useCallback(
+    (processedId: string) => {
+      const currentIndex = reviewItems.findIndex((candidate) => candidate.id === processedId);
+      const remaining = reviewItems.filter((candidate) => candidate.id !== processedId);
+      const nextItem =
+        remaining[currentIndex] ??
+        remaining[Math.max(0, currentIndex - 1)] ??
+        remaining[0] ??
+        null;
+      setProcessedIds((current) => new Set(current).add(processedId));
+      if (nextItem) onChangeItem(nextItem.id);
+    },
+    [onChangeItem, reviewItems],
+  );
+
+  const beginReviewTransition = useCallback(
+    (
+      kind: ReviewTransition["kind"],
+      processedId: string,
+      afterAdvance?: () => void,
+    ) => {
+      const currentIndex = reviewItems.findIndex((candidate) => candidate.id === processedId);
+      const remaining = reviewItems.filter((candidate) => candidate.id !== processedId);
+      const nextItem =
+        remaining[currentIndex] ??
+        remaining[Math.max(0, currentIndex - 1)] ??
+        remaining[0] ??
+        null;
+      const processedTitle =
+        reviewItems.find((candidate) => candidate.id === processedId)?.title ??
+        item?.title ??
+        t("digest.untitled");
+      clearTransitionTimer();
+      setReviewTransition({
+        kind,
+        title: processedTitle,
+        nextTitle: nextItem?.title ?? null,
+      });
+      transitionTimerRef.current = window.setTimeout(() => {
+        setReviewTransition(null);
+        advanceAfterProcessed(processedId);
+        afterAdvance?.();
+      }, REVIEW_TRANSITION_MS);
+    },
+    [advanceAfterProcessed, clearTransitionTimer, item?.title, reviewItems, t],
+  );
 
   const draftMut = useMutation({
     mutationFn: async () => {
@@ -706,15 +867,14 @@ function ReviewOverlay({
       });
     },
     onSuccess: (result) => {
+      const edit = draftToEdit(result.draft);
       setDraftResult(result);
       setCommitResult(null);
-      setDraftEdit({
-        title: result.draft.title,
-        tags: result.draft.tags.join(", "),
-        kind: result.draft.kind,
-        folder: result.draft.folder ?? "",
-        body: result.draft.body ?? "",
-      });
+      setDraftEdit(edit);
+      openedDraftBaselineRef.current = edit;
+      setDraftEditorRevision((revision) => revision + 1);
+      draftSaveStateRef.current = "idle";
+      setDraftSaveState("idle");
       setStageTab("draft");
       setDraftError(null);
       void qc.invalidateQueries({ queryKey: ["digest-items"] });
@@ -726,34 +886,64 @@ function ReviewOverlay({
   });
 
   const saveDraftMut = useMutation({
-    mutationFn: async () => {
-      if (!draftResult) throw new Error("No draft to save");
-      return updateDraft(draftResult.draft.id, {
-        title: draftEdit.title,
-        body: draftEdit.body,
-        tags: draftEdit.tags
-          .split(",")
-          .map((tag) => tag.trim().replace(/^#/, ""))
-          .filter(Boolean),
-        kind: draftEdit.kind,
-        folder: draftEdit.folder,
-      });
+    mutationFn: async ({
+      draftId,
+      edit,
+      seq,
+    }: {
+      draftId: string;
+      edit: DraftEdit;
+      seq: number;
+    }) => {
+      const draft = await updateDraft(draftId, normalizeDraftEdit(edit));
+      return { draft, seq };
     },
-    onSuccess: (draft) => {
+    onSuccess: ({ draft, seq }) => {
+      if (seq < latestSaveSeqRef.current) return;
+      const savedEdit = draftToEdit(draft);
       setDraftResult((current) => (current ? { ...current, draft } : current));
-      setDraftEdit({
-        title: draft.title,
-        tags: draft.tags.join(", "),
-        kind: draft.kind,
-        folder: draft.folder ?? "",
-        body: draft.body ?? "",
-      });
       setDraftError(null);
+      clearSavedIdleTimer();
+      if (sameDraftEdit(draftEditRef.current, savedEdit)) {
+        draftSaveStateRef.current = "saved";
+        setDraftSaveState("saved");
+        savedIdleTimerRef.current = window.setTimeout(() => {
+          draftSaveStateRef.current = "idle";
+          setDraftSaveState("idle");
+          savedIdleTimerRef.current = null;
+        }, DRAFT_SAVED_IDLE_MS);
+      } else {
+        draftSaveStateRef.current = "dirty";
+        setDraftSaveState("dirty");
+      }
     },
-    onError: (err) => {
+    onError: (err, variables) => {
+      if (variables.seq < latestSaveSeqRef.current) return;
+      clearSavedIdleTimer();
+      draftSaveStateRef.current = "error";
+      setDraftSaveState("error");
       setDraftError(err instanceof Error ? err.message : t("digest.draftSaveFailed"));
     },
   });
+  const saveDraftMutateRef = useRef(saveDraftMut.mutate);
+  useEffect(() => {
+    saveDraftMutateRef.current = saveDraftMut.mutate;
+  }, [saveDraftMut.mutate]);
+
+  const startDraftSave = useCallback(
+    (edit: DraftEdit = draftEditRef.current) => {
+      const current = draftResultRef.current;
+      if (!current) return;
+      clearAutosaveTimer();
+      clearSavedIdleTimer();
+      const seq = latestSaveSeqRef.current + 1;
+      latestSaveSeqRef.current = seq;
+      draftSaveStateRef.current = "saving";
+      setDraftSaveState("saving");
+      saveDraftMutateRef.current({ draftId: current.draft.id, edit, seq });
+    },
+    [clearAutosaveTimer, clearSavedIdleTimer],
+  );
 
   const acceptDiffMut = useMutation({
     mutationFn: async (finalBody: string) => {
@@ -761,14 +951,12 @@ function ReviewOverlay({
       return acceptDraftDiff(pendingDiff.draftId, { final_body: finalBody });
     },
     onSuccess: (result) => {
+      const edit = draftToEdit(result.draft);
       setDraftResult((current) => (current ? { ...current, draft: result.draft } : current));
-      setDraftEdit({
-        title: result.draft.title,
-        tags: result.draft.tags.join(", "),
-        kind: result.draft.kind,
-        folder: result.draft.folder ?? "",
-        body: result.draft.body ?? "",
-      });
+      setDraftEdit(edit);
+      setDraftEditorRevision((revision) => revision + 1);
+      draftSaveStateRef.current = "idle";
+      setDraftSaveState("idle");
       setPendingDiff(null);
       clearProposal();
       setDraftError(null);
@@ -784,14 +972,12 @@ function ReviewOverlay({
       return rejectDraftDiff(pendingDiff.draftId);
     },
     onSuccess: (result) => {
+      const edit = draftToEdit(result.draft);
       setDraftResult((current) => (current ? { ...current, draft: result.draft } : current));
-      setDraftEdit({
-        title: result.draft.title,
-        tags: result.draft.tags.join(", "),
-        kind: result.draft.kind,
-        folder: result.draft.folder ?? "",
-        body: result.draft.body ?? "",
-      });
+      setDraftEdit(edit);
+      setDraftEditorRevision((revision) => revision + 1);
+      draftSaveStateRef.current = "idle";
+      setDraftSaveState("idle");
       setPendingDiff(null);
       clearProposal();
       setDraftError(null);
@@ -811,12 +997,17 @@ function ReviewOverlay({
       setFolderDialogOpen(false);
       setPendingDiff(null);
       clearProposal();
-      void qc.invalidateQueries({ queryKey: ["digest-items"] });
-      void qc.invalidateQueries({ queryKey: ["digest-status"] });
-      void qc.invalidateQueries({ queryKey: ["drafts"] });
-      void qc.invalidateQueries({ queryKey: QK.tree });
-      onOpenNote?.(result.note_id);
-      advanceAfterProcessed(result.raw_info_id ?? item?.id ?? activeId);
+      clearDelayedTransitionTimer();
+      delayedTransitionTimerRef.current = window.setTimeout(() => {
+        delayedTransitionTimerRef.current = null;
+        beginReviewTransition("commit", result.raw_info_id ?? item?.id ?? activeId, () => {
+          void qc.invalidateQueries({ queryKey: ["digest-items"] });
+          void qc.invalidateQueries({ queryKey: ["digest-status"] });
+          void qc.invalidateQueries({ queryKey: ["drafts"] });
+          void qc.invalidateQueries({ queryKey: QK.tree });
+          onOpenNote?.(result.note_id);
+        });
+      }, 120);
     },
     onError: (err) => {
       setDraftError(err instanceof Error ? err.message : t("digest.commitFailed"));
@@ -824,6 +1015,8 @@ function ReviewOverlay({
   });
 
   useEffect(() => {
+    clearAutosaveTimer();
+    clearSavedIdleTimer();
     setInput("");
     setDraftResult(null);
     setPendingDiff(null);
@@ -832,27 +1025,31 @@ function ReviewOverlay({
     setStageTab("raw");
     setDraftEdit({ title: "", tags: "", kind: "reference", folder: "", body: "" });
     setDraftError(null);
+    draftSaveStateRef.current = "idle";
+    setDraftSaveState("idle");
+    setDraftEditorRevision((revision) => revision + 1);
+    openedDraftBaselineRef.current = null;
     clearProposal();
-  }, [clearProposal, item?.id]);
+  }, [clearAutosaveTimer, clearProposal, clearSavedIdleTimer, item?.id]);
 
   useEffect(() => {
     if (!item?.note_draft_id || !existingDraft.data) return;
     const draft = existingDraft.data;
+    if (draftResult?.draft.id === draft.id) return;
+    const edit = draftToEdit(draft);
     setDraftResult({
       raw_info: item,
       draft,
       rationale: t("digest.existingDraftRationale"),
     });
-    setDraftEdit({
-      title: draft.title,
-      tags: draft.tags.join(", "),
-      kind: draft.kind,
-      folder: draft.folder ?? "",
-      body: draft.body ?? "",
-    });
+    setDraftEdit(edit);
+    openedDraftBaselineRef.current = edit;
+    setDraftEditorRevision((revision) => revision + 1);
+    draftSaveStateRef.current = "idle";
+    setDraftSaveState("idle");
     setStageTab("draft");
     setDraftError(null);
-  }, [existingDraft.data, item, t]);
+  }, [draftResult?.draft.id, existingDraft.data, item, t]);
 
   useEffect(() => {
     if (!proposal) return;
@@ -864,6 +1061,53 @@ function ReviewOverlay({
       clearProposal();
     }
   }, [clearProposal, proposal, t]);
+
+  const persistedDraftEdit = draftResult ? draftToEdit(draftResult.draft) : null;
+  const draftChanged =
+    draftResult !== null &&
+    persistedDraftEdit !== null &&
+    !sameDraftEdit(draftEdit, persistedDraftEdit);
+  const sessionChanged =
+    openedDraftBaselineRef.current !== null &&
+    !sameDraftEdit(draftEdit, openedDraftBaselineRef.current);
+  const draftWaitingForSave =
+    draftChanged ||
+    draftSaveState === "dirty" ||
+    draftSaveState === "saving" ||
+    draftSaveState === "error" ||
+    saveDraftMut.isPending;
+
+  useEffect(() => {
+    clearAutosaveTimer();
+    if (!draftResult) {
+      draftSaveStateRef.current = "idle";
+      setDraftSaveState("idle");
+      return;
+    }
+    if (!draftChanged) {
+      if (draftSaveStateRef.current === "dirty") {
+        draftSaveStateRef.current = "idle";
+        setDraftSaveState("idle");
+      }
+      return;
+    }
+    if (draftSaveStateRef.current === "saving") return;
+    clearSavedIdleTimer();
+    draftSaveStateRef.current = "dirty";
+    setDraftSaveState("dirty");
+    const edit = draftEdit;
+    autosaveTimerRef.current = window.setTimeout(() => {
+      startDraftSave(edit);
+    }, DRAFT_AUTOSAVE_DEBOUNCE_MS);
+    return clearAutosaveTimer;
+  }, [
+    clearAutosaveTimer,
+    clearSavedIdleTimer,
+    draftChanged,
+    draftEdit,
+    draftResult,
+    startDraftSave,
+  ]);
 
   if (!item) {
     return (
@@ -911,13 +1155,6 @@ function ReviewOverlay({
     );
   }
 
-  const draftChanged =
-    draftResult !== null &&
-    (draftEdit.title.trim() !== draftResult.draft.title ||
-      draftEdit.tags.trim() !== draftResult.draft.tags.join(", ") ||
-      draftEdit.kind !== draftResult.draft.kind ||
-      draftEdit.folder.trim() !== (draftResult.draft.folder ?? "") ||
-      draftEdit.body !== draftResult.draft.body);
   const hasExistingDraft = Boolean(draftResult || item.note_draft_id);
 
   const submit = () => {
@@ -927,9 +1164,23 @@ function ReviewOverlay({
     }
   };
 
+  const revertSessionChanges = () => {
+    if (pendingDiff) {
+      setDraftError(t("digest.revertBlockedByDiff"));
+      return;
+    }
+    const baseline = openedDraftBaselineRef.current;
+    if (!baseline) return;
+    setDraftEdit(baseline);
+    setDraftEditorRevision((revision) => revision + 1);
+    clearSavedIdleTimer();
+    draftSaveStateRef.current = "dirty";
+    setDraftSaveState("dirty");
+  };
+
   return (
     <div
-      className="fixed inset-0 z-[60] flex flex-col"
+      className="fixed inset-0 z-[60] flex flex-col overflow-hidden"
       style={{ background: "var(--bg, #f4f0e8)" }}
       data-testid="digest-review-workspace"
     >
@@ -958,6 +1209,43 @@ function ReviewOverlay({
           <X className="size-4" />
         </button>
       </header>
+
+      {reviewTransition && (
+        <div
+          className="absolute inset-0 z-[110] flex items-center justify-center px-6"
+          data-testid="digest-review-transition"
+          data-kind={reviewTransition.kind}
+        >
+          <div
+            className="max-w-md rounded-md border px-6 py-5 text-center shadow-lg transition-all duration-500"
+            style={{
+              borderColor: "var(--accent)",
+              background: "var(--bg-1)",
+              color: "var(--ink)",
+            }}
+          >
+            <div
+              className="mx-auto mb-3 flex size-11 items-center justify-center rounded-full"
+              style={{ background: "var(--accent-tint-2)" }}
+            >
+              <CheckCircle2 className="size-5" />
+            </div>
+            <div className="font-serif text-lg font-medium">
+              {reviewTransition.kind === "commit"
+                ? t("digest.transitionCommitted")
+                : t("digest.transitionSkipped")}
+            </div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              {reviewTransition.title}
+            </div>
+            <div className="mt-3 text-xs text-muted-foreground">
+              {reviewTransition.nextTitle
+                ? t("digest.transitionNext", { title: reviewTransition.nextTitle })
+                : t("digest.transitionDone")}
+            </div>
+          </div>
+        </div>
+      )}
 
       <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
         <ResizablePanel defaultSize={60} minSize={40}>
@@ -1064,52 +1352,70 @@ function ReviewOverlay({
                     <DigestDraftNoteSurface
                       draft={draftResult.draft}
                       draftEdit={draftEdit}
+                      editorRevision={draftEditorRevision}
                       onDraftEditChange={setDraftEdit}
                       rationale={draftResult.rationale}
                       footer={
                         <div className="space-y-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <button
-                              type="button"
-                              disabled={!draftChanged || saveDraftMut.isPending}
-                              onClick={() => saveDraftMut.mutate()}
-                              className="rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
-                              style={{ borderColor: "var(--line)" }}
-                              data-testid="digest-draft-save"
-                            >
-                              {saveDraftMut.isPending ? t("digest.savingDraft") : t("digest.saveDraft")}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={
-                                commitMut.isPending ||
-                                Boolean(pendingDiff) ||
-                                draftChanged ||
-                                !draftEdit.title.trim() ||
-                                !draftEdit.body.trim()
-                              }
-                              onClick={() => setFolderDialogOpen(true)}
-                              className="rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
-                              style={{
-                                borderColor: "var(--accent)",
-                                background: "var(--accent-soft, rgba(91,122,156,0.14))",
-                              }}
-                              data-testid="digest-draft-commit"
-                            >
-                              {commitMut.isPending ? t("digest.committingDraft") : t("digest.commitDraft")}
-                            </button>
-                            <DigestFolderCommitDialog
-                              open={folderDialogOpen}
-                              recommendedFolder={draftEdit.folder}
-                              committing={commitMut.isPending}
-                              onOpenChange={setFolderDialogOpen}
-                              onConfirm={(folder) => commitMut.mutate(folder)}
-                            />
-                            {draftChanged && (
-                              <span className="text-xs text-muted-foreground">
-                                {t("digest.unsavedDraft")}
-                              </span>
-                            )}
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <DraftAutosaveStatus
+                                state={draftSaveState}
+                                onRetry={() => startDraftSave()}
+                              />
+                              <button
+                                type="button"
+                                disabled={!sessionChanged || Boolean(pendingDiff)}
+                                onClick={revertSessionChanges}
+                                className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
+                                style={{ borderColor: "var(--line)" }}
+                                data-testid="digest-draft-revert-session"
+                              >
+                                <Undo2 className="size-3.5" />
+                                {t("digest.revertSessionChanges")}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!draftChanged || saveDraftMut.isPending}
+                                onClick={() => startDraftSave()}
+                                className="rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
+                                style={{ borderColor: "var(--line)" }}
+                                data-testid="digest-draft-save"
+                              >
+                                {saveDraftMut.isPending ? t("digest.savingDraft") : t("digest.saveDraft")}
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={
+                                  commitMut.isPending ||
+                                  Boolean(pendingDiff) ||
+                                  draftWaitingForSave ||
+                                  !draftEdit.title.trim() ||
+                                  !draftEdit.body.trim()
+                                }
+                                onClick={() => setFolderDialogOpen(true)}
+                                className="rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
+                                style={{
+                                  borderColor: "var(--accent)",
+                                  background: "var(--accent-soft, rgba(91,122,156,0.14))",
+                                }}
+                                data-testid="digest-draft-commit"
+                              >
+                                {commitMut.isPending ? t("digest.committingDraft") : t("digest.commitDraft")}
+                              </button>
+                              <DigestFolderCommitDialog
+                                open={folderDialogOpen}
+                                recommendedFolder={draftEdit.folder}
+                                committing={commitMut.isPending}
+                                onOpenChange={setFolderDialogOpen}
+                                onConfirm={(folder) => {
+                                  setFolderDialogOpen(false);
+                                  commitMut.mutate(folder);
+                                }}
+                              />
+                            </div>
                           </div>
                           {commitResult && (
                             <div
@@ -1158,7 +1464,7 @@ function ReviewOverlay({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  disabled={!previous || status === "streaming"}
+                  disabled={!previous || status === "streaming" || Boolean(reviewTransition)}
                   onClick={() => previous && onChangeItem(previous.id)}
                   className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
                   style={{ borderColor: "var(--line)" }}
@@ -1169,8 +1475,8 @@ function ReviewOverlay({
                 </button>
                 <button
                   type="button"
-                  disabled={status === "streaming"}
-                  onClick={() => advanceAfterProcessed(item.id)}
+                  disabled={status === "streaming" || Boolean(reviewTransition)}
+                  onClick={() => beginReviewTransition("skip", item.id)}
                   className="rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
                   style={{ borderColor: "var(--line)" }}
                   data-testid="digest-review-skip"
@@ -1180,7 +1486,7 @@ function ReviewOverlay({
               </div>
               <button
                 type="button"
-                disabled={!next || status === "streaming"}
+                disabled={!next || status === "streaming" || Boolean(reviewTransition)}
                 onClick={() => next && onChangeItem(next.id)}
                 className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
                 style={{ borderColor: "var(--line)" }}
@@ -1267,6 +1573,53 @@ function ReviewOverlay({
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>
+  );
+}
+
+function DraftAutosaveStatus({
+  state,
+  onRetry,
+}: {
+  state: DraftSaveState;
+  onRetry: () => void;
+}) {
+  const { t } = useTranslation();
+  const label =
+    state === "saving"
+      ? t("digest.draftAutosaveSaving")
+      : state === "saved"
+        ? t("digest.draftAutosaveSaved")
+        : state === "dirty"
+          ? t("digest.draftAutosaveDirty")
+          : state === "error"
+            ? t("digest.draftAutosaveError")
+            : t("digest.draftAutosaveIdle");
+  return (
+    <span
+      className="inline-flex min-h-7 items-center gap-1.5 rounded px-1 text-[11px] text-muted-foreground"
+      data-testid="digest-draft-autosave-state"
+      data-state={state}
+    >
+      {state === "saving" ? (
+        <RefreshCw className="size-3 animate-spin" />
+      ) : state === "error" ? (
+        <AlertTriangle className="size-3" />
+      ) : state === "saved" || state === "idle" ? (
+        <CheckCircle2 className="size-3" />
+      ) : null}
+      <span>{label}</span>
+      {state === "error" && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="rounded border px-1.5 py-0.5 text-[11px]"
+          style={{ borderColor: "var(--line)" }}
+          data-testid="digest-draft-autosave-retry"
+        >
+          {t("digest.draftAutosaveRetry")}
+        </button>
+      )}
+    </span>
   );
 }
 

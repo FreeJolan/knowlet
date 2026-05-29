@@ -1,6 +1,6 @@
 # Stage C v2 — 资讯审阅与入库
 
-- Status: Implemented through C12 (Source config → Raw Info review → Draft diff → commit → workspace polish → note-like draft surface → directory-confirmed commit queue)
+- Status: Implemented through C13 (Source config → Raw Info review → Draft diff → commit → workspace polish → note-like draft surface → directory-confirmed commit queue → draft autosave/revert/transition polish)
 - Date: 2026-05-30
 - Roadmap: [`../roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md)
 
@@ -241,7 +241,11 @@ Note
     收进 properties 区。
   - 正文编辑体验复用主笔记 Markdown editor,并支持 edit / split / preview
     视图切换。
-  - 草稿阶段可保存 metadata/body,可继续走 Diff Review,但仍不会写入正式 Note。
+  - 草稿阶段会在用户停止编辑后自动保存 metadata/body,并在 footer 显示
+    保存中/已保存/保存失败状态;保存失败时落库保持阻塞。
+  - 用户可以撤回自打开这份草稿以来的所有改动;这个撤回是会话级基线,
+    不会因为中途 autosave 过就丢失。
+  - 草稿可继续走 Diff Review,但仍不会写入正式 Note。
   - 落库前必须先进入"选取目录并落库"确认流,不能从草稿页直接写入 vault。
 
 - 右侧:对话流。
@@ -434,6 +438,15 @@ API:
   - 已有 Draft 的 Raw Info 不可重复生成草稿;进入该条时自动打开 Draft 阶段。
   - commit / 本轮 skip 后自动推进;队列空时显示跨左右栏空状态。
   - Review 左右栏初始比例调整为 6:4。
+
+- **C13 Draft autosave / session revert / completion transition**
+  - Draft footer 不再要求用户手动保存作为主路径;标题、tags、kind、folder
+    和正文在停止编辑后短间隔 autosave,并显示小型保存状态。
+  - 保存失败会显示可重试状态并阻止落库,避免用户把未持久化草稿误写入正式库。
+  - "撤回本次改动"以打开这份 Draft 时的快照为基线,覆盖本次打开后所有
+    metadata/body 修改。
+  - commit 或本轮 skip 后先显示覆盖工作台的完成过渡,再推进到下一条或空队列;
+    目录确认 dialog 会先关闭,避免过渡期间误点。
 
 - **C8 Create draft + draft tools**
   - `create_note_draft_from_info`。

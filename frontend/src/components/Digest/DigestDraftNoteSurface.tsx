@@ -23,6 +23,7 @@ type ViewMode = "edit" | "split" | "preview";
 interface Props {
   draft: DraftSummary;
   draftEdit: DraftEdit;
+  editorRevision?: number;
   onDraftEditChange: (next: DraftEdit | ((current: DraftEdit) => DraftEdit)) => void;
   rationale?: string | null;
   footer?: React.ReactNode;
@@ -62,6 +63,7 @@ function writeViewMode(value: ViewMode): void {
 export function DigestDraftNoteSurface({
   draft,
   draftEdit,
+  editorRevision = 0,
   onDraftEditChange,
   rationale,
   footer,
@@ -278,8 +280,8 @@ export function DigestDraftNoteSurface({
           data-view-mode={viewMode}
         >
           <MarkdownEditor
-            key={`${draft.id}:${draft.updated_at}`}
-            initialValue={draft.body ?? ""}
+            key={`${draft.id}:${editorRevision}`}
+            initialValue={draftEdit.body ?? ""}
             onChange={(body) => setDraftEdit((current) => ({ ...current, body }))}
           />
         </div>

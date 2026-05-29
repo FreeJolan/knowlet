@@ -69,6 +69,25 @@ function writeRawInfos(vaultDir, items) {
   }
 }
 
+async function waitForDraftAutosave(page, state) {
+  await page.locator(`[data-testid="digest-draft-autosave-state"][data-state="${state}"]`).waitFor({
+    state: "visible",
+    timeout: 5000,
+  });
+}
+
+async function replaceDraftBody(page, body) {
+  await page
+    .locator('[data-testid="digest-draft-view-mode-toggle"] button[data-mode="edit"]')
+    .click();
+  const editor = page.locator('[data-testid="digest-draft-editor"] .cm-content');
+  await editor.waitFor({ state: "visible", timeout: 3000 });
+  await editor.click();
+  await page.keyboard.press("Meta+A");
+  await page.keyboard.press("Delete");
+  await page.keyboard.type(body, { delay: 5 });
+}
+
 function seedThreeItems(vaultDir) {
   mkdirSync(join(vaultDir, "notes", "ai", "notes"), { recursive: true });
   mkdirSync(join(vaultDir, "notes", "library", "final"), { recursive: true });
@@ -284,27 +303,32 @@ try {
     let acceptCalled = false;
     let commitCalled = false;
     let revisionCount = 0;
+    let failNextDraftSave = false;
+    const draftSaveBodies = [];
     await page.route("**/api/drafts/01C8DRAFTFROMRAWINFO", async (route) => {
       if (route.request().method() !== "PUT") return route.fallback();
       const body = route.request().postDataJSON();
-      assert(body.title === "Tool Trace Notes", "draft metadata update sends title");
-      assert(body.folder === "ai/notes", "draft metadata update sends folder");
-      assert(body.kind === "reference", "draft kind update sends kind chip value");
-      assert(
-        body.tags.join(",") === "agents,notes",
-        `draft tags update sends chip values, got ${body.tags.join(",")}`,
-      );
+      draftSaveBodies.push(body);
+      if (failNextDraftSave) {
+        failNextDraftSave = false;
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "save failed" }),
+        });
+        return;
+      }
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
           id: "01C8DRAFTFROMRAWINFO",
-          title: "Tool Trace Notes",
-          body: "## Core\n\nTool traces should be visible but separate from the final answer.",
+          title: body.title,
+          body: body.body,
           source: "https://example.com/agent-trace",
-          tags: ["agents", "notes"],
-          kind: "reference",
-          folder: "ai/notes",
+          tags: body.tags,
+          kind: body.kind,
+          folder: body.folder,
           task_id: null,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -548,10 +572,18 @@ try {
       "raw info with a draft does not offer duplicate draft generation",
     );
     await page.locator('[data-testid="digest-review-stage-tab-draft"]').click();
+    await waitForDraftAutosave(page, "idle");
 
+    failNextDraftSave = true;
     await page.locator('[data-testid="digest-draft-title"]').click();
     await page.locator('[data-testid="digest-draft-title-input"]').fill("Tool Trace Notes");
     await page.locator('[data-testid="digest-draft-title-input"]').press("Enter");
+    await waitForDraftAutosave(page, "error");
+    assert(
+      await page.locator('[data-testid="digest-draft-commit"]').isDisabled(),
+      "commit stays blocked while autosave is failed",
+    );
+
     await page.locator('[data-testid="tag-add-button"]').click();
     await page.locator('[data-testid="tag-add-input"]').fill("notes");
     await page.locator('[data-testid="tag-add-input"]').press("Enter");
@@ -564,6 +596,55 @@ try {
     );
     await page.locator('[data-testid="digest-draft-properties-toggle"]').click();
     await page.locator('[data-testid="digest-draft-folder-input"]').fill("ai/notes");
+    await replaceDraftBody(
+      page,
+      "## Core\n\nTool traces should be visible, separate from the final answer, and pleasant to review.",
+    );
+    await waitForDraftAutosave(page, "saved");
+    assert(
+      draftSaveBodies.some(
+        (body) =>
+          body.title === "Tool Trace Notes" &&
+          body.folder === "ai/notes" &&
+          body.kind === "reference" &&
+          body.tags.join(",") === "agents,notes" &&
+          body.body.includes("pleasant to review"),
+      ),
+      `autosave persists the edited draft body and metadata — got ${JSON.stringify(draftSaveBodies)}`,
+    );
+
+    await page.locator('[data-testid="digest-draft-revert-session"]').click();
+    await waitForDraftAutosave(page, "saved");
+    const revertedTitle = await page.locator('[data-testid="digest-draft-title"]').textContent();
+    const revertedFolder = await page.locator('[data-testid="digest-draft-folder-input"]').inputValue();
+    assert(revertedTitle === "Tool Trace Separation", "session revert restores opened title");
+    assert(revertedFolder === "ai/research", "session revert restores opened folder");
+    assert(
+      draftSaveBodies.some(
+        (body) =>
+          body.title === "Tool Trace Separation" &&
+          body.folder === "ai/research" &&
+          body.kind === "knowledge" &&
+          body.tags.join(",") === "agents,tooling",
+      ),
+      "session revert autosaves the opened baseline",
+    );
+
+    await page.locator('[data-testid="digest-draft-title"]').click();
+    await page.locator('[data-testid="digest-draft-title-input"]').fill("Tool Trace Notes");
+    await page.locator('[data-testid="digest-draft-title-input"]').press("Enter");
+    await page.locator('[data-testid="tag-add-button"]').click();
+    await page.locator('[data-testid="tag-add-input"]').fill("notes");
+    await page.locator('[data-testid="tag-add-input"]').press("Enter");
+    await page.locator('[data-testid="tag-chip-remove"][data-tag="tooling"]').click();
+    await page.locator('[data-testid="digest-draft-kind-chip-button"]').click();
+    await page.locator('[data-testid="kind-chip-demote-confirm"]').click();
+    await page.locator('[data-testid="digest-draft-folder-input"]').fill("ai/notes");
+    await replaceDraftBody(
+      page,
+      "## Core\n\nTool traces should be visible but separate from the final answer.",
+    );
+    await waitForDraftAutosave(page, "saved");
     await page
       .locator('[data-testid="digest-draft-view-mode-toggle"] button[data-mode="preview"]')
       .click();
@@ -571,7 +652,6 @@ try {
       .locator('[data-testid="digest-draft-preview"]')
       .filter({ hasText: "Tool traces should be visible" })
       .waitFor({ state: "visible", timeout: 3000 });
-    await page.locator('[data-testid="digest-draft-save"]').click();
     const updatedTitle = await page.locator('[data-testid="digest-draft-title"]').textContent();
     const updatedFolder = await page.locator('[data-testid="digest-draft-folder-input"]').inputValue();
     assert(updatedTitle === "Tool Trace Notes", "updated draft title is visible");
@@ -632,11 +712,15 @@ try {
     await page.locator('[data-testid="digest-folder-option-library-final"]').click();
     await page.locator('[data-testid="digest-folder-confirm"]').click();
     assert(commitCalled, "commit endpoint is called");
+    await page.locator('[data-testid="digest-review-transition"][data-kind="commit"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
     await page.locator('[data-testid="digest-review-current-title"]').filter({
       hasText: "RSS normalization caveat",
     }).waitFor({
       state: "visible",
-      timeout: 3000,
+      timeout: 5000,
     });
     assert(
       (await page.locator('[data-testid="digest-review-stage-tab-raw"]').getAttribute("aria-selected")) === "true",
@@ -646,7 +730,9 @@ try {
   });
 
   await runTest("no console errors during populated inbox suite", () => {
-    assertConsoleClean(env);
+    assertConsoleClean(env, {
+      allowMessages: ["Failed to load resource: the server responded with a status of 500"],
+    });
   });
 } finally {
   await env.teardown();
@@ -663,9 +749,13 @@ try {
       timeout: 3000,
     });
     await page.locator('[data-testid="digest-review-skip"]').click();
-    await page.locator('[data-testid="digest-review-empty-state"]').waitFor({
+    await page.locator('[data-testid="digest-review-transition"][data-kind="skip"]').waitFor({
       state: "visible",
       timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-review-empty-state"]').waitFor({
+      state: "visible",
+      timeout: 5000,
     });
     assert(
       (await page.locator('[data-testid="digest-review-left-pane"]').count()) === 0,
