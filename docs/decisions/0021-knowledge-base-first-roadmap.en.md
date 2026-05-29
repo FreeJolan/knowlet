@@ -7,7 +7,7 @@
 
 > **2026-05-08 amendment**: Phase 1 D added (6 Obsidian-baseline UX gaps), original 8-12 weeks → 10-14 weeks. See [`docs/roadmap/README.en.md` §"Phase plan after rewrite"](../roadmap/README.en.md#phase-plan-after-rewrite). Trigger: after Phase 1 ABC + GATE 2 dogfood, side-by-side with Obsidian still showed 6 baseline UX gaps users hit daily (multi-tab / full-text search panel / Properties UI / dark toggle / Outline panel / hover preview).
 
-> **2026-05-28 amendment**: This ADR has served its "knowledge-base first" course-correction role, but it is no longer the execution checklist for the AI line. For current AI work, use [`docs/roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md): Stage B has passed dogfood, F0 AI capability foundation has met its current gate, and the next step is Stage E/Quiz, not the old Phase 3 envelope bundle.
+> **2026-05-30 amendment**: This ADR has served its "knowledge-base first" course-correction role, but it is no longer the execution checklist for the AI line. For current AI work, use [`docs/roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md): Stage B has passed dogfood, F0 AI capability foundation has met its current gate, and the next step is Stage C v2 information review and note intake ([design doc](../design/stage-c-digest-inbox.md)), then Phase 3.5 desktop client. Stage E/Quiz is deferred until after desktop, and the old Phase 3 envelope bundle must not drive execution.
 
 ## Context
 

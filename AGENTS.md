@@ -8,12 +8,16 @@ Per-user / per-machine preferences live in `~/.codex/AGENTS.md` (not
 committed). Architectural decisions live in `docs/decisions/` (ADRs).
 This file covers **process**.
 
-Current roadmap pointer (2026-05-28): for AI product work, use
+Current roadmap pointer (2026-05-30): for AI product work, use
 `docs/roadmap/ai-modes-roadmap.md` as the source of truth. The old
 `docs/roadmap/phase-3-stages.md`, `docs/roadmap/phase-3-slicing.md`,
 and ADR-0021 Phase 3 envelope plan are historical context only. Stage B
 has passed dogfood; the inserted F0 AI capability foundation refactor
-has met its current gate. The next product step is Stage E/Quiz.
+has met its current gate. Stage C digest v1 is only a foundation; the
+next product step is Stage C v2 information review and note intake
+(`docs/design/stage-c-digest-inbox.md`), then the desktop client.
+Stage E/Quiz is deferred until after the desktop milestone unless the
+roadmap is explicitly reprioritized again.
 
 ---
 

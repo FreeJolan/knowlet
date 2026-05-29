@@ -10,6 +10,7 @@
 - [`architecture-diagrams.md`](./architecture-diagrams.md) — **技术 + 产品 ASCII 架构图**(2026-05-02 当前形态:M6 + ADR-0013/14)
 - [`users.md`](./users.md) — 目标用户共性画像与"决策视角"用法
 - [`organization.md`](./organization.md) — 知识组织策略:AI 托底 + 人工点睛
+- [`stage-c-digest-inbox.md`](./stage-c-digest-inbox.md) — Stage C v2 资讯审阅、沉淀草稿、Diff 修正与入库设计
 - [`tech-stack.md`](./tech-stack.md) — 技术选型当前倾向与竞品参考
 - [`voice.md`](./voice.md) — 语音 / TTS 设计(阶段一不实现,留存供后续参考)
 - [`mvp-slice.md`](./mvp-slice.md) — MVP 切片实现规划(关键库 / 模块划分 / 第一里程碑 M0)

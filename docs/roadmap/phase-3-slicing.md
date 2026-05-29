@@ -4,7 +4,7 @@
 >
 > Last update: 2026-05-16
 >
-> ⚠️ **已被取代两次**:2026-05-16 本 slice 表被 [`phase-3-stages.md`](./phase-3-stages.md) 取代;2026-05-24 `phase-3-stages.md` 又被 [`ai-modes-roadmap.md`](./ai-modes-roadmap.md) 取代。**当前推进顺序只看 `ai-modes-roadmap.md`;截至 2026-05-28,F0 AI 底层能力重构已达到当前门槛,下一步是阶段 E/Quiz。** 本文件仅作历史参考,不要用这里的 Phase/P3 名称判断下一步。
+> ⚠️ **已被取代两次**:2026-05-16 本 slice 表被 [`phase-3-stages.md`](./phase-3-stages.md) 取代;2026-05-24 `phase-3-stages.md` 又被 [`ai-modes-roadmap.md`](./ai-modes-roadmap.md) 取代。**当前推进顺序只看 `ai-modes-roadmap.md`;截至 2026-05-30,F0 AI 底层能力重构已达到当前门槛,下一步是 Stage C v2 资讯审阅与入库,随后直接做 Phase 3.5 桌面端客户端;阶段 E/Quiz 暂缓。** 本文件仅作历史参考,不要用这里的 Phase/P3 名称判断下一步。
 
 ## 背景
 

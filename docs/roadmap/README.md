@@ -4,11 +4,11 @@
 
 Knowlet 按 Wedge 战略分阶段演进。能力同源、相互增强;叙事按阶段聚焦。详见 [ADR-0003](../decisions/0003-wedge-pivot-ai-memory-layer.md)(及其 2026-05-04 amendment)。
 
-## ⚡ 当前状态(2026-05-28)
+## ⚡ 当前状态(2026-05-30)
 
 **产品阶段** = 开发期(per [ADR-0022](../decisions/0022-product-lifecycle-phases.md))。无外部用户,允许激进迭代。
 
-**当前 AI 主线 source of truth** = [`ai-modes-roadmap.md`](./ai-modes-roadmap.md)。2026-05-28 用户 dogfood 结论:阶段 B(今日反思/情绪入口)通过;随后插队的 **AI 底层能力重构(F0)** 已完成当前门槛。下一步恢复阶段 E/Quiz。旧的 Phase 3 "envelope 全家桶"、`phase-3-stages.md`、`phase-3-slicing.md` 只作历史背景,不能用来判断下一步。
+**当前 AI 主线 source of truth** = [`ai-modes-roadmap.md`](./ai-modes-roadmap.md)。2026-05-28 用户 dogfood 结论:阶段 B(今日反思/情绪入口)通过;随后插队的 **AI 底层能力重构(F0)** 已完成当前门槛。2026-05-30 用户进一步修正 Stage C:现有 digest v1 只算基础通路,下一步优先实现 **Stage C v2 资讯审阅与入库**([设计文档](../design/stage-c-digest-inbox.md));资讯相关内容完成后,直接进入 **Phase 3.5 桌面端客户端**。阶段 E/Quiz 暂缓到桌面端之后再评估。旧的 Phase 3 "envelope 全家桶"、`phase-3-stages.md`、`phase-3-slicing.md` 只作历史背景,不能用来判断下一步。
 
 **默认 LLM / dogfood 路径** = 本机 `cliproxyapi` + Codex/GPT 5.5 (`http://127.0.0.1:8317/v1`, `gpt-5.5`)。Claude/Claude Code 只保留为历史参考或成熟 agent 设计模式来源,不再作为默认运行时或计划前提。
 
@@ -18,7 +18,7 @@ Knowlet 按 Wedge 战略分阶段演进。能力同源、相互增强;叙事按�
 
 - **前端**:Alpine 弃用,改 React 19 + Vite + TypeScript + shadcn/ui + AI SDK + CodeMirror 6 + react-arborist + Tanstack Query
 - **后端**:不重写,加 mypy strict + ruff + pre-commit + CI(per ADR-0020)
-- **顺序**:Phase 0 ✅ → Phase 1 ABC ✅ → Phase 1 D ✅ → ADR-0027 sync 主线 ✅(剩 3 项收尾)→ **Phase 2 D ✅ → Phase 2 E 数据耐久 ✅ → AI modes A/B/C/D ✅ → F0 AI 底层能力重构当前门槛 ✅ → AI modes E/Quiz(下一站) → Phase 3.5 桌面端 → Phase 4 灰度 + v1.0.0 → Phase 5 移动端(读/复习导向)**
+- **顺序**:Phase 0 ✅ → Phase 1 ABC ✅ → Phase 1 D ✅ → ADR-0027 sync 主线 ✅(剩 3 项收尾)→ **Phase 2 D ✅ → Phase 2 E 数据耐久 ✅ → AI modes A/B/D ✅ → F0 AI 底层能力重构当前门槛 ✅ → Stage C v2 资讯审阅与入库(下一站) → Phase 3.5 桌面端客户端 → AI modes E/Quiz(暂缓,桌面端后再评估) → Phase 4 灰度 + v1.0.0 → Phase 5 移动端(读/复习导向)**
 - **预估时间**:**12-17 周**到 Phase 4(灰度入口前)— 2026-05-12 修订,加 Phase 3.5 桌面端 2-3 周
 
 ```

@@ -2,7 +2,7 @@
 > 经 2026-05-24 与用户的重定向讨论,这套 envelope 全家桶 / linter 全库扫 / reorg planner / tidy advisor /
 > vault health dashboard / 知识·资料二分 / anti-drift 队列 大部分被判为**伪需求或早产**(建立在发明的
 > persona 上,而非用户真实需求)。新方向 = need-driven 的 **modes**(Cursor-for-notes:grounded 对谈 +
-> stance + diff-accept)。**请按 `ai-modes-roadmap.md` 推进;截至 2026-05-28,F0 AI 底层能力重构已达到当前门槛,下一步是阶段 E/Quiz。** 本文件仅作历史参考。
+> stance + diff-accept)。**请按 `ai-modes-roadmap.md` 推进;截至 2026-05-30,F0 AI 底层能力重构已达到当前门槛,下一步是 Stage C v2 资讯审阅与入库,随后直接做 Phase 3.5 桌面端客户端;阶段 E/Quiz 暂缓。** 本文件仅作历史参考。
 > 另注意:`AGENTS.md` 的 Phase A/B/C/D/E 是协作流程,不是本 repo 的产品 roadmap 阶段;不要用本文件里的旧 stage/slice 名称推断下一步。
 
 # Phase 3 — 7 Stage 推进计划(2026-05-16 重打包)

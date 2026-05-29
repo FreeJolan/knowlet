@@ -4,11 +4,11 @@
 
 Knowlet evolves in stages per the Wedge strategy. Capabilities share a common foundation; narrative tightens by stage. See [ADR-0003](../decisions/0003-wedge-pivot-ai-memory-layer.en.md) (and its 2026-05-04 amendment).
 
-## ⚡ Current state (2026-05-28)
+## ⚡ Current state (2026-05-30)
 
 **Product phase** = development (per [ADR-0022](../decisions/0022-product-lifecycle-phases.en.md)). No external users; aggressive iteration allowed.
 
-**Current AI-line source of truth** = [`ai-modes-roadmap.md`](./ai-modes-roadmap.md). 2026-05-28 dogfood conclusion: Stage B (Reflect Today / emotional journaling entry) passed; the inserted **F0 — AI capability foundation refactor** has now met its current gate. The next work item is Stage E/Quiz. The old Phase 3 envelope plan, `phase-3-stages.md`, and `phase-3-slicing.md` are historical context only and must not drive the next step.
+**Current AI-line source of truth** = [`ai-modes-roadmap.md`](./ai-modes-roadmap.md). 2026-05-28 dogfood conclusion: Stage B (Reflect Today / emotional journaling entry) passed; the inserted **F0 — AI capability foundation refactor** has now met its current gate. On 2026-05-30 the user refined Stage C: the existing digest v1 is only the foundation, and the next work item is **Stage C v2 — information review and note intake** ([design doc](../design/stage-c-digest-inbox.md)); after the information-intake work lands, go directly to **Phase 3.5 desktop client**. Stage E/Quiz is deferred until after the desktop milestone. The old Phase 3 envelope plan, `phase-3-stages.md`, and `phase-3-slicing.md` are historical context only and must not drive the next step.
 
 **Default LLM / dogfood path** = local `cliproxyapi` + Codex/GPT 5.5 (`http://127.0.0.1:8317/v1`, `gpt-5.5`). Claude / Claude Code remain only historical references or mature-agent design inspirations, not the default runtime or planning premise.
 
@@ -18,7 +18,7 @@ Knowlet evolves in stages per the Wedge strategy. Capabilities share a common fo
 
 - **Frontend**: Alpine deprecated; switching to React 19 + Vite + TypeScript + shadcn/ui + Vercel AI SDK + CodeMirror 6 + react-arborist + Tanstack Query
 - **Backend**: not rewritten; adding mypy strict + ruff + pre-commit + CI (per ADR-0020)
-- **Order**: Phase 0 ✅ → Phase 1 ABC ✅ → Phase 1 D ✅ → ADR-0027 sync main line ✅ → **Phase 2 D ✅ → Phase 2 E data durability ✅ → AI modes A/B/C/D ✅ → F0 AI capability foundation current gate ✅ → AI modes E/Quiz (next) → Phase 3.5 desktop client → Phase 4 gray-release + v1.0.0 → Phase 5 mobile (read/review-centric)**
+- **Order**: Phase 0 ✅ → Phase 1 ABC ✅ → Phase 1 D ✅ → ADR-0027 sync main line ✅ → **Phase 2 D ✅ → Phase 2 E data durability ✅ → AI modes A/B/D ✅ → F0 AI capability foundation current gate ✅ → Stage C v2 information review and note intake (next) → Phase 3.5 desktop client → AI modes E/Quiz (deferred; reassess after desktop) → Phase 4 gray-release + v1.0.0 → Phase 5 mobile (read/review-centric)**
 - **Estimated**: **12-17 weeks** to Phase 4 (gray entrance) — 2026-05-12 revision, added Phase 3.5 desktop 2-3 weeks
 
 ```
