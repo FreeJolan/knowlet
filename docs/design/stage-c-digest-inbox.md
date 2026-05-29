@@ -1,6 +1,6 @@
 # Stage C v2 — 资讯审阅与入库
 
-- Status: Implemented through C10 (Source config → Raw Info review → Draft diff → commit → workspace polish)
+- Status: Implemented through C11 (Source config → Raw Info review → Draft diff → commit → workspace polish → note-like draft surface)
 - Date: 2026-05-30
 - Roadmap: [`../roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md)
 
@@ -235,8 +235,12 @@ Note
   - 内容只读,不可直接编辑。
 
 - Note Draft 阶段:
-  - 展示 title、tags、kind、folder 和正文。
-  - 正文编辑体验尽量贴近主笔记编辑器。
+  - 展示 title、tags、kind、folder、source、rationale 和正文。
+  - 草稿展示采用接近主笔记的 surface:标题是可内联编辑的大标题,
+    tags 使用主笔记的 chip strip,kind 使用 `KindChip`,folder/source/rationale
+    收进 properties 区。
+  - 正文编辑体验复用主笔记 Markdown editor,并支持 edit / split / preview
+    视图切换。
   - 草稿阶段可保存 metadata/body,可继续走 Diff Review,但仍不会写入正式 Note。
 
 - 右侧:对话流。
@@ -279,6 +283,8 @@ Raw Info 本身不可直接修改。用户如果想改内容,必须先沉淀为 
  正式 Note。
 - 用户可在 Note Draft 阶段调整 title、tags、kind、folder 和正文,通过既有
   `PUT /api/drafts/{draft_id}` 保存草稿内容。
+- Note Draft 阶段使用接近主笔记的交互:标题内联编辑、tags chip 增删、
+  kind chip 升降级、properties 展开、Markdown edit/split/preview 切换。
 - AI 输出 JSON schema 校验失败时返回错误,不写 Draft,不改变 Raw Info 状态。
 
 ## 隐藏知识: Library Context
@@ -406,6 +412,13 @@ API:
   - Source 配置移入 Digest 工作台。
   - Note Draft 阶段生成前禁用,生成后自动切换。
   - Draft 正文编辑复用主笔记编辑体验。
+
+- **C11 Draft note surface**
+  - Draft 阶段不再是表单堆叠,而是接近主笔记阅读/编辑的 surface。
+  - title、tags、kind、folder、source、rationale 和 body 使用主笔记同源
+    组件或同源交互。
+  - Draft footer 保留保存、Diff Review、落库等草稿生命周期操作,明确
+    仍处于入库前边界。
 
 - **C8 Create draft + draft tools**
   - `create_note_draft_from_info`。

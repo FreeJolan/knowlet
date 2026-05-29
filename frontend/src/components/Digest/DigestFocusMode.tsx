@@ -1,8 +1,9 @@
 /**
- * DigestFocusMode — Stage C v2 C6.
+ * DigestFocusMode — Stage C v2.
  *
- * Raw Info inbox. Items are read-only here; review conversation and draft
- * settlement return in the next slice.
+ * Raw Info inbox, source configuration, full-screen review, and note-draft
+ * settlement all live together because Digest is a workflow surface, not a
+ * generic settings panel.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,7 +11,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
-  CheckCircle2,
   Clock,
   ExternalLink,
   FileText,
@@ -39,7 +39,6 @@ import {
   type RawInfoSummary,
 } from "@/api/client";
 import { ChatTranscript, DiffReview, chatHistoryForRequest } from "@/components/Discuss";
-import { MarkdownEditor } from "@/components/Editor/MarkdownEditor";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -47,6 +46,7 @@ import {
 } from "@/components/ui/resizable";
 import { QK } from "@/lib/queryClient";
 
+import { DigestDraftNoteSurface } from "./DigestDraftNoteSurface";
 import { DigestSourcePanel } from "./DigestSourcePanel";
 import { useRawInfoChat } from "./useRawInfoChat";
 
@@ -737,10 +737,13 @@ function ReviewOverlay({
     },
     onSuccess: (result) => {
       setDraftResult((current) => (current ? { ...current, draft: result.draft } : current));
-      setDraftEdit((current) => ({
-        ...current,
+      setDraftEdit({
+        title: result.draft.title,
+        tags: result.draft.tags.join(", "),
+        kind: result.draft.kind,
+        folder: result.draft.folder ?? "",
         body: result.draft.body ?? "",
-      }));
+      });
       setPendingDiff(null);
       clearProposal();
       setDraftError(null);
@@ -757,10 +760,13 @@ function ReviewOverlay({
     },
     onSuccess: (result) => {
       setDraftResult((current) => (current ? { ...current, draft: result.draft } : current));
-      setDraftEdit((current) => ({
-        ...current,
+      setDraftEdit({
+        title: result.draft.title,
+        tags: result.draft.tags.join(", "),
+        kind: result.draft.kind,
+        folder: result.draft.folder ?? "",
         body: result.draft.body ?? "",
-      }));
+      });
       setPendingDiff(null);
       clearProposal();
       setDraftError(null);
@@ -938,170 +944,78 @@ function ReviewOverlay({
                   </button>
                 </div>
               ) : (
-                <div className="space-y-4" data-testid="digest-draft-result">
+                <div className="min-h-[720px]" data-testid="digest-draft-result">
                   {draftResult ? (
-                    <>
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <CheckCircle2 className="size-3.5" />
-                        {t("digest.draftCreated")}
-                      </div>
-                      <div
-                        className="grid gap-3 lg:grid-cols-[minmax(240px,0.55fr)_minmax(320px,1fr)]"
-                        data-testid="digest-draft-metadata"
-                      >
-                        <div className="space-y-2">
-                          <label className="block text-[11px] text-muted-foreground">
-                            {t("digest.draftTitle")}
-                            <input
-                              data-testid="digest-draft-title-input"
-                              value={draftEdit.title}
-                              onChange={(e) =>
-                                setDraftEdit((current) => ({
-                                  ...current,
-                                  title: e.target.value,
-                                }))
-                              }
-                              className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
+                    <DigestDraftNoteSurface
+                      draft={draftResult.draft}
+                      draftEdit={draftEdit}
+                      onDraftEditChange={setDraftEdit}
+                      rationale={draftResult.rationale}
+                      footer={
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={!draftChanged || saveDraftMut.isPending}
+                              onClick={() => saveDraftMut.mutate()}
+                              className="rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
                               style={{ borderColor: "var(--line)" }}
-                            />
-                          </label>
-                          <label className="block text-[11px] text-muted-foreground">
-                            {t("digest.draftTags")}
-                            <input
-                              data-testid="digest-draft-tags-input"
-                              value={draftEdit.tags}
-                              onChange={(e) =>
-                                setDraftEdit((current) => ({
-                                  ...current,
-                                  tags: e.target.value,
-                                }))
+                              data-testid="digest-draft-save"
+                            >
+                              {saveDraftMut.isPending ? t("digest.savingDraft") : t("digest.saveDraft")}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={
+                                commitMut.isPending ||
+                                Boolean(pendingDiff) ||
+                                draftChanged ||
+                                !draftEdit.title.trim() ||
+                                !draftEdit.body.trim()
                               }
-                              className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
+                              onClick={() => commitMut.mutate()}
+                              className="rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
+                              style={{
+                                borderColor: "var(--accent)",
+                                background: "var(--accent-soft, rgba(91,122,156,0.14))",
+                              }}
+                              data-testid="digest-draft-commit"
+                            >
+                              {commitMut.isPending ? t("digest.committingDraft") : t("digest.commitDraft")}
+                            </button>
+                            {draftChanged && (
+                              <span className="text-xs text-muted-foreground">
+                                {t("digest.unsavedDraft")}
+                              </span>
+                            )}
+                          </div>
+                          {commitResult && (
+                            <div
+                              className="rounded border px-2 py-1.5 text-xs"
+                              style={{ borderColor: "var(--accent)", background: "var(--accent-tint)" }}
+                              data-testid="digest-draft-committed"
+                            >
+                              {t("digest.draftCommitted", { title: commitResult.title })}
+                            </div>
+                          )}
+                          {pendingDiff && (
+                            <div
+                              className="h-[420px] overflow-hidden rounded-md border"
                               style={{ borderColor: "var(--line)" }}
-                            />
-                          </label>
-                          <div className="grid grid-cols-2 gap-2">
-                            <label className="block text-[11px] text-muted-foreground">
-                              {t("digest.draftKind")}
-                              <select
-                                data-testid="digest-draft-kind-select"
-                                value={draftEdit.kind}
-                                onChange={(e) =>
-                                  setDraftEdit((current) => ({
-                                    ...current,
-                                    kind: e.target.value as "knowledge" | "reference",
-                                  }))
-                                }
-                                className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
-                                style={{ borderColor: "var(--line)" }}
-                              >
-                                <option value="knowledge">knowledge</option>
-                                <option value="reference">reference</option>
-                              </select>
-                            </label>
-                            <label className="block text-[11px] text-muted-foreground">
-                              {t("digest.draftFolder")}
-                              <input
-                                data-testid="digest-draft-folder-input"
-                                value={draftEdit.folder}
-                                onChange={(e) =>
-                                  setDraftEdit((current) => ({
-                                    ...current,
-                                    folder: e.target.value,
-                                  }))
-                                }
-                                placeholder={t("digest.rootFolder")}
-                                className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
-                                style={{ borderColor: "var(--line)" }}
+                              data-testid="digest-draft-diff-panel"
+                            >
+                              <DiffReview
+                                oldBody={pendingDiff.oldBody}
+                                newBody={pendingDiff.newBody}
+                                saving={acceptDiffMut.isPending || rejectDiffMut.isPending}
+                                onAccept={(finalBody) => acceptDiffMut.mutate(finalBody)}
+                                onReject={() => rejectDiffMut.mutate()}
                               />
-                            </label>
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {draftResult.draft.kind} · {draftResult.draft.folder || t("digest.rootFolder")}
-                          </div>
-                          {draftResult.rationale && (
-                            <div className="text-xs text-muted-foreground">
-                              {draftResult.rationale}
                             </div>
                           )}
                         </div>
-                        <div
-                          className="min-h-[360px] overflow-hidden rounded-md border"
-                          style={{ borderColor: "var(--line)", background: "var(--bg)" }}
-                          data-testid="digest-draft-editor"
-                        >
-                          <MarkdownEditor
-                            key={`${draftResult.draft.id}:${draftResult.draft.updated_at}`}
-                            initialValue={draftResult.draft.body ?? ""}
-                            onChange={(body) =>
-                              setDraftEdit((current) => ({ ...current, body }))
-                            }
-                          />
-                        </div>
-                      </div>
-                      <div
-                        className="max-h-32 overflow-y-auto rounded border px-2 py-1.5 text-xs whitespace-pre-wrap"
-                        style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
-                        data-testid="digest-draft-body-preview"
-                      >
-                        {draftEdit.body || t("digest.emptyDraftBody")}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          disabled={!draftChanged || saveDraftMut.isPending}
-                          onClick={() => saveDraftMut.mutate()}
-                          className="rounded border px-2 py-1 text-xs disabled:opacity-50"
-                          style={{ borderColor: "var(--line)" }}
-                          data-testid="digest-draft-save"
-                        >
-                          {saveDraftMut.isPending ? t("digest.savingDraft") : t("digest.saveDraft")}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={
-                            commitMut.isPending ||
-                            Boolean(pendingDiff) ||
-                            draftChanged ||
-                            !draftEdit.title.trim() ||
-                            !draftEdit.body.trim()
-                          }
-                          onClick={() => commitMut.mutate()}
-                          className="rounded border px-2 py-1 text-xs disabled:opacity-50"
-                          style={{
-                            borderColor: "var(--accent)",
-                            background: "var(--accent-soft, rgba(91,122,156,0.14))",
-                          }}
-                          data-testid="digest-draft-commit"
-                        >
-                          {commitMut.isPending ? t("digest.committingDraft") : t("digest.commitDraft")}
-                        </button>
-                      </div>
-                      {commitResult && (
-                        <div
-                          className="rounded border px-2 py-1.5 text-xs"
-                          style={{ borderColor: "var(--accent)", background: "var(--accent-tint)" }}
-                          data-testid="digest-draft-committed"
-                        >
-                          {t("digest.draftCommitted", { title: commitResult.title })}
-                        </div>
-                      )}
-                      {pendingDiff && (
-                        <div
-                          className="h-[420px] overflow-hidden rounded-md border"
-                          style={{ borderColor: "var(--line)" }}
-                          data-testid="digest-draft-diff-panel"
-                        >
-                          <DiffReview
-                            oldBody={pendingDiff.oldBody}
-                            newBody={pendingDiff.newBody}
-                            saving={acceptDiffMut.isPending || rejectDiffMut.isPending}
-                            onAccept={(finalBody) => acceptDiffMut.mutate(finalBody)}
-                            onReject={() => rejectDiffMut.mutate()}
-                          />
-                        </div>
-                      )}
-                    </>
+                      }
+                    />
                   ) : (
                     <div className="text-sm text-muted-foreground">
                       {t("digest.draftStageDisabled")}

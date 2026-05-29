@@ -1,6 +1,6 @@
 # Stage C v2 Tracking — 资讯审阅与入库
 
-- Status: C4-C10 implemented and verified
+- Status: C4-C11 implemented and verified
 - Started: 2026-05-30
 - Design: [`../design/stage-c-digest-inbox.md`](../design/stage-c-digest-inbox.md)
 
@@ -72,6 +72,13 @@ P8 Digest workspace polish
     Branch: empty-source state exposes configuration; closing review returns to inbox without a window backdrop.
     Final assertion: Digest-specific configuration is discoverable in the workbench and the Raw Info → Note Draft stage boundary is visible in DOM state.
 
+P9 Draft note surface
+    ☑ implemented   ☑ tested   ✓ dogfooded
+    Entry state: review mode has generated or reused a Note Draft and the Draft stage is active.
+    Happy path: user reads and edits the draft through a note-like surface: title inline edit, tag chips, kind chip, properties panel, and Markdown edit/split/preview.
+    Branch: user changes metadata/body before save or reviews a diff; commit remains blocked while unsaved changes or pending diff exist.
+    Final assertion: draft interactions stay inside the Draft boundary, metadata/body save through `PUT /api/drafts/{id}`, and commit still requires explicit user action.
+
 ## B.3 Persona Walkthrough
 
 - **新用户 / P1**: I open Digest and need the source setup to be right there because it is required for the workflow. I need the UI to make RSS vs Prompt obvious and reject website subscription wording.
@@ -95,6 +102,11 @@ P8 Digest workspace polish
 - Review workspace split: reuse existing `react-resizable-panels 2.1.9` (npm publish 2025-04-27) through the local `ResizablePanelGroup` wrapper. It matches AppShell's pane pattern and avoids new layout state.
 - Stage tabs: considered `@radix-ui/react-tabs 1.1.13` (npm modified 2025-12-24), but rejected for C10 because this surface needs only two stable buttons with explicit ARIA state and no new dependency.
 - Draft body editing: reuse existing `@uiw/react-codemirror 4.25.9` (npm publish 2026-03-25) indirectly through `MarkdownEditor`, the same primitive used by `NoteView`, so draft editing stays close to the main note experience.
+- Draft note surface: reuse local `InlineEditInput`, `TagChipStrip`, `KindChip`,
+  `MarkdownEditor`, and `MarkdownPreview`. Considered `@radix-ui/react-tabs 1.1.13`
+  (npm modified 2025-12-24) again for editor mode switching, but kept a local
+  icon segmented control to match `NoteView` and avoid a dependency for three
+  fixed states.
 
 ## C.1 Similar Code Read
 
@@ -132,6 +144,7 @@ P8 Digest workspace polish
 - P6 Draft diff tools → `tests/test_digest_pull.py:531` draft diff API proposes without writing Note, `tests/test_digest_pull.py:549` reject keeps Draft body unchanged, `tests/test_digest_pull.py:564` accept mutates only Draft, `tests/test_digest_pull.py:607` conversation tool proposes/rejects/accepts current Draft, `frontend/scripts/e2e/digest-list.mjs:469` review chat opens DiffReview and can reject/accept all ☑
 - P7 Commit note draft → `tests/test_digest_pull.py:632` `commit_note_draft` tool writes Note, indexes it, deletes Draft, and marks Raw Info included, `tests/test_digest_pull.py:650` empty-body commit blocks without deleting Draft, `frontend/scripts/e2e/digest-list.mjs:499` review overlay commit writes and opens the Note, `tests/test_cli.py` exposes `drafts commit`, `drafts accept-diff`, and `drafts reject-diff` commands ☑
 - P8 Digest workspace polish → `frontend/scripts/e2e/digest-sources.mjs:21` general Settings lacks Digest tab, `frontend/scripts/e2e/digest-sources.mjs:38` source config is in Digest, `frontend/scripts/e2e/digest-list.mjs:191` review is full-screen with Raw Info/Draft stages, `frontend/scripts/e2e/digest-list.mjs:470` Draft stage enables and auto-selects after generation ☑
+- P9 Draft note surface → `frontend/scripts/e2e/digest-list.mjs:496` Draft note surface appears, `frontend/scripts/e2e/digest-list.mjs:517` title/tags/kind/properties editing, `frontend/scripts/e2e/digest-list.mjs:532` preview toggle, `frontend/scripts/e2e/digest-list.mjs:539` draft save, `frontend/scripts/e2e/digest-list.mjs:556` diff reject and `frontend/scripts/e2e/digest-list.mjs:571` diff accept still return to the draft surface before commit ☑
 
 ## E.3 Dogfood Log
 
@@ -193,3 +206,11 @@ P8 Digest workspace polish
   - UI probes: source panel background `rgb(244, 240, 232)`, review workspace background `rgb(244, 240, 232)`, `document.elementFromPoint(center)` resolved to `digest-config-toggle` / `digest-settle-draft`, active element `BUTTON`, and browser console had no errors/warnings.
   - Screenshots: `/tmp/knowlet-c10-digest-config.png`, `/tmp/knowlet-c10-review-workspace.png`, `/tmp/knowlet-c10-draft-stage.png`
   - UX check: Digest now owns source configuration; review mode is a full-screen workspace without a backdrop; Raw Info is the first selected stage; Note Draft is disabled until generation, then auto-selected and editable with the same Markdown editor primitive as the main note view.
+- P9 Draft note surface:
+  - Red test: `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-list.mjs` initially failed waiting for `[data-testid="digest-draft-note-surface"]`, because the Draft stage still used the old compact form/editor layout.
+  - Focused green: `cd frontend && node scripts/e2e/digest-list.mjs` → passed; `cd frontend && node scripts/e2e/digest-sources.mjs` → passed. Earlier implementation loop also passed the same suites with `SKIP_BUILD=1` after rebuilding.
+  - Related green: `uv run pytest tests/test_digest_pull.py tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py` → 42 passed; `cd frontend && npm run lint --silent` → passed; `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run build --silent` → passed.
+  - Browser dogfood: production build served from `/tmp/knowlet-stage-c-demo-vault`; Digest → Start review → Settle as note draft reused/generated a Draft, auto-selected Draft, opened properties, switched to preview, and showed note-like title/tags/kind/source/rationale/body.
+  - UI probes: draft surface background `rgb(244, 240, 232)`, mode toggle background `rgb(239, 233, 221)`, center hit target `digest-draft-preview`, active element `BUTTON`, referenced CSS variables defined in `frontend/src/styles/globals.css`, and browser console had no new errors/warnings.
+  - Screenshot: `/tmp/knowlet-c11-draft-note-surface.png`
+  - UX check: Draft now reads like a real Knowlet note before commit, while save/diff/commit controls remain in the Draft lifecycle footer so the Raw Info → Draft → Note boundary stays visible.

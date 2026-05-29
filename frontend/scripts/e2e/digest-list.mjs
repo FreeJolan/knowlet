@@ -266,6 +266,11 @@ try {
       const body = route.request().postDataJSON();
       assert(body.title === "Tool Trace Notes", "draft metadata update sends title");
       assert(body.folder === "ai/notes", "draft metadata update sends folder");
+      assert(body.kind === "reference", "draft kind update sends kind chip value");
+      assert(
+        body.tags.join(",") === "agents,notes",
+        `draft tags update sends chip values, got ${body.tags.join(",")}`,
+      );
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -275,7 +280,7 @@ try {
           body: "## Core\n\nTool traces should be visible but separate from the final answer.",
           source: "https://example.com/agent-trace",
           tags: ["agents", "notes"],
-          kind: "knowledge",
+          kind: "reference",
           folder: "ai/notes",
           task_id: null,
           created_at: new Date().toISOString(),
@@ -341,7 +346,7 @@ try {
             body: "## Core\n\nTool traces should be visible but separate from the final answer.",
             source: "https://example.com/agent-trace",
             tags: ["agents", "notes"],
-            kind: "knowledge",
+            kind: "reference",
             folder: "ai/notes",
             task_id: null,
             created_at: new Date().toISOString(),
@@ -371,7 +376,7 @@ try {
             body: body.final_body,
             source: "https://example.com/agent-trace",
             tags: ["agents", "notes"],
-            kind: "knowledge",
+            kind: "reference",
             folder: "ai/notes",
             task_id: null,
             created_at: new Date().toISOString(),
@@ -488,20 +493,58 @@ try {
       state: "visible",
       timeout: 3000,
     });
-    const titleValue = await page.locator('[data-testid="digest-draft-title-input"]').inputValue();
+    await page.locator('[data-testid="digest-draft-note-surface"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    const titleText = await page.locator('[data-testid="digest-draft-title"]').textContent();
     const result = await page.locator('[data-testid="digest-draft-result"]').textContent();
-    assert(titleValue === "Tool Trace Separation", "created draft title is visible");
-    assert(result.includes("knowledge"), "created draft kind is visible");
+    assert(titleText === "Tool Trace Separation", "created draft title is visible as note title");
     assert(result.includes("ai/research"), "created draft folder is visible");
+    assert(
+      (await page.locator('[data-testid="digest-draft-kind-chip"]').getAttribute("data-kind")) === "knowledge",
+      "created draft kind chip is visible",
+    );
+    assert(
+      (await page.locator('[data-testid="digest-draft-view-mode-toggle"]').count()) === 1,
+      "draft has note-style view mode toggle",
+    );
+    assert(
+      (await page.locator('[data-testid="tag-chip"][data-tag="tooling"]').count()) === 1,
+      "draft tags render as chips",
+    );
+
+    await page.locator('[data-testid="digest-draft-title"]').click();
     await page.locator('[data-testid="digest-draft-title-input"]').fill("Tool Trace Notes");
-    await page.locator('[data-testid="digest-draft-tags-input"]').fill("agents, notes");
+    await page.locator('[data-testid="digest-draft-title-input"]').press("Enter");
+    await page.locator('[data-testid="tag-add-button"]').click();
+    await page.locator('[data-testid="tag-add-input"]').fill("notes");
+    await page.locator('[data-testid="tag-add-input"]').press("Enter");
+    await page.locator('[data-testid="tag-chip-remove"][data-tag="tooling"]').click();
+    await page.locator('[data-testid="digest-draft-kind-chip-button"]').click();
+    await page.locator('[data-testid="kind-chip-demote-confirm"]').click();
+    assert(
+      (await page.locator('[data-testid="digest-draft-kind-chip"]').getAttribute("data-kind")) === "reference",
+      "draft kind chip demotes to reference",
+    );
+    await page.locator('[data-testid="digest-draft-properties-toggle"]').click();
     await page.locator('[data-testid="digest-draft-folder-input"]').fill("ai/notes");
+    await page
+      .locator('[data-testid="digest-draft-view-mode-toggle"] button[data-mode="preview"]')
+      .click();
+    await page
+      .locator('[data-testid="digest-draft-preview"]')
+      .filter({ hasText: "Tool traces should be visible" })
+      .waitFor({ state: "visible", timeout: 3000 });
     await page.locator('[data-testid="digest-draft-save"]').click();
-    const updatedTitle = await page.locator('[data-testid="digest-draft-title-input"]').inputValue();
+    const updatedTitle = await page.locator('[data-testid="digest-draft-title"]').textContent();
     const updatedFolder = await page.locator('[data-testid="digest-draft-folder-input"]').inputValue();
-    const updated = await page.locator('[data-testid="digest-draft-result"]').textContent();
     assert(updatedTitle === "Tool Trace Notes", "updated draft title is visible");
     assert(updatedFolder === "ai/notes", "updated draft folder is visible");
+    assert(
+      (await page.locator('[data-testid="digest-draft-kind-chip"]').getAttribute("data-kind")) === "reference",
+      "updated draft kind is visible",
+    );
     await page
       .locator('[data-testid="digest-review-chat-input"]')
       .fill("Please revise the draft so the final note is clearer.");
@@ -528,7 +571,10 @@ try {
     await page.locator('[data-testid="diff-apply"]').click();
     assert(acceptCalled, "accept diff endpoint is called");
     await page
-      .locator('[data-testid="digest-draft-body-preview"]')
+      .locator('[data-testid="digest-draft-view-mode-toggle"] button[data-mode="preview"]')
+      .click();
+    await page
+      .locator('[data-testid="digest-draft-preview"]')
       .filter({ hasText: "easy to review" })
       .waitFor({ state: "visible", timeout: 3000 });
 
