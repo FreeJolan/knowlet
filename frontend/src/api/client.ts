@@ -724,6 +724,9 @@ export interface DraftSummary {
 export const listDrafts = (): Promise<DraftSummary[]> =>
   request("GET", "/api/drafts");
 
+export const getDraft = (id: string): Promise<DraftSummary> =>
+  request("GET", `/api/drafts/${encodeURIComponent(id)}`);
+
 export type DigestPeriod = "today" | "week" | "all";
 
 export const listDigestDrafts = (
@@ -866,12 +869,13 @@ export const rejectDraftDiff = (
 
 export const commitNoteDraft = (
   id: string,
+  payload?: { folder?: string },
 ): Promise<{
   note_id: string;
   path: string;
   title: string;
   raw_info_id?: string | null;
-}> => request("POST", `/api/drafts/${encodeURIComponent(id)}/commit`);
+}> => request("POST", `/api/drafts/${encodeURIComponent(id)}/commit`, payload);
 
 export const getDigestStatus = (): Promise<DigestStatus> =>
   request("GET", "/api/digest/status");

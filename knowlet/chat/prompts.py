@@ -47,7 +47,7 @@ Knowledge mining (RSS / URL → AI-extracted drafts → user review → Notes):
   after the user explicitly asks to apply all changes.
 - reject_all_draft_diff(draft_id?): clear the current pending Draft diff
   after the user asks to reject/discard/撤回 it.
-- commit_note_draft(draft_id?): commit the reviewed Draft as a formal Note.
+- commit_note_draft(draft_id?, folder?): commit the reviewed Draft as a formal Note.
   Confirm first; this writes to the vault and removes the draft.
 
 Web access (use sparingly; M7.5 / ADR-0017):

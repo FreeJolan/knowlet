@@ -70,6 +70,8 @@ function writeRawInfos(vaultDir, items) {
 }
 
 function seedThreeItems(vaultDir) {
+  mkdirSync(join(vaultDir, "notes", "ai", "notes"), { recursive: true });
+  mkdirSync(join(vaultDir, "notes", "library", "final"), { recursive: true });
   writeRawInfos(vaultDir, [
     rawInfo({
       id: "01C6TODAYRAWINFO000001",
@@ -98,6 +100,19 @@ function seedThreeItems(vaultDir) {
       summary: "A model-generated candidate with an original link.",
       status: "discussed",
       suggested_tags: ["agents", "prompt-source"],
+    }),
+  ]);
+}
+
+function seedOneItem(vaultDir) {
+  writeRawInfos(vaultDir, [
+    rawInfo({
+      id: "01C6ONLYRAWINFO000001",
+      title: "Only review item",
+      url: "https://example.com/only",
+      fetched_at: isoDaysAgo(0),
+      summary: "A single item for empty queue behavior.",
+      status: "unprocessed",
     }),
   ]);
 }
@@ -223,6 +238,14 @@ try {
       (await page.locator('[data-testid="digest-review-stage-tab-draft"]').getAttribute("aria-disabled")) === "true",
       "Draft tab is disabled before draft generation",
     );
+    const paneRatio = await page.locator('[data-testid="digest-review-workspace"]').evaluate(() => {
+      const left = document.querySelector('[data-testid="digest-review-left-pane"]');
+      const right = document.querySelector('[data-testid="digest-review-chat-pane"]');
+      const lw = left?.getBoundingClientRect().width ?? 0;
+      const rw = right?.getBoundingClientRect().width ?? 0;
+      return lw / (lw + rw);
+    });
+    assert(paneRatio > 0.58 && paneRatio < 0.62, `review layout starts near 6:4, got ${paneRatio}`);
     let title = await page.locator('[data-testid="digest-review-current-title"]').textContent();
     assert(title.includes("Agent trace design"), "review starts at selected item");
 
@@ -391,12 +414,14 @@ try {
     });
     await page.route("**/api/drafts/01C8DRAFTFROMRAWINFO/commit", async (route) => {
       commitCalled = true;
+      const body = route.request().postDataJSON();
+      assert(body.folder === "library/final", `commit sends selected folder, got ${body.folder}`);
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
           note_id: "01C9NOTEFROMDRAFT",
-          path: "/tmp/knowlet/notes/ai/notes/tool-trace-notes.md",
+          path: "/tmp/knowlet/notes/library/final/tool-trace-notes.md",
           title: "Tool Trace Notes",
           raw_info_id: "01C6TODAYRAWINFO000001",
         }),
@@ -513,6 +538,16 @@ try {
       (await page.locator('[data-testid="tag-chip"][data-tag="tooling"]').count()) === 1,
       "draft tags render as chips",
     );
+    await page.locator('[data-testid="digest-review-stage-tab-raw"]').click();
+    await page.locator('[data-testid="digest-existing-draft-notice"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    assert(
+      (await page.locator('[data-testid="digest-settle-draft"]').count()) === 0,
+      "raw info with a draft does not offer duplicate draft generation",
+    );
+    await page.locator('[data-testid="digest-review-stage-tab-draft"]').click();
 
     await page.locator('[data-testid="digest-draft-title"]').click();
     await page.locator('[data-testid="digest-draft-title-input"]').fill("Tool Trace Notes");
@@ -579,15 +614,66 @@ try {
       .waitFor({ state: "visible", timeout: 3000 });
 
     await page.locator('[data-testid="digest-draft-commit"]').click();
-    assert(commitCalled, "commit endpoint is called");
-    await page.locator('[data-testid="digest-draft-committed"]').waitFor({
+    await page.locator('[data-testid="digest-folder-dialog"]').waitFor({
       state: "visible",
       timeout: 3000,
     });
+    assert(!commitCalled, "opening the folder dialog does not commit");
+    await page.locator('[data-testid="digest-folder-cancel"]').click();
+    await page.locator('[data-testid="digest-folder-dialog"]').waitFor({
+      state: "detached",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-draft-commit"]').click();
+    await page.locator('[data-testid="digest-folder-dialog"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-folder-option-library-final"]').click();
+    await page.locator('[data-testid="digest-folder-confirm"]').click();
+    assert(commitCalled, "commit endpoint is called");
+    await page.locator('[data-testid="digest-review-current-title"]').filter({
+      hasText: "RSS normalization caveat",
+    }).waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    assert(
+      (await page.locator('[data-testid="digest-review-stage-tab-raw"]').getAttribute("aria-selected")) === "true",
+      "after commit the next item without a draft opens Raw Info",
+    );
     await page.locator('[data-testid="digest-review-close"]').click();
   });
 
   await runTest("no console errors during populated inbox suite", () => {
+    assertConsoleClean(env);
+  });
+} finally {
+  await env.teardown();
+}
+
+env = await setupDigestEnv(seedOneItem);
+try {
+  const { page } = env;
+  await runTest("review queue shows an empty state after skipping the last item", async () => {
+    await page.locator('[data-testid="header-digest-button"]').click();
+    await page.locator('[data-testid="digest-start-review"]').click();
+    await page.locator('[data-testid="digest-review-workspace"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-review-skip"]').click();
+    await page.locator('[data-testid="digest-review-empty-state"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    assert(
+      (await page.locator('[data-testid="digest-review-left-pane"]').count()) === 0,
+      "empty review queue replaces the split panes",
+    );
+    await page.locator('[data-testid="digest-review-close"]').click();
+  });
+  await runTest("no console errors during single-item skip suite", () => {
     assertConsoleClean(env);
   });
 } finally {

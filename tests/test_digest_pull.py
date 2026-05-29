@@ -631,10 +631,16 @@ def test_current_draft_tools_propose_accept_reject_and_commit(tmp_path):
         "Tool traces should be visible, separate, and reviewable."
     )
 
-    committed = runtime.registry.dispatch("commit_note_draft", {}, runtime.ctx)
+    committed = runtime.registry.dispatch(
+        "commit_note_draft",
+        {"folder": "library/final"},
+        runtime.ctx,
+    )
     assert committed["note_id"] == draft.id
+    assert committed["path"].endswith(f"/notes/library/final/{draft.id}.md")
     assert dirty_notes == [draft.id]
     assert DraftStore(vault.drafts_dir).get(draft.id) is None
+    assert (vault.notes_dir / "library" / "final" / f"{draft.id}.md").exists()
     loaded = RawInfoStore(vault.digest_items_dir).get(item.id)
     assert loaded is not None
     assert loaded.status == "included"
@@ -655,6 +661,30 @@ def test_commit_note_draft_rejects_empty_body_without_deleting_draft(tmp_path):
     assert res.status_code == 400, res.text
     assert DraftStore(vault.drafts_dir).get(draft.id) is not None
     assert len(list(vault.iter_note_paths())) == 0
+
+
+def test_commit_note_draft_can_override_target_folder(tmp_path):
+    vault, cfg = _ready_vault(tmp_path)
+    draft = Draft(
+        title="Folder reviewed draft",
+        body="Reviewed body.",
+        kind="knowledge",
+        folder="ai/recommended",
+    )
+    DraftStore(vault.drafts_dir).save(draft)
+    client = TestClient(create_app(vault, cfg))
+
+    res = client.post(
+        f"/api/drafts/{draft.id}/commit",
+        json={"folder": "library/final"},
+    )
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["note_id"] == draft.id
+    assert body["path"].endswith(f"/notes/library/final/{draft.id}.md")
+    assert DraftStore(vault.drafts_dir).get(draft.id) is None
+    assert (vault.notes_dir / "library" / "final" / f"{draft.id}.md").exists()
 
 
 def test_digest_cli_run_pulls_v2_source(tmp_path, monkeypatch):

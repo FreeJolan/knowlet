@@ -30,6 +30,7 @@ import {
   commitNoteDraft,
   createRawInfoDraft,
   getDigestStatus,
+  getDraft,
   listRawInfoItems,
   pullDigestSources,
   rejectDraftDiff,
@@ -46,6 +47,7 @@ import {
 } from "@/components/ui/resizable";
 import { QK } from "@/lib/queryClient";
 
+import { DigestFolderCommitDialog } from "./DigestFolderCommitDialog";
 import { DigestDraftNoteSurface } from "./DigestDraftNoteSurface";
 import { DigestSourcePanel } from "./DigestSourcePanel";
 import { useRawInfoChat } from "./useRawInfoChat";
@@ -646,13 +648,18 @@ function ReviewOverlay({
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const [processedIds, setProcessedIds] = useState<Set<string>>(() => new Set());
+  const reviewItems = useMemo(
+    () => items.filter((candidate) => isPending(candidate) && !processedIds.has(candidate.id)),
+    [items, processedIds],
+  );
   const index = Math.max(
     0,
-    items.findIndex((item) => item.id === activeId),
+    reviewItems.findIndex((item) => item.id === activeId),
   );
-  const item = items[index] ?? null;
-  const previous = index > 0 ? items[index - 1] : null;
-  const next = index >= 0 && index < items.length - 1 ? items[index + 1] : null;
+  const item = reviewItems[index] ?? null;
+  const previous = index > 0 ? reviewItems[index - 1] : null;
+  const next = index >= 0 && index < reviewItems.length - 1 ? reviewItems[index + 1] : null;
   const { messages, status, error, proposal, send, stop, clearProposal } = useRawInfoChat(
     item?.id ?? null,
   );
@@ -664,6 +671,7 @@ function ReviewOverlay({
     title: string;
   } | null>(null);
   const [stageTab, setStageTab] = useState<"raw" | "draft">("raw");
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [draftEdit, setDraftEdit] = useState({
     title: "",
     tags: "",
@@ -672,6 +680,23 @@ function ReviewOverlay({
     body: "",
   });
   const [draftError, setDraftError] = useState<string | null>(null);
+  const existingDraft = useQuery({
+    queryKey: ["draft", item?.note_draft_id],
+    queryFn: () => getDraft(item?.note_draft_id ?? ""),
+    enabled: Boolean(item?.note_draft_id),
+  });
+
+  const advanceAfterProcessed = (processedId: string) => {
+    const currentIndex = reviewItems.findIndex((candidate) => candidate.id === processedId);
+    const remaining = reviewItems.filter((candidate) => candidate.id !== processedId);
+    const nextItem =
+      remaining[currentIndex] ??
+      remaining[Math.max(0, currentIndex - 1)] ??
+      remaining[0] ??
+      null;
+    setProcessedIds((current) => new Set(current).add(processedId));
+    if (nextItem) onChangeItem(nextItem.id);
+  };
 
   const draftMut = useMutation({
     mutationFn: async () => {
@@ -777,12 +802,13 @@ function ReviewOverlay({
   });
 
   const commitMut = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (folder: string) => {
       if (!draftResult) throw new Error("No draft to commit");
-      return commitNoteDraft(draftResult.draft.id);
+      return commitNoteDraft(draftResult.draft.id, { folder });
     },
     onSuccess: (result) => {
       setCommitResult({ note_id: result.note_id, title: result.title });
+      setFolderDialogOpen(false);
       setPendingDiff(null);
       clearProposal();
       void qc.invalidateQueries({ queryKey: ["digest-items"] });
@@ -790,6 +816,7 @@ function ReviewOverlay({
       void qc.invalidateQueries({ queryKey: ["drafts"] });
       void qc.invalidateQueries({ queryKey: QK.tree });
       onOpenNote?.(result.note_id);
+      advanceAfterProcessed(result.raw_info_id ?? item?.id ?? activeId);
     },
     onError: (err) => {
       setDraftError(err instanceof Error ? err.message : t("digest.commitFailed"));
@@ -801,11 +828,31 @@ function ReviewOverlay({
     setDraftResult(null);
     setPendingDiff(null);
     setCommitResult(null);
+    setFolderDialogOpen(false);
     setStageTab("raw");
     setDraftEdit({ title: "", tags: "", kind: "reference", folder: "", body: "" });
     setDraftError(null);
     clearProposal();
   }, [clearProposal, item?.id]);
+
+  useEffect(() => {
+    if (!item?.note_draft_id || !existingDraft.data) return;
+    const draft = existingDraft.data;
+    setDraftResult({
+      raw_info: item,
+      draft,
+      rationale: t("digest.existingDraftRationale"),
+    });
+    setDraftEdit({
+      title: draft.title,
+      tags: draft.tags.join(", "),
+      kind: draft.kind,
+      folder: draft.folder ?? "",
+      body: draft.body ?? "",
+    });
+    setStageTab("draft");
+    setDraftError(null);
+  }, [existingDraft.data, item, t]);
 
   useEffect(() => {
     if (!proposal) return;
@@ -818,7 +865,51 @@ function ReviewOverlay({
     }
   }, [clearProposal, proposal, t]);
 
-  if (!item) return null;
+  if (!item) {
+    return (
+      <div
+        className="fixed inset-0 z-[60] flex flex-col"
+        style={{ background: "var(--bg, #f4f0e8)" }}
+        data-testid="digest-review-workspace"
+      >
+        <header
+          className="flex items-center justify-between gap-4 border-b px-5 py-3"
+          style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+        >
+          <div className="min-w-0">
+            <div className="text-[11px] font-mono uppercase text-muted-foreground">
+              {t("digest.reviewComplete")}
+            </div>
+            <h2 className="truncate font-serif text-xl font-medium">
+              {t("digest.reviewEmptyTitle")}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded p-1 hover:bg-accent/30"
+            data-testid="digest-review-close"
+            aria-label={t("digest.close")}
+          >
+            <X className="size-4" />
+          </button>
+        </header>
+        <div
+          className="flex min-h-0 flex-1 items-center justify-center p-8 text-center"
+          data-testid="digest-review-empty-state"
+        >
+          <div className="max-w-md">
+            <div className="font-serif text-2xl font-semibold">
+              {t("digest.reviewEmptyTitle")}
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {t("digest.reviewEmptyHint")}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const draftChanged =
     draftResult !== null &&
@@ -827,6 +918,7 @@ function ReviewOverlay({
       draftEdit.kind !== draftResult.draft.kind ||
       draftEdit.folder.trim() !== (draftResult.draft.folder ?? "") ||
       draftEdit.body !== draftResult.draft.body);
+  const hasExistingDraft = Boolean(draftResult || item.note_draft_id);
 
   const submit = () => {
     if (input.trim() && status !== "streaming") {
@@ -847,7 +939,7 @@ function ReviewOverlay({
       >
         <div className="min-w-0">
           <div className="text-[11px] font-mono uppercase text-muted-foreground">
-            {t("digest.reviewPosition", { current: index + 1, total: items.length })}
+            {t("digest.reviewPosition", { current: index + 1, total: reviewItems.length })}
           </div>
           <h2
             className="truncate font-serif text-xl font-medium"
@@ -868,10 +960,11 @@ function ReviewOverlay({
       </header>
 
       <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
-        <ResizablePanel defaultSize={54} minSize={38}>
+        <ResizablePanel defaultSize={60} minSize={40}>
           <section
             className="flex h-full min-h-0 flex-col"
             style={{ background: "var(--bg-1)" }}
+            data-testid="digest-review-left-pane"
           >
             <div
               className="flex items-center gap-2 border-b px-4 py-2"
@@ -931,17 +1024,39 @@ function ReviewOverlay({
                   )}
                   <DetailBlock label={t("digest.whyItMatters")} value={item.why_it_matters} />
                   <DetailBlock label={t("digest.excerpt")} value={item.content_excerpt} />
-                  <button
-                    type="button"
-                    disabled={draftMut.isPending || status === "streaming"}
-                    onClick={() => draftMut.mutate()}
-                    className="inline-flex items-center gap-1.5 rounded border px-3 py-2 text-xs disabled:opacity-50"
-                    style={{ borderColor: "var(--accent)", color: "var(--ink)" }}
-                    data-testid="digest-settle-draft"
-                  >
-                    <Sparkles className="size-3.5" />
-                    {draftMut.isPending ? t("digest.creatingDraft") : t("digest.settleDraft")}
-                  </button>
+                  {hasExistingDraft ? (
+                    <div
+                      className="flex flex-wrap items-center gap-2 rounded border px-3 py-2 text-xs"
+                      style={{ borderColor: "var(--line)", background: "var(--bg)" }}
+                      data-testid="digest-existing-draft-notice"
+                    >
+                      <FileText className="size-3.5" />
+                      <span>{t("digest.existingDraftNotice")}</span>
+                      {draftResult && (
+                        <button
+                          type="button"
+                          className="rounded border px-2 py-1"
+                          style={{ borderColor: "var(--accent)" }}
+                          onClick={() => setStageTab("draft")}
+                          data-testid="digest-open-existing-draft"
+                        >
+                          {t("digest.openDraft")}
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={draftMut.isPending || status === "streaming"}
+                      onClick={() => draftMut.mutate()}
+                      className="inline-flex items-center gap-1.5 rounded border px-3 py-2 text-xs disabled:opacity-50"
+                      style={{ borderColor: "var(--accent)", color: "var(--ink)" }}
+                      data-testid="digest-settle-draft"
+                    >
+                      <Sparkles className="size-3.5" />
+                      {draftMut.isPending ? t("digest.creatingDraft") : t("digest.settleDraft")}
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="min-h-[720px]" data-testid="digest-draft-result">
@@ -973,7 +1088,7 @@ function ReviewOverlay({
                                 !draftEdit.title.trim() ||
                                 !draftEdit.body.trim()
                               }
-                              onClick={() => commitMut.mutate()}
+                              onClick={() => setFolderDialogOpen(true)}
                               className="rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
                               style={{
                                 borderColor: "var(--accent)",
@@ -983,6 +1098,13 @@ function ReviewOverlay({
                             >
                               {commitMut.isPending ? t("digest.committingDraft") : t("digest.commitDraft")}
                             </button>
+                            <DigestFolderCommitDialog
+                              open={folderDialogOpen}
+                              recommendedFolder={draftEdit.folder}
+                              committing={commitMut.isPending}
+                              onOpenChange={setFolderDialogOpen}
+                              onConfirm={(folder) => commitMut.mutate(folder)}
+                            />
                             {draftChanged && (
                               <span className="text-xs text-muted-foreground">
                                 {t("digest.unsavedDraft")}
@@ -1033,17 +1155,29 @@ function ReviewOverlay({
               className="flex flex-wrap items-center justify-between gap-2 border-t p-4"
               style={{ borderColor: "var(--line)" }}
             >
-              <button
-                type="button"
-                disabled={!previous || status === "streaming"}
-                onClick={() => previous && onChangeItem(previous.id)}
-                className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
-                style={{ borderColor: "var(--line)" }}
-                data-testid="digest-review-prev"
-              >
-                <ArrowLeft className="size-3.5" />
-                {t("digest.previous")}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!previous || status === "streaming"}
+                  onClick={() => previous && onChangeItem(previous.id)}
+                  className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
+                  style={{ borderColor: "var(--line)" }}
+                  data-testid="digest-review-prev"
+                >
+                  <ArrowLeft className="size-3.5" />
+                  {t("digest.previous")}
+                </button>
+                <button
+                  type="button"
+                  disabled={status === "streaming"}
+                  onClick={() => advanceAfterProcessed(item.id)}
+                  className="rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
+                  style={{ borderColor: "var(--line)" }}
+                  data-testid="digest-review-skip"
+                >
+                  {t("digest.skip")}
+                </button>
+              </div>
               <button
                 type="button"
                 disabled={!next || status === "streaming"}
@@ -1059,8 +1193,12 @@ function ReviewOverlay({
           </section>
         </ResizablePanel>
         <ResizableHandle />
-        <ResizablePanel defaultSize={46} minSize={32}>
-          <section className="flex h-full min-h-0 flex-col" style={{ background: "var(--bg)" }}>
+        <ResizablePanel defaultSize={40} minSize={30}>
+          <section
+            className="flex h-full min-h-0 flex-col"
+            style={{ background: "var(--bg)" }}
+            data-testid="digest-review-chat-pane"
+          >
           <div className="border-b p-4" style={{ borderColor: "var(--line)" }}>
             <h3 className="font-serif text-lg font-medium">{t("digest.reviewChat")}</h3>
           </div>

@@ -1,6 +1,6 @@
 # Stage C v2 — 资讯审阅与入库
 
-- Status: Implemented through C11 (Source config → Raw Info review → Draft diff → commit → workspace polish → note-like draft surface)
+- Status: Implemented through C12 (Source config → Raw Info review → Draft diff → commit → workspace polish → note-like draft surface → directory-confirmed commit queue)
 - Date: 2026-05-30
 - Roadmap: [`../roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md)
 
@@ -242,6 +242,7 @@ Note
   - 正文编辑体验复用主笔记 Markdown editor,并支持 edit / split / preview
     视图切换。
   - 草稿阶段可保存 metadata/body,可继续走 Diff Review,但仍不会写入正式 Note。
+  - 落库前必须先进入"选取目录并落库"确认流,不能从草稿页直接写入 vault。
 
 - 右侧:对话流。
   - 默认围绕当前 Raw Info 讨论。
@@ -375,15 +376,21 @@ API:
 规则:
 
 - 用户点击"落库"可以 commit。
+- UI 不直接提供裸"落库"按钮;草稿页提供"选取目录并落库"。
+- 点击后打开 vault 目录树,默认选中 AI 推荐目录;用户可改选目录后确认落库,也可取消。
 - 用户明确说"帮我落库这份笔记 / 保存为正式笔记 / 放入知识库"时,
   AI 可以调用 `commit_note_draft`。
 - 用户没有明确确认时,AI 不能主动落库。
 - commit 前若仍有未处理 diff,系统会阻止落库并要求先接受或撤回。
 - commit 后 Raw Info 标记为已纳入,Note Draft 从草稿列表移除,正式 Note 写入 vault 并刷新索引。
+- commit 或本轮跳过后,批阅队列自动推进到下一条待处理资讯。
+- 队列进入新条目时,如果没有草稿则默认停在 Raw Info;如果已有草稿则默认打开 Note Draft。
+- 已有草稿的 Raw Info 不再显示重复生成草稿入口。
+- 本轮队列没有可批阅条目时,审阅工作台显示覆盖左右栏的空状态。
 
 API:
 
-- `POST /api/drafts/{draft_id}/commit`:落库 Draft 并返回正式 Note id/path。
+- `POST /api/drafts/{draft_id}/commit`:落库 Draft 并返回正式 Note id/path;可传 `folder` 覆盖 Draft 推荐目录。
 - `POST /api/drafts/{draft_id}/approve`:兼容旧 approve 入口,内部复用同一 commit helper。
 
 ## 实现切片
@@ -419,6 +426,14 @@ API:
     组件或同源交互。
   - Draft footer 保留保存、Diff Review、落库等草稿生命周期操作,明确
     仍处于入库前边界。
+
+- **C12 Directory-confirmed commit queue**
+  - 草稿 footer 的落库入口改为"选取目录并落库"。
+  - commit 前打开目录树,默认选中 AI 推荐目录,确认后把目标 folder 传给
+    commit API。
+  - 已有 Draft 的 Raw Info 不可重复生成草稿;进入该条时自动打开 Draft 阶段。
+  - commit / 本轮 skip 后自动推进;队列空时显示跨左右栏空状态。
+  - Review 左右栏初始比例调整为 6:4。
 
 - **C8 Create draft + draft tools**
   - `create_note_draft_from_info`。

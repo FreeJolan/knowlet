@@ -5,7 +5,7 @@
 - **取代**: [`phase-3-stages.md`](./phase-3-stages.md) 的 7-Stage 计划 + [`phase-3-slicing.md`](./phase-3-slicing.md) 的 slice 切分。那套（envelope 7 层 / linter 全库扫 / reorg planner / tidy advisor / vault health dashboard / 知识·资料二分 / anti-drift 队列）大部分被判为**伪需求或早产**——它们建立在发明的 persona（小红/小张/新用户）上,而非用户的真实需求。
 - **命名警告**:`AGENTS.md` 里的 Phase A/B/C/D/E 是 agent 工作流;本文件的 阶段 A/B/C/D/E 是产品 roadmap。问"下一阶段/Phase B"时,以本文件为准。
 - **当前默认 LLM(2026-05-27)**:本机 `cliproxyapi` + Codex/GPT 5.5(`http://127.0.0.1:8317/v1`, `gpt-5.5`)。历史文档里 Claude/Claude Code 相关内容只作当时参考,不再作为默认接入或 dogfood 路径。
-- **当前执行顺序(2026-05-30 二次重排)**:阶段 B 已由用户 dogfood 通过;随后插队的 **F0 — AI 底层能力重构** 已完成当前门槛。Stage C 的第一版 digest/drafts 已验证基础通路,用户 dogfood 后升级的 **Stage C v2 — 资讯审阅与入库** 已完成 C4-C11:RSS / Prompt Source → 只读资讯 → 对话审阅 → 沉淀草稿 → Diff 修正 → 用户确认落库 → Digest 工作台体验收敛 → note-like 草稿交互。下一步直接进入 **Phase 3.5 桌面端客户端**。阶段 E/Quiz 暂缓到桌面端之后再评估。
+- **当前执行顺序(2026-05-30 二次重排)**:阶段 B 已由用户 dogfood 通过;随后插队的 **F0 — AI 底层能力重构** 已完成当前门槛。Stage C 的第一版 digest/drafts 已验证基础通路,用户 dogfood 后升级的 **Stage C v2 — 资讯审阅与入库** 已完成 C4-C12:RSS / Prompt Source → 只读资讯 → 对话审阅 → 沉淀草稿 → Diff 修正 → 目录确认后落库 → Digest 工作台体验收敛 → note-like 草稿交互 → 队列推进。下一步直接进入 **Phase 3.5 桌面端客户端**。阶段 E/Quiz 暂缓到桌面端之后再评估。
 - 根原则锚仍是 [ADR-0029](../decisions/0029-cognitive-contract.md):**用户是最后一个字节**（现由 diff-accept 兑现）、AI 是脚手架、输出可追溯。ADR-0029 衍生的**维护类机制**（anti-drift 队列 / dashboard / 知识资料二分）**推迟到有真实大 vault 信号再说**。
 
 ## 为什么重定向（2026-05-24 讨论）
@@ -53,7 +53,7 @@ knowlet AI = **Cursor-for-notes**。唯一不可替代价值 = grounded 对谈 +
 
 ## 阶段 C — 资讯内化 triage（need 1,次高频）
 
-> 目标形态见 [`../design/stage-c-digest-inbox.md`](../design/stage-c-digest-inbox.md):RSS / Prompt Source → 只读资讯 → 对话审阅 → 沉淀为笔记草稿 → 草稿 Diff 修正 → 用户确认落库。依赖 A + F0 tool/capability layer。C11 后,Stage C v2 已达到当前实现门槛,下一步直接进入 Phase 3.5 桌面端。
+> 目标形态见 [`../design/stage-c-digest-inbox.md`](../design/stage-c-digest-inbox.md):RSS / Prompt Source → 只读资讯 → 对话审阅 → 沉淀为笔记草稿 → 草稿 Diff 修正 → 用户选择目录并确认落库。依赖 A + F0 tool/capability layer。C12 后,Stage C v2 已达到当前实现门槛,下一步直接进入 Phase 3.5 桌面端。
 
 **v1 已完成但不足(保留为基础能力):**
 
@@ -81,6 +81,7 @@ knowlet AI = **Cursor-for-notes**。唯一不可替代价值 = grounded 对谈 +
 - [x] C9 Draft diff + commit:草稿修正走 Diff;支持全部接受/全部撤回;对话可驱动 `propose_current_draft_edit` / `accept_all_draft_diff` / `reject_all_draft_diff` / `commit_note_draft`;用户确认后落库为正式 Note。2026-05-30:新增 Draft pending diff 持久化、UI DiffReview、API/CLI/tool parity、真 `gpt-5.5` dogfood 和生产构建浏览器 dogfood,截图 `/tmp/knowlet-c9-draft-commit-dogfood.png`。
 - [x] C10 Digest workspace polish:Source 配置从通用 Settings 移到 Digest 工作台;批阅模式改为全屏工作台;左侧 Raw Info → Note Draft 阶段 Tab,草稿生成前禁用 Draft Tab,生成后自动切换并用主编辑器体验编辑草稿正文。focused E2E + tsc/build + focused pytest 已通过。
 - [x] C11 Draft note surface:Note Draft 阶段从表单堆叠升级为接近主笔记的 surface:标题内联编辑、tags chip、KindChip、properties、source/rationale、Markdown edit/split/preview 和草稿生命周期 footer。focused E2E + lint/tsc/build + focused pytest 已通过,截图 `/tmp/knowlet-c11-draft-note-surface.png`。
+- [x] C12 Directory-confirmed commit queue:草稿页不再裸落库;改为"选取目录并落库"→目录树确认→commit API 携带目标 folder。已有草稿不重复生成,进入该条默认 Draft 阶段;commit/本轮 skip 自动推进队列,空队列显示跨栏空状态;Review 初始布局改 6:4。focused E2E + focused pytest + lint/tsc/build 已通过。
 
 _死掉不做:网站订阅 / 通用爬站 / RSS-Bridge / anti-drift 队列 / 自动归档 / 知识资料强制二次确认。_
 
@@ -151,7 +152,7 @@ _死掉不做:网站订阅 / 通用爬站 / RSS-Bridge / anti-drift 队列 / 自
 
 **近期粗估** ≈ **2–3.5 周**（桌面端 ≈ 2–3 周 · 收尾/dogfood ≈ 1.5d）。A/B/D、F0 和 Stage C v2 当前门槛已完成;阶段 E/Quiz 不计入最近一轮,桌面端后再评估。
 
-**建议顺序**:A/B/D 已完成 → F0 AI 底层能力重构当前门槛完成 → **C v2(资讯审阅与入库) 当前门槛完成(C11)** → **Phase 3.5 桌面端客户端** → 桌面端 dogfood 后再决定是否回到 **E/Quiz**。不要再根据旧 `phase-3-*` 文档、本文件 2026-05-28/2026-05-30 早些时候的旧结论或 ADR-0021 旧 Phase 3 envelope 计划推进。
+**建议顺序**:A/B/D 已完成 → F0 AI 底层能力重构当前门槛完成 → **C v2(资讯审阅与入库) 当前门槛完成(C12)** → **Phase 3.5 桌面端客户端** → 桌面端 dogfood 后再决定是否回到 **E/Quiz**。不要再根据旧 `phase-3-*` 文档、本文件 2026-05-28/2026-05-30 早些时候的旧结论或 ADR-0021 旧 Phase 3 envelope 计划推进。
 
 ## 明确不做（旧计划里、用户场景没点到的）
 

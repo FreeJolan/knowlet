@@ -75,6 +75,7 @@ def commit_note_draft(
     drafts: DraftStore,
     draft_id: str,
     raw_infos: RawInfoStore | None = None,
+    folder: str | None = None,
 ) -> DraftCommitResult:
     draft = _get_draft_or_raise(drafts, draft_id)
     if not draft.title.strip():
@@ -85,7 +86,8 @@ def commit_note_draft(
         raise DraftFlowError("accept or reject the pending diff before commit")
 
     note = draft.to_note()
-    path = vault.write_note(note, folder=draft.folder)
+    target_folder = folder.strip().strip("/") if folder is not None else draft.folder
+    path = vault.write_note(note, folder=target_folder)
     note.path = path
     index.upsert_note(
         note,

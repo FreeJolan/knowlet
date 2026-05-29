@@ -179,6 +179,10 @@ class DraftDiffAcceptRequest(BaseModel):
     final_body: str | None = None
 
 
+class DraftCommitRequest(BaseModel):
+    folder: str | None = None
+
+
 class NoteKindUpdate(BaseModel):
     """Payload for POST /api/notes/{id}/kind (Phase 3 Stage 2).
 
@@ -6450,6 +6454,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     @app.post("/api/drafts/{draft_id}/commit", response_model=DraftCommitResponse)
     def commit_draft_endpoint(
         draft_id: str,
+        payload: DraftCommitRequest | None = None,
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> DraftCommitResponse:
         from knowlet.core.digest_items import RawInfoStore
@@ -6463,6 +6468,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 drafts=runtime.ctx.drafts,
                 draft_id=draft_id,
                 raw_infos=RawInfoStore(runtime.vault.digest_items_dir),
+                folder=payload.folder if payload else None,
             )
         except KeyError as exc:
             raise HTTPException(

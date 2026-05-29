@@ -1,6 +1,6 @@
 # Stage C v2 Tracking — 资讯审阅与入库
 
-- Status: C4-C11 implemented and verified
+- Status: C4-C12 implemented and verified
 - Started: 2026-05-30
 - Design: [`../design/stage-c-digest-inbox.md`](../design/stage-c-digest-inbox.md)
 
@@ -79,6 +79,13 @@ P9 Draft note surface
     Branch: user changes metadata/body before save or reviews a diff; commit remains blocked while unsaved changes or pending diff exist.
     Final assertion: draft interactions stay inside the Draft boundary, metadata/body save through `PUT /api/drafts/{id}`, and commit still requires explicit user action.
 
+P10 Directory-confirmed commit queue
+    ☑ implemented   ☑ tested   ✓ dogfooded
+    Entry state: review mode has a saved Note Draft and the Draft stage is active.
+    Happy path: user clicks "Choose folder and commit", sees a vault folder tree with the AI-recommended folder selected, chooses/keeps a target folder, confirms commit, and the queue advances.
+    Branch: user cancels the folder dialog or skips the last item; cancel must not commit, and an empty queue must replace both panes with one empty state.
+    Final assertion: `POST /api/drafts/{id}/commit` receives the selected folder, committed/skipped items leave the current review queue, existing drafts cannot be regenerated, and the next item opens at Raw Info or Draft according to its state.
+
 ## B.3 Persona Walkthrough
 
 - **新用户 / P1**: I open Digest and need the source setup to be right there because it is required for the workflow. I need the UI to make RSS vs Prompt obvious and reject website subscription wording.
@@ -92,6 +99,10 @@ P9 Draft note surface
 - **新用户 / P5-P7**: I need the app to show that the AI draft is only a proposal. I get stuck if "commit" happens without a clear review boundary.
 - **小红 / P5-P7**: I want to adjust title/tags/folder before saving. I get stuck if AI picks a folder but I cannot change it.
 - **小张 / P5-P7**: I want to drive settle/revise/accept/commit by conversation. I get stuck if the tool trace says something happened but the draft state does not match.
+
+- **新用户 / P10**: I need one more confirmation before my draft becomes a real note, especially where it will be stored. I get stuck if the "commit" button writes immediately without showing the vault structure.
+- **小红 / P10**: I want the app to start from the AI's recommended folder but still let me put the note somewhere else. I get stuck if canceling the picker already committed, or if the queue stays on an item I just finished.
+- **小张 / P10**: I want to process several items quickly: commit or skip should advance, and already drafted items should reopen at the Draft stage. I get stuck if the app lets me accidentally create a second draft for the same Raw Info.
 
 ## B.4 Build Or Borrow
 
@@ -107,6 +118,12 @@ P9 Draft note surface
   (npm modified 2025-12-24) again for editor mode switching, but kept a local
   icon segmented control to match `NoteView` and avoid a dependency for three
   fixed states.
+- Folder tree picker: reuse existing `react-arborist 3.5.0` (npm package
+  modified 2026-05-25; version published 2026-04-21) rather than building tree
+  virtualization/selection locally. The commit confirmation itself reuses the
+  project's existing Radix Dialog stack, backed by `@radix-ui/react-dialog 1.1.15`
+  (npm package modified 2025-12-24; version published 2025-08-13), through local
+  `Dialog` wrappers.
 
 ## C.1 Similar Code Read
 
@@ -142,9 +159,10 @@ P9 Draft note surface
 - P4 Review mode → `tests/test_digest_pull.py:299` Raw Info chat stream + discussed state, `frontend/scripts/e2e/digest-list.mjs:191` review from header/chat/next/close, `frontend/scripts/e2e/digest-list.mjs:228` review from specific card ☑
 - P5 Create note draft from info → `tests/test_digest_pull.py:332` API creates Draft with library context + metadata update, `tests/test_digest_pull.py:423` invalid LLM payload writes nothing, `tests/test_digest_pull.py:450` `create_note_draft_from_info` tool uses current Raw Info, `frontend/scripts/e2e/digest-list.mjs:239` review overlay creates a Draft and edits metadata ☑
 - P6 Draft diff tools → `tests/test_digest_pull.py:531` draft diff API proposes without writing Note, `tests/test_digest_pull.py:549` reject keeps Draft body unchanged, `tests/test_digest_pull.py:564` accept mutates only Draft, `tests/test_digest_pull.py:607` conversation tool proposes/rejects/accepts current Draft, `frontend/scripts/e2e/digest-list.mjs:469` review chat opens DiffReview and can reject/accept all ☑
-- P7 Commit note draft → `tests/test_digest_pull.py:632` `commit_note_draft` tool writes Note, indexes it, deletes Draft, and marks Raw Info included, `tests/test_digest_pull.py:650` empty-body commit blocks without deleting Draft, `frontend/scripts/e2e/digest-list.mjs:499` review overlay commit writes and opens the Note, `tests/test_cli.py` exposes `drafts commit`, `drafts accept-diff`, and `drafts reject-diff` commands ☑
+- P7 Commit note draft → `tests/test_digest_pull.py:634` `commit_note_draft` tool writes Note, honors an optional folder, indexes it, deletes Draft, and marks Raw Info included, `tests/test_digest_pull.py:653` empty-body commit blocks without deleting Draft, `frontend/scripts/e2e/digest-list.mjs:499` review overlay commit writes and opens the Note, `tests/test_cli.py` exposes `drafts commit`, `drafts accept-diff`, and `drafts reject-diff` commands ☑
 - P8 Digest workspace polish → `frontend/scripts/e2e/digest-sources.mjs:21` general Settings lacks Digest tab, `frontend/scripts/e2e/digest-sources.mjs:38` source config is in Digest, `frontend/scripts/e2e/digest-list.mjs:191` review is full-screen with Raw Info/Draft stages, `frontend/scripts/e2e/digest-list.mjs:470` Draft stage enables and auto-selects after generation ☑
 - P9 Draft note surface → `frontend/scripts/e2e/digest-list.mjs:496` Draft note surface appears, `frontend/scripts/e2e/digest-list.mjs:517` title/tags/kind/properties editing, `frontend/scripts/e2e/digest-list.mjs:532` preview toggle, `frontend/scripts/e2e/digest-list.mjs:539` draft save, `frontend/scripts/e2e/digest-list.mjs:556` diff reject and `frontend/scripts/e2e/digest-list.mjs:571` diff accept still return to the draft surface before commit ☑
+- P10 Directory-confirmed commit queue → `tests/test_digest_pull.py:666` commit API honors a folder override, `frontend/scripts/e2e/digest-list.mjs:241` review layout starts near 6:4, `frontend/scripts/e2e/digest-list.mjs:541` existing Draft suppresses duplicate generation, `frontend/scripts/e2e/digest-list.mjs:616` folder dialog cancel does not commit and confirm sends the selected folder, `frontend/scripts/e2e/digest-list.mjs:635` commit advances to the next item and selects the right stage, `frontend/scripts/e2e/digest-list.mjs:658` skipping the last review item shows a cross-pane empty state ☑
 
 ## E.3 Dogfood Log
 
@@ -214,3 +232,12 @@ P9 Draft note surface
   - UI probes: draft surface background `rgb(244, 240, 232)`, mode toggle background `rgb(239, 233, 221)`, center hit target `digest-draft-preview`, active element `BUTTON`, referenced CSS variables defined in `frontend/src/styles/globals.css`, and browser console had no new errors/warnings.
   - Screenshot: `/tmp/knowlet-c11-draft-note-surface.png`
   - UX check: Draft now reads like a real Knowlet note before commit, while save/diff/commit controls remain in the Draft lifecycle footer so the Raw Info → Draft → Note boundary stays visible.
+- P10 Directory-confirmed commit queue:
+  - Red tests: `tests/test_digest_pull.py::test_commit_note_draft_can_override_target_folder` first failed before commit accepted a folder override; `frontend/scripts/e2e/digest-list.mjs` first failed against the old build because the Draft footer still committed directly and the review queue did not expose the new empty-state branch.
+  - Focused green: `uv run pytest tests/test_digest_pull.py tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py` → 43 passed; `cd frontend && node scripts/e2e/digest-list.mjs` → passed; `cd frontend && node scripts/e2e/digest-sources.mjs` → passed.
+  - Related green: `uv run pytest tests/` → 1000 passed; `cd frontend && npm run lint --silent` → passed; `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run build --silent` → passed with the existing large-chunk warning.
+  - Browser dogfood: production build served from `/tmp/knowlet-stage-c-demo-vault`; Digest → Start review opened an existing-draft item directly at the Draft stage, "选取目录并落库" opened the folder tree with `ai/agents` selected, cancel left the item uncommitted, reopening and selecting `library/final` committed the note and advanced to the next existing-draft item.
+  - Vault probe: Raw Info `Agent trace 与最终回答分层设计` became `included`, formal note was written at `/tmp/knowlet-stage-c-demo-vault/notes/library/final/01KSTNEEBZW1RJ94CV7RAYC3H5.md`, and the source Draft file was removed from `/tmp/knowlet-stage-c-demo-vault/drafts/`.
+  - UI probes: review workspace background `rgb(244, 240, 232)`, folder dialog background `rgb(251, 248, 241)`, review layout ratio `0.599998...`, dialog center hit target `digest-folder-option-library-final`, post-commit center hit target `digest-draft-preview`, active element `BODY` after commit, referenced CSS variables (`--bg`, `--bg-1`, `--line`, `--accent`, `--ink`) defined in `frontend/src/styles/globals.css`, and browser console had no errors/warnings.
+  - Screenshots: `/tmp/knowlet-c12-folder-commit.png`, `/tmp/knowlet-c12-after-commit-next-draft.png`
+  - UX check: commit is no longer a bare destructive-looking footer action; users get an explicit directory confirmation, queue progress continues after commit/skip, and Raw Info with an existing Draft no longer invites duplicate draft generation.

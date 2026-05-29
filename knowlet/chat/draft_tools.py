@@ -126,6 +126,7 @@ def _commit_note_draft(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]
             drafts=ctx.drafts,
             draft_id=draft_id,
             raw_infos=RawInfoStore(ctx.vault.digest_items_dir),
+            folder=str(args.get("folder") or "").strip() or None,
         )
     except KeyError:
         return _missing_draft(draft_id)
@@ -212,7 +213,13 @@ COMMIT_NOTE_DRAFT_TOOL = ToolDef(
     ),
     input_schema={
         "type": "object",
-        "properties": {"draft_id": {"type": "string"}},
+        "properties": {
+            "draft_id": {"type": "string"},
+            "folder": {
+                "type": "string",
+                "description": "Optional target folder under notes/. Omit to use the Draft's recommended folder.",
+            },
+        },
         "additionalProperties": False,
     },
     handler=_commit_note_draft,
