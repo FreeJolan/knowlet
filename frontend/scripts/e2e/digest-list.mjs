@@ -1,11 +1,10 @@
-// E2E: Stage C2 — digest list UI.
+// E2E: Stage C v2 C6 — Raw Info digest inbox.
 //
-// The digest view should show only drafts produced by digest sources,
-// with an explicit today/week switch. Regular mining drafts must not
-// leak into this intake surface.
+// Digest no longer shows today/week draft tabs. It is a Raw Info inbox:
+// read-only cards, grouping by time/source, pull status, and overflow guard.
 
-import fs from "node:fs";
-import path from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   assert,
@@ -15,226 +14,221 @@ import {
   setupTestEnv,
 } from "./_fixture.mjs";
 
-const env = await setupTestEnv({ notes: [], language: "en" });
-const { page, baseURL, vaultDir, teardown } = env;
+let builtOnce = false;
 
-function writeTask({ id, name, digest = false }) {
-  const tasksDir = path.join(vaultDir, "tasks");
-  fs.mkdirSync(tasksDir, { recursive: true });
-  const now = new Date().toISOString();
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
-  const front = [
-    "---",
-    "schema_version: 1",
-    `id: ${id}`,
-    `name: ${name}`,
-    "enabled: true",
-    "schedule:",
-    "  every: 1d",
-    "sources:",
-    "  - rss: https://example.com/feed.xml",
-    "prompt: digest prompt",
-    `created_at: "${now}"`,
-    `updated_at: "${now}"`,
-    "---",
-  ].join("\n");
-  const body = digest
-    ? "<!-- knowlet:digest-source/v1 -->\n\nDigest source"
-    : "Regular mining source";
-  fs.writeFileSync(path.join(tasksDir, `${id}-${slug}.md`), `${front}\n${body}\n`);
+async function setupDigestEnv(seed) {
+  if (builtOnce) process.env.SKIP_BUILD = "1";
+  const env = await setupTestEnv({ notes: [], language: "en" });
+  builtOnce = true;
+  process.env.SKIP_BUILD = "1";
+  seed?.(env.vaultDir);
+  await env.page.goto(env.baseURL, { waitUntil: "networkidle" });
+  return env;
 }
 
-function writeDraft({ id, title, taskId, daysAgo = 0 }) {
-  const draftsDir = path.join(vaultDir, "drafts");
-  fs.mkdirSync(draftsDir, { recursive: true });
-  const dt = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString();
-  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
-  const front = [
-    "---",
-    "schema_version: 1",
-    `id: ${id}`,
-    `title: ${title}`,
-    "tags: [digest]",
-    "kind: reference",
-    `task_id: ${taskId}`,
-    "source: https://example.com/item",
-    `created_at: ${dt}`,
-    `updated_at: ${dt}`,
-    "status: draft",
-    "---",
-  ].join("\n");
-  fs.writeFileSync(path.join(draftsDir, `${id}-${slug}.md`), `${front}\n${title} body\n`);
+function isoDaysAgo(days) {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .replace(/\.\d{3}Z$/, "Z");
 }
 
-try {
-  writeTask({ id: "01DIGESTTASK01", name: "Digest feed", digest: true });
-  writeTask({ id: "01REGULARTASK1", name: "Regular feed", digest: false });
-  writeDraft({
-    id: "01DIGESTTODAY1",
-    title: "Digest today item",
-    taskId: "01DIGESTTASK01",
-    daysAgo: 0,
-  });
-  writeDraft({
-    id: "01DIGESTSAVE01",
-    title: "Save as reference item",
-    taskId: "01DIGESTTASK01",
-    daysAgo: 0,
-  });
-  writeDraft({
-    id: "01DIGESTINTRNL",
-    title: "Internalize item",
-    taskId: "01DIGESTTASK01",
-    daysAgo: 0,
-  });
-  writeDraft({
-    id: "01DIGESTWEEK01",
-    title: "Digest week item",
-    taskId: "01DIGESTTASK01",
-    daysAgo: 3,
-  });
-  writeDraft({
-    id: "01DIGESTOLD001",
-    title: "Digest old item",
-    taskId: "01DIGESTTASK01",
-    daysAgo: 8,
-  });
-  writeDraft({
-    id: "01REGULARTODAY",
-    title: "Regular mining item",
-    taskId: "01REGULARTASK1",
-    daysAgo: 0,
-  });
+function rawInfo(overrides) {
+  return {
+    schema_version: 1,
+    id: overrides.id,
+    source_id: overrides.source_id ?? "01C6SRCRESEARCH",
+    source_name: overrides.source_name ?? "Research Feed",
+    source_kind: overrides.source_kind ?? "rss",
+    item_key: overrides.item_key ?? `rss:${overrides.id}`,
+    title: overrides.title,
+    url: overrides.url ?? `https://example.com/${overrides.id}`,
+    published_at: overrides.published_at ?? null,
+    fetched_at: overrides.fetched_at ?? isoDaysAgo(0),
+    summary: overrides.summary ?? "A concise raw information summary.",
+    key_points: overrides.key_points ?? ["first signal", "second signal"],
+    why_it_matters: overrides.why_it_matters ?? "Useful for deciding what to review.",
+    suggested_tags: overrides.suggested_tags ?? ["ai"],
+    confidence: overrides.confidence ?? "medium",
+    content_excerpt: overrides.content_excerpt ?? "Excerpt from the original item.",
+    status: overrides.status ?? "unprocessed",
+    note_draft_id: null,
+    note_id: null,
+  };
+}
 
-  await page.goto(baseURL, { waitUntil: "networkidle" });
+function writeRawInfos(vaultDir, items) {
+  const root = join(vaultDir, ".knowlet", "digest", "items");
+  mkdirSync(root, { recursive: true });
+  for (const item of items) {
+    const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    writeFileSync(
+      join(root, `${item.id}-${slug}.json`),
+      JSON.stringify(item, null, 2) + "\n",
+      "utf8",
+    );
+  }
+}
 
-  await page.route("**/api/chat/draft/*/stream", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "text/event-stream",
-      body:
-        'data: {"type":"reply_chunk","text":"Grounded draft reply"}\n\n' +
-        'data: {"type":"turn_done"}\n\n',
-    });
-  });
-  await page.route("**/api/chat/draft/*/propose-internalize", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        note_id: "01DIGESTINTRNL",
-        old_body: "Internalize item body\n",
-        new_body: "# Internalized body\n\nThis is my reusable take.",
-        changed: true,
-        reason: "",
+function seedThreeItems(vaultDir) {
+  writeRawInfos(vaultDir, [
+    rawInfo({
+      id: "01C6TODAYRAWINFO000001",
+      title: "Agent trace design",
+      url: "https://example.com/agent-trace",
+      fetched_at: isoDaysAgo(0),
+      summary: "A note about making tool traces visible without mixing them into final answers.",
+      key_points: ["tool trace is separate", "answer remains readable"],
+      status: "unprocessed",
+    }),
+    rawInfo({
+      id: "01C6YDAYRAWINFO0000002",
+      title: "RSS normalization caveat",
+      fetched_at: isoDaysAgo(1),
+      summary: "RSS feeds can be thin, so each entry needs normalization before review.",
+      status: "viewed",
+    }),
+    rawInfo({
+      id: "01C6PROMPTRAWINFO00003",
+      source_id: "01C6SRCPROMPT",
+      source_name: "Prompt Watch",
+      source_kind: "prompt",
+      title: "Prompt source candidate",
+      url: "https://example.com/prompt-candidate",
+      fetched_at: isoDaysAgo(8),
+      summary: "A model-generated candidate with an original link.",
+      status: "discussed",
+      suggested_tags: ["agents", "prompt-source"],
+    }),
+  ]);
+}
+
+function seedOverflow(vaultDir) {
+  writeRawInfos(
+    vaultDir,
+    Array.from({ length: 201 }, (_, i) =>
+      rawInfo({
+        id: `01C6OVERFLOW${String(i).padStart(12, "0")}`,
+        title: `Overflow item ${i + 1}`,
+        fetched_at: isoDaysAgo(0),
+        summary: "Pending overflow item.",
       }),
-    });
-  });
+    ),
+  );
+}
 
-  await runTest("digest button opens today's intake cards only", async () => {
+let env = await setupDigestEnv(seedThreeItems);
+try {
+  const { page } = env;
+
+  await runTest("digest opens Raw Info inbox without today/week tabs", async () => {
     await page.locator('[data-testid="header-digest-button"]').click();
     await page.locator('[data-testid="digest-focus-mode"]').waitFor({
       state: "visible",
       timeout: 3000,
     });
-    await page.locator('[data-testid="digest-card-01DIGESTTODAY1"]').waitFor({
+    assert(
+      (await page.locator('[data-testid="digest-period-today"]').count()) === 0,
+      "today tab removed",
+    );
+    assert(
+      (await page.locator('[data-testid="digest-period-week"]').count()) === 0,
+      "week tab removed",
+    );
+    await page.locator('[data-testid="digest-group-time-today"]').waitFor({
       state: "visible",
       timeout: 3000,
     });
-    assert(
-      (await page.locator('[data-testid="digest-card-01DIGESTWEEK01"]').count()) === 0,
-      "week-old digest item is hidden in Today",
-    );
-    assert(
-      (await page.locator('[data-testid="digest-card-01REGULARTODAY"]').count()) === 0,
-      "regular mining draft is not shown in digest",
-    );
-  });
-
-  await runTest("selected digest item can be read and discussed", async () => {
-    await page.locator('[data-testid="digest-card-01DIGESTTODAY1"]').click();
-    await page.locator('[data-testid="digest-detail"]').waitFor({
+    await page.locator('[data-testid="digest-card-01C6TODAYRAWINFO000001"]').waitFor({
       state: "visible",
       timeout: 3000,
     });
+    const detailBg = await page
+      .locator('[data-testid="digest-detail"]')
+      .evaluate((el) => getComputedStyle(el).backgroundColor);
+    assert(detailBg !== "rgba(0, 0, 0, 0)", "detail panel background is opaque");
+    const hitCard = await page
+      .locator('[data-testid="digest-card-01C6TODAYRAWINFO000001"]')
+      .evaluate((el) => {
+        const rect = el.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2,
+        );
+        return hit?.closest('[data-testid="digest-card-01C6TODAYRAWINFO000001"]')
+          ?.getAttribute("data-testid");
+      });
     assert(
-      (await page.locator('[data-testid="digest-detail"]').textContent()).includes(
-        "Digest today item body",
-      ),
-      "detail pane shows full draft body",
-    );
-    await page.locator('[data-testid="digest-chat-input"]').fill("What matters?");
-    await page.locator('[data-testid="digest-chat-send"]').click();
-    await page
-      .locator('[data-testid="digest-message-assistant"]')
-      .filter({ hasText: "Grounded draft reply" })
-      .waitFor({ state: "visible", timeout: 3000 });
-  });
-
-  await runTest("skip removes only the selected digest draft", async () => {
-    await page.locator('[data-testid="digest-action-skip"]').click();
-    await page.locator('[data-testid="digest-card-01DIGESTTODAY1"]').waitFor({
-      state: "detached",
-      timeout: 3000,
-    });
-    const drafts = await (await page.request.get(`${baseURL}/api/digest/drafts?period=today`)).json();
-    assert(!drafts.some((d) => d.id === "01DIGESTTODAY1"), "skipped draft is gone");
-    assert(drafts.some((d) => d.id === "01DIGESTSAVE01"), "other digest drafts remain");
-  });
-
-  await runTest("save reference promotes the draft as a reference note", async () => {
-    await page.locator('[data-testid="digest-card-01DIGESTSAVE01"]').click();
-    await page.locator('[data-testid="digest-action-save-reference"]').click();
-    await page.locator('[data-testid="digest-card-01DIGESTSAVE01"]').waitFor({
-      state: "detached",
-      timeout: 3000,
-    });
-    const notes = await (await page.request.get(`${baseURL}/api/notes`)).json();
-    const note = notes.find((n) => n.id === "01DIGESTSAVE01");
-    assert(note, "reference note was created");
-    const full = await (await page.request.get(`${baseURL}/api/notes/01DIGESTSAVE01`)).json();
-    assert(full.kind === "reference", "reference action preserves reference kind");
-  });
-
-  await runTest("internalize uses AI diff review before creating a knowledge note", async () => {
-    await page.locator('[data-testid="header-digest-button"]').click();
-    await page.locator('[data-testid="digest-card-01DIGESTINTRNL"]').click();
-    await page.locator('[data-testid="digest-action-internalize"]').click();
-    await page.locator('[data-testid="diff-review"]').waitFor({
-      state: "visible",
-      timeout: 3000,
-    });
-    await page.locator('[data-testid="diff-apply"]').click();
-    await page.locator('[data-testid="digest-card-01DIGESTINTRNL"]').waitFor({
-      state: "detached",
-      timeout: 3000,
-    });
-    const notes = await (await page.request.get(`${baseURL}/api/notes`)).json();
-    const note = notes.find((n) => n.id === "01DIGESTINTRNL");
-    assert(note, "knowledge note was created after accepting diff");
-    assert(note.kind === "knowledge", "internalize action creates a knowledge note");
-    const full = await (await page.request.get(`${baseURL}/api/notes/01DIGESTINTRNL`)).json();
-    assert(full.body.includes("Internalized body"), "accepted diff body was written");
-  });
-
-  await runTest("week tab includes this week's digest cards", async () => {
-    await page.locator('[data-testid="header-digest-button"]').click();
-    await page.locator('[data-testid="digest-period-week"]').click();
-    await page.locator('[data-testid="digest-card-01DIGESTWEEK01"]').waitFor({
-      state: "visible",
-      timeout: 3000,
-    });
-    assert(
-      (await page.locator('[data-testid="digest-card-01DIGESTOLD001"]').count()) === 0,
-      "older-than-week digest item is hidden in This week",
+      hitCard === "digest-card-01C6TODAYRAWINFO000001",
+      "card center resolves to the card",
     );
   });
 
-  await runTest("no console errors during the suite", () => {
+  await runTest("digest can group Raw Info by source", async () => {
+    await page.locator('[data-testid="digest-group-mode-source"]').click();
+    await page.locator('[data-testid="digest-group-source-research-feed"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-group-source-prompt-watch"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+  });
+
+  await runTest("selected Raw Info renders read-only details", async () => {
+    await page.locator('[data-testid="digest-card-01C6TODAYRAWINFO000001"]').click();
+    const detail = await page.locator('[data-testid="digest-detail"]').textContent();
+    assert(detail.includes("Agent trace design"), "detail shows title");
+    assert(detail.includes("tool traces visible"), "detail shows summary");
+    assert(detail.includes("tool trace is separate"), "detail shows key points");
+    assert(detail.includes("https://example.com/agent-trace"), "detail shows original link");
+    assert(
+      (await page.locator('[data-testid="digest-action-save-reference"]').count()) === 0,
+      "old draft action is gone from raw info inbox",
+    );
+  });
+
+  await runTest("no console errors during populated inbox suite", () => {
     assertConsoleClean(env);
   });
 } finally {
-  await teardown();
+  await env.teardown();
+}
+
+env = await setupDigestEnv(seedOverflow);
+try {
+  const { page } = env;
+  await runTest("digest shows pause banner when pending Raw Info exceeds 200", async () => {
+    await page.locator('[data-testid="header-digest-button"]').click();
+    await page.locator('[data-testid="digest-pause-banner"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    const text = await page.locator('[data-testid="digest-pause-banner"]').textContent();
+    assert(text.includes("200"), "pause banner names the threshold");
+  });
+  await runTest("no console errors during overflow suite", () => {
+    assertConsoleClean(env);
+  });
+} finally {
+  await env.teardown();
+}
+
+env = await setupDigestEnv();
+try {
+  const { page } = env;
+  await runTest("digest empty state renders for an empty Raw Info inbox", async () => {
+    await page.locator('[data-testid="header-digest-button"]').click();
+    await page.locator('[data-testid="digest-empty"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+  });
+  await runTest("no console errors during empty suite", () => {
+    assertConsoleClean(env);
+  });
+} finally {
+  await env.teardown();
 }
 
 exitAfter();

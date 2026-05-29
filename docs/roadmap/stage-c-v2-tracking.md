@@ -31,7 +31,7 @@ P2 Pull + normalize pipeline
     Final assertion: raw items are queryable and source status shows success/failure/pause.
 
 P3 Digest inbox v2
-    □ implemented   □ tested   □ dogfooded
+    ☑ implemented   ☑ tested   ✓ dogfooded
     Entry state: Digest is opened from the header.
     Happy path: user sees unprocessed raw info grouped by time or source and can switch grouping.
     Branch: empty inbox and >200 pending pause banner render correctly.
@@ -100,7 +100,7 @@ P7 Commit note draft
 - Backend focused: `uv run pytest tests/test_digest_pull.py tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py`
 - Backend related: `uv run pytest tests/test_web_note_chat.py tests/test_drafts_stage3.py tests/test_web_capture_flow.py`
 - Frontend type: `cd frontend && npx tsc --noEmit`
-- E2E focused: `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-sources.mjs`
+- E2E focused: `cd frontend && node scripts/e2e/digest-list.mjs`; `cd frontend && node scripts/e2e/digest-sources.mjs`
 - Full backend: `uv run pytest tests/`
 - Full E2E baseline: `cd frontend && npm run e2e`
 
@@ -114,7 +114,8 @@ P7 Commit note draft
 ## E.1 Path × Test Reconciliation
 
 - P1 Source config v2 → `tests/test_digest_sources.py`, `tests/test_digest.py`, `tests/test_cli.py`, `frontend/scripts/e2e/digest-sources.mjs` ☑
-- P2 Pull + normalize pipeline → `tests/test_digest_pull.py:52` RSS normalize + seen-set, `tests/test_digest_pull.py:129` Prompt Source JSON wrapper, `tests/test_digest_pull.py:180` 200 pending pause, `tests/test_digest_pull.py:219` API pull/list, `tests/test_digest_pull.py:262` CLI pull, `tests/test_digest_pull.py:307` CLI limit regression, `tests/test_digest_pull.py:364` daily auto-pull ☑
+- P2 Pull + normalize pipeline → `tests/test_digest_pull.py:52` RSS normalize + seen-set, `tests/test_digest_pull.py:129` Prompt Source JSON wrapper, `tests/test_digest_pull.py:180` 200 pending pause, `tests/test_digest_pull.py:219` API pull/list, `tests/test_digest_pull.py:292` CLI pull, `tests/test_digest_pull.py:337` CLI limit regression, `tests/test_digest_pull.py:394` daily auto-pull ☑
+- P3 Digest inbox v2 → `tests/test_digest_pull.py:262` status API, `frontend/scripts/e2e/digest-list.mjs` Raw Info list/group/detail/empty/overflow paths ☑
 
 ## E.3 Dogfood Log
 
@@ -131,3 +132,9 @@ P7 Commit note draft
   - Dedupe dogfood: second run on the same feed → `fetched=1 new=0 created=0 skipped=0 pending=1`.
   - API smoke: `GET /api/health` on the temp vault returned `ready=true`; `GET /api/digest/items` returned the created read-only Raw Info item.
   - Screenshot: not applicable; P2 is backend/API/CLI infrastructure. Visual inbox verification starts at P3.
+- P3 Digest inbox v2:
+  - Red test: `cd frontend && node scripts/e2e/digest-list.mjs` initially failed because the old today/week draft tabs were still present.
+  - Focused green: `cd frontend && node scripts/e2e/digest-list.mjs` → passed; `cd frontend && node scripts/e2e/digest-sources.mjs` → passed; `uv run pytest tests/test_digest_pull.py tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py` → 35 passed.
+  - Lint/type/full backend: `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run lint --silent` → passed; `uv run pytest tests/` → 987 passed.
+  - UI probes: detail panel background is opaque; card center resolves through `document.elementFromPoint`; console clean in populated / overflow / empty inbox suites.
+  - Screenshot: `/tmp/knowlet-c6-digest-inbox.png`

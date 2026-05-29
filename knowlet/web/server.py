@@ -863,6 +863,14 @@ class DigestPullReportPayload(BaseModel):
     errors: list[str]
 
 
+class DigestStatusPayload(BaseModel):
+    status: Literal["idle", "running", "ok", "error", "paused"]
+    pending_count: int
+    last_report: dict[str, Any] | None = None
+    last_error: str | None = None
+    sources: list[DigestSourceSummary]
+
+
 class DraftSummary(BaseModel):
     id: str
     title: str
@@ -6027,6 +6035,22 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         with state.digest_pull_lock:
             report = pull_digest_sources(vault=runtime.vault, llm=runtime.llm)
         return DigestPullReportPayload(**report.to_dict())
+
+    @app.get("/api/digest/status", response_model=DigestStatusPayload)
+    def digest_status_endpoint(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> DigestStatusPayload:
+        from knowlet.core.digest_items import RawInfoStore
+
+        item_store = RawInfoStore(runtime.vault.digest_items_dir)
+        source_store = _digest_source_store(runtime)
+        return DigestStatusPayload(
+            status=state.digest_pull_status,
+            pending_count=item_store.pending_count(),
+            last_report=state.digest_pull_last_report,
+            last_error=state.digest_pull_last_error,
+            sources=[_digest_source_summary(source) for source in source_store.list()],
+        )
 
     @app.get("/api/digest/items", response_model=list[RawInfoSummary])
     def list_raw_info_endpoint(

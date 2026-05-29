@@ -805,8 +805,19 @@ export interface DigestPullReport {
   errors: string[];
 }
 
+export interface DigestStatus {
+  status: "idle" | "running" | "ok" | "error" | "paused";
+  pending_count: number;
+  last_report?: Record<string, unknown> | null;
+  last_error?: string | null;
+  sources: DigestSourceSummary[];
+}
+
 export const listRawInfoItems = (): Promise<RawInfoSummary[]> =>
   request("GET", "/api/digest/items");
+
+export const getDigestStatus = (): Promise<DigestStatus> =>
+  request("GET", "/api/digest/status");
 
 export const pullDigestSources = (): Promise<DigestPullReport> =>
   request("POST", "/api/digest/pull");

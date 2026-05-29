@@ -1,38 +1,30 @@
 /**
- * DigestFocusMode — Stage C2/C3.
+ * DigestFocusMode — Stage C v2 C6.
  *
- * Read-only intake list for drafts produced by digest sources, plus
- * Stage C3's per-item decision path: read, discuss, then skip / save as
- * reference / internalize as knowledge through diff review.
+ * Raw Info inbox. Items are read-only here; review conversation and draft
+ * settlement return in the next slice.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Archive,
-  BookOpenCheck,
-  Brain,
+  AlertTriangle,
+  Clock,
   ExternalLink,
-  Send,
-  Square,
+  RefreshCw,
+  Rss,
+  Sparkles,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
-  approveDraft,
-  listDigestDrafts,
-  proposeDraftInternalize,
-  rejectDraft,
-  updateDraft,
-  type DigestPeriod,
-  type DraftSummary,
-  type ProposedEdit,
+  getDigestStatus,
+  listRawInfoItems,
+  pullDigestSources,
+  type DigestStatus,
+  type RawInfoSummary,
 } from "@/api/client";
-import { ChatTranscript, DiffReview } from "@/components/Discuss";
-import { QK } from "@/lib/queryClient";
-
-import { useDraftChat } from "./useDraftChat";
 
 interface Props {
   open: boolean;
@@ -40,26 +32,27 @@ interface Props {
   onOpenNote?: (noteId: string, opts?: { discuss?: boolean }) => void;
 }
 
-type DraftProposal = ProposedEdit & { draftId: string };
+type GroupMode = "time" | "source";
+
+interface DigestGroup {
+  id: string;
+  label: string;
+  items: RawInfoSummary[];
+}
 
 export function DigestFocusMode({
   open,
   onClose,
-  onOpenNote,
 }: Props): React.ReactElement | null {
   const { t } = useTranslation();
   const qc = useQueryClient();
-  const [period, setPeriod] = useState<DigestPeriod>("today");
+  const [groupMode, setGroupMode] = useState<GroupMode>("time");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [proposal, setProposal] = useState<DraftProposal | null>(null);
-  const [savingInternalize, setSavingInternalize] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       setSelectedId(null);
-      setProposal(null);
-      setNotice(null);
+      setGroupMode("time");
       return;
     }
     const onKey = (e: KeyboardEvent) => {
@@ -72,106 +65,62 @@ export function DigestFocusMode({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  const drafts = useQuery({
-    queryKey: ["digest-drafts", period],
-    queryFn: () => listDigestDrafts(period),
+  const rawInfo = useQuery({
+    queryKey: ["digest-items"],
+    queryFn: listRawInfoItems,
     enabled: open,
     refetchOnMount: "always",
     staleTime: 0,
   });
 
-  const items = useMemo(() => drafts.data ?? [], [drafts.data]);
+  const status = useQuery({
+    queryKey: ["digest-status"],
+    queryFn: getDigestStatus,
+    enabled: open,
+    refetchInterval: open ? 5000 : false,
+  });
+
+  const pullMut = useMutation({
+    mutationFn: pullDigestSources,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["digest-items"] });
+      void qc.invalidateQueries({ queryKey: ["digest-status"] });
+    },
+  });
+
+  const items = useMemo(
+    () => sortRawInfo(rawInfo.data ?? []),
+    [rawInfo.data],
+  );
   const selected = useMemo(
-    () => items.find((draft) => draft.id === selectedId) ?? null,
+    () => items.find((item) => item.id === selectedId) ?? null,
     [items, selectedId],
+  );
+  const groups = useMemo(
+    () => groupRawInfo(items, groupMode, t),
+    [items, groupMode, t],
   );
 
   useEffect(() => {
-    if (!open || !drafts.data) return;
+    if (!open || !rawInfo.data) return;
     if (items.length === 0) {
       setSelectedId(null);
-      setProposal(null);
       return;
     }
-    if (!selectedId || !items.some((draft) => draft.id === selectedId)) {
+    if (!selectedId || !items.some((item) => item.id === selectedId)) {
       const first = items[0];
       if (first) setSelectedId(first.id);
-      setProposal(null);
     }
-  }, [drafts.data, items, open, selectedId]);
-
-  const refreshQueues = () => {
-    void qc.invalidateQueries({ queryKey: ["digest-drafts"] });
-    void qc.invalidateQueries({ queryKey: ["drafts"] });
-  };
-
-  const skipMut = useMutation({
-    mutationFn: (draft: DraftSummary) => rejectDraft(draft.id),
-    onSuccess: () => {
-      refreshQueues();
-      setSelectedId(null);
-      setProposal(null);
-    },
-  });
-
-  const saveReferenceMut = useMutation({
-    mutationFn: async (draft: DraftSummary) => {
-      await updateDraft(draft.id, { kind: "reference" });
-      return approveDraft(draft.id);
-    },
-    onSuccess: (res) => {
-      refreshQueues();
-      void qc.invalidateQueries({ queryKey: QK.tree });
-      onOpenNote?.(res.note_id);
-      onClose();
-    },
-  });
-
-  const proposeInternalizeMut = useMutation({
-    mutationFn: (draft: DraftSummary) =>
-      proposeDraftInternalize(
-        draft.id,
-        "把这条 digest 内化成我自己的知识笔记,保留出处线索,不要虚构。",
-      ),
-    onSuccess: (res, draft) => {
-      if (res.changed) {
-        setProposal({ ...res, draftId: draft.id });
-        setNotice(null);
-      } else {
-        setNotice(res.reason || t("digest.noProposal"));
-      }
-    },
-  });
-
-  const acceptInternalize = async (finalBody: string) => {
-    if (!proposal) return;
-    setSavingInternalize(true);
-    try {
-      await updateDraft(proposal.draftId, {
-        body: finalBody,
-        kind: "knowledge",
-      });
-      const res = await approveDraft(proposal.draftId);
-      refreshQueues();
-      void qc.invalidateQueries({ queryKey: QK.tree });
-      setProposal(null);
-      onOpenNote?.(res.note_id, { discuss: true });
-      onClose();
-    } catch (err) {
-      console.error("internalize digest draft failed", err);
-      setNotice(t("digest.internalizeFailed"));
-    } finally {
-      setSavingInternalize(false);
-    }
-  };
+  }, [items, open, rawInfo.data, selectedId]);
 
   if (!open) return null;
 
-  const busy =
-    skipMut.isPending ||
-    saveReferenceMut.isPending ||
-    proposeInternalizeMut.isPending ||
-    savingInternalize;
+  const pendingCount =
+    status.data?.pending_count ?? items.filter((item) => isPending(item)).length;
+  const paused =
+    pendingCount > 200 ||
+    status.data?.status === "paused" ||
+    (status.data?.sources ?? []).some((source) => source.pull_status === "paused");
 
   return (
     <div
@@ -180,62 +129,100 @@ export function DigestFocusMode({
       data-testid="digest-focus-mode"
     >
       <header
-        className="flex items-center justify-between border-b px-6 py-3"
+        className="flex items-center justify-between gap-4 border-b px-6 py-3"
         style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
       >
-        <div className="flex items-baseline gap-3">
-          <h2 className="font-serif text-xl font-semibold">
-            {t("digest.title")}
-          </h2>
-          <span className="text-[11px] text-muted-foreground">
-            {items.length > 0
-              ? t("digest.count", { count: items.length })
-              : ""}
-          </span>
+        <div className="min-w-0">
+          <div className="flex items-baseline gap-3">
+            <h2 className="font-serif text-xl font-semibold">
+              {t("digest.title")}
+            </h2>
+            <span className="text-[11px] text-muted-foreground">
+              {items.length > 0
+                ? t("digest.count", { count: items.length })
+                : ""}
+            </span>
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={t("digest.close")}
-          className="rounded p-1 hover:bg-accent/30"
-          data-testid="digest-close"
-        >
-          <X className="size-4" />
-        </button>
+
+        <div className="flex shrink-0 items-center gap-2">
+          <PullStatusBadge
+            status={status.data}
+            pending={pullMut.isPending || status.isFetching}
+            fallbackPaused={paused}
+          />
+          <button
+            type="button"
+            onClick={() => pullMut.mutate()}
+            disabled={pullMut.isPending}
+            className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
+            style={{ borderColor: "var(--line)", color: "var(--ink)" }}
+            data-testid="digest-pull-now"
+            title={t("digest.pullNow")}
+          >
+            <RefreshCw className={pullMut.isPending ? "size-3 animate-spin" : "size-3"} />
+            {t("digest.pullNow")}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t("digest.close")}
+            className="rounded p-1 hover:bg-accent/30"
+            data-testid="digest-close"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
       </header>
 
       <div
-        className="flex items-center gap-2 border-b px-6 py-2"
+        className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-2"
         style={{ borderColor: "var(--line)" }}
       >
-        <PeriodButton
-          id="today"
-          active={period === "today"}
-          label={t("digest.today")}
-          onClick={() => setPeriod("today")}
-        />
-        <PeriodButton
-          id="week"
-          active={period === "week"}
-          label={t("digest.week")}
-          onClick={() => setPeriod("week")}
-        />
+        <div className="flex items-center gap-2">
+          <GroupButton
+            mode="time"
+            active={groupMode === "time"}
+            label={t("digest.groupTime")}
+            onClick={() => setGroupMode("time")}
+          />
+          <GroupButton
+            mode="source"
+            active={groupMode === "source"}
+            label={t("digest.groupSource")}
+            onClick={() => setGroupMode("source")}
+          />
+        </div>
+        {paused && (
+          <div
+            className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs"
+            style={{
+              borderColor: "var(--warning, #b7791f)",
+              background: "var(--bg-1)",
+              color: "var(--ink)",
+            }}
+            data-testid="digest-pause-banner"
+          >
+            <AlertTriangle className="size-3.5" />
+            {t("digest.pauseBanner")}
+          </div>
+        )}
       </div>
 
       <div className="grid min-h-0 flex-1 gap-4 px-6 py-4 lg:grid-cols-[minmax(0,1fr)_430px]">
-        <div className="min-h-0 overflow-y-auto">
-          {drafts.isLoading && (
+        <main className="min-h-0 overflow-y-auto">
+          {rawInfo.isLoading && (
             <div className="text-sm text-muted-foreground">
               {t("digest.loading")}
             </div>
           )}
-          {drafts.data && items.length === 0 && (
+          {rawInfo.data && items.length === 0 && (
             <div
               className="mx-auto mt-12 max-w-md rounded border p-6 text-center text-sm"
-              style={{ borderColor: "var(--line)" }}
+              style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
               data-testid="digest-empty"
             >
-              <div className="font-serif text-base mb-2">
+              <div className="mb-2 font-serif text-base">
                 {t("digest.emptyTitle")}
               </div>
               <div className="text-xs text-muted-foreground">
@@ -243,45 +230,39 @@ export function DigestFocusMode({
               </div>
             </div>
           )}
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {items.map((draft) => (
-              <DigestCard
-                key={draft.id}
-                draft={draft}
-                selected={draft.id === selectedId}
-                onSelect={() => {
-                  setSelectedId(draft.id);
-                  setProposal(null);
-                  setNotice(null);
-                }}
-              />
+
+          <div className="space-y-5">
+            {groups.map((group) => (
+              <section
+                key={group.id}
+                data-testid={`digest-group-${groupMode}-${slugId(group.id)}`}
+              >
+                <div className="mb-2 flex items-center justify-between">
+                  <h3 className="font-mono text-[11px] uppercase text-muted-foreground">
+                    {group.label}
+                  </h3>
+                  <span className="text-[11px] text-muted-foreground">
+                    {t("digest.count", { count: group.items.length })}
+                  </span>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {group.items.map((item) => (
+                    <DigestCard
+                      key={item.id}
+                      item={item}
+                      selected={item.id === selectedId}
+                      onSelect={() => setSelectedId(item.id)}
+                    />
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
-        </div>
+        </main>
 
         <aside className="min-h-0">
-          {proposal ? (
-            <div
-              className="h-full min-h-[520px] overflow-hidden rounded-md border"
-              style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
-            >
-              <DiffReview
-                oldBody={proposal.old_body}
-                newBody={proposal.new_body}
-                saving={savingInternalize}
-                onAccept={acceptInternalize}
-                onReject={() => setProposal(null)}
-              />
-            </div>
-          ) : selected ? (
-            <DigestDetail
-              draft={selected}
-              busy={busy}
-              notice={notice}
-              onSkip={() => skipMut.mutate(selected)}
-              onSaveReference={() => saveReferenceMut.mutate(selected)}
-              onInternalize={() => proposeInternalizeMut.mutate(selected)}
-            />
+          {selected ? (
+            <DigestDetail item={selected} />
           ) : (
             <div
               className="rounded-md border p-4 text-sm text-muted-foreground"
@@ -296,13 +277,46 @@ export function DigestFocusMode({
   );
 }
 
-function PeriodButton({
-  id,
+function PullStatusBadge({
+  status,
+  pending,
+  fallbackPaused,
+}: {
+  status?: DigestStatus;
+  pending: boolean;
+  fallbackPaused: boolean;
+}) {
+  const { t } = useTranslation();
+  const state = pending ? "running" : fallbackPaused ? "paused" : status?.status ?? "idle";
+  const label =
+    state === "running"
+      ? t("digest.pullRunning")
+      : state === "paused"
+        ? t("digest.pullPaused")
+        : state === "error"
+          ? t("digest.pullError")
+          : state === "ok"
+            ? t("digest.pullOk")
+            : t("digest.pullIdle");
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs"
+      style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+      data-testid="digest-pull-status"
+    >
+      <Clock className="size-3.5" />
+      {label}
+    </span>
+  );
+}
+
+function GroupButton({
+  mode,
   active,
   label,
   onClick,
 }: {
-  id: "today" | "week";
+  mode: GroupMode;
   active: boolean;
   label: string;
   onClick: () => void;
@@ -317,7 +331,7 @@ function PeriodButton({
         background: active ? "var(--accent-tint-2)" : "transparent",
         color: "var(--ink)",
       }}
-      data-testid={`digest-period-${id}`}
+      data-testid={`digest-group-mode-${mode}`}
       aria-pressed={active}
     >
       {label}
@@ -326,24 +340,23 @@ function PeriodButton({
 }
 
 function DigestCard({
-  draft,
+  item,
   selected,
   onSelect,
 }: {
-  draft: DraftSummary;
+  item: RawInfoSummary;
   selected: boolean;
   onSelect: () => void;
 }) {
   const { t } = useTranslation();
-  const preview = (draft.body ?? "").trim();
   return (
     <article
-      className="min-h-[150px] cursor-pointer rounded-md border p-4 outline-none"
+      className="min-h-[172px] cursor-pointer rounded-md border p-4 outline-none"
       style={{
         borderColor: selected ? "var(--accent)" : "var(--line)",
         background: selected ? "var(--accent-tint-2)" : "var(--bg-1)",
       }}
-      data-testid={`digest-card-${draft.id}`}
+      data-testid={`digest-card-${item.id}`}
       data-selected={selected ? "true" : "false"}
       role="button"
       tabIndex={0}
@@ -357,54 +370,43 @@ function DigestCard({
     >
       <div className="mb-2 flex items-start justify-between gap-2">
         <h3 className="font-serif text-base font-medium leading-snug">
-          {draft.title || t("digest.untitled")}
+          {item.title || t("digest.untitled")}
         </h3>
-        <span className="font-mono text-[10px] text-muted-foreground">
-          {t("digest.ageDays", { count: draft.age_days ?? 0 })}
-        </span>
+        <SourceKind kind={item.source_kind} />
       </div>
-      {draft.source && (
-        <a
-          href={draft.source}
-          target="_blank"
-          rel="noreferrer"
-          className="mb-3 flex items-center gap-1 truncate text-[11px] text-muted-foreground hover:text-foreground"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <ExternalLink className="size-3" />
-          {draft.source}
-        </a>
-      )}
+      <div className="mb-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+        <span className="truncate">{item.source_name}</span>
+        <span>{statusLabel(item.status)}</span>
+      </div>
+      <a
+        href={item.url}
+        target="_blank"
+        rel="noreferrer"
+        className="mb-3 flex items-center gap-1 truncate text-[11px] text-muted-foreground hover:text-foreground"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <ExternalLink className="size-3" />
+        {item.url}
+      </a>
       <p
-        className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground"
+        className="text-sm leading-relaxed text-muted-foreground"
         style={{
           display: "-webkit-box",
-          WebkitLineClamp: 8,
+          WebkitLineClamp: 5,
           WebkitBoxOrient: "vertical",
           overflow: "hidden",
         }}
       >
-        {preview || t("digest.bodyMissing")}
+        {item.summary || t("digest.bodyMissing")}
       </p>
+      <div className="mt-3 text-[11px] text-muted-foreground">
+        {formatDate(item.fetched_at)}
+      </div>
     </article>
   );
 }
 
-function DigestDetail({
-  draft,
-  busy,
-  notice,
-  onSkip,
-  onSaveReference,
-  onInternalize,
-}: {
-  draft: DraftSummary;
-  busy: boolean;
-  notice: string | null;
-  onSkip: () => void;
-  onSaveReference: () => void;
-  onInternalize: () => void;
-}) {
+function DigestDetail({ item }: { item: RawInfoSummary }) {
   const { t } = useTranslation();
   return (
     <div
@@ -413,196 +415,165 @@ function DigestDetail({
       data-testid="digest-detail"
     >
       <div className="border-b p-4" style={{ borderColor: "var(--line)" }}>
-        <div className="mb-1 text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+        <div className="mb-1 text-[10px] font-mono uppercase text-muted-foreground">
           {t("digest.detail")}
         </div>
         <h3 className="font-serif text-lg font-medium">
-          {draft.title || t("digest.untitled")}
+          {item.title || t("digest.untitled")}
         </h3>
-        {draft.source && (
-          <a
-            href={draft.source}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-2 flex items-center gap-1 truncate text-[11px] text-muted-foreground hover:text-foreground"
-          >
-            <ExternalLink className="size-3" />
-            {draft.source}
-          </a>
-        )}
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        <div className="whitespace-pre-wrap text-sm leading-relaxed">
-          {draft.body || t("digest.bodyMissing")}
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+          <SourceKind kind={item.source_kind} />
+          <span>{item.source_name}</span>
+          <span>{statusLabel(item.status)}</span>
+          <span>{t("digest.confidenceLabel", { confidence: item.confidence })}</span>
         </div>
-        <DraftDiscussion draftId={draft.id} />
-      </div>
-
-      {notice && (
-        <div
-          className="border-t px-4 py-2 text-xs text-muted-foreground"
-          style={{ borderColor: "var(--line)" }}
-          data-testid="digest-action-notice"
+        <a
+          href={item.url}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-2 flex items-center gap-1 truncate text-[11px] text-muted-foreground hover:text-foreground"
         >
-          {notice}
-        </div>
-      )}
+          <ExternalLink className="size-3" />
+          {item.url}
+        </a>
+      </div>
 
-      <div
-        className="flex flex-wrap justify-end gap-2 border-t p-3"
-        style={{ borderColor: "var(--line)" }}
-      >
-        <ActionButton
-          icon={<Archive className="size-3.5" />}
-          label={t("digest.skip")}
-          onClick={onSkip}
-          disabled={busy}
-          testId="digest-action-skip"
-        />
-        <ActionButton
-          icon={<BookOpenCheck className="size-3.5" />}
-          label={t("digest.saveReference")}
-          onClick={onSaveReference}
-          disabled={busy}
-          testId="digest-action-save-reference"
-        />
-        <ActionButton
-          icon={<Brain className="size-3.5" />}
-          label={busy ? t("digest.working") : t("digest.internalize")}
-          onClick={onInternalize}
-          disabled={busy}
-          testId="digest-action-internalize"
-          primary
-        />
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 text-sm leading-relaxed">
+        <DetailBlock label={t("digest.summary")} value={item.summary} />
+        {item.key_points.length > 0 && (
+          <section>
+            <h4 className="mb-1 text-[11px] font-mono uppercase text-muted-foreground">
+              {t("digest.keyPoints")}
+            </h4>
+            <ul className="list-disc space-y-1 pl-5">
+              {item.key_points.map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
+          </section>
+        )}
+        <DetailBlock label={t("digest.whyItMatters")} value={item.why_it_matters} />
+        {item.suggested_tags.length > 0 && (
+          <section>
+            <h4 className="mb-1 text-[11px] font-mono uppercase text-muted-foreground">
+              {t("digest.tags")}
+            </h4>
+            <div className="flex flex-wrap gap-1.5">
+              {item.suggested_tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded border px-1.5 py-0.5 text-[11px]"
+                  style={{ borderColor: "var(--line)" }}
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
+        <DetailBlock label={t("digest.excerpt")} value={item.content_excerpt} />
+        <div className="text-[11px] text-muted-foreground">
+          {t("digest.fetchedAt", { date: formatDate(item.fetched_at) })}
+        </div>
       </div>
     </div>
   );
 }
 
-function ActionButton({
-  icon,
-  label,
-  onClick,
-  disabled,
-  testId,
-  primary = false,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-  disabled: boolean;
-  testId: string;
-  primary?: boolean;
-}) {
+function DetailBlock({ label, value }: { label: string; value?: string }) {
+  if (!value) return null;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
-      style={{
-        borderColor: primary ? "var(--accent)" : "var(--line)",
-        background: primary ? "var(--accent-tint-2)" : "transparent",
-        color: "var(--ink)",
-      }}
-      data-testid={testId}
-    >
-      {icon}
-      {label}
-    </button>
+    <section>
+      <h4 className="mb-1 text-[11px] font-mono uppercase text-muted-foreground">
+        {label}
+      </h4>
+      <p className="whitespace-pre-wrap">{value}</p>
+    </section>
   );
 }
 
-function DraftDiscussion({ draftId }: { draftId: string }) {
-  const { t } = useTranslation();
-  const { messages, status, error, send, stop } = useDraftChat(draftId);
-  const [input, setInput] = useState("");
+function SourceKind({ kind }: { kind: RawInfoSummary["source_kind"] }) {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px]"
+      style={{ background: "var(--accent-tint-2)" }}
+    >
+      {kind === "rss" ? <Rss className="size-3" /> : <Sparkles className="size-3" />}
+      {kind}
+    </span>
+  );
+}
 
-  useEffect(() => {
-    setInput("");
-  }, [draftId]);
-
-  const submit = () => {
-    if (input.trim() && status !== "streaming") {
-      send(input);
-      setInput("");
+function groupRawInfo(
+  items: RawInfoSummary[],
+  mode: GroupMode,
+  t: ReturnType<typeof useTranslation>["t"],
+): DigestGroup[] {
+  const grouped = new Map<string, DigestGroup>();
+  for (const item of items) {
+    const id = mode === "time" ? timeGroupId(item.fetched_at) : item.source_name || "Unknown";
+    const label = mode === "time" ? timeGroupLabel(id, t) : id;
+    const existing = grouped.get(id);
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      grouped.set(id, { id, label, items: [item] });
     }
-  };
+  }
+  return Array.from(grouped.values());
+}
 
-  return (
-    <div
-      className="mt-5 rounded-md border"
-      style={{ borderColor: "var(--line)" }}
-      data-testid="digest-discussion"
-    >
-      <div
-        className="border-b px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-muted-foreground"
-        style={{ borderColor: "var(--line)" }}
-      >
-        {t("digest.discuss")}
-      </div>
-      <div className="max-h-48 space-y-4 overflow-y-auto px-3 py-3">
-        {messages.length === 0 && !error && (
-          <div className="text-xs text-muted-foreground">
-            {t("digest.chatEmpty")}
-          </div>
-        )}
-        <ChatTranscript
-          messages={messages}
-          status={status}
-          testPrefix="digest"
-          generatingLabel={t("digest.working")}
-        />
-        {error && (
-          <div className="text-xs" style={{ color: "var(--danger, #c0392b)" }}>
-            {error}
-          </div>
-        )}
-      </div>
-      <div className="border-t p-2" style={{ borderColor: "var(--line)" }}>
-        <textarea
-          data-testid="digest-chat-input"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          placeholder={t("digest.chatPlaceholder")}
-          rows={2}
-          className="w-full resize-none rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none"
-          style={{ borderColor: "var(--line)", color: "var(--ink)" }}
-        />
-        <div className="mt-1 flex justify-end">
-          {status === "streaming" ? (
-            <button
-              type="button"
-              onClick={stop}
-              className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs"
-              style={{ borderColor: "var(--line)" }}
-              data-testid="digest-chat-stop"
-            >
-              <Square className="size-3" />
-              {t("digest.stop")}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={submit}
-              disabled={!input.trim()}
-              className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs disabled:opacity-50"
-              style={{ borderColor: "var(--line)" }}
-              data-testid="digest-chat-send"
-            >
-              <Send className="size-3" />
-              {t("digest.send")}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+function timeGroupId(raw: string): string {
+  const fetched = startOfDay(new Date(raw));
+  const today = startOfDay(new Date());
+  const days = Math.floor((today.getTime() - fetched.getTime()) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return "week";
+  return "earlier";
+}
+
+function timeGroupLabel(
+  id: string,
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
+  if (id === "today") return t("digest.timeToday");
+  if (id === "yesterday") return t("digest.timeYesterday");
+  if (id === "week") return t("digest.timeWeek");
+  return t("digest.timeEarlier");
+}
+
+function sortRawInfo(items: RawInfoSummary[]): RawInfoSummary[] {
+  return [...items].sort((a, b) => {
+    const byFetched = Date.parse(b.fetched_at) - Date.parse(a.fetched_at);
+    if (byFetched !== 0) return byFetched;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function slugId(raw: string): string {
+  return raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function formatDate(raw: string): string {
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return parsed.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function statusLabel(status: RawInfoSummary["status"]): string {
+  return status.replace(/_/g, " ");
+}
+
+function isPending(item: RawInfoSummary): boolean {
+  return item.status !== "discarded" && item.status !== "included";
 }

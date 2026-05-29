@@ -259,6 +259,36 @@ def test_digest_pull_api_lists_raw_info_items(tmp_path, monkeypatch):
     assert listed.json()[0]["source_id"] == source.id
 
 
+def test_digest_status_api_reports_pending_count_and_source_status(tmp_path):
+    vault, cfg = _ready_vault(tmp_path)
+    source = DigestSource(name="AI feed", kind="rss", url="https://example.com/feed.xml")
+    source.pull_status = "paused"
+    source.last_error = "pending raw info reached 200"
+    _save_source(vault, source)
+    RawInfoStore(vault.digest_items_dir).save(
+        RawInfo(
+            source_id=source.id,
+            source_name=source.name,
+            source_kind="rss",
+            item_key="rss:test",
+            title="Pending raw info",
+            url="https://example.com/a",
+            summary="Needs review.",
+        )
+    )
+    client = TestClient(create_app(vault, cfg))
+    client.app.state.web_state.digest_pull_status = "paused"
+    client.app.state.web_state.digest_pull_last_error = "pending raw info reached 200"
+
+    res = client.get("/api/digest/status")
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload["status"] == "paused"
+    assert payload["pending_count"] == 1
+    assert payload["last_error"] == "pending raw info reached 200"
+    assert payload["sources"][0]["pull_status"] == "paused"
+
+
 def test_digest_cli_run_pulls_v2_source(tmp_path, monkeypatch):
     vault, _cfg = _ready_vault(tmp_path)
     source = _save_source(
