@@ -136,6 +136,23 @@ function seedOneItem(vaultDir) {
   ]);
 }
 
+function seedProcessedItems(vaultDir) {
+  writeRawInfos(vaultDir, [
+    rawInfo({
+      id: "01C6INCLUDEDRAWINFO01",
+      title: "Already included item",
+      url: "https://example.com/included",
+      status: "included",
+    }),
+    rawInfo({
+      id: "01C6DISCARDEDRAWINFO1",
+      title: "Already discarded item",
+      url: "https://example.com/discarded",
+      status: "discarded",
+    }),
+  ]);
+}
+
 function seedOverflow(vaultDir) {
   writeRawInfos(
     vaultDir,
@@ -830,6 +847,39 @@ try {
     await page.locator('[data-testid="digest-review-close"]').click();
   });
   await runTest("no console errors during single-item discard suite", () => {
+    assertConsoleClean(env);
+  });
+} finally {
+  await env.teardown();
+}
+
+env = await setupDigestEnv(seedProcessedItems);
+try {
+  const { page } = env;
+  await runTest("review entry is disabled when every Raw Info item is already processed", async () => {
+    await page.locator('[data-testid="header-digest-button"]').click();
+    await page.locator('[data-testid="digest-focus-mode"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    assert(
+      await page.locator('[data-testid="digest-start-review"]').isDisabled(),
+      "top-level review entry is disabled with no pending items",
+    );
+    assert(
+      await page.locator('[data-testid="digest-card-review-01C6INCLUDEDRAWINFO01"]').isDisabled(),
+      "included item card cannot enter review mode",
+    );
+    assert(
+      await page.locator('[data-testid="digest-card-review-01C6DISCARDEDRAWINFO1"]').isDisabled(),
+      "discarded item card cannot enter review mode",
+    );
+    assert(
+      (await page.locator('[data-testid="digest-review-workspace"]').count()) === 0,
+      "disabled review entries do not open the empty review workspace",
+    );
+  });
+  await runTest("no console errors during processed-only suite", () => {
     assertConsoleClean(env);
   });
 } finally {

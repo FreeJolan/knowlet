@@ -158,6 +158,10 @@ export function DigestFocusMode({
     () => sortRawInfo(rawInfo.data ?? []),
     [rawInfo.data],
   );
+  const pendingItems = useMemo(
+    () => items.filter((item) => isPending(item)),
+    [items],
+  );
   const selected = useMemo(
     () => items.find((item) => item.id === selectedId) ?? null,
     [items, selectedId],
@@ -182,7 +186,7 @@ export function DigestFocusMode({
   if (!open) return null;
 
   const pendingCount =
-    status.data?.pending_count ?? items.filter((item) => isPending(item)).length;
+    status.data?.pending_count ?? pendingItems.length;
   const paused =
     pendingCount > 200 ||
     status.data?.status === "paused" ||
@@ -248,11 +252,19 @@ export function DigestFocusMode({
           </button>
           <button
             type="button"
-            onClick={() => setReviewId(selected?.id ?? items[0]?.id ?? null)}
-            disabled={items.length === 0}
+            onClick={() => {
+              const target = selected && isPending(selected) ? selected : pendingItems[0] ?? null;
+              setReviewId(target?.id ?? null);
+            }}
+            disabled={pendingItems.length === 0}
             className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
             style={{ borderColor: "var(--accent)", color: "var(--ink)" }}
             data-testid="digest-start-review"
+            title={
+              pendingItems.length === 0
+                ? t("digest.noPendingReview")
+                : t("digest.startReview")
+            }
           >
             {t("digest.startReview")}
           </button>
@@ -354,6 +366,7 @@ export function DigestFocusMode({
                       key={item.id}
                       item={item}
                       selected={item.id === selectedId}
+                      reviewable={isPending(item)}
                       onSelect={() => setSelectedId(item.id)}
                       onReview={() => setReviewId(item.id)}
                     />
@@ -455,11 +468,13 @@ function GroupButton({
 function DigestCard({
   item,
   selected,
+  reviewable,
   onSelect,
   onReview,
 }: {
   item: RawInfoSummary;
   selected: boolean;
+  reviewable: boolean;
   onSelect: () => void;
   onReview: () => void;
 }) {
@@ -519,11 +534,14 @@ function DigestCard({
       </div>
       <button
         type="button"
-        className="mt-3 rounded border px-2 py-1 text-[11px]"
+        className="mt-3 rounded border px-2 py-1 text-[11px] disabled:cursor-not-allowed disabled:opacity-50"
         style={{ borderColor: "var(--line)", color: "var(--ink)" }}
         data-testid={`digest-card-review-${item.id}`}
+        disabled={!reviewable}
+        title={!reviewable ? t("digest.processedReviewUnavailable") : t("digest.startHere")}
         onClick={(e) => {
           e.stopPropagation();
+          if (!reviewable) return;
           onReview();
         }}
       >

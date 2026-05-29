@@ -128,6 +128,8 @@
     "sourceConfigHint": "RSS and Prompt Sources live here because they are part of the Digest workflow.",
     "startReview": "Start review",
     "startHere": "Review from here",
+    "noPendingReview": "No pending items to review.",
+    "processedReviewUnavailable": "This item has already been processed.",
     "previous": "Previous",
     "next": "Next",
     "previousTooltip": "Go to the previous item.",

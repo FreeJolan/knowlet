@@ -128,6 +128,8 @@
     "sourceConfigHint": "RSS 和 Prompt Source 是资讯工作流的一部分,所以直接在这里配置。",
     "startReview": "开始批阅",
     "startHere": "从此处批阅",
+    "noPendingReview": "没有待批阅资讯。",
+    "processedReviewUnavailable": "这条资讯已经处理过。",
     "previous": "上一条",
     "next": "下一条",
     "previousTooltip": "回到上一条资讯。",
