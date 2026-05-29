@@ -41,7 +41,14 @@ from knowlet.config import KnowletConfig, find_vault, load_config
 from knowlet.core.backlinks import find_backlinks
 from knowlet.core.card import Card, parse_due
 from knowlet.core.drafts import Draft
-from knowlet.core.events import ErrorEvent, event_to_dict
+from knowlet.core.events import (
+    ErrorEvent,
+    ReplyChunkEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+    TurnDoneEvent,
+    event_to_dict,
+)
 from knowlet.core.fsrs_wrap import initial_state, schedule_next
 from knowlet.core.graph import build_graph, read_body_via_note
 from knowlet.core.i18n import SUPPORTED_LANGUAGES, all_keys, set_language
@@ -1987,10 +1994,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
         # Nuke the fake remote file.
         fake = _dev_conflict_path(note_id)
-        try:
+        with suppress(FileNotFoundError):
             fake.unlink()
-        except FileNotFoundError:
-            pass
         # Clear the sync_state row by overwriting with a no-op
         # (clearing drive_file_id sends the note back to "dirty"
         # on the next status poll, which is the right state for a
@@ -2605,10 +2610,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         device_count = (
             len(rep.alive_devices) if rep is not None else 0
         )
-        if mode == "auto":
-            effective = "strict" if device_count >= 2 else "lax"
-        else:
-            effective = mode
+        effective = ("strict" if device_count >= 2 else "lax") if mode == "auto" else mode
         return {
             "mode": mode,
             "effective_mode": effective,
@@ -2635,10 +2637,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         device_count = (
             len(rep.alive_devices) if rep is not None else 0
         )
-        if new_mode == "auto":
-            effective = "strict" if device_count >= 2 else "lax"
-        else:
-            effective = new_mode
+        effective = (
+            ("strict" if device_count >= 2 else "lax") if new_mode == "auto" else new_mode
+        )
         return {
             "mode": new_mode,
             "effective_mode": effective,
@@ -2880,14 +2881,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         path = Path(meta["path"])
         if not path.is_absolute():
             path = runtime.vault.notes_dir / path.name
-        try:
+        with suppress(FileNotFoundError, ValueError):
             runtime.vault.trash_note(path)
-        except (FileNotFoundError, ValueError):
-            pass
-        try:
+        with suppress(Exception):
             runtime.index.delete_note(note_id)
-        except Exception:
-            pass
         store = SyncStateStore(vault.root)
         try:
             store.remove_file_state("note", note_id)
@@ -3277,6 +3274,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         from knowlet.chat.note_chat import (
             build_grounded_turn,
             build_note_chat_session,
+            wants_current_note_edit_proposal,
         )
 
         meta = runtime.index.get_note_meta(note_id)
@@ -3300,6 +3298,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             llm=runtime.session.llm,
             registry=runtime.session.registry,
             ctx=runtime.session.ctx,
+            current_note_id=note.id,
         )
         # A6: seed prior clean turns so the model has conversation memory.
         for m in req.history:
@@ -3311,6 +3310,47 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
         def event_source() -> Iterator[str]:
             try:
+                if wants_current_note_edit_proposal(req.text):
+                    call_id = "direct_propose_current_note_edit"
+                    instruction = req.text
+                    if req.history:
+                        prior = "\n".join(
+                            f"{m.role}: {m.content}" for m in req.history[-6:]
+                        )
+                        instruction = f"此前对话:\n{prior}\n\n当前修改请求:{req.text}"
+                    arguments = {"instruction": instruction}
+                    call = ToolCallEvent(
+                        id=call_id,
+                        name="propose_current_note_edit",
+                        arguments=arguments,
+                    )
+                    yield f"data: {json.dumps(event_to_dict(call), ensure_ascii=False)}\n\n"
+                    payload = session.registry.dispatch(
+                        call.name,
+                        arguments,
+                        session.ctx,
+                    )
+                    result = ToolResultEvent(
+                        id=call_id,
+                        name=call.name,
+                        payload=payload,
+                    )
+                    yield (
+                        "data: "
+                        f"{json.dumps(event_to_dict(result), ensure_ascii=False)}\n\n"
+                    )
+                    if isinstance(payload.get("error"), str):
+                        text = f"提议失败: {payload['error']}"
+                    elif payload.get("changed") is False:
+                        text = str(payload.get("summary") or "没有可应用改动。")
+                    else:
+                        text = (
+                            "我已经准备好一版可在 diff 中审阅的修改提案。"
+                            "你可以在左侧 diff 中逐块接受、手动调整或放弃。"
+                        )
+                    yield f"data: {json.dumps(event_to_dict(ReplyChunkEvent(text=text)), ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps(event_to_dict(TurnDoneEvent(final_text=text)), ensure_ascii=False)}\n\n"
+                    return
                 for event in session.user_turn_stream(grounded):
                     payload = json.dumps(event_to_dict(event), ensure_ascii=False)
                     yield f"data: {payload}\n\n"
@@ -4965,12 +5005,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             ) from exc
         except ExtractionError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # Page fetched, but summarize blew up. Return a capsule
             # with raw extracted text so the user can still triage.
             try:
                 title, body = fetch_and_extract(url)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 title, body = url, ""
             return CapturePayload(
                 title=title or url,
@@ -5478,7 +5518,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 runtime_or_init_safe()
                 .ctx.drafts.list_for_task(t.id)
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             pending = 0
         return TaskSummary(
             id=t.id,
@@ -5999,12 +6039,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         from knowlet.core.note import Note as _Note
 
         for p in notes_dir.rglob("*.md"):
-            try:
+            with suppress(Exception):
                 note = _Note.from_file(p)
-            except Exception:  # noqa: BLE001
-                continue
-            if note.title:
-                out.append(note.title)
+                if note.title:
+                    out.append(note.title)
         return out
 
     def _existing_note_ids(vault_root: Path) -> list[str]:
@@ -6018,21 +6056,17 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         from knowlet.core.note import Note as _Note
 
         for p in notes_dir.rglob("*.md"):
-            try:
+            with suppress(Exception):
                 note = _Note.from_file(p)
-            except Exception:  # noqa: BLE001
-                continue
-            if note.id:
-                out.append(note.id)
+                if note.id:
+                    out.append(note.id)
         return out
 
     def shutil_rmtree_safe(p: Path) -> None:
         import shutil as _shutil
 
-        try:
+        with suppress(FileNotFoundError):
             _shutil.rmtree(p)
-        except FileNotFoundError:
-            pass
 
     def _import_report_to_json(report: Any) -> dict[str, Any]:
         return {

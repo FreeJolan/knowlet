@@ -12,6 +12,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from knowlet.chat.conversation_store import Conversation, ConversationStore
+from knowlet.chat.current_note_tools import (
+    CHECK_CURRENT_NOTE_TOOL,
+    PROPOSE_CURRENT_NOTE_EDIT_TOOL,
+)
 from knowlet.chat.log import prune_old
 from knowlet.chat.prompts import build_chat_system_prompt
 from knowlet.chat.session import ChatSession
@@ -166,6 +170,8 @@ def bootstrap_chat(
 
     llm = LLMClient(cfg.llm, audit_store=AuditEventStore(vault.root))
     registry = default_registry()
+    registry.register(CHECK_CURRENT_NOTE_TOOL)
+    registry.register(PROPOSE_CURRENT_NOTE_EDIT_TOOL)
     cards = CardStore(vault.cards_dir)
     tasks = TaskStore(vault.tasks_dir)
     drafts = DraftStore(vault.drafts_dir)
@@ -176,6 +182,7 @@ def bootstrap_chat(
         cards=cards,
         tasks=tasks,
         drafts=drafts,
+        llm=llm,
     )
     session = ChatSession(llm=llm, registry=registry, ctx=ctx, system_prompt=system_prompt)
     conversations = ConversationStore(vault.conversations_dir)

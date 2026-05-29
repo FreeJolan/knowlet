@@ -876,7 +876,8 @@ export function FileTree({
  * is a no-op, leaving the input's focus alone.
  */
 function CustomRow<T>({ node, attrs, innerRef, children }: RowRendererProps<T>) {
-  const { tabIndex: _ignored, ...rest } = attrs;
+  const rest = { ...attrs };
+  delete rest.tabIndex;
   return (
     <div
       {...rest}

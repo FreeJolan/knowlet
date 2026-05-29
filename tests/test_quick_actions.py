@@ -10,9 +10,8 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
-from knowlet.core.note import Note, new_id
 from knowlet.core.quick_actions import (
     CreateNoteParams,
     QuickAction,
@@ -20,7 +19,6 @@ from knowlet.core.quick_actions import (
     new_action_id,
     render_title_placeholders,
 )
-
 
 # ---------- store unit tests ----------
 
@@ -105,11 +103,11 @@ def test_store_delete_returns_false_for_missing(tmp_path: Path):
 
 
 def test_create_note_params_rejects_traversal():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         CreateNoteParams(folder="../escape", title_template="x")
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         CreateNoteParams(folder="/abs/path", title_template="x")
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         CreateNoteParams(folder=".hidden/inside", title_template="x")
 
 
@@ -233,7 +231,6 @@ def test_endpoint_update_replaces_in_place(tmp_path: Path):
 
 def test_endpoint_run_creates_note_with_rendered_title(tmp_path: Path):
     client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
-    runtime = client.app.state.web_state.runtime_or_init()
     r = client.post(
         "/api/quick-actions",
         json=_make_action(folder="daily", title="{{date}}"),

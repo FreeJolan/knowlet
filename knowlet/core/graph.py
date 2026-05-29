@@ -15,12 +15,15 @@ backlinks.py made for the same reason).
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
 from knowlet.core.backlinks import extract_wikilinks
 from knowlet.core.note import Note
+
+log = logging.getLogger(__name__)
 
 
 def _normalize(title: str) -> str:
@@ -94,7 +97,8 @@ def build_graph(
             continue
         try:
             body = read_body(path)
-        except Exception:  # noqa: BLE001 — keep going if a single note is unreadable
+        except Exception:
+            log.debug("skip unreadable note while building graph: %s", path, exc_info=True)
             continue
         seen_targets: set[str] = set()
         for w in extract_wikilinks(body):

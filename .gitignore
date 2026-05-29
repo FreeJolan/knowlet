@@ -39,6 +39,7 @@ scratch/
 
 # In case someone runs knowlet from the repo root, don't commit vault state.
 .knowlet/
+/cards/
 /notes/
 /users/
 

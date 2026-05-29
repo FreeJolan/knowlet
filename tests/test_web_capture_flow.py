@@ -171,7 +171,7 @@ def test_defer_then_list_drafts_includes_body(tmp_path: Path) -> None:
     must round-trip through to /api/drafts response. The earlier
     DraftSummary lacked the body field — drafts showed empty body in
     the UI even though the markdown file on disk was correct."""
-    client, v = _client(tmp_path)
+    client, _v = _client(tmp_path)
     capsule = {
         "title": "Article with body",
         "body": (

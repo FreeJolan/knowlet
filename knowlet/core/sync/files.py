@@ -240,7 +240,7 @@ def list_appdata_revisions(service: Any) -> dict[str, DriveFileBrief]:
     page_token: str | None = None
     # Hard cap pages so a misbehaving service (or a unit-test
     # MagicMock that truthy-loops on ``nextPageToken``) can't hang
-    # the scan. 1000 entries per page × 10 pages = 10k files,
+    # the scan. 1000 entries per page x 10 pages = 10k files,
     # well past any single-user vault.
     for _ in range(10):
         kwargs: dict[str, Any] = {

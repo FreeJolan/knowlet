@@ -29,7 +29,7 @@ import json
 import os
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -199,12 +199,12 @@ class RecentActivitySource:
         store = ctx.audit_store
         if store is None:
             return None
-        since_dt = datetime.now(timezone.utc) - timedelta(days=self.window_days)
+        since_dt = datetime.now(UTC) - timedelta(days=self.window_days)
         try:
             events = list(
                 store.query(since=since_dt.isoformat(), limit=self.limit)
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             # Bad DB / locked / schema mismatch — skip rather than fail
             # envelope assembly. The envelope must never break LLM calls.
             return None

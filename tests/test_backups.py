@@ -19,7 +19,6 @@ from knowlet.core.quick_actions import (
 )
 from knowlet.core.vault import Vault
 
-
 # ----------------------------------------------------- store unit tests
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import suppress
 from pathlib import Path
 from typing import Annotated
 
@@ -482,10 +483,8 @@ def vault_import(
         )
         if not dry_run:
             console.print(
-                "[dim]· run `knowlet --vault {0} reindex` to build "
-                "the index for the restored vault[/dim]".format(
-                    report.target_path
-                ),
+                f"[dim]· run `knowlet --vault {report.target_path} reindex` to build "
+                "the index for the restored vault[/dim]",
             )
         return
 
@@ -549,19 +548,15 @@ def _existing_titles(vault_root: Path) -> list[str]:
     if not notes_dir.exists():
         return out
     for p in notes_dir.rglob("*.md"):
-        try:
+        with suppress(Exception):
             note = Note.from_file(p)
-        except Exception:  # noqa: BLE001
-            continue
-        if note.title:
-            out.append(note.title)
+            if note.title:
+                out.append(note.title)
     return out
 
 
 def shutil_rmtree_safe(path: Path) -> None:
     import shutil
 
-    try:
+    with suppress(FileNotFoundError):
         shutil.rmtree(path)
-    except FileNotFoundError:
-        pass

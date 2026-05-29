@@ -9,7 +9,6 @@ provider.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +17,6 @@ import pytest
 from knowlet.config import LLMConfig
 from knowlet.core.audit_log import AuditEventStore
 from knowlet.core.llm import LLMClient
-
 
 # ----------------------------------------------- fakes
 

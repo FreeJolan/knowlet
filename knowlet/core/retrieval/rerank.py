@@ -20,8 +20,8 @@ Always falls back to the original ranking on LLM error.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import replace
-from typing import Sequence
 
 from knowlet.config import LLMConfig
 from knowlet.core.index import SearchHit
@@ -103,7 +103,7 @@ def llm_rerank(
             max_tokens=512,
         )
         scores = _parse_scores(result.content or "")
-    except Exception:  # noqa: BLE001
+    except Exception:
         return list(hits)
     if not scores:
         return list(hits)

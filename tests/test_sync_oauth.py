@@ -98,9 +98,11 @@ def test_require_google_libs_passes_when_installed() -> None:
 
 
 def test_require_google_libs_raises_when_missing() -> None:
-    with patch.dict("sys.modules", {"google.auth": None}):
-        with pytest.raises(SyncDependenciesMissingError):
-            require_google_libs()
+    with (
+        patch.dict("sys.modules", {"google.auth": None}),
+        pytest.raises(SyncDependenciesMissingError),
+    ):
+        require_google_libs()
 
 
 # ----------------------------------------------------- happy path

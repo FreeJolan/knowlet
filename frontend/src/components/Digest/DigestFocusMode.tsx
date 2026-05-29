@@ -80,7 +80,7 @@ export function DigestFocusMode({
     staleTime: 0,
   });
 
-  const items = drafts.data ?? [];
+  const items = useMemo(() => drafts.data ?? [], [drafts.data]);
   const selected = useMemo(
     () => items.find((draft) => draft.id === selectedId) ?? null,
     [items, selectedId],

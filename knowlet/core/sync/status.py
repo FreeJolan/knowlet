@@ -152,7 +152,7 @@ def compute_note_sync_status(
     # We have a Drive id; ask Drive for the current revision.
     try:
         meta = get_file_metadata(_drive_service(creds), record.drive_file_id)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         # Network / Drive-side error. Don't crash; mark offline +
         # surface the reason in detail for the tooltip.
         return _make_status(

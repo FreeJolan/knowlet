@@ -20,6 +20,7 @@ or later, with its own UX design.
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -367,10 +368,8 @@ def resolve_with_merge(
 
     synced_iso = now_iso()
     synced_epoch = _iso_seconds_to_epoch(synced_iso)
-    try:
+    with suppress(OSError):
         os.utime(local_path, (synced_epoch, synced_epoch))
-    except OSError:
-        pass
 
     state.upsert_file_state(
         FileState(

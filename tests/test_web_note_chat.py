@@ -21,10 +21,10 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from knowlet.chat.note_chat import build_grounded_turn
+from knowlet.chat.note_chat import build_grounded_turn, wants_current_note_edit_proposal
 from knowlet.config import KnowletConfig, save_config
 from knowlet.core.drafts import Draft, DraftStore
-from knowlet.core.events import ReplyChunkEvent, ReplyDoneEvent
+from knowlet.core.events import ReplyChunkEvent, ReplyDoneEvent, ToolCallEvent
 from knowlet.core.llm import AssistantMessage
 from knowlet.core.note import Note, new_id
 from knowlet.core.vault import Vault
@@ -43,6 +43,89 @@ class StreamStubLLM:
     ) -> Iterator[Any]:
         self.seen_messages = messages
         yield from self._events
+
+
+class CheckCurrentNoteStubLLM:
+    """Streams a tool call, then answers after the tool result is added.
+
+    The same object also serves the nested `check_note` LLM call through
+    `.chat`, mirroring the real runtime where the note-chat tool loop and
+    the Stage D checker share the configured model client.
+    """
+
+    def __init__(self) -> None:
+        self.stream_calls = 0
+        self.check_messages: list[dict[str, Any]] | None = None
+
+    def chat_stream(
+        self, messages, tools=None, max_tokens=None, temperature=None
+    ) -> Iterator[Any]:
+        self.stream_calls += 1
+        if self.stream_calls == 1:
+            yield ToolCallEvent(
+                id="check_1",
+                name="check_current_note",
+                arguments={"instruction": "重点检查 RAG 事实错误"},
+            )
+            yield ReplyDoneEvent(final_text="")
+            return
+        yield ReplyChunkEvent(text="校准完成。")
+        yield ReplyDoneEvent(final_text="校准完成。")
+
+    def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+        self.check_messages = messages
+        return AssistantMessage(
+            content=json.dumps(
+                {
+                    "summary": "发现一处高风险事实错误。",
+                    "findings": [
+                        {
+                            "severity": "high",
+                            "paragraph": 1,
+                            "quote": "RAG means putting every note into the prompt.",
+                            "finding": "RAG 不是把全部笔记塞进 prompt。",
+                            "why": "RAG 是先检索相关材料,再把相关上下文交给生成模型。",
+                            "suggestion": "改为先检索、再生成的描述。",
+                            "fix_instruction": "把第 1 段改成检索相关笔记再生成。",
+                            "confidence": 0.92,
+                        }
+                    ],
+                }
+            ),
+            tool_calls=[],
+        )
+
+
+class ProposeCurrentNoteEditStubLLM:
+    """Streams a current-note edit proposal tool call, then answers after
+    the proposal has been returned to the tool loop."""
+
+    def __init__(self, new_body: str) -> None:
+        self.new_body = new_body
+        self.stream_calls = 0
+        self.propose_messages: list[dict[str, Any]] | None = None
+
+    def chat_stream(
+        self, messages, tools=None, max_tokens=None, temperature=None
+    ) -> Iterator[Any]:
+        self.stream_calls += 1
+        if self.stream_calls == 1:
+            yield ToolCallEvent(
+                id="edit_1",
+                name="propose_current_note_edit",
+                arguments={"instruction": "把 RAG 描述改得更准确,保持最小改动"},
+            )
+            yield ReplyDoneEvent(final_text="")
+            return
+        yield ReplyChunkEvent(text="我已经准备好一版可审阅的 diff。")
+        yield ReplyDoneEvent(final_text="我已经准备好一版可审阅的 diff。")
+
+    def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+        self.propose_messages = messages
+        return AssistantMessage(
+            content=json.dumps({"new_body": self.new_body}),
+            tool_calls=[],
+        )
 
 
 def _client_with_note(
@@ -174,6 +257,147 @@ def test_note_chat_llm_failure_yields_error_event(tmp_path: Path):
     assert "upstream went down" in msg
 
 
+def test_note_chat_can_trigger_current_note_check_tool(tmp_path: Path):
+    """Stage D through normal conversation: the model can call a
+    note-scoped checker tool from the Discuss stream, the UI receives a
+    structured tool trace, and the note remains read-only."""
+    stub = CheckCurrentNoteStubLLM()
+    client, note = _client_with_note(
+        tmp_path,
+        body="RAG means putting every note into the prompt.",
+        stub=stub,
+    )
+
+    r = client.post(
+        f"/api/chat/note/{note.id}/stream",
+        json={"text": "帮我检查这篇笔记有没有错漏"},
+    )
+
+    assert r.status_code == 200
+    events = _parse_sse(r.text)
+    assert [e["type"] for e in events] == [
+        "tool_call",
+        "tool_result",
+        "reply_chunk",
+        "turn_done",
+    ]
+    assert events[0]["name"] == "check_current_note"
+    assert events[1]["name"] == "check_current_note"
+    payload = events[1]["payload"]
+    assert payload["note_id"] == note.id
+    assert payload["summary"] == "发现一处高风险事实错误。"
+    assert payload["findings"][0]["finding"] == "RAG 不是把全部笔记塞进 prompt。"
+    assert stub.check_messages is not None
+    checker_prompt = "\n".join(
+        m["content"] for m in stub.check_messages if m["role"] == "user"
+    )
+    assert "RAG means putting every note into the prompt." in checker_prompt
+
+    after = client.get(f"/api/notes/{note.id}").json()
+    assert after["body"] == "RAG means putting every note into the prompt."
+
+
+def test_note_chat_can_trigger_current_note_edit_proposal_tool(tmp_path: Path):
+    """Normal discussion can ask for an applyable note change: the model
+    calls a note-scoped proposal tool, the SSE payload carries old/new
+    bodies for the diff UI, and the note remains untouched until the user
+    accepts the diff."""
+    new_body = "RAG retrieves relevant chunks, then generates an answer."
+    stub = ProposeCurrentNoteEditStubLLM(new_body)
+    client, note = _client_with_note(
+        tmp_path,
+        body="RAG puts every note into the prompt.",
+        stub=stub,
+    )
+
+    r = client.post(
+        f"/api/chat/note/{note.id}/stream",
+        json={"text": "请帮我把这篇笔记改得更准确,但先给我 diff 审。"},
+    )
+
+    assert r.status_code == 200
+    events = _parse_sse(r.text)
+    assert [e["type"] for e in events] == [
+        "tool_call",
+        "tool_result",
+        "reply_chunk",
+        "turn_done",
+    ]
+    assert events[0]["name"] == "propose_current_note_edit"
+    payload = events[1]["payload"]
+    assert payload["note_id"] == note.id
+    assert payload["changed"] is True
+    assert payload["old_body"] == "RAG puts every note into the prompt."
+    assert payload["new_body"] == new_body
+    assert payload["summary"] == "已生成可审阅的修改提案。"
+    assert stub.propose_messages is not None
+    propose_prompt = "\n".join(
+        m["content"] for m in stub.propose_messages if m["role"] == "user"
+    )
+    assert "RAG puts every note into the prompt." in propose_prompt
+
+    after = client.get(f"/api/notes/{note.id}").json()
+    assert after["body"] == "RAG puts every note into the prompt."
+
+
+def test_note_chat_routes_explicit_diff_prompt_to_proposal_tool(tmp_path: Path):
+    """When the user's own message explicitly asks for a reviewable diff,
+    the app should not rely on the model choosing the tool. It should emit
+    the same tool trace deterministically and open the normal DiffReview path."""
+
+    class DirectProposalLLM:
+        def __init__(self) -> None:
+            self.stream_called = False
+            self.propose_messages: list[dict[str, Any]] | None = None
+
+        def chat_stream(self, *args: Any, **kwargs: Any) -> Iterator[Any]:
+            self.stream_called = True
+            yield ReplyDoneEvent(final_text="")
+
+        def chat(self, messages, tools=None, max_tokens=None, temperature=None):
+            self.propose_messages = messages
+            return AssistantMessage(
+                content=json.dumps({"new_body": "RAG retrieves, then generates."}),
+                tool_calls=[],
+            )
+
+    stub = DirectProposalLLM()
+    client, note = _client_with_note(
+        tmp_path,
+        body="RAG puts everything into the prompt.",
+        stub=stub,
+    )
+
+    r = client.post(
+        f"/api/chat/note/{note.id}/stream",
+        json={
+            "text": (
+                "请为这篇笔记生成一个可在 diff 中审阅的最小改写提案,"
+                "不要直接把整篇改写正文贴在聊天里。"
+            )
+        },
+    )
+
+    assert r.status_code == 200
+    events = _parse_sse(r.text)
+    assert [e["type"] for e in events] == [
+        "tool_call",
+        "tool_result",
+        "reply_chunk",
+        "turn_done",
+    ]
+    assert events[0]["name"] == "propose_current_note_edit"
+    assert events[1]["payload"]["changed"] is True
+    assert events[1]["payload"]["old_body"] == "RAG puts everything into the prompt."
+    assert events[1]["payload"]["new_body"] == "RAG retrieves, then generates."
+    assert "diff 中审阅" in events[0]["arguments"]["instruction"]
+    assert "diff 中审阅" in events[2]["text"]
+    assert stub.stream_called is False
+
+    after = client.get(f"/api/notes/{note.id}").json()
+    assert after["body"] == "RAG puts everything into the prompt."
+
+
 def test_draft_chat_streams_grounded_reply(tmp_path: Path):
     """C3: digest drafts can be discussed before the user decides to
     skip/save/internalize. The draft body must reach the same grounded
@@ -236,6 +460,14 @@ def test_emotional_tone_guidance_is_non_fixing_and_non_cliche() -> None:
     assert "不要诊断" in turn
     assert "不灌鸡汤" in turn
     assert "最多只问一个轻问题" in turn
+
+
+def test_edit_intent_router_is_limited_to_applyable_note_changes() -> None:
+    assert wants_current_note_edit_proposal(
+        "请为这篇笔记生成一个可在 diff 中审阅的最小改写提案"
+    )
+    assert wants_current_note_edit_proposal("帮我把这篇笔记改写得更清楚")
+    assert not wants_current_note_edit_proposal("帮我检查这篇笔记有没有错漏")
 
 
 # ------------------------------------- A6: multi-turn (conversation memory)

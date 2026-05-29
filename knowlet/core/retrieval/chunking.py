@@ -21,8 +21,6 @@ this is a drop-in replacement at the indexer call site.
 
 from __future__ import annotations
 
-from typing import Iterable
-
 from langchain_text_splitters import (
     MarkdownHeaderTextSplitter,
     RecursiveCharacterTextSplitter,

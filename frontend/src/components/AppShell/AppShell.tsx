@@ -249,6 +249,16 @@ export function AppShell() {
     () => new Set(tabsApi.pinned),
     [tabsApi.pinned],
   );
+  const tabsActiveId = tabsApi.activeId;
+  const tabsCount = tabsApi.tabs.length;
+  const tabsCanMoveActiveLeft = tabsApi.canMoveActiveLeft;
+  const tabsCanMoveActiveRight = tabsApi.canMoveActiveRight;
+  const tabsCloseTab = tabsApi.closeTab;
+  const tabsCloseOthers = tabsApi.closeOthers;
+  const tabsCloseUnpinned = tabsApi.closeUnpinned;
+  const tabsTogglePin = tabsApi.togglePin;
+  const tabsMoveActiveLeft = tabsApi.moveActiveLeft;
+  const tabsMoveActiveRight = tabsApi.moveActiveRight;
 
   // Phase 2 D Slice 2c.3 — built-in palette commands. Memoize so cmdk
   // doesn't re-render the list every parent render. Closures capture
@@ -266,42 +276,41 @@ export function AppShell() {
         setSearchFocusOpen,
         setSettingsOpen,
         tabs: {
-          activeId: tabsApi.activeId,
-          count: tabsApi.tabs.length,
-          activeIsPinned:
-            tabsApi.activeId !== null && pinnedSet.has(tabsApi.activeId),
-          canMoveActiveLeft: tabsApi.canMoveActiveLeft,
-          canMoveActiveRight: tabsApi.canMoveActiveRight,
+          activeId: tabsActiveId,
+          count: tabsCount,
+          activeIsPinned: tabsActiveId !== null && pinnedSet.has(tabsActiveId),
+          canMoveActiveLeft: tabsCanMoveActiveLeft,
+          canMoveActiveRight: tabsCanMoveActiveRight,
           closeActive: () => {
-            const id = tabsApi.activeId;
-            if (id) tabsApi.closeTab(id);
+            const id = tabsActiveId;
+            if (id) tabsCloseTab(id);
           },
           closeOthers: () => {
-            const id = tabsApi.activeId;
-            if (id) tabsApi.closeOthers(id);
+            const id = tabsActiveId;
+            if (id) tabsCloseOthers(id);
           },
-          closeAll: () => tabsApi.closeUnpinned(),
+          closeAll: () => tabsCloseUnpinned(),
           togglePinActive: () => {
-            const id = tabsApi.activeId;
-            if (id) tabsApi.togglePin(id);
+            const id = tabsActiveId;
+            if (id) tabsTogglePin(id);
           },
-          moveActiveLeft: () => tabsApi.moveActiveLeft(),
-          moveActiveRight: () => tabsApi.moveActiveRight(),
+          moveActiveLeft: () => tabsMoveActiveLeft(),
+          moveActiveRight: () => tabsMoveActiveRight(),
         },
       }),
     [
       t,
       openNewDocDialog,
-      tabsApi.activeId,
-      tabsApi.tabs.length,
-      tabsApi.canMoveActiveLeft,
-      tabsApi.canMoveActiveRight,
-      tabsApi.closeTab,
-      tabsApi.closeOthers,
-      tabsApi.closeUnpinned,
-      tabsApi.togglePin,
-      tabsApi.moveActiveLeft,
-      tabsApi.moveActiveRight,
+      tabsActiveId,
+      tabsCount,
+      tabsCanMoveActiveLeft,
+      tabsCanMoveActiveRight,
+      tabsCloseTab,
+      tabsCloseOthers,
+      tabsCloseUnpinned,
+      tabsTogglePin,
+      tabsMoveActiveLeft,
+      tabsMoveActiveRight,
       pinnedSet,
     ],
   );
@@ -311,7 +320,7 @@ export function AppShell() {
   // already cached for the FileTree, so this is free.
   const selectedNoteTitle = useMemo(() => {
     if (!selectedNoteId) return "";
-    const tree = qc.getQueryData<TreeFolder>(QK.tree);
+    const tree = treeQuery.data ?? qc.getQueryData<TreeFolder>(QK.tree);
     if (!tree) return "";
     const stack: TreeFolder[] = [tree];
     while (stack.length) {
@@ -321,9 +330,6 @@ export function AppShell() {
       for (const sub of f.folders) stack.push(sub);
     }
     return "";
-    // `treeQuery.data` in deps so a freshly-created note's title (e.g.
-    // 今日反思) populates once the tree refetch lands — without it the
-    // memo computes "" before the new note is cached and never recomputes.
   }, [selectedNoteId, qc, treeQuery.data]);
 
   const toggleRail = () => {
@@ -379,7 +385,7 @@ export function AppShell() {
   // standalone CalendarDays header icon was removed in the same
   // slice; the daily flow is just one example of the quick-actions
   // mechanism, teaching the concept by use rather than by docs.
-  const openTodayDaily = async () => {
+  const openTodayDaily = useCallback(async () => {
     try {
       const actions = await qc.fetchQuery({
         queryKey: QK.quickActions,
@@ -400,16 +406,16 @@ export function AppShell() {
     } catch (err) {
       console.error("daily-note action run failed", err);
     }
-  };
+  }, [qc, tabsApi]);
 
   // Phase 3 Stage 4 — B1: 今日反思. Open (or create) today's daily note
   // AND open the discussion pane on it in one gesture, so the daily
   // reflect-and-talk habit is a single click. Tone is auto-inferred from
   // what the user writes (warm once it's a journal-ish entry).
-  const openReflectToday = async () => {
+  const openReflectToday = useCallback(async () => {
     await openTodayDaily();
     setDiscussOpen(true);
-  };
+  }, [openTodayDaily]);
 
   useEffect(() => {
     const openPalette = (e: Event) => {
@@ -607,7 +613,14 @@ export function AppShell() {
       window.removeEventListener("knowlet:open-digest", openDigest);
       window.removeEventListener("keydown", onKey);
     };
-  }, [qc, selectedNoteId, openNewDocDialog]);
+  }, [
+    qc,
+    selectedNoteId,
+    openNewDocDialog,
+    openTodayDaily,
+    setSelectedNoteId,
+    tabsApi,
+  ]);
 
   // Phase 3 Stage 4 P3/P4 — apply an accepted AI edit through the
   // existing atomic note-save (PUT /api/notes), which backs up the

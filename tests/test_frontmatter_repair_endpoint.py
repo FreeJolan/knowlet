@@ -69,7 +69,7 @@ def test_repair_endpoint_409_when_not_corrupted(tmp_path: Path) -> None:
     """Calling repair on a healthy note is a programmer error (the
     UI hides the button when status==valid). Returns 409 rather
     than silently rewriting an intact file."""
-    client, vault, _ = _client_with_stub(tmp_path, StubLLM([]))
+    client, _vault, _ = _client_with_stub(tmp_path, StubLLM([]))
     runtime = client.app.state.web_state.runtime  # type: ignore[attr-defined]
     note = Note(id="01KR1J4TEST00000000000000A", title="clean", body="ok")
     runtime.vault.write_note(note)

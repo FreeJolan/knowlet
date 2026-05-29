@@ -33,7 +33,7 @@ from knowlet.cli._common import (
 app = typer.Typer(help="Connect knowlet to Google Drive (opt-in sync).", no_args_is_help=True)
 
 
-def _load_and_verify_creds(tok_path: Path) -> "SyncCredentials | None":  # noqa: F821
+def _load_and_verify_creds(tok_path: Path) -> SyncCredentials | None:
     """Load credentials and verify the stored scopes match the
     build's required SCOPES. Returns None when no creds exist;
     raises ScopeUpgradeRequiredError when scopes are stale.

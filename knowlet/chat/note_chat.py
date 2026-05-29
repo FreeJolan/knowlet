@@ -18,7 +18,7 @@ warm mirror; formal material gets a sharper critic.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from knowlet.chat.session import ChatSession
@@ -56,7 +56,63 @@ TONE_GUIDANCE = (
 DISCUSS_SYSTEM = "你是 knowlet 里的笔记对谈助手,只围绕用户给你的这篇笔记跟他交流。"
 
 
-def build_note_chat_session(*, llm: Any, registry: Any, ctx: Any) -> ChatSession:
+_EDIT_INTENT_MARKERS = (
+    "改写",
+    "重写",
+    "修改",
+    "修正",
+    "润色",
+    "整理",
+    "更清晰",
+    "应用到",
+    "apply",
+    "rewrite",
+    "revise",
+    "edit",
+    "fix",
+    "polish",
+)
+
+_REVIEWABLE_PROPOSAL_MARKERS = (
+    "diff",
+    "审阅",
+    "确认",
+    "提案",
+    "应用",
+    "不要直接",
+    "review",
+    "proposal",
+    "apply",
+)
+
+
+def wants_current_note_edit_proposal(user_text: str) -> bool:
+    """True when a note-anchored user turn is clearly asking for an
+    applyable edit proposal rather than just discussion.
+
+    This is intentionally conservative-but-practical. Real dogfood showed
+    GPT can answer with a textual "diff" instead of calling the tool, even
+    when the tool is available. For explicit edit/diff intents we route to
+    the proposal tool deterministically so the UI can honor the human-review
+    contract.
+    """
+    text = user_text.strip().lower()
+    if not text:
+        return False
+    if any(marker in text for marker in _EDIT_INTENT_MARKERS):
+        return True
+    return "diff" in text and any(
+        marker in text for marker in _REVIEWABLE_PROPOSAL_MARKERS
+    )
+
+
+def build_note_chat_session(
+    *,
+    llm: Any,
+    registry: Any,
+    ctx: Any,
+    current_note_id: str | None = None,
+) -> ChatSession:
     """A fresh :class:`ChatSession` for a note-anchored discussion.
 
     Reuses the runtime's ``llm`` / ``registry`` / ``ctx`` (same wiring as
@@ -65,8 +121,14 @@ def build_note_chat_session(*, llm: Any, registry: Any, ctx: Any) -> ChatSession
     they survive proxies that ignore system. Ephemeral per call in P1;
     per-note persistence lands in P6.
     """
+    session_ctx = replace(
+        ctx,
+        per_turn={},
+        llm=llm,
+        current_note_id=current_note_id,
+    )
     return ChatSession(
-        llm=llm, registry=registry, ctx=ctx, system_prompt=DISCUSS_SYSTEM
+        llm=llm, registry=registry, ctx=session_ctx, system_prompt=DISCUSS_SYSTEM
     )
 
 
@@ -80,6 +142,14 @@ def build_grounded_turn(note: Note, user_text: str) -> str:
         f"{TONE_GUIDANCE}\n\n"
         f"我们在讨论我的这篇笔记:\n"
         f"<anchored-note title={note.title!r}>\n{note.body}\n</anchored-note>\n\n"
+        "如果我的话是在要求检查、校准、核对、找错漏、找事实错误或找推理漏洞,"
+        "你应该优先调用 check_current_note 工具获取结构化检查结果,再用 Markdown "
+        "向我解释。这个工具只读,不会修改正文;不要把它说成已经修改了笔记。\n\n"
+        "如果我的话是在要求你改写、修改、修正、润色、整理、让正文更清晰,"
+        "提出修改建议、生成可审阅提案、给出 diff,或把检查结果应用到这篇笔记,"
+        "你应该调用 propose_current_note_edit 工具生成"
+        "可审阅的 diff 提案。这个工具只生成 old_body/new_body 供我确认,不会写盘;"
+        "不要在聊天里直接贴整篇改写正文来替代 diff。\n\n"
         f"我的话:{user_text}"
     )
 

@@ -22,7 +22,7 @@ as a property. Expansion is an *optional* AI booster.
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 from knowlet.core.index import SearchHit
 from knowlet.core.llm import LLMClient
@@ -68,7 +68,7 @@ def expand_query_hyde(
         )
         text = (result.content or "").strip()
         return text if text else q
-    except Exception:  # noqa: BLE001
+    except Exception:
         # Network / auth / quota — degrade gracefully to baseline search.
         return q
 

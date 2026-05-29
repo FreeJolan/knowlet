@@ -18,5 +18,18 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    linterOptions: {
+      reportUnusedDisableDirectives: 'off',
+    },
+    rules: {
+      // The React Compiler advisory rules are too broad for the current
+      // codebase; keep them out of the blocking lint gate until we schedule
+      // a dedicated React Compiler cleanup pass.
+      'react-hooks/set-state-in-effect': 'off',
+      'react-hooks/refs': 'off',
+      // knowlet uses colocated helpers beside components; HMR still works for
+      // our Vite setup, so this should not block the repository lint gate.
+      'react-refresh/only-export-components': 'off',
+    },
   },
 ])

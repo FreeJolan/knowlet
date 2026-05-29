@@ -353,6 +353,40 @@
   font-size: 0.9em;
   line-height: 1.55;
 }
+
+/* Diff review: CodeMirror's MergeView provides the two-pane mechanics; these
+ * rules adapt it to knowlet's note surface and keep the center revert lane
+ * visually separate from either document. */
+.kn-diff-merge {
+  height: 100%;
+  overflow: auto;
+  background: var(--card-paper);
+}
+.kn-diff-merge .cm-mergeViewEditors {
+  min-height: 100%;
+}
+.kn-diff-merge .cm-mergeViewEditor {
+  min-width: 0;
+}
+.kn-diff-merge .cm-mergeViewEditor:first-child {
+  border-right: 1px solid var(--line);
+}
+.kn-diff-merge .cm-merge-revert {
+  border-left: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line-soft);
+  background: var(--panel);
+}
+.kn-diff-merge .cm-merge-revert button {
+  color: var(--ink-mute);
+  border-radius: 4px;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+.kn-diff-merge .cm-merge-revert button:hover {
+  background: var(--accent-tint);
+  color: var(--ink);
+}
 /* react-markdown renders our MermaidBlock inside its inherited <pre>
  * wrapper. That wrapper would otherwise paint a code-block background
  * around the diagram, which looks wrong. Strip the wrapper styling

@@ -24,8 +24,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import frontmatter
@@ -67,10 +68,10 @@ def _age_days_from_iso(iso_ts: str | None) -> int:
         s = iso_ts.replace("Z", "+00:00") if iso_ts.endswith("Z") else iso_ts
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
     except (TypeError, ValueError):
         return 0
-    delta = datetime.now(timezone.utc) - dt
+    delta = datetime.now(UTC) - dt
     return max(0, int(delta.total_seconds() // 86400))
 
 
@@ -232,10 +233,8 @@ class DraftStore:
             and previous_path != target
             and previous_path.exists()
         ):
-            try:
+            with suppress(OSError):
                 os.unlink(previous_path)
-            except OSError:
-                pass  # best-effort cleanup
         return target
 
     def delete(self, draft_id: str) -> bool:
@@ -267,7 +266,7 @@ class DraftStore:
         if month_subdir:
             from datetime import datetime as _dt
 
-            yyyy_mm = _dt.now(timezone.utc).strftime("%Y-%m")
+            yyyy_mm = _dt.now(UTC).strftime("%Y-%m")
             base = self.archive_dir / yyyy_mm
         else:
             base = self.archive_dir
@@ -321,9 +320,8 @@ class DraftStore:
                 draft = Draft.from_file(path)
             except OSError:
                 continue
-            if draft.should_auto_archive:
-                if self.archive(draft, month_subdir=True) is not None:
-                    archived += 1
+            if draft.should_auto_archive and self.archive(draft, month_subdir=True) is not None:
+                archived += 1
         return archived
 
     def active_count(self) -> int:

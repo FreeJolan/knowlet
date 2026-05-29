@@ -37,6 +37,13 @@ class ToolContext:
     # (web_search, fetch_url) read+increment their own key here. Free-form
     # so future tools can add new keys without changing this dataclass.
     per_turn: dict[str, int] = field(default_factory=dict)
+    # The configured LLM client. Most tools do not need it; agentic tools
+    # such as current-note calibration do.
+    llm: Any | None = None
+    # Note-anchored sessions set this so normal chat can invoke tools that
+    # operate on "the note I'm currently discussing" without exposing a
+    # separate UI button.
+    current_note_id: str | None = None
 
 
 @dataclass

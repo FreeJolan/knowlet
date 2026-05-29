@@ -33,7 +33,7 @@ import shutil
 import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -88,7 +88,7 @@ class ExportManifest:
         )
 
     @classmethod
-    def from_json(cls, raw: str) -> "ExportManifest":
+    def from_json(cls, raw: str) -> ExportManifest:
         d = json.loads(raw)
         return cls(
             schema_version=int(d.get("schema_version", 1)),
@@ -456,4 +456,4 @@ def _first_h1(raw: str) -> str | None:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

@@ -38,7 +38,6 @@ from ulid import ULID
 
 from knowlet.config import VAULT_MARKER_DIR
 
-
 SCHEMA_VERSION = 1
 QUICK_ACTIONS_FILENAME = "quick-actions.toml"
 

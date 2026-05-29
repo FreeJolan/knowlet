@@ -148,7 +148,7 @@ class Envelope:
     task_layer: Layer | None
 
     def system_prompt(self) -> str:
-        return "\n\n".join(l.render() for l in self.system_layers)
+        return "\n\n".join(layer.render() for layer in self.system_layers)
 
     def to_chat_messages(
         self,
@@ -180,7 +180,7 @@ class Envelope:
 
     @property
     def total_bytes(self) -> int:
-        n = sum(l.byte_count for l in self.system_layers)
+        n = sum(layer.byte_count for layer in self.system_layers)
         if self.task_layer:
             n += self.task_layer.byte_count
         return n

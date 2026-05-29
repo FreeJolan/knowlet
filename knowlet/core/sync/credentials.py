@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -92,12 +93,8 @@ def save_credentials(path: Path, creds: SyncCredentials) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(creds.to_json(), encoding="utf-8")
-    try:
+    with suppress(OSError):
         os.chmod(tmp, 0o600)
-    except OSError:
-        # Windows / weird FS — best-effort. The atomic rename below
-        # still completes; we just couldn't tighten perms.
-        pass
     tmp.replace(path)
 
 

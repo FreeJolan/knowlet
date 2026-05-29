@@ -29,7 +29,6 @@ from pathlib import Path
 from knowlet.core.note import Note, _classify_frontmatter, new_id
 from knowlet.core.vault import Vault
 
-
 # ----------------------------------------------------- classifier
 
 
@@ -55,7 +54,7 @@ def test_classify_missing_opening_marker():
     """User deleted the opening ``---`` but left the keys + closing.
     Classic external-edit damage."""
     raw = "id: 01XYZ\ntitle: oops\n---\n\nthe body"
-    status, meta, body, detail = _classify_frontmatter(raw)
+    status, _meta, body, detail = _classify_frontmatter(raw)
     assert status == "corrupted"
     assert "opening" in (detail or "").lower()
     assert body == "the body"
@@ -65,7 +64,7 @@ def test_classify_missing_closing_marker():
     """Opening is there but the closing ``---`` is gone — we can't
     tell where metadata stops, so we surface the whole file."""
     raw = "---\nid: 01XYZ\ntitle: oops\n\nthe body"
-    status, meta, body, detail = _classify_frontmatter(raw)
+    status, _meta, body, detail = _classify_frontmatter(raw)
     assert status == "corrupted"
     assert "never closes" in (detail or "").lower()
     assert body == raw  # full file — we couldn't slice it
@@ -73,7 +72,7 @@ def test_classify_missing_closing_marker():
 
 def test_classify_yaml_parse_error():
     raw = "---\nid: 01ABC\ntitle: \"unclosed quote\nbroken: : :\n---\nbody"
-    status, meta, body, detail = _classify_frontmatter(raw)
+    status, _meta, body, detail = _classify_frontmatter(raw)
     assert status == "corrupted"
     assert "yaml" in (detail or "").lower()
     assert body == "body"
@@ -82,20 +81,20 @@ def test_classify_yaml_parse_error():
 def test_classify_non_mapping_yaml():
     """frontmatter is a YAML list, not a mapping — semantic broken."""
     raw = "---\n- foo\n- bar\n---\nbody"
-    status, meta, body, detail = _classify_frontmatter(raw)
+    status, _meta, body, detail = _classify_frontmatter(raw)
     assert status == "corrupted"
     assert "mapping" in (detail or "").lower()
     assert body == "body"
 
 
 def test_classify_empty_file():
-    status, meta, body, detail = _classify_frontmatter("")
+    status, meta, _body, _detail = _classify_frontmatter("")
     assert status == "auto_filled"
     assert meta == {}
 
 
 def test_classify_whitespace_only_file():
-    status, meta, body, detail = _classify_frontmatter("\n\n\n")
+    status, _meta, _body, _detail = _classify_frontmatter("\n\n\n")
     assert status == "auto_filled"
 
 
@@ -104,7 +103,7 @@ def test_classify_yaml_key_in_body_isnt_corrupted():
     markdown looks YAML-key-shaped but ISN'T damaged frontmatter.
     Distinguishing signal: no ``---`` marker anywhere nearby."""
     raw = "URL: https://example.com\n\nA cool article I want to remember."
-    status, meta, body, detail = _classify_frontmatter(raw)
+    status, _meta, body, _detail = _classify_frontmatter(raw)
     assert status == "auto_filled"  # not corrupted
     assert body == raw
 

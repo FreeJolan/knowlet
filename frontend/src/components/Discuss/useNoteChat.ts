@@ -25,6 +25,16 @@ export interface ChatMessage {
   tool?: ChatToolTrace;
 }
 export type ChatStatus = "idle" | "streaming" | "error";
+export interface NoteEditProposal {
+  id: string;
+  noteId: string;
+  title?: string;
+  oldBody: string;
+  newBody: string;
+  changed: boolean;
+  reason?: string;
+  summary?: string;
+}
 
 export interface ChatSSEEvent {
   type: string;
@@ -42,6 +52,7 @@ interface NoteChatSession {
   status: ChatStatus;
   error: string | null;
   abort: AbortController | null;
+  proposal: NoteEditProposal | null;
   listeners: Set<() => void>;
 }
 
@@ -107,6 +118,7 @@ function getSession(noteId: string): NoteChatSession {
     status: "idle",
     error: null,
     abort: null,
+    proposal: null,
     listeners: new Set(),
   };
   sessions.set(noteId, created);
@@ -221,6 +233,32 @@ export function applyToolResult(
   });
 }
 
+function proposalFromToolResult(ev: ChatSSEEvent): NoteEditProposal | null {
+  if (ev.name !== "propose_current_note_edit") return null;
+  const payload = ev.payload;
+  if (!payload || typeof payload !== "object") return null;
+  const obj = payload as Record<string, unknown>;
+  const noteId = typeof obj.note_id === "string" ? obj.note_id : "";
+  if (
+    !noteId ||
+    typeof obj.old_body !== "string" ||
+    typeof obj.new_body !== "string"
+  ) {
+    return null;
+  }
+  const proposal: NoteEditProposal = {
+    id: ev.id || `proposal-${Date.now()}`,
+    noteId,
+    oldBody: obj.old_body,
+    newBody: obj.new_body,
+    changed: obj.changed === true,
+  };
+  if (typeof obj.title === "string") proposal.title = obj.title;
+  if (typeof obj.reason === "string") proposal.reason = obj.reason;
+  if (typeof obj.summary === "string") proposal.summary = obj.summary;
+  return proposal;
+}
+
 export function useNoteChat(noteId: string | null) {
   const [, forceRender] = useState(0);
   const activeNoteRef = useRef<string | null>(noteId);
@@ -244,6 +282,7 @@ export function useNoteChat(noteId: string | null) {
   const messages = activeSession?.messages ?? [];
   const status = activeSession?.status ?? "idle";
   const error = activeSession?.error ?? null;
+  const proposal = activeSession?.proposal ?? null;
 
   const appendUserMessage = useCallback(
     (content: string, targetNoteId?: string) => {
@@ -350,8 +389,10 @@ export function useNoteChat(noteId: string | null) {
               s.messages = upsertToolCall(s.messages, ev);
             });
           } else if (ev.type === "tool_result") {
+            const proposalResult = proposalFromToolResult(ev);
             updateSession(id, (s) => {
               s.messages = applyToolResult(s.messages, ev);
+              if (proposalResult) s.proposal = proposalResult;
             });
           } else if (ev.type === "error") {
             streamError = formatErrorDetail(ev.message || "stream error");
@@ -404,6 +445,15 @@ export function useNoteChat(noteId: string | null) {
       session.status = "idle";
       session.error = null;
       session.messages = [];
+      session.proposal = null;
+    });
+  }, []);
+
+  const clearProposal = useCallback((targetNoteId?: string) => {
+    const id = targetNoteId ?? activeNoteRef.current;
+    if (!id) return;
+    updateSession(id, (session) => {
+      session.proposal = null;
     });
   }, []);
 
@@ -411,9 +461,11 @@ export function useNoteChat(noteId: string | null) {
     messages,
     status,
     error,
+    proposal,
     send,
     stop,
     reset,
+    clearProposal,
     appendUserMessage,
     appendAssistantMessage,
   };

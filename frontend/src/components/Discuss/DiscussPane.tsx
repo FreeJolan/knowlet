@@ -48,7 +48,7 @@ const DISCUSS_SUGGESTIONS: Array<{
     id: "propose",
     label: "提出一版更清晰的改写",
     prompt:
-      "请帮我基于这篇笔记提出一版更清晰但尽量少改动的修改建议，修改必须经过我确认后才能应用。",
+      "请为这篇笔记生成一个可在 diff 中审阅的最小改写提案：在尽量保留原意的前提下，让结构更清楚、表达更准确，并删掉口语化或含混的表达。不要直接把整篇改写正文贴在聊天里，修改必须等我确认后才能应用。",
   },
 ];
 
@@ -68,9 +68,11 @@ export function DiscussPane({
     messages,
     status,
     error,
+    proposal,
     send,
     stop,
     reset,
+    clearProposal,
   } = useNoteChat(noteId);
   const [input, setInput] = useState("");
   const [proposing, setProposing] = useState(false);
@@ -93,6 +95,17 @@ export function DiscussPane({
     const el = scrollRef.current;
     if (el && followTail) el.scrollTo({ top: el.scrollHeight });
   }, [messages, followTail]);
+
+  useEffect(() => {
+    if (!noteId || !proposal || proposal.noteId !== noteId) return;
+    if (proposal.changed) {
+      onProposeEdit?.({ oldBody: proposal.oldBody, newBody: proposal.newBody });
+      setProposeMsg(proposal.summary || "已生成可审阅的修改提案。");
+    } else {
+      setProposeMsg(proposal.reason || proposal.summary || "无可应用改动");
+    }
+    clearProposal(noteId);
+  }, [clearProposal, noteId, onProposeEdit, proposal]);
 
   const handleMessageScroll = () => {
     const el = scrollRef.current;

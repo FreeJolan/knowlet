@@ -14,7 +14,6 @@ from knowlet.core.sync.state import (
     sync_state_db_path,
 )
 
-
 # ----------------------------------------------------- lifecycle
 
 

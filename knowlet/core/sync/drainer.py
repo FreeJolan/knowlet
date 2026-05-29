@@ -160,7 +160,7 @@ class PushDrainer:
             try:
                 with self._tick_lock:
                     self._tick()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.warning("drainer tick raised", exc_info=True)
             if self._stop.wait(self.poll_interval):
                 return
@@ -181,7 +181,7 @@ class PushDrainer:
         if not self._untracked_sweep_done:
             try:
                 untracked = self.untracked_sweep()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.warning(
                     "untracked-sweep callback raised", exc_info=True
                 )
@@ -257,7 +257,7 @@ class PushDrainer:
                     # is handled separately.
                     self._clear_failure(row.entity_id)
                     continue
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.warning(
                         "drainer: push failed for note %s: %r — will retry",
                         row.entity_id,
@@ -355,7 +355,7 @@ class PushDrainer:
             )
             self._clear_failure(row.entity_id)
             return
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "drainer: attachment push failed for %s: %r — will retry",
                 row.entity_id,
@@ -448,7 +448,7 @@ class PushDrainer:
                         fileId=row.drive_file_id,
                         body={"trashed": True},
                     ).execute()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "drainer: Drive %s-delete failed for %s: %r — "
                     "will retry",

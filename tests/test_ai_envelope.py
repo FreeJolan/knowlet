@@ -17,7 +17,6 @@ from pathlib import Path
 import pytest
 
 from knowlet.core.ai import (
-    Envelope,
     EnvelopeContext,
     Layer,
     RoleConfig,
@@ -29,7 +28,6 @@ from knowlet.core.ai import (
 from knowlet.core.audit_log import AuditEvent, AuditEventStore
 from knowlet.core.user_profile import UserProfile, write_profile
 from knowlet.core.vault import Vault
-
 
 # ----------------------------------------------------------- Layer
 

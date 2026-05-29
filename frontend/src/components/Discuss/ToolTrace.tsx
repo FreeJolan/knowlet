@@ -15,6 +15,19 @@ export function summarizeToolPayload(name: string, payload: unknown): string {
   if (!payload || typeof payload !== "object") return "";
   const obj = payload as Record<string, unknown>;
   if (typeof obj.error === "string") return obj.error;
+  if (obj.kind === "note_edit_proposal") {
+    if (obj.changed === false) {
+      return typeof obj.reason === "string" && obj.reason
+        ? obj.reason
+        : "没有可应用改动";
+    }
+    return typeof obj.summary === "string" && obj.summary
+      ? obj.summary
+      : "已生成可审阅的修改提案";
+  }
+  if (Array.isArray(obj.findings) && typeof obj.summary === "string") {
+    return `${obj.findings.length} 个发现 · ${obj.summary}`;
+  }
   if (Array.isArray(obj.results)) {
     const first = obj.results[0] as Record<string, unknown> | undefined;
     const title = typeof first?.title === "string" ? ` · ${first.title}` : "";

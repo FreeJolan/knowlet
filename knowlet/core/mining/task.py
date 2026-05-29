@@ -227,11 +227,9 @@ class MiningTask:
         keep = _int_or_default(meta.get("max_keep"), 30)
         pending = _int_or_default(meta.get("max_pending_drafts"), 5)
         paused_reason_raw = meta.get("paused_reason")
-        paused_reason: str | None
-        if paused_reason_raw in ("backlog", "user"):
-            paused_reason = str(paused_reason_raw)
-        else:
-            paused_reason = None
+        paused_reason = (
+            str(paused_reason_raw) if paused_reason_raw in ("backlog", "user") else None
+        )
         try:
             schema_version = int(meta.get("schema_version") or 1)
         except (TypeError, ValueError):

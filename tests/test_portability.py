@@ -25,7 +25,6 @@ from knowlet.core.portability import (
 )
 from knowlet.core.vault import Vault
 
-
 # ----------------------------------------------------- helpers
 
 
@@ -179,7 +178,7 @@ def test_restore_rejects_non_knowlet_zip(tmp_path: Path) -> None:
     plain = tmp_path / "plain.zip"
     with zipfile.ZipFile(plain, "w") as zf:
         zf.writestr("foo.md", "# foo\n")
-    with pytest.raises(ValueError, match="MANIFEST.json"):
+    with pytest.raises(ValueError, match=r"MANIFEST\.json"):
         restore_archive(
             archive_path=plain,
             target_dir=tmp_path / "out",

@@ -438,6 +438,124 @@ try {
     await page.unroute("**/api/chat/note/*/stream");
   });
 
+  await runTest("natural check request can show current-note calibration trace", async () => {
+    await page.route("**/api/chat/note/*/stream", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body:
+          'data: {"type":"tool_call","id":"check_1","name":"check_current_note","arguments":{"instruction":"检查错漏"}}\n\n' +
+          'data: {"type":"tool_result","id":"check_1","name":"check_current_note","payload":{"note_id":"n1","title":"RAG Notes","summary":"发现一处高风险事实错误。","count":1,"findings":[{"severity":"high","paragraph":1,"finding":"RAG 不是把全部笔记塞进 prompt。"}]}}\n\n' +
+          'data: {"type":"reply_chunk","text":"我检查完了，主要问题是 RAG 的定义写反了。"}\n\n' +
+          'data: {"type":"turn_done","final_text":"我检查完了，主要问题是 RAG 的定义写反了。"}\n\n',
+      });
+    });
+    await page.locator('[data-testid="discuss-input"]').fill("帮我检查这篇有没有错漏");
+    await page.locator('[data-testid="discuss-send"]').click();
+    const tracePanel = page.locator('[data-testid="discuss-trace-panel"]').first();
+    await tracePanel.waitFor({ state: "visible", timeout: 3000 });
+    await page.locator('[data-testid="discuss-trace-toggle"]').first().click();
+    const trace = page.locator('[data-testid="tool-trace-check_current_note"]').first();
+    await trace.waitFor({ state: "visible", timeout: 3000 });
+    assert(
+      (await trace.innerText()).includes("check_current_note"),
+      "calibration should be rendered as a tool trace",
+    );
+    assert(
+      (await trace.innerText()).includes("1 个发现"),
+      "calibration trace should summarize findings instead of raw JSON",
+    );
+    await page
+      .locator('[data-testid="discuss-message-assistant"]')
+      .filter({ hasText: "RAG 的定义写反了" })
+      .first()
+      .waitFor({ state: "visible", timeout: 3000 });
+    await page.locator('[data-testid="discuss-reset"]').click();
+    await page.unroute("**/api/chat/note/*/stream");
+  });
+
+  await runTest("current-note edit proposal tool opens the diff review", async () => {
+    await page
+      .locator(".group")
+      .filter({ hasText: "RAG Notes" })
+      .first()
+      .click();
+    const reset = page.locator('[data-testid="discuss-reset"]');
+    if (await reset.isEnabled()) await reset.click();
+    await page.route("**/api/chat/note/*/stream", async (route) => {
+      const noteId = new URL(route.request().url()).pathname.match(
+        /\/api\/chat\/note\/([^/]+)\/stream$/,
+      )?.[1];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body:
+          'data: {"type":"tool_call","id":"edit_1","name":"propose_current_note_edit","arguments":{"instruction":"最小改写"}}\n\n' +
+          `data: {"type":"tool_result","id":"edit_1","name":"propose_current_note_edit","payload":{"kind":"note_edit_proposal","note_id":"${noteId}","title":"RAG Notes","changed":true,"summary":"已生成可审阅的修改提案。","old_body":"RAG retrieves relevant chunks, then generates an answer.","new_body":"RAG retrieves relevant chunks, reranks them, then generates an answer."}}\n\n` +
+          'data: {"type":"reply_chunk","text":"我准备好了一版可审阅的修改提案。"}\n\n' +
+          'data: {"type":"turn_done","final_text":"我准备好了一版可审阅的修改提案。"}\n\n',
+      });
+    });
+    await page
+      .locator('[data-testid="discuss-input"]')
+      .fill("请给这篇笔记提出一版可审阅的最小改写");
+    await page.locator('[data-testid="discuss-send"]').click();
+    await page
+      .locator('[data-testid="diff-review"]')
+      .waitFor({ state: "visible", timeout: 3000 });
+    await page
+      .locator('[data-testid="diff-label-original"]')
+      .filter({ hasText: "当前正文" })
+      .waitFor({ state: "visible", timeout: 3000 });
+    await page
+      .locator('[data-testid="diff-label-proposal"]')
+      .filter({ hasText: "AI 提案" })
+      .waitFor({ state: "visible", timeout: 3000 });
+    await page
+      .locator('[data-testid="diff-editor"]')
+      .filter({ hasText: "reranks" })
+      .waitFor({ state: "visible", timeout: 3000 });
+    const diffLayout = await page
+      .locator('[data-testid="diff-review"]')
+      .evaluate((root) => {
+        const editors = Array.from(root.querySelectorAll(".cm-mergeViewEditor")).map(
+          (el) => {
+            const rect = el.getBoundingClientRect();
+            return {
+              left: rect.left,
+              right: rect.right,
+              top: rect.top,
+              width: rect.width,
+            };
+          },
+        );
+        return {
+          count: editors.length,
+          sameRow:
+            editors.length === 2 && Math.abs(editors[0].top - editors[1].top) < 4,
+          separated:
+            editors.length === 2 && editors[0].right <= editors[1].left + 32,
+          balanced:
+            editors.length === 2 &&
+            Math.abs(editors[0].width - editors[1].width) < 80,
+        };
+      });
+    assert(
+      diffLayout.count === 2 && diffLayout.sameRow && diffLayout.separated && diffLayout.balanced,
+      `diff review should render two side-by-side panes: ${JSON.stringify(diffLayout)}`,
+    );
+    await page
+      .locator('[data-testid="tool-trace-propose_current_note_edit"]')
+      .first()
+      .waitFor({ state: "attached", timeout: 3000 });
+    await page.locator('[data-testid="diff-reject"]').click();
+    await page
+      .locator('[data-testid="markdown-editor"]')
+      .waitFor({ state: "visible", timeout: 3000 });
+    await page.locator('[data-testid="discuss-reset"]').click();
+    await page.unroute("**/api/chat/note/*/stream");
+  });
+
   await runTest("structured stream errors render as text instead of crashing", async () => {
     await page.route("**/api/chat/note/*/stream", (route) =>
       route.fulfill({
@@ -706,7 +824,7 @@ try {
     await page.locator('[data-testid="discuss-suggestion-propose"]').click();
     await page
       .locator('[data-testid="discuss-message-user"]')
-      .filter({ hasText: "请帮我基于这篇笔记提出一版更清晰" })
+      .filter({ hasText: "请为这篇笔记生成一个可在 diff 中审阅的最小改写提案" })
       .first()
       .waitFor({ state: "visible", timeout: 3000 });
     await page
@@ -715,7 +833,7 @@ try {
       .first()
       .waitFor({ state: "visible", timeout: 3000 });
     assert(
-      streamedPrompt.includes("请帮我基于这篇笔记提出一版更清晰"),
+      streamedPrompt.includes("请为这篇笔记生成一个可在 diff 中审阅的最小改写提案"),
       `proposal suggestion should send the full prompt through the chat stream: ${streamedPrompt}`,
     );
     assert(!proposeEditCalled, "proposal suggestion should not call propose-edit");

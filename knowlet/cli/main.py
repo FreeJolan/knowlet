@@ -320,6 +320,7 @@ def discuss(
                 llm=runtime.session.llm,
                 registry=runtime.session.registry,
                 ctx=runtime.session.ctx,
+                current_note_id=note_obj.id,
             )
             session.history.extend(history)
             grounded = build_grounded_turn(note_obj, text)

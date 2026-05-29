@@ -98,7 +98,8 @@ def drafts_edit(
         err_console.print(f"[red]draft not found:[/red] {draft_id}")
         raise typer.Exit(code=1)
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
-    subprocess.run([editor, str(d.path)], check=False)
+    # User-controlled by design: this command explicitly opens the user's editor.
+    subprocess.run([editor, str(d.path)], check=False)  # noqa: S603
     console.print(f"[dim]edited (saved as-is):[/dim] {d.path}")
 
 

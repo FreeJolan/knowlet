@@ -27,6 +27,7 @@ via the underlying filesystem rename guarantees.
 from __future__ import annotations
 
 import os
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -110,15 +111,8 @@ def pull_note_to_local(
     # phantom conflict on the next status poll).
     synced_iso = now_iso()
     synced_epoch = _iso_to_epoch(synced_iso)
-    try:
+    with suppress(OSError):
         os.utime(local_path, (synced_epoch, synced_epoch))
-    except OSError:
-        # Filesystems that refuse atime/mtime updates (rare, mostly
-        # weird FUSE mounts) — fall back to whatever mtime the
-        # rename produced. The 0.5s tolerance in _is_local_dirty
-        # absorbs most cases; worst case the next poll auto-pulls
-        # again, which is harmless because pull is idempotent.
-        pass
 
     state.upsert_file_state(
         FileState(

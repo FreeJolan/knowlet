@@ -129,7 +129,6 @@ export function MermaidBlock({ source }: Props) {
       className="kn-mermaid"
       // mermaid output is well-known + sanitised by mermaid itself
       // (securityLevel: "strict" above strips scripts). We trust it.
-      // eslint-disable-next-line react/no-danger
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );

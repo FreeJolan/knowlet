@@ -24,7 +24,6 @@ from knowlet.core.audit_log import (
 from knowlet.core.note import Note, new_id
 from knowlet.core.vault import Vault
 
-
 # ----------------------------------------------------- store unit tests
 
 
@@ -256,7 +255,7 @@ def test_audit_failure_does_not_break_writes(tmp_path: Path) -> None:
     # Sabotage: a fake store whose append raises.
 
     class BrokenAudit:
-        def append(self, *_a: object, **_kw: object) -> None:  # noqa: D401
+        def append(self, *_a: object, **_kw: object) -> None:
             raise RuntimeError("audit blew up")
 
     vault = Vault(vault_root, audit_log=BrokenAudit())  # type: ignore[arg-type]

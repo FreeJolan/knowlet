@@ -250,9 +250,38 @@ class SyncStateStore:
             delete_intent=row[7],
         )
 
-    _COLS = (
-        "entity_type, entity_id, drive_file_id, last_known_etag, "
-        "last_synced_at, dirty, dismissed_until, delete_intent"
+    _SELECT_BY_ID_SQL = (
+        "SELECT entity_type, entity_id, drive_file_id, last_known_etag, "
+        "last_synced_at, dirty, dismissed_until, delete_intent "
+        "FROM file_state WHERE entity_type=? AND entity_id=?"
+    )
+    _UPSERT_SQL = """
+        INSERT INTO file_state(
+            entity_type, entity_id, drive_file_id, last_known_etag,
+            last_synced_at, dirty, dismissed_until, delete_intent
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(entity_type, entity_id) DO UPDATE SET
+            drive_file_id    = excluded.drive_file_id,
+            last_known_etag  = excluded.last_known_etag,
+            last_synced_at   = excluded.last_synced_at,
+            dirty            = excluded.dirty,
+            dismissed_until  = excluded.dismissed_until,
+            delete_intent    = excluded.delete_intent
+    """
+    _LIST_DIRTY_SQL = (
+        "SELECT entity_type, entity_id, drive_file_id, last_known_etag, "
+        "last_synced_at, dirty, dismissed_until, delete_intent "
+        "FROM file_state WHERE dirty=1"
+    )
+    _LIST_DELETION_PENDING_SQL = (
+        "SELECT entity_type, entity_id, drive_file_id, last_known_etag, "
+        "last_synced_at, dirty, dismissed_until, delete_intent "
+        "FROM file_state WHERE delete_intent IS NOT NULL"
+    )
+    _LIST_ALL_SQL = (
+        "SELECT entity_type, entity_id, drive_file_id, last_known_etag, "
+        "last_synced_at, dirty, dismissed_until, delete_intent FROM file_state"
     )
 
     def get_file_state(
@@ -261,8 +290,7 @@ class SyncStateStore:
         conn = self._connect()
         with self._lock:
             row = conn.execute(
-                f"SELECT {self._COLS} "
-                "FROM file_state WHERE entity_type=? AND entity_id=?",
+                self._SELECT_BY_ID_SQL,
                 (entity_type, entity_id),
             ).fetchone()
         if row is None:
@@ -282,17 +310,7 @@ class SyncStateStore:
         conn = self._connect()
         with self._lock:
             conn.execute(
-                f"""
-                INSERT INTO file_state({self._COLS})
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(entity_type, entity_id) DO UPDATE SET
-                    drive_file_id    = excluded.drive_file_id,
-                    last_known_etag  = excluded.last_known_etag,
-                    last_synced_at   = excluded.last_synced_at,
-                    dirty            = excluded.dirty,
-                    dismissed_until  = excluded.dismissed_until,
-                    delete_intent    = excluded.delete_intent
-                """,
+                self._UPSERT_SQL,
                 (
                     state.entity_type,
                     state.entity_id,
@@ -328,9 +346,7 @@ class SyncStateStore:
     def list_dirty(self) -> list[FileState]:
         conn = self._connect()
         with self._lock:
-            rows = conn.execute(
-                f"SELECT {self._COLS} FROM file_state WHERE dirty=1"
-            ).fetchall()
+            rows = conn.execute(self._LIST_DIRTY_SQL).fetchall()
         return [self._row_to_file_state(r) for r in rows]
 
     def list_deletion_pending(self) -> list[FileState]:
@@ -338,10 +354,7 @@ class SyncStateStore:
         (soft = trash; hard = permanent)."""
         conn = self._connect()
         with self._lock:
-            rows = conn.execute(
-                f"SELECT {self._COLS} FROM file_state "
-                "WHERE delete_intent IS NOT NULL"
-            ).fetchall()
+            rows = conn.execute(self._LIST_DELETION_PENDING_SQL).fetchall()
         return [self._row_to_file_state(r) for r in rows]
 
     def remove_file_state(
@@ -366,9 +379,7 @@ class SyncStateStore:
         compare last_known_etag against current Drive metadata."""
         conn = self._connect()
         with self._lock:
-            rows = conn.execute(
-                f"SELECT {self._COLS} FROM file_state"
-            ).fetchall()
+            rows = conn.execute(self._LIST_ALL_SQL).fetchall()
         return [self._row_to_file_state(r) for r in rows]
 
     def count_files(self) -> int:

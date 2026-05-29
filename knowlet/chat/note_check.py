@@ -37,7 +37,7 @@ CHECK_USER_RULES = (
     "- confidence 低于 0.5 的问题不要输出。\n"
 )
 
-NO_STANDARD_FALLBACK = "（用户没有提供标准答案;只检查笔记自洽性和明显事实错漏）"
+NO_STANDARD_FALLBACK = "(用户没有提供标准答案;只检查笔记自洽性和明显事实错漏)"
 
 
 @dataclass

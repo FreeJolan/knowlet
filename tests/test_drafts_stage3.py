@@ -9,7 +9,7 @@ Tests target the behavior, not internals:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from knowlet.core.drafts import (
@@ -23,7 +23,7 @@ from knowlet.core.drafts import (
 
 def _iso_days_ago(n: int) -> str:
     return (
-        datetime.now(timezone.utc) - timedelta(days=n)
+        datetime.now(UTC) - timedelta(days=n)
     ).isoformat()
 
 

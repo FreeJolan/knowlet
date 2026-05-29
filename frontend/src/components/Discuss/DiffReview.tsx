@@ -1,11 +1,9 @@
 /**
  * Diff review (Phase 3 Stage 4 P3 + P4).
  *
- * Renders the AI's proposed change to a note as a Cursor-style inline
- * diff via @codemirror/merge's unifiedMergeView: the editor holds the
- * proposed (new) body, the original (old) body is the baseline, and
- * each changed chunk gets accept (keep new) / reject (revert to old)
- * controls in the gutter. The user can also hand-edit before applying.
+ * Renders the AI's proposed change to a note as a VS Code-style
+ * side-by-side diff via @codemirror/merge's MergeView: the left pane is
+ * the current note, and the right pane is the editable AI proposal.
  *
  * P4 invariant: nothing is written until the user clicks 应用 — and
  * even then the write goes through the existing atomic note-save (PUT
@@ -16,7 +14,7 @@
 
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
-import { unifiedMergeView } from "@codemirror/merge";
+import { MergeView } from "@codemirror/merge";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { Check, X } from "lucide-react";
@@ -25,38 +23,40 @@ import { useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 
 const reviewTheme = EditorView.theme({
-  "&": { height: "100%", fontSize: "15px", background: "transparent", color: "var(--ink)" },
-  ".cm-scroller": { fontFamily: "var(--kn-font-body)", lineHeight: "1.7", overflow: "auto" },
-  ".cm-content": { caretColor: "var(--ring)" },
-  ".cm-deletedChunk .cm-chunkButtons": {
-    top: "2px",
-    display: "flex",
-    gap: "4px",
+  "&": {
+    minHeight: "100%",
+    fontSize: "15px",
+    background: "transparent",
+    color: "var(--ink)",
   },
-  ".cm-deletedChunk .cm-chunkButtons button": {
-    width: "20px",
-    height: "20px",
-    padding: "0",
-    lineHeight: "20px",
-    fontSize: "13px",
-    fontWeight: "700",
+  ".cm-scroller": {
+    fontFamily: "var(--kn-font-body)",
+    lineHeight: "1.7",
+    overflow: "visible",
+  },
+  ".cm-content": {
+    caretColor: "var(--ring)",
+    padding: "10px 12px 16px",
+  },
+  ".cm-gutters": {
+    background: "transparent",
+    borderRight: "1px solid var(--line-soft)",
+    color: "var(--ink-mute)",
+  },
+  ".cm-activeLine, .cm-activeLineGutter": {
+    background: "transparent",
+  },
+  "&.cm-focused": {
+    outline: "none",
   },
 });
 
-function renderChunkControl(
-  type: "accept" | "reject",
-  action: (event: MouseEvent) => void,
-): HTMLElement {
+function renderRevertControl(): HTMLElement {
   const button = document.createElement("button");
   button.type = "button";
-  button.name = type;
-  button.setAttribute(
-    "aria-label",
-    type === "accept" ? "接受这一块改动" : "拒绝这一块改动",
-  );
-  button.title = type === "accept" ? "接受这一块改动" : "拒绝这一块改动";
-  button.textContent = type === "accept" ? "✓" : "×";
-  button.onmousedown = action;
+  button.setAttribute("aria-label", "用左侧原文还原右侧这一块");
+  button.title = "用左侧原文还原右侧这一块";
+  button.textContent = "→";
   return button;
 }
 
@@ -74,34 +74,49 @@ export function DiffReview({
   onReject: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<EditorView | null>(null);
+  const mergeRef = useRef<MergeView | null>(null);
 
   useEffect(() => {
-    if (!hostRef.current) return;
-    const view = new EditorView({
-      parent: hostRef.current,
-      state: EditorState.create({
-        doc: newBody,
+    const host = hostRef.current;
+    if (!host) return;
+    host.textContent = "";
+
+    const commonExtensions = [
+      markdown({ base: markdownLanguage, codeLanguages: languages }),
+      EditorView.lineWrapping,
+      reviewTheme,
+    ];
+
+    const view = new MergeView({
+      parent: host,
+      a: {
+        doc: oldBody,
         extensions: [
-          markdown({ base: markdownLanguage, codeLanguages: languages }),
-          // original = the note as it stands; doc = AI's proposal. The
-          // merge view shows the delta with per-chunk accept/reject.
-          unifiedMergeView({ original: oldBody, mergeControls: renderChunkControl }),
-          EditorView.lineWrapping,
-          EditorView.editable.of(true),
-          reviewTheme,
+          ...commonExtensions,
+          EditorState.readOnly.of(true),
+          EditorView.editable.of(false),
         ],
-      }),
+      },
+      b: {
+        doc: newBody,
+        extensions: [...commonExtensions, EditorView.editable.of(true)],
+      },
+      orientation: "a-b",
+      revertControls: "a-to-b",
+      renderRevertControl,
+      collapseUnchanged: { margin: 4, minSize: 8 },
+      diffConfig: { scanLimit: 1000 },
     });
-    viewRef.current = view;
+    view.dom.classList.add("kn-diff-merge");
+    mergeRef.current = view;
     return () => {
       view.destroy();
-      viewRef.current = null;
+      mergeRef.current = null;
     };
   }, [oldBody, newBody]);
 
   const apply = () => {
-    const text = viewRef.current?.state.doc.toString() ?? newBody;
+    const text = mergeRef.current?.b.state.doc.toString() ?? newBody;
     onAccept(text);
   };
 
@@ -112,7 +127,7 @@ export function DiffReview({
         style={{ borderColor: "var(--line)", background: "var(--panel)" }}
       >
         <div className="text-sm" style={{ color: "var(--ink)" }}>
-          AI 建议的改动 · 逐块接受/拒绝，确认后应用
+          AI 建议的改动 · 双栏审阅，确认后应用
         </div>
         <div className="flex gap-2">
           <Button
@@ -137,9 +152,28 @@ export function DiffReview({
         </div>
       </div>
       <div
+        className="grid shrink-0 grid-cols-2 border-b text-xs font-medium"
+        style={{
+          borderColor: "var(--line)",
+          background: "var(--card-paper)",
+          color: "var(--ink-mute)",
+        }}
+      >
+        <div
+          data-testid="diff-label-original"
+          className="border-r px-3 py-2"
+          style={{ borderColor: "var(--line)" }}
+        >
+          当前正文
+        </div>
+        <div data-testid="diff-label-proposal" className="px-3 py-2">
+          AI 提案
+        </div>
+      </div>
+      <div
         ref={hostRef}
         data-testid="diff-editor"
-        className="min-h-0 flex-1 overflow-auto px-3 py-2"
+        className="min-h-0 flex-1 overflow-hidden"
       />
     </div>
   );

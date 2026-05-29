@@ -179,7 +179,7 @@ def preflight_scan(
             from knowlet.core.sync.files import list_appdata_revisions
 
             drive_files = list_appdata_revisions(drive_service)
-        except Exception:  # noqa: BLE001
+        except Exception:
             import logging
 
             logging.getLogger(__name__).warning(
@@ -240,7 +240,7 @@ def preflight_scan(
                 # doesn't get lost. Manual repair via the doctor
                 # command can sort it.
                 offline.append(_offline_row(row, status, note_meta_lookup))
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 # Network blip mid-pull. The note is still stale; we
                 # downgrade it to "offline" for THIS scan so the user
                 # sees something rather than a silent miss.
@@ -288,7 +288,7 @@ def preflight_scan(
                 try:
                     trash_local_for_drive_deleted(row.entity_id)
                     trashed_for_drive_delete.append(row.entity_id)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     import logging
 
                     logging.getLogger(__name__).warning(
@@ -317,7 +317,7 @@ def preflight_scan(
                     materialized_id = materialize_drive_file(file_id, brief)
                     if materialized_id:
                         cloned_from_drive.append(materialized_id)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     import logging
 
                     logging.getLogger(__name__).warning(
@@ -367,7 +367,7 @@ def _maybe_heartbeat_pass(
             device_id=state_store.device_id(),
             device_label=state_store.device_label(),
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         import logging
 
         logging.getLogger(__name__).warning(
@@ -379,7 +379,7 @@ def _maybe_heartbeat_pass(
             alive_devices_out.append(
                 {"device_id": d.device_id, "last_seen_at": d.last_seen_at}
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         import logging
 
         logging.getLogger(__name__).warning(
