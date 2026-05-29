@@ -740,6 +740,7 @@ export interface DigestSourceSummary {
   last_pull_at?: string | null;
   last_success_at?: string | null;
   last_error?: string | null;
+  pull_status?: "idle" | "ok" | "error" | "paused";
 }
 
 export interface DigestSourcePayload {
@@ -765,6 +766,53 @@ export const updateDigestSource = (
 
 export const deleteDigestSource = (id: string): Promise<{ ok: boolean }> =>
   request("DELETE", `/api/digest/sources/${encodeURIComponent(id)}`);
+
+export interface RawInfoSummary {
+  id: string;
+  source_id: string;
+  source_name: string;
+  source_kind: "rss" | "prompt";
+  title: string;
+  url: string;
+  published_at?: string | null;
+  fetched_at: string;
+  summary: string;
+  key_points: string[];
+  why_it_matters: string;
+  suggested_tags: string[];
+  confidence: "high" | "medium" | "low";
+  content_excerpt: string;
+  status:
+    | "unprocessed"
+    | "viewed"
+    | "discussed"
+    | "drafted"
+    | "discarded"
+    | "included";
+  note_draft_id?: string | null;
+  note_id?: string | null;
+}
+
+export interface DigestPullReport {
+  started_at: string;
+  finished_at: string;
+  source_ids: string[];
+  fetched: number;
+  new_items: number;
+  created: number;
+  skipped: number;
+  paused: boolean;
+  errors: string[];
+}
+
+export const listRawInfoItems = (): Promise<RawInfoSummary[]> =>
+  request("GET", "/api/digest/items");
+
+export const pullDigestSources = (): Promise<DigestPullReport> =>
+  request("POST", "/api/digest/pull");
+
+export const pullDigestSource = (id: string): Promise<DigestPullReport> =>
+  request("POST", `/api/digest/sources/${encodeURIComponent(id)}/pull`);
 
 export const approveDraft = (id: string): Promise<{ note_id: string }> =>
   request("POST", `/api/drafts/${id}/approve`);

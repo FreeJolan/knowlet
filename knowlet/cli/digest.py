@@ -15,6 +15,8 @@ from knowlet.cli._common import (
 )
 from knowlet.cli.mining import _render_run_report
 from knowlet.core.digest import is_digest_task, list_digest_tasks
+from knowlet.core.digest_items import RawInfoStore
+from knowlet.core.digest_pull import pull_digest_sources
 from knowlet.core.digest_sources import DigestSource, DigestSourceStore
 from knowlet.core.mining.task_store import TaskStore
 
@@ -39,6 +41,7 @@ def digest_list() -> None:
     table.add_column("kind")
     table.add_column("source")
     table.add_column("on?", style="dim")
+    table.add_column("pull", style="dim")
     table.add_column("last error")
     for source in sources:
         value = source.url if source.kind == "rss" else source.prompt
@@ -50,6 +53,7 @@ def digest_list() -> None:
             source.kind,
             preview,
             "yes" if source.enabled else "no",
+            source.pull_status,
             source.last_error or "—",
         )
     console.print(table)
@@ -169,6 +173,47 @@ def digest_run(
     if not cfg.llm.api_key:
         err_console.print("[red]LLM api_key is empty. Run `knowlet config init` first.[/red]")
         raise typer.Exit(code=2)
+    source_store = DigestSourceStore(vault.digest_sources_dir)
+    if source_id:
+        source = source_store.get(source_id)
+        if source is not None:
+            report = pull_digest_sources(
+                vault=vault,
+                llm=LLMClient(cfg.llm),
+                source_ids=[source.id],
+                max_items=limit,
+            )
+            console.print(
+                "[green]digest pull[/green] "
+                f"fetched={report.fetched} new={report.new_items} "
+                f"created={report.created} skipped={report.skipped}"
+            )
+            if report.paused:
+                console.print("[yellow]paused[/yellow] pending raw info limit reached")
+            for error in report.errors:
+                err_console.print(f"[red]{error}[/red]")
+            return
+    else:
+        sources = [source for source in source_store.list() if source.enabled]
+        if sources:
+            report = pull_digest_sources(
+                vault=vault,
+                llm=LLMClient(cfg.llm),
+                max_items=limit,
+            )
+            pending = RawInfoStore(vault.digest_items_dir).pending_count()
+            console.print(
+                "[green]digest pull[/green] "
+                f"sources={len(report.source_ids)} fetched={report.fetched} "
+                f"new={report.new_items} created={report.created} "
+                f"skipped={report.skipped} pending={pending}"
+            )
+            if report.paused:
+                console.print("[yellow]paused[/yellow] pending raw info limit reached")
+            for error in report.errors:
+                err_console.print(f"[red]{error}[/red]")
+            return
+
     store = TaskStore(vault.tasks_dir)
     if source_id:
         task = store.get(source_id)

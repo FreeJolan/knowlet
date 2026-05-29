@@ -821,6 +821,46 @@ class DigestSourceSummary(BaseModel):
     last_pull_at: str | None = None
     last_success_at: str | None = None
     last_error: str | None = None
+    pull_status: Literal["idle", "ok", "error", "paused"] = "idle"
+
+
+class RawInfoSummary(BaseModel):
+    id: str
+    source_id: str
+    source_name: str
+    source_kind: Literal["rss", "prompt"]
+    title: str
+    url: str
+    published_at: str | None = None
+    fetched_at: str
+    summary: str
+    key_points: list[str]
+    why_it_matters: str
+    suggested_tags: list[str]
+    confidence: Literal["high", "medium", "low"]
+    content_excerpt: str
+    status: Literal[
+        "unprocessed",
+        "viewed",
+        "discussed",
+        "drafted",
+        "discarded",
+        "included",
+    ]
+    note_draft_id: str | None = None
+    note_id: str | None = None
+
+
+class DigestPullReportPayload(BaseModel):
+    started_at: str
+    finished_at: str
+    source_ids: list[str]
+    fetched: int
+    new_items: int
+    created: int
+    skipped: int
+    paused: bool
+    errors: list[str]
 
 
 class DraftSummary(BaseModel):
@@ -873,6 +913,14 @@ class WebState:
         self.config = config
         self.runtime: ChatRuntime | None = None
         self.scheduler: MiningScheduler | None = None
+        self.digest_auto_pull_thread: threading.Thread | None = None
+        self.digest_auto_pull_stop = threading.Event()
+        self.digest_pull_lock = threading.Lock()
+        self.digest_pull_status: Literal["idle", "running", "ok", "error", "paused"] = (
+            "idle"
+        )
+        self.digest_pull_last_report: dict[str, Any] | None = None
+        self.digest_pull_last_error: str | None = None
         # Bootstrap state (production async path):
         #   "idle"   — never attempted (no api_key, or tests pre-init)
         #   "running"— lifespan started a thread; not done
@@ -938,6 +986,7 @@ class WebState:
                 scheduler.start()
                 self.scheduler = scheduler
                 self.bootstrap_status = "ready"
+                self.start_digest_auto_pull(runtime)
             except Exception as exc:
                 self.bootstrap_error = exc
                 self.bootstrap_status = "error"
@@ -946,6 +995,69 @@ class WebState:
             target=_run, name="knowlet-bootstrap", daemon=True
         )
         self._bootstrap_thread.start()
+
+    def start_digest_auto_pull(
+        self,
+        runtime: ChatRuntime,
+        *,
+        interval_seconds: int = 1800,
+    ) -> None:
+        """Start the Stage C v2 daily Raw Info pull loop.
+
+        It checks immediately when the app comes online, then periodically
+        while the app stays open so a date change triggers the next daily pull.
+        """
+        if (
+            self.digest_auto_pull_thread is not None
+            and self.digest_auto_pull_thread.is_alive()
+        ):
+            return
+        self.digest_auto_pull_stop.clear()
+
+        def _loop() -> None:
+            from knowlet.core.digest_pull import maybe_auto_pull_digest_sources
+
+            while not self.digest_auto_pull_stop.is_set():
+                try:
+                    self.digest_pull_status = "running"
+                    with self.digest_pull_lock:
+                        report = maybe_auto_pull_digest_sources(
+                            vault=runtime.vault,
+                            llm=runtime.llm,
+                        )
+                    if report is None:
+                        self.digest_pull_status = "idle"
+                    elif report.paused:
+                        self.digest_pull_status = "paused"
+                    elif report.errors:
+                        self.digest_pull_status = "error"
+                    else:
+                        self.digest_pull_status = "ok"
+                    self.digest_pull_last_report = (
+                        report.to_dict() if report is not None else None
+                    )
+                    self.digest_pull_last_error = (
+                        "; ".join(report.errors)
+                        if report is not None and report.errors
+                        else None
+                    )
+                except Exception as exc:
+                    self.digest_pull_status = "error"
+                    self.digest_pull_last_error = f"{type(exc).__name__}: {exc}"
+                    import logging as _logging
+
+                    _logging.getLogger(__name__).exception(
+                        "digest auto-pull crashed"
+                    )
+                if self.digest_auto_pull_stop.wait(interval_seconds):
+                    return
+
+        self.digest_auto_pull_thread = threading.Thread(
+            target=_loop,
+            name="knowlet-digest-auto-pull",
+            daemon=True,
+        )
+        self.digest_auto_pull_thread.start()
 
     def runtime_or_init(self) -> ChatRuntime:
         """Return the ready runtime, or raise an HTTPException with the
@@ -1001,6 +1113,7 @@ class WebState:
         return self.runtime
 
     def close(self) -> None:
+        self.digest_auto_pull_stop.set()
         if self.scheduler is not None:
             self.scheduler.shutdown()
             self.scheduler = None
@@ -5771,6 +5884,28 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             last_pull_at=source.last_pull_at,
             last_success_at=source.last_success_at,
             last_error=source.last_error,
+            pull_status=source.pull_status,
+        )
+
+    def _raw_info_summary(item: Any) -> RawInfoSummary:
+        return RawInfoSummary(
+            id=item.id,
+            source_id=item.source_id,
+            source_name=item.source_name,
+            source_kind=item.source_kind,
+            title=item.title,
+            url=item.url,
+            published_at=item.published_at,
+            fetched_at=item.fetched_at,
+            summary=item.summary,
+            key_points=item.key_points,
+            why_it_matters=item.why_it_matters,
+            suggested_tags=item.suggested_tags,
+            confidence=item.confidence,
+            content_excerpt=item.content_excerpt,
+            status=item.status,
+            note_draft_id=item.note_draft_id,
+            note_id=item.note_id,
         )
 
     def _digest_source_store(runtime: ChatRuntime):
@@ -5859,6 +5994,48 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail=f"digest source not found: {source_id}",
             )
         return {"ok": True}
+
+    @app.post(
+        "/api/digest/sources/{source_id}/pull",
+        response_model=DigestPullReportPayload,
+    )
+    def pull_digest_source_endpoint(
+        source_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> DigestPullReportPayload:
+        from knowlet.core.digest_pull import pull_digest_sources
+
+        if _digest_source_store(runtime).get(source_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"digest source not found: {source_id}",
+            )
+        with state.digest_pull_lock:
+            report = pull_digest_sources(
+                vault=runtime.vault,
+                llm=runtime.llm,
+                source_ids=[source_id],
+            )
+        return DigestPullReportPayload(**report.to_dict())
+
+    @app.post("/api/digest/pull", response_model=DigestPullReportPayload)
+    def pull_digest_sources_endpoint(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> DigestPullReportPayload:
+        from knowlet.core.digest_pull import pull_digest_sources
+
+        with state.digest_pull_lock:
+            report = pull_digest_sources(vault=runtime.vault, llm=runtime.llm)
+        return DigestPullReportPayload(**report.to_dict())
+
+    @app.get("/api/digest/items", response_model=list[RawInfoSummary])
+    def list_raw_info_endpoint(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> list[RawInfoSummary]:
+        from knowlet.core.digest_items import RawInfoStore
+
+        store = RawInfoStore(runtime.vault.digest_items_dir)
+        return [_raw_info_summary(item) for item in store.list()]
 
     @app.get("/api/digest/drafts", response_model=list[DraftSummary])
     def list_digest_drafts_endpoint(

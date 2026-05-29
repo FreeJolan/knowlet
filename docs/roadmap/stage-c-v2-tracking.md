@@ -24,7 +24,7 @@ P1 Source config v2
     Final assertion: source file is persisted under the vault and API/CLI return the same shape.
 
 P2 Pull + normalize pipeline
-    □ implemented   □ tested   □ dogfooded
+    ☑ implemented   ☑ tested   ✓ dogfooded
     Entry state: at least one enabled source exists.
     Happy path: daily auto-pull or manual pull creates raw info items with original links, summaries, source ids, and seen-set dedupe.
     Branch: source fails or pending raw info exceeds 200; pull records failure or pause state without losing existing items.
@@ -97,7 +97,7 @@ P7 Commit note draft
 
 ## C.2 Exact Verification Commands
 
-- Backend focused: `uv run pytest tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py`
+- Backend focused: `uv run pytest tests/test_digest_pull.py tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py`
 - Backend related: `uv run pytest tests/test_web_note_chat.py tests/test_drafts_stage3.py tests/test_web_capture_flow.py`
 - Frontend type: `cd frontend && npx tsc --noEmit`
 - E2E focused: `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-sources.mjs`
@@ -114,6 +114,7 @@ P7 Commit note draft
 ## E.1 Path × Test Reconciliation
 
 - P1 Source config v2 → `tests/test_digest_sources.py`, `tests/test_digest.py`, `tests/test_cli.py`, `frontend/scripts/e2e/digest-sources.mjs` ☑
+- P2 Pull + normalize pipeline → `tests/test_digest_pull.py:52` RSS normalize + seen-set, `tests/test_digest_pull.py:129` Prompt Source JSON wrapper, `tests/test_digest_pull.py:180` 200 pending pause, `tests/test_digest_pull.py:219` API pull/list, `tests/test_digest_pull.py:262` CLI pull, `tests/test_digest_pull.py:307` CLI limit regression, `tests/test_digest_pull.py:364` daily auto-pull ☑
 
 ## E.3 Dogfood Log
 
@@ -122,3 +123,11 @@ P7 Commit note draft
   - Adversarial branch: invalid RSS URL returns 400 and does not persist.
   - UI probes: panel background opaque (`rgb(239, 233, 221)`), add button hit target resolves at center, no unfiltered browser errors/warnings.
   - Screenshot: `/tmp/knowlet-c4-digest-sources.png`
+- P2 Pull + normalize pipeline:
+  - Red test: `tests/test_digest_pull.py::test_auto_pull_runs_once_per_day_and_rechecks_next_day` initially failed on missing `maybe_auto_pull_digest_sources`.
+  - Focused green: `uv run pytest tests/test_digest_pull.py tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py` → 34 passed; `cd frontend && node scripts/e2e/digest-sources.mjs` → passed.
+  - Lint/type/full backend: `uv run ruff check knowlet/core/digest_items.py knowlet/core/digest_pull.py knowlet/core/digest_sources.py knowlet/core/vault.py knowlet/cli/digest.py knowlet/web/server.py tests/test_digest_pull.py` → passed; `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run lint --silent` → passed; `uv run pytest tests/` → 986 passed.
+  - Real model dogfood: temp vault `/tmp/knowlet-c5-dogfood-local.zCz5lQ`, local one-item RSS, `NO_PROXY=127.0.0.1,localhost KNOWLET_VAULT=<vault> uv run knowlet digest run --limit 1` via `gpt-5.5` → `fetched=1 new=1 created=1 skipped=0 pending=1`.
+  - Dedupe dogfood: second run on the same feed → `fetched=1 new=0 created=0 skipped=0 pending=1`.
+  - API smoke: `GET /api/health` on the temp vault returned `ready=true`; `GET /api/digest/items` returned the created read-only Raw Info item.
+  - Screenshot: not applicable; P2 is backend/API/CLI infrastructure. Visual inbox verification starts at P3.

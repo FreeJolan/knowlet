@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 from knowlet.core.note import new_id, now_iso, slugify
 
 DigestSourceKind = Literal["rss", "prompt"]
+DigestPullStatus = Literal["idle", "ok", "error", "paused"]
 DIGEST_SOURCE_SCHEMA_VERSION = 1
 
 
@@ -34,6 +35,7 @@ class DigestSource:
     last_pull_at: str | None = None
     last_success_at: str | None = None
     last_error: str | None = None
+    pull_status: DigestPullStatus = "idle"
     schema_version: int = DIGEST_SOURCE_SCHEMA_VERSION
     path: Path | None = None
 
@@ -74,6 +76,7 @@ class DigestSource:
             "last_pull_at": self.last_pull_at,
             "last_success_at": self.last_success_at,
             "last_error": self.last_error,
+            "pull_status": self.pull_status,
         }
 
     @classmethod
@@ -85,6 +88,9 @@ class DigestSource:
         kind = str(raw.get("kind") or "rss")
         if kind not in ("rss", "prompt"):
             kind = "rss"
+        pull_status = str(raw.get("pull_status") or "idle")
+        if pull_status not in ("idle", "ok", "error", "paused"):
+            pull_status = "idle"
         return cls(
             id=str(raw.get("id") or new_id()),
             name=str(raw.get("name") or ""),
@@ -99,6 +105,7 @@ class DigestSource:
                 str(raw["last_success_at"]) if raw.get("last_success_at") else None
             ),
             last_error=str(raw["last_error"]) if raw.get("last_error") else None,
+            pull_status=pull_status,  # type: ignore[arg-type]
             schema_version=schema_version,
             path=path,
         )

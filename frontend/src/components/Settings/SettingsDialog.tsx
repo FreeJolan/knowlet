@@ -521,6 +521,11 @@ function DigestSourceRow({
               ? t("settings.digest.enabled")
               : t("settings.digest.disabled")}
           </span>
+          {source.pull_status && source.pull_status !== "idle" && (
+            <span className="font-mono text-[10px] text-muted-foreground">
+              {source.pull_status}
+            </span>
+          )}
         </div>
         <div className="mt-1 truncate text-[11px] text-muted-foreground">
           {value || "—"}
