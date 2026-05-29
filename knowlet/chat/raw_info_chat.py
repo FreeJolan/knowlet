@@ -50,6 +50,8 @@ to change it, explain that the next step is to settle it into an editable note
 draft first. If the user asks to settle/save/turn this item into a note draft,
 call the create_note_draft_from_info tool. That tool creates a Draft only; it
 does not commit a formal Note.
+If the user explicitly asks to discard/drop/舍弃/丢弃 this Raw Info item from
+the review queue, call discard_raw_info instead of editing the Raw Info.
 
 Raw Info:
 - ID: {item.id}
@@ -141,5 +143,22 @@ def wants_commit_note_draft(text: str) -> bool:
             "正式笔记",
             "保存为笔记",
             "纳入",
+        )
+    )
+
+
+def wants_discard_raw_info(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        needle in lowered
+        for needle in (
+            "discard this item",
+            "discard this raw info",
+            "drop this item",
+            "remove this item from review",
+            "舍弃这条",
+            "丢弃这条",
+            "不要这条",
+            "放弃这条资讯",
         )
     )

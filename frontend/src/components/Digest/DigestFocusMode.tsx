@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  BookOpen,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -21,7 +22,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Square,
-  Undo2,
+  Trash2,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -31,6 +32,7 @@ import {
   acceptDraftDiff,
   commitNoteDraft,
   createRawInfoDraft,
+  discardRawInfo,
   getDigestStatus,
   getDraft,
   listRawInfoItems,
@@ -64,7 +66,7 @@ type GroupMode = "time" | "source";
 
 const DRAFT_AUTOSAVE_DEBOUNCE_MS = 500;
 const DRAFT_SAVED_IDLE_MS = 1200;
-const REVIEW_TRANSITION_MS = 650;
+const REVIEW_TRANSITION_MS = 2000;
 
 type DraftSaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
@@ -77,7 +79,7 @@ type DraftEdit = {
 };
 
 type ReviewTransition = {
-  kind: "commit" | "skip";
+  kind: "commit" | "discard";
   title: string;
   nextTitle: string | null;
 };
@@ -750,7 +752,6 @@ function ReviewOverlay({
   const draftEditRef = useRef<DraftEdit>(draftEdit);
   const draftResultRef = useRef<RawInfoDraftResult | null>(draftResult);
   const draftSaveStateRef = useRef<DraftSaveState>(draftSaveState);
-  const openedDraftBaselineRef = useRef<DraftEdit | null>(null);
   const existingDraft = useQuery({
     queryKey: ["draft", item?.note_draft_id],
     queryFn: () => getDraft(item?.note_draft_id ?? ""),
@@ -871,7 +872,6 @@ function ReviewOverlay({
       setDraftResult(result);
       setCommitResult(null);
       setDraftEdit(edit);
-      openedDraftBaselineRef.current = edit;
       setDraftEditorRevision((revision) => revision + 1);
       draftSaveStateRef.current = "idle";
       setDraftSaveState("idle");
@@ -1014,6 +1014,24 @@ function ReviewOverlay({
     },
   });
 
+  const discardMut = useMutation({
+    mutationFn: async (infoId: string) => discardRawInfo(infoId),
+    onSuccess: (result) => {
+      clearAutosaveTimer();
+      clearSavedIdleTimer();
+      setPendingDiff(null);
+      clearProposal();
+      beginReviewTransition("discard", result.id, () => {
+        void qc.invalidateQueries({ queryKey: ["digest-items"] });
+        void qc.invalidateQueries({ queryKey: ["digest-status"] });
+        void qc.invalidateQueries({ queryKey: ["drafts"] });
+      });
+    },
+    onError: (err) => {
+      setDraftError(err instanceof Error ? err.message : t("digest.discardFailed"));
+    },
+  });
+
   useEffect(() => {
     clearAutosaveTimer();
     clearSavedIdleTimer();
@@ -1028,7 +1046,6 @@ function ReviewOverlay({
     draftSaveStateRef.current = "idle";
     setDraftSaveState("idle");
     setDraftEditorRevision((revision) => revision + 1);
-    openedDraftBaselineRef.current = null;
     clearProposal();
   }, [clearAutosaveTimer, clearProposal, clearSavedIdleTimer, item?.id]);
 
@@ -1043,7 +1060,6 @@ function ReviewOverlay({
       rationale: t("digest.existingDraftRationale"),
     });
     setDraftEdit(edit);
-    openedDraftBaselineRef.current = edit;
     setDraftEditorRevision((revision) => revision + 1);
     draftSaveStateRef.current = "idle";
     setDraftSaveState("idle");
@@ -1067,9 +1083,6 @@ function ReviewOverlay({
     draftResult !== null &&
     persistedDraftEdit !== null &&
     !sameDraftEdit(draftEdit, persistedDraftEdit);
-  const sessionChanged =
-    openedDraftBaselineRef.current !== null &&
-    !sameDraftEdit(draftEdit, openedDraftBaselineRef.current);
   const draftWaitingForSave =
     draftChanged ||
     draftSaveState === "dirty" ||
@@ -1164,20 +1177,6 @@ function ReviewOverlay({
     }
   };
 
-  const revertSessionChanges = () => {
-    if (pendingDiff) {
-      setDraftError(t("digest.revertBlockedByDiff"));
-      return;
-    }
-    const baseline = openedDraftBaselineRef.current;
-    if (!baseline) return;
-    setDraftEdit(baseline);
-    setDraftEditorRevision((revision) => revision + 1);
-    clearSavedIdleTimer();
-    draftSaveStateRef.current = "dirty";
-    setDraftSaveState("dirty");
-  };
-
   return (
     <div
       className="fixed inset-0 z-[60] flex flex-col overflow-hidden"
@@ -1210,42 +1209,7 @@ function ReviewOverlay({
         </button>
       </header>
 
-      {reviewTransition && (
-        <div
-          className="absolute inset-0 z-[110] flex items-center justify-center px-6"
-          data-testid="digest-review-transition"
-          data-kind={reviewTransition.kind}
-        >
-          <div
-            className="max-w-md rounded-md border px-6 py-5 text-center shadow-lg transition-all duration-500"
-            style={{
-              borderColor: "var(--accent)",
-              background: "var(--bg-1)",
-              color: "var(--ink)",
-            }}
-          >
-            <div
-              className="mx-auto mb-3 flex size-11 items-center justify-center rounded-full"
-              style={{ background: "var(--accent-tint-2)" }}
-            >
-              <CheckCircle2 className="size-5" />
-            </div>
-            <div className="font-serif text-lg font-medium">
-              {reviewTransition.kind === "commit"
-                ? t("digest.transitionCommitted")
-                : t("digest.transitionSkipped")}
-            </div>
-            <div className="mt-1 text-sm text-muted-foreground">
-              {reviewTransition.title}
-            </div>
-            <div className="mt-3 text-xs text-muted-foreground">
-              {reviewTransition.nextTitle
-                ? t("digest.transitionNext", { title: reviewTransition.nextTitle })
-                : t("digest.transitionDone")}
-            </div>
-          </div>
-        </div>
-      )}
+      {reviewTransition && <ReviewTransitionOverlay transition={reviewTransition} />}
 
       <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
         <ResizablePanel defaultSize={60} minSize={40}>
@@ -1363,27 +1327,6 @@ function ReviewOverlay({
                                 state={draftSaveState}
                                 onRetry={() => startDraftSave()}
                               />
-                              <button
-                                type="button"
-                                disabled={!sessionChanged || Boolean(pendingDiff)}
-                                onClick={revertSessionChanges}
-                                className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
-                                style={{ borderColor: "var(--line)" }}
-                                data-testid="digest-draft-revert-session"
-                              >
-                                <Undo2 className="size-3.5" />
-                                {t("digest.revertSessionChanges")}
-                              </button>
-                              <button
-                                type="button"
-                                disabled={!draftChanged || saveDraftMut.isPending}
-                                onClick={() => startDraftSave()}
-                                className="rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
-                                style={{ borderColor: "var(--line)" }}
-                                data-testid="digest-draft-save"
-                              >
-                                {saveDraftMut.isPending ? t("digest.savingDraft") : t("digest.saveDraft")}
-                              </button>
                             </div>
                             <div className="flex items-center gap-2">
                               <button
@@ -1464,7 +1407,12 @@ function ReviewOverlay({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  disabled={!previous || status === "streaming" || Boolean(reviewTransition)}
+                  disabled={
+                    !previous ||
+                    status === "streaming" ||
+                    Boolean(reviewTransition) ||
+                    discardMut.isPending
+                  }
                   onClick={() => previous && onChangeItem(previous.id)}
                   className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
                   style={{ borderColor: "var(--line)" }}
@@ -1475,18 +1423,28 @@ function ReviewOverlay({
                 </button>
                 <button
                   type="button"
-                  disabled={status === "streaming" || Boolean(reviewTransition)}
-                  onClick={() => beginReviewTransition("skip", item.id)}
-                  className="rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
+                  disabled={status === "streaming" || Boolean(reviewTransition) || discardMut.isPending}
+                  onClick={() => {
+                    clearAutosaveTimer();
+                    clearSavedIdleTimer();
+                    discardMut.mutate(item.id);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
                   style={{ borderColor: "var(--line)" }}
-                  data-testid="digest-review-skip"
+                  data-testid="digest-review-discard"
                 >
-                  {t("digest.skip")}
+                  <Trash2 className="size-3.5" />
+                  {discardMut.isPending ? t("digest.discarding") : t("digest.discard")}
                 </button>
               </div>
               <button
                 type="button"
-                disabled={!next || status === "streaming" || Boolean(reviewTransition)}
+                disabled={
+                  !next ||
+                  status === "streaming" ||
+                  Boolean(reviewTransition) ||
+                  discardMut.isPending
+                }
                 onClick={() => next && onChangeItem(next.id)}
                 className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
                 style={{ borderColor: "var(--line)" }}
@@ -1620,6 +1578,78 @@ function DraftAutosaveStatus({
         </button>
       )}
     </span>
+  );
+}
+
+function ReviewTransitionOverlay({
+  transition,
+}: {
+  transition: ReviewTransition;
+}) {
+  const { t } = useTranslation();
+  const isCommit = transition.kind === "commit";
+  const target = isCommit ? "library" : "discard";
+  const TargetIcon = isCommit ? BookOpen : Trash2;
+  return (
+    <div
+      className="absolute inset-0 z-[110] flex items-center justify-center overflow-hidden px-6"
+      style={{ background: "rgb(244 240 232 / 0.74)" }}
+      data-testid="digest-review-transition"
+      data-kind={transition.kind}
+      data-target={target}
+      data-duration-ms={REVIEW_TRANSITION_MS}
+    >
+      <div className="pointer-events-none relative h-72 w-full max-w-4xl">
+        <div
+          className="digest-review-transition-snapshot absolute left-1/2 top-1/2 w-[min(52vw,440px)] -translate-x-1/2 -translate-y-1/2 rounded-md border p-4 shadow-lg"
+          style={{
+            borderColor: "var(--line)",
+            background: "var(--card-paper)",
+            color: "var(--ink)",
+          }}
+          data-testid="digest-review-transition-snapshot"
+        >
+          <div className="text-[11px] font-mono uppercase text-muted-foreground">
+            {isCommit ? t("digest.transitionArchiveLabel") : t("digest.transitionDiscardLabel")}
+          </div>
+          <div className="mt-2 truncate font-serif text-xl font-medium">
+            {transition.title}
+          </div>
+          <div className="mt-3 h-2 w-4/5 rounded-full" style={{ background: "var(--line-soft)" }} />
+          <div className="mt-2 h-2 w-3/5 rounded-full" style={{ background: "var(--line-soft)" }} />
+        </div>
+        <div
+          className="digest-review-transition-target absolute right-[8%] top-1/2 flex size-24 -translate-y-1/2 items-center justify-center rounded-full border shadow-sm"
+          style={{
+            borderColor: isCommit ? "var(--good)" : "var(--line)",
+            background: "var(--bg-1)",
+            color: isCommit ? "var(--good)" : "var(--ink-soft)",
+          }}
+          data-testid="digest-review-transition-target"
+        >
+          <TargetIcon className="size-9" />
+        </div>
+        {isCommit && (
+          <div
+            className="digest-review-transition-complete absolute bottom-4 right-[7%] flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs"
+            style={{
+              borderColor: "var(--good)",
+              background: "rgb(94 135 87 / 0.12)",
+              color: "var(--good)",
+            }}
+            data-testid="digest-review-transition-complete"
+          >
+            <CheckCircle2 className="size-3.5" />
+            {t("digest.transitionComplete")}
+          </div>
+        )}
+      </div>
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 text-center text-xs text-muted-foreground">
+        {transition.nextTitle
+          ? t("digest.transitionNext", { title: transition.nextTitle })
+          : t("digest.transitionDone")}
+      </div>
+    </div>
   );
 }
 

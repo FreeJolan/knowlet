@@ -687,6 +687,114 @@ def test_commit_note_draft_can_override_target_folder(tmp_path):
     assert (vault.notes_dir / "library" / "final" / f"{draft.id}.md").exists()
 
 
+def test_discard_raw_info_api_marks_discarded_and_deletes_linked_draft(tmp_path):
+    vault, cfg = _ready_vault(tmp_path)
+    draft = Draft(
+        title="Discard candidate",
+        body="Draft body that should not enter notes.",
+        tags=["digest"],
+        source="https://example.com/discard",
+    )
+    DraftStore(vault.drafts_dir).save(draft)
+    item = RawInfo(
+        source_id="source-1",
+        source_name="Research Feed",
+        source_kind="rss",
+        item_key="rss:discard",
+        title="Discard this item",
+        url="https://example.com/discard",
+        summary="A raw info item the user chose not to keep.",
+        status="drafted",
+        note_draft_id=draft.id,
+    )
+    RawInfoStore(vault.digest_items_dir).save(item)
+    client = TestClient(create_app(vault, cfg))
+
+    res = client.post(f"/api/digest/items/{item.id}/discard")
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload["status"] == "discarded"
+    assert payload["note_draft_id"] == draft.id
+    assert DraftStore(vault.drafts_dir).get(draft.id) is None
+    loaded = RawInfoStore(vault.digest_items_dir).get(item.id)
+    assert loaded is not None
+    assert loaded.status == "discarded"
+    assert loaded.note_draft_id == draft.id
+    assert RawInfoStore(vault.digest_items_dir).pending_count() == 0
+
+
+def test_discard_raw_info_tool_uses_current_item_and_deletes_linked_draft(tmp_path):
+    vault, cfg = _ready_vault(tmp_path)
+    draft = Draft(
+        title="Tool discard candidate",
+        body="Draft body",
+        tags=["digest"],
+        source="https://example.com/tool-discard",
+    )
+    DraftStore(vault.drafts_dir).save(draft)
+    item = RawInfo(
+        source_id="source-1",
+        source_name="Research Feed",
+        source_kind="rss",
+        item_key="rss:tool-discard",
+        title="Tool discard item",
+        url="https://example.com/tool-discard",
+        summary="A raw info item for tool-driven discard.",
+        status="drafted",
+        note_draft_id=draft.id,
+    )
+    RawInfoStore(vault.digest_items_dir).save(item)
+    client = TestClient(create_app(vault, cfg))
+    runtime = client.app.state.web_state.runtime_or_init()
+    runtime.ctx.current_raw_info_id = item.id
+
+    result = runtime.registry.dispatch("discard_raw_info", {}, runtime.ctx)
+
+    assert result["status"] == "discarded"
+    assert result["deleted_draft_id"] == draft.id
+    assert result["draft_deleted"] is True
+    loaded = RawInfoStore(vault.digest_items_dir).get(item.id)
+    assert loaded is not None
+    assert loaded.status == "discarded"
+    assert DraftStore(vault.drafts_dir).get(draft.id) is None
+
+
+def test_digest_cli_discard_marks_raw_info_and_deletes_linked_draft(
+    tmp_path, monkeypatch
+):
+    vault, _cfg = _ready_vault(tmp_path)
+    monkeypatch.setenv("KNOWLET_VAULT", str(vault.root))
+    draft = Draft(
+        title="CLI discard candidate",
+        body="Draft body",
+        tags=["digest"],
+        source="https://example.com/cli-discard",
+    )
+    DraftStore(vault.drafts_dir).save(draft)
+    item = RawInfo(
+        source_id="source-1",
+        source_name="Research Feed",
+        source_kind="rss",
+        item_key="rss:cli-discard",
+        title="CLI discard item",
+        url="https://example.com/cli-discard",
+        summary="A raw info item for CLI discard parity.",
+        status="drafted",
+        note_draft_id=draft.id,
+    )
+    RawInfoStore(vault.digest_items_dir).save(item)
+
+    result = runner.invoke(app, ["digest", "discard", item.id])
+
+    assert result.exit_code == 0, result.stdout
+    assert "discarded" in result.stdout
+    loaded = RawInfoStore(vault.digest_items_dir).get(item.id)
+    assert loaded is not None
+    assert loaded.status == "discarded"
+    assert DraftStore(vault.drafts_dir).get(draft.id) is None
+
+
 def test_digest_cli_run_pulls_v2_source(tmp_path, monkeypatch):
     vault, _cfg = _ready_vault(tmp_path)
     source = _save_source(

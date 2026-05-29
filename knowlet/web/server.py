@@ -3691,6 +3691,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             wants_accept_all_draft_diff,
             wants_commit_note_draft,
             wants_current_draft_edit_proposal,
+            wants_discard_raw_info,
             wants_reject_all_draft_diff,
         )
         from knowlet.chat.session import ChatSession
@@ -3725,6 +3726,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         grounded = build_raw_info_grounded_turn(item, req.text, draft=draft)
 
         def direct_draft_tool() -> tuple[str, dict[str, Any]] | None:
+            if wants_discard_raw_info(req.text):
+                return "discard_raw_info", {}
             if draft is None:
                 return None
             if wants_accept_all_draft_diff(req.text):
@@ -3754,6 +3757,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 return "已撤回这次草稿 diff,草稿正文保持不变。"
             if name == "commit_note_draft":
                 return "已把这份草稿落库为正式笔记。"
+            if name == "discard_raw_info":
+                return "已舍弃这条资讯,并将它移出当前批阅队列。"
             return "工具操作已完成。"
 
         def event_source() -> Iterator[str]:
@@ -6283,6 +6288,32 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             draft=DraftFull(**_draft_summary(result.draft).model_dump()),
             rationale=result.rationale,
         )
+
+    @app.post("/api/digest/items/{info_id}/discard", response_model=RawInfoSummary)
+    def discard_raw_info_endpoint(
+        info_id: str,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> RawInfoSummary:
+        from knowlet.core.digest_items import RawInfoStore
+        from knowlet.core.digest_review import DigestReviewError, discard_raw_info
+
+        try:
+            result = discard_raw_info(
+                items=RawInfoStore(runtime.vault.digest_items_dir),
+                drafts=runtime.ctx.drafts,
+                info_id=info_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"raw info not found: {info_id}",
+            ) from exc
+        except DigestReviewError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        return _raw_info_summary(result.item)
 
     @app.get("/api/digest/drafts", response_model=list[DraftSummary])
     def list_digest_drafts_endpoint(

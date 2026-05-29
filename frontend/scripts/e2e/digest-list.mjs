@@ -573,6 +573,22 @@ try {
     );
     await page.locator('[data-testid="digest-review-stage-tab-draft"]').click();
     await waitForDraftAutosave(page, "idle");
+    assert(
+      (await page.locator('[data-testid="digest-draft-revert-session"]').count()) === 0,
+      "draft footer does not expose a session revert button",
+    );
+    assert(
+      (await page.locator('[data-testid="digest-draft-save"]').count()) === 0,
+      "draft footer does not expose a manual save button",
+    );
+    assert(
+      (await page.locator('[data-testid="digest-review-skip"]').count()) === 0,
+      "review footer does not expose the old skip button",
+    );
+    await page.locator('[data-testid="digest-review-discard"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
 
     failNextDraftSave = true;
     await page.locator('[data-testid="digest-draft-title"]').click();
@@ -613,33 +629,6 @@ try {
       `autosave persists the edited draft body and metadata — got ${JSON.stringify(draftSaveBodies)}`,
     );
 
-    await page.locator('[data-testid="digest-draft-revert-session"]').click();
-    await waitForDraftAutosave(page, "saved");
-    const revertedTitle = await page.locator('[data-testid="digest-draft-title"]').textContent();
-    const revertedFolder = await page.locator('[data-testid="digest-draft-folder-input"]').inputValue();
-    assert(revertedTitle === "Tool Trace Separation", "session revert restores opened title");
-    assert(revertedFolder === "ai/research", "session revert restores opened folder");
-    assert(
-      draftSaveBodies.some(
-        (body) =>
-          body.title === "Tool Trace Separation" &&
-          body.folder === "ai/research" &&
-          body.kind === "knowledge" &&
-          body.tags.join(",") === "agents,tooling",
-      ),
-      "session revert autosaves the opened baseline",
-    );
-
-    await page.locator('[data-testid="digest-draft-title"]').click();
-    await page.locator('[data-testid="digest-draft-title-input"]').fill("Tool Trace Notes");
-    await page.locator('[data-testid="digest-draft-title-input"]').press("Enter");
-    await page.locator('[data-testid="tag-add-button"]').click();
-    await page.locator('[data-testid="tag-add-input"]').fill("notes");
-    await page.locator('[data-testid="tag-add-input"]').press("Enter");
-    await page.locator('[data-testid="tag-chip-remove"][data-tag="tooling"]').click();
-    await page.locator('[data-testid="digest-draft-kind-chip-button"]').click();
-    await page.locator('[data-testid="kind-chip-demote-confirm"]').click();
-    await page.locator('[data-testid="digest-draft-folder-input"]').fill("ai/notes");
     await replaceDraftBody(
       page,
       "## Core\n\nTool traces should be visible but separate from the final answer.",
@@ -712,7 +701,19 @@ try {
     await page.locator('[data-testid="digest-folder-option-library-final"]').click();
     await page.locator('[data-testid="digest-folder-confirm"]').click();
     assert(commitCalled, "commit endpoint is called");
-    await page.locator('[data-testid="digest-review-transition"][data-kind="commit"]').waitFor({
+    const commitTransition = page.locator(
+      '[data-testid="digest-review-transition"][data-kind="commit"][data-target="library"][data-duration-ms="2000"]',
+    );
+    await commitTransition.waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await page.waitForTimeout(1000);
+    assert(
+      await commitTransition.isVisible(),
+      "commit transition stays visible long enough to communicate the destination",
+    );
+    await page.locator('[data-testid="digest-review-transition-complete"]').waitFor({
       state: "visible",
       timeout: 3000,
     });
@@ -741,18 +742,34 @@ try {
 env = await setupDigestEnv(seedOneItem);
 try {
   const { page } = env;
-  await runTest("review queue shows an empty state after skipping the last item", async () => {
+  await runTest("review queue shows an empty state after discarding the last item", async () => {
     await page.locator('[data-testid="header-digest-button"]').click();
     await page.locator('[data-testid="digest-start-review"]').click();
     await page.locator('[data-testid="digest-review-workspace"]').waitFor({
       state: "visible",
       timeout: 3000,
     });
-    await page.locator('[data-testid="digest-review-skip"]').click();
-    await page.locator('[data-testid="digest-review-transition"][data-kind="skip"]').waitFor({
+    assert(
+      (await page.locator('[data-testid="digest-review-skip"]').count()) === 0,
+      "skip button is removed from review mode",
+    );
+    await page.locator('[data-testid="digest-review-discard"]').click();
+    const discardTransition = page.locator(
+      '[data-testid="digest-review-transition"][data-kind="discard"][data-target="discard"][data-duration-ms="2000"]',
+    );
+    await discardTransition.waitFor({
       state: "visible",
       timeout: 3000,
     });
+    await page.waitForTimeout(1000);
+    assert(
+      await discardTransition.isVisible(),
+      "discard transition stays visible long enough to communicate the destination",
+    );
+    assert(
+      (await page.locator('[data-testid="digest-review-transition-complete"]').count()) === 0,
+      "discard transition avoids a green completion badge",
+    );
     await page.locator('[data-testid="digest-review-empty-state"]').waitFor({
       state: "visible",
       timeout: 5000,
@@ -763,7 +780,7 @@ try {
     );
     await page.locator('[data-testid="digest-review-close"]').click();
   });
-  await runTest("no console errors during single-item skip suite", () => {
+  await runTest("no console errors during single-item discard suite", () => {
     assertConsoleClean(env);
   });
 } finally {

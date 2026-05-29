@@ -1,6 +1,6 @@
 # Stage C v2 Tracking — 资讯审阅与入库
 
-- Status: C4-C13 implemented and verified
+- Status: C4-C14 implemented and verified
 - Started: 2026-05-30
 - Design: [`../design/stage-c-digest-inbox.md`](../design/stage-c-digest-inbox.md)
 
@@ -83,8 +83,8 @@ P10 Directory-confirmed commit queue
     ☑ implemented   ☑ tested   ✓ dogfooded
     Entry state: review mode has a saved Note Draft and the Draft stage is active.
     Happy path: user clicks "Choose folder and commit", sees a vault folder tree with the AI-recommended folder selected, chooses/keeps a target folder, confirms commit, and the queue advances.
-    Branch: user cancels the folder dialog or skips the last item; cancel must not commit, and an empty queue must replace both panes with one empty state.
-    Final assertion: `POST /api/drafts/{id}/commit` receives the selected folder, committed/skipped items leave the current review queue, existing drafts cannot be regenerated, and the next item opens at Raw Info or Draft according to its state.
+    Branch: user cancels the folder dialog or discards the last item; cancel must not commit, and an empty queue must replace both panes with one empty state.
+    Final assertion: `POST /api/drafts/{id}/commit` receives the selected folder, committed/discarded items leave the current review queue, existing drafts cannot be regenerated, and the next item opens at Raw Info or Draft according to its state.
 
 P11 Draft autosave status
     ☑ implemented   ☑ tested   ✓ dogfooded
@@ -94,18 +94,38 @@ P11 Draft autosave status
     Final assertion: `PUT /api/drafts/{id}` receives the latest draft edit, the footer shows saving/saved/error states, and the editor does not remount on every successful autosave.
 
 P12 Session-level draft revert
-    ☑ implemented   ☑ tested   ✓ dogfooded
+    ⏸ superseded by C14 product decision
     Entry state: user opens a Note Draft in review mode.
-    Happy path: user makes several autosaved metadata/body edits, then chooses to revert changes made since opening this draft.
-    Branch: a pending diff exists; the revert action is blocked until the diff is accepted or rejected.
-    Final assertion: the draft returns to its open-session baseline and that reverted state is autosaved.
+    Original path: user could revert changes made since opening this draft.
+    Current decision: the visible "revert this session" button was removed to keep Draft actions sparse; autosave status + retry remain.
 
 P13 Review completion transition
     ☑ implemented   ☑ tested   ✓ dogfooded
-    Entry state: user commits a draft through the folder dialog or skips a Raw Info item.
-    Happy path: after commit/skip, the workspace shows a brief completion transition before moving to the next item or empty queue state.
+    Entry state: user commits a draft through the folder dialog.
+    Happy path: after commit, the workspace shows a completion transition before moving to the next item or empty queue state.
     Branch: user finishes the final queue item; the transition resolves into the cross-pane empty state.
     Final assertion: the processed item is visually marked as complete during the transition and then removed from the active review queue.
+
+P14 Review controls consolidation
+    ☑ implemented   ☑ tested   ✓ dogfooded
+    Entry state: review mode is open, with either Raw Info or Note Draft active.
+    Happy path: Draft footer exposes autosave status but no "revert this session" or "save draft" buttons; review footer exposes Previous, Discard, Next, but no Skip.
+    Branch: autosave fails; commit remains blocked, autosave retry stays available, and Discard remains a valid terminal action.
+    Final assertion: navigation buttons only browse the queue; only commit/discard remove items from pending review.
+
+P15 Discard Raw Info
+    ☑ implemented   ☑ tested   ✓ dogfooded
+    Entry state: user is reviewing a Raw Info item, with or without a linked Note Draft.
+    Happy path: user clicks Discard or invokes the `discard_raw_info` Tool; Raw Info becomes `discarded`, linked Draft is deleted, and the review queue advances.
+    Branch: discard fails; item remains in the queue and the UI shows an error.
+    Final assertion: `POST /api/digest/items/{id}/discard`, `knowlet digest discard`, and the Tool all use the same core helper.
+
+P16 Destination animation
+    ☑ implemented   ☑ tested   ✓ dogfooded
+    Entry state: user commits a Draft or discards a Raw Info item.
+    Happy path: the left-pane item snapshot shrinks toward the center, then moves into a right-side destination marker over about 2 seconds.
+    Branch: the final queue item is processed; the transition resolves into the cross-pane empty state.
+    Final assertion: commit uses a library marker and green done sign; discard uses a neutral trash marker, no red completion state, and no completion button.
 
 ## B.3 Persona Walkthrough
 
@@ -123,11 +143,15 @@ P13 Review completion transition
 
 - **新用户 / P10**: I need one more confirmation before my draft becomes a real note, especially where it will be stored. I get stuck if the "commit" button writes immediately without showing the vault structure.
 - **小红 / P10**: I want the app to start from the AI's recommended folder but still let me put the note somewhere else. I get stuck if canceling the picker already committed, or if the queue stays on an item I just finished.
-- **小张 / P10**: I want to process several items quickly: commit or skip should advance, and already drafted items should reopen at the Draft stage. I get stuck if the app lets me accidentally create a second draft for the same Raw Info.
+- **小张 / P10**: I want to process several items quickly: commit or discard should advance, and already drafted items should reopen at the Draft stage. I get stuck if the app lets me accidentally create a second draft for the same Raw Info.
 
 - **新用户 / P11-P13**: I expect my edits to be safe without understanding a save button, and I need the UI to show that the item was processed before it disappears. I get stuck if commit silently jumps away or if a failed autosave still allows final commit.
-- **小红 / P11-P13**: I may edit title/tags/folder over a few seconds and want a calm "saved" signal. I get stuck if "undo" only handles the last keystroke instead of the changes I made since opening this draft.
-- **小张 / P11-P13**: I want to triage quickly: edit, let autosave catch up, revert the whole session if I dislike the direction, then commit/skip and move on. I get stuck if autosave remounts the editor, loses focus, or queue transition feels like a hard cut.
+- **小红 / P11-P13**: I may edit title/tags/folder over a few seconds and want a calm "saved" signal. I get stuck if commit silently jumps away or if a failed autosave still allows final commit.
+- **小张 / P11-P13**: I want to triage quickly: edit, let autosave catch up, then commit or discard and move on. I get stuck if autosave remounts the editor, loses focus, or queue transition feels like a hard cut.
+
+- **新用户 / P14-P16**: I can browse with Previous/Next without accidentally processing an item. When I choose Commit or Discard, I see where the item went.
+- **小红 / P14-P16**: I do not need to decide between "save", "revert", and "commit"; saving is background behavior and the terminal actions are clear. Discard feels neutral rather than punitive.
+- **小张 / P14-P16**: I can use the button, CLI, or Tool for discard and expect the same state change. The longer animation is acceptable because it only runs on terminal actions, not on browsing.
 
 ## B.4 Build Or Borrow
 
@@ -154,16 +178,20 @@ P13 Review completion transition
   lightweight local timer pattern as `NoteView` and no cross-component debounce
   abstraction.
 - Draft session revert: considered `use-undo 1.2.0` (npm package modified
-  2026-03-25), but rejected because the requested scope is not a full undo
-  stack; it is a single open-session baseline plus explicit revert.
+  2026-03-25), but rejected because C14 removed the visible revert affordance
+  and the product no longer needs an undo-stack dependency here.
 - Review completion animation: considered `motion 12.40.0` / `framer-motion
   12.40.0` (npm package modified 2026-05-21), but rejected for this small
   transition; CSS/Tailwind state classes are enough and avoid a new dependency.
+- Destination icons: reuse existing `lucide-react 1.14.0` (npm version
+  published 2026-04-29) for library/trash/done markers rather than adding an
+  illustration or animation package.
 
 ## C.1 Similar Code Read
 
 - Backend store pattern: `knowlet/core/mining/task_store.py`
 - Existing digest wrapper: `knowlet/core/digest.py`
+- Raw Info terminal action helper: `knowlet/core/digest_review.py`
 - CLI adapter pattern: `knowlet/cli/digest.py`
 - Web endpoint pattern: `knowlet/web/server.py` mining/digest endpoints
 - Frontend settings pattern: `frontend/src/components/Settings/SettingsDialog.tsx`
@@ -189,6 +217,9 @@ P13 Review completion transition
   - `git status --short` → clean.
 - C13 pre-change focused baseline:
   - `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-list.mjs` → passed.
+- C14 pre-change focused baseline:
+  - `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-list.mjs` → passed.
+  - `uv run pytest tests/test_digest_pull.py tests/test_cli.py` → 34 passed.
 
 ## E.1 Path × Test Reconciliation
 
@@ -201,10 +232,13 @@ P13 Review completion transition
 - P7 Commit note draft → `tests/test_digest_pull.py:634` `commit_note_draft` tool writes Note, honors an optional folder, indexes it, deletes Draft, and marks Raw Info included, `tests/test_digest_pull.py:653` empty-body commit blocks without deleting Draft, `frontend/scripts/e2e/digest-list.mjs:499` review overlay commit writes and opens the Note, `tests/test_cli.py` exposes `drafts commit`, `drafts accept-diff`, and `drafts reject-diff` commands ☑
 - P8 Digest workspace polish → `frontend/scripts/e2e/digest-sources.mjs:21` general Settings lacks Digest tab, `frontend/scripts/e2e/digest-sources.mjs:38` source config is in Digest, `frontend/scripts/e2e/digest-list.mjs:191` review is full-screen with Raw Info/Draft stages, `frontend/scripts/e2e/digest-list.mjs:470` Draft stage enables and auto-selects after generation ☑
 - P9 Draft note surface → `frontend/scripts/e2e/digest-list.mjs:545` Draft note surface appears, `frontend/scripts/e2e/digest-list.mjs:549` title/tags/kind/properties render, `frontend/scripts/e2e/digest-list.mjs:648` preview toggle, `frontend/scripts/e2e/digest-list.mjs:671` diff reject and `frontend/scripts/e2e/digest-list.mjs:686` diff accept still return to the draft surface before commit ☑
-- P10 Directory-confirmed commit queue → `tests/test_digest_pull.py:666` commit API honors a folder override, `frontend/scripts/e2e/digest-list.mjs:241` review layout starts near 6:4, `frontend/scripts/e2e/digest-list.mjs:565` existing Draft suppresses duplicate generation, `frontend/scripts/e2e/digest-list.mjs:696` folder dialog cancel does not commit and confirm sends the selected folder, `frontend/scripts/e2e/digest-list.mjs:715` commit advances to the next item and selects the right stage, `frontend/scripts/e2e/digest-list.mjs:751` skipping the last review item shows a cross-pane empty state ☑
+- P10 Directory-confirmed commit queue → `tests/test_digest_pull.py:666` commit API honors a folder override, `frontend/scripts/e2e/digest-list.mjs:241` review layout starts near 6:4, `frontend/scripts/e2e/digest-list.mjs:565` existing Draft suppresses duplicate generation, `frontend/scripts/e2e/digest-list.mjs:685` folder dialog cancel does not commit and confirm sends the selected folder, `frontend/scripts/e2e/digest-list.mjs:704` commit advances to the next item and selects the right stage, `frontend/scripts/e2e/digest-list.mjs:745` discarding the last review item shows a cross-pane empty state ☑
 - P11 Draft autosave status → `frontend/scripts/e2e/digest-list.mjs:575` initial status, `frontend/scripts/e2e/digest-list.mjs:577` simulated save failure blocks commit, `frontend/scripts/e2e/digest-list.mjs:587` metadata/body edit autosaves through `PUT /api/drafts/{id}`, and `frontend/scripts/e2e/digest-list.mjs:647` later autosave clears the dirty state before diff/commit ☑
-- P12 Session-level draft revert → `frontend/scripts/e2e/digest-list.mjs:616` revert button returns title/folder/tags/kind/body to the opened Draft baseline and autosaves that baseline ☑
-- P13 Review completion transition → `frontend/scripts/e2e/digest-list.mjs:715` commit shows transition before next item, `frontend/scripts/e2e/digest-list.mjs:751` skip shows transition before empty queue ☑
+- P12 Session-level draft revert → ⏸ superseded by C14; no current visible affordance by product decision
+- P13 Review completion transition → `frontend/scripts/e2e/digest-list.mjs:704` commit shows transition before next item ☑
+- P14 Review controls consolidation → `frontend/scripts/e2e/digest-list.mjs:576` no revert button, `frontend/scripts/e2e/digest-list.mjs:580` no manual save button, `frontend/scripts/e2e/digest-list.mjs:584` no skip button, `frontend/scripts/e2e/digest-list.mjs:588` discard button exists ☑
+- P15 Discard Raw Info → `tests/test_digest_pull.py:690` API marks `discarded` and deletes linked Draft, `tests/test_digest_pull.py:727` Tool uses current Raw Info, `tests/test_digest_pull.py:763` CLI parity, `tests/test_cli.py:89` CLI help exposes `digest discard`, `frontend/scripts/e2e/digest-list.mjs:756` UI discard action ☑
+- P16 Destination animation → `frontend/scripts/e2e/digest-list.mjs:704` commit transition uses library target and 2000ms duration, `frontend/scripts/e2e/digest-list.mjs:716` commit shows green completion sign, `frontend/scripts/e2e/digest-list.mjs:757` discard transition uses neutral discard target and 2000ms duration, `frontend/scripts/e2e/digest-list.mjs:769` discard has no green completion badge ☑
 
 ## E.3 Dogfood Log
 
@@ -283,11 +317,18 @@ P13 Review completion transition
   - UI probes: review workspace background `rgb(244, 240, 232)`, folder dialog background `rgb(251, 248, 241)`, review layout ratio `0.599998...`, dialog center hit target `digest-folder-option-library-final`, post-commit center hit target `digest-draft-preview`, active element `BODY` after commit, referenced CSS variables (`--bg`, `--bg-1`, `--line`, `--accent`, `--ink`) defined in `frontend/src/styles/globals.css`, and browser console had no errors/warnings.
   - Screenshots: `/tmp/knowlet-c12-folder-commit.png`, `/tmp/knowlet-c12-after-commit-next-draft.png`
   - UX check: commit is no longer a bare destructive-looking footer action; users get an explicit directory confirmation, queue progress continues after commit/skip, and Raw Info with an existing Draft no longer invites duplicate draft generation.
-- P11-P13 Draft autosave / session revert / completion transition:
+- P11-P13 Draft autosave / initial completion transition:
   - Red test: `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-list.mjs` first failed waiting for `[data-testid="digest-draft-autosave-state"][data-state="idle"]` and `[data-testid="digest-review-transition"][data-kind="skip"]`, because the old draft footer still had no autosave status, no session revert, and no transition layer.
   - Focused green: `cd frontend && node scripts/e2e/digest-list.mjs` → passed; `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-sources.mjs` → passed; `uv run pytest tests/test_digest_pull.py tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py` → 43 passed.
   - Related green: `uv run pytest tests/` → 1000 passed; `cd frontend && npm run lint --silent` → passed; `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run build --silent` → passed with the existing large-chunk warning; `cd frontend && npm run e2e` → 45/45 suites passed.
-  - Browser dogfood: production build served at `http://127.0.0.1:8765`; fresh Playwright context with deterministic Raw Info/Draft API stubs exercised Digest → Start review → Settle as note draft → edit title/body → autosave saved → revert session → autosave baseline → choose folder and commit → transition before queue advance.
+  - Browser dogfood: production build served at `http://127.0.0.1:8765`; fresh Playwright context with deterministic Raw Info/Draft API stubs exercised Digest → Start review → Settle as note draft → edit title/body → autosave saved → choose folder and commit → transition before queue advance.
   - UI probes: review workspace background `rgb(244, 240, 232)`, autosave state `saved`, transition kind `commit`, `document.elementFromPoint(center)` resolved to `digest-review-transition`, active element `BODY`, referenced CSS variables (`--bg`, `--bg-1`, `--line`, `--accent`, `--ink`) were defined, and browser console had no errors/warnings.
-  - Screenshots: `/tmp/knowlet-c13-autosave-saved.png`, `/tmp/knowlet-c13-revert-session.png`, `/tmp/knowlet-c13-commit-transition.png`
-  - UX check: Draft edits no longer rely on a prominent manual save path; failed saves visibly block commit, reverting means "since I opened this draft" rather than "last keystroke", and commit/skip now feel like a processed item moving out of the queue rather than a hard jump.
+  - Screenshots: `/tmp/knowlet-c13-autosave-saved.png`, `/tmp/knowlet-c13-commit-transition.png`
+  - UX check: Draft edits no longer rely on a prominent manual save path; failed saves visibly block commit, and commit now feels like a processed item moving out of the queue rather than a hard jump. C14 later removed the visible session-revert affordance.
+- P14-P16 Review action consolidation + destination animation:
+  - Red tests: focused backend first failed with `405 Method Not Allowed` for `POST /api/digest/items/{id}/discard`, missing `digest discard`, and missing CLI help entry; focused E2E first failed because the old revert/save/skip buttons were still visible.
+  - Focused green: `uv run pytest tests/test_digest_pull.py::test_discard_raw_info_api_marks_discarded_and_deletes_linked_draft tests/test_digest_pull.py::test_discard_raw_info_tool_uses_current_item_and_deletes_linked_draft tests/test_digest_pull.py::test_digest_cli_discard_marks_raw_info_and_deletes_linked_draft tests/test_cli.py::test_digest_help` → 4 passed; `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-list.mjs` → passed; `cd frontend && npx tsc --noEmit` → passed.
+  - Browser dogfood: production build served at `http://127.0.0.1:8765` after restarting the web backend; seeded one drafted Raw Info, then ran Digest → Start review → Choose folder and commit → 2s library transition, followed by Discard on the next Raw Info → 2s neutral trash transition.
+  - UI probes: commit transition `data-kind=commit`, `data-target=library`, `data-duration-ms=2000`, green completion sign present; discard transition `data-kind=discard`, `data-target=discard`, `data-duration-ms=2000`, completion sign absent, target color `rgb(94, 91, 83)`; review workspace background `rgb(244, 240, 232)`, center hit target `digest-review-transition`, active element `BODY`, referenced CSS vars defined, browser console had no errors/warnings.
+  - Screenshots: `/tmp/knowlet-c14-commit-destination.png`, `/tmp/knowlet-c14-discard-destination.png`
+  - UX check: Review browsing no longer implies processing; Raw Info only leaves the queue through commit or discard, and the two terminal paths have distinct destination feedback.

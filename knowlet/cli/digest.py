@@ -17,7 +17,9 @@ from knowlet.cli.mining import _render_run_report
 from knowlet.core.digest import is_digest_task, list_digest_tasks
 from knowlet.core.digest_items import RawInfoStore
 from knowlet.core.digest_pull import pull_digest_sources
+from knowlet.core.digest_review import DigestReviewError, discard_raw_info
 from knowlet.core.digest_sources import DigestSource, DigestSourceStore
+from knowlet.core.drafts import DraftStore
 from knowlet.core.mining.task_store import TaskStore
 
 app = typer.Typer(help="Information digest sources and intake runs.", no_args_is_help=True)
@@ -234,3 +236,29 @@ def digest_run(
             max_items=limit,
         )
         _render_run_report(report)
+
+
+@app.command("discard")
+def digest_discard(
+    info_id: Annotated[str, typer.Argument(help="Raw Info item id.")],
+) -> None:
+    """Discard one Raw Info item and delete its linked note Draft if present."""
+    vault = resolve_vault_or_die()
+    try:
+        result = discard_raw_info(
+            items=RawInfoStore(vault.digest_items_dir),
+            drafts=DraftStore(vault.drafts_dir),
+            info_id=info_id,
+        )
+    except KeyError:
+        err_console.print(f"[red]raw info not found:[/red] {info_id}")
+        raise typer.Exit(code=1) from None
+    except DigestReviewError as exc:
+        err_console.print(f"[red]cannot discard raw info:[/red] {exc}")
+        raise typer.Exit(code=2) from None
+    suffix = (
+        f" and deleted draft {result.deleted_draft_id[:8]}…"
+        if result.deleted_draft_id and result.draft_deleted
+        else ""
+    )
+    console.print(f"[green]discarded[/green] {result.item.id[:8]}…{suffix}")

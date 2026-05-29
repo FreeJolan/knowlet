@@ -108,6 +108,7 @@ def _build_default_registry() -> Registry:
     from knowlet.core.tools import (
         approve_draft,
         create_card,
+        discard_raw_info,
         fetch_url,
         get_card,
         get_draft,
@@ -139,6 +140,7 @@ def _build_default_registry() -> Registry:
     reg.register(get_draft.TOOL)
     reg.register(approve_draft.TOOL)
     reg.register(reject_draft.TOOL)
+    reg.register(discard_raw_info.TOOL)
     # M7.5 / ADR-0017: backend-agnostic web search. Two-stage pattern —
     # web_search returns snippets, fetch_url pulls full bodies.
     reg.register(web_search.TOOL)

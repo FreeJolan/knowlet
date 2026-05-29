@@ -834,6 +834,9 @@ export const createRawInfoDraft = (
 ): Promise<RawInfoDraftResult> =>
   request("POST", `/api/digest/items/${encodeURIComponent(id)}/draft`, payload);
 
+export const discardRawInfo = (id: string): Promise<RawInfoSummary> =>
+  request("POST", `/api/digest/items/${encodeURIComponent(id)}/discard`);
+
 export interface DraftDiffProposal {
   kind: "draft_edit_proposal";
   draft_id: string;

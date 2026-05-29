@@ -1,6 +1,6 @@
 # Stage C v2 — 资讯审阅与入库
 
-- Status: Implemented through C13 (Source config → Raw Info review → Draft diff → commit → workspace polish → note-like draft surface → directory-confirmed commit queue → draft autosave/revert/transition polish)
+- Status: Implemented through C14 (Source config → Raw Info review → Draft diff → commit → workspace polish → note-like draft surface → directory-confirmed commit queue → autosave → discard/commit destination transitions)
 - Date: 2026-05-30
 - Roadmap: [`../roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md)
 
@@ -149,7 +149,7 @@ Stage C v2 有三层对象:
    - 只读。
    - 来自 RSS 或 Prompt Source。
    - 包含原链接、来源、抓取时间、摘要、正文摘录、处理状态。
-   - 可讨论、可跳过、可舍弃、可沉淀为草稿。
+   - 可讨论、可浏览到上一条/下一条、可舍弃、可沉淀为草稿。
 
 2. **Note Draft**
    - 可修改。
@@ -166,7 +166,6 @@ Stage C v2 有三层对象:
 ```text
 Raw Info
   ├─ discuss
-  ├─ skip temporarily
   ├─ discard
   └─ create note draft
         ↓
@@ -182,10 +181,10 @@ Note
 
 最终结果只有两类:
 
-- 舍弃:discard 后离开待处理队列。
+- 舍弃:discard 后离开待处理队列;若已有 Note Draft,同时删除关联 Draft。
 - 纳入:commit 后成为正式 Note。
 
-`skip temporarily` 不是最终结果,只是在批阅模式里暂时跳过。
+上一条/下一条只是浏览队列,不改变 Raw Info 状态,也不表示处理结果。
 
 ## Digest Inbox
 
@@ -231,7 +230,7 @@ Note
   - 标题、来源、原链接。
   - 摘要、关键点、正文摘录。
   - 队列位置。
-  - 操作:上一条、下一条、跳过、舍弃、沉淀为笔记。
+  - 操作:上一条、下一条、舍弃、沉淀为笔记。
   - 内容只读,不可直接编辑。
 
 - Note Draft 阶段:
@@ -243,8 +242,8 @@ Note
     视图切换。
   - 草稿阶段会在用户停止编辑后自动保存 metadata/body,并在 footer 显示
     保存中/已保存/保存失败状态;保存失败时落库保持阻塞。
-  - 用户可以撤回自打开这份草稿以来的所有改动;这个撤回是会话级基线,
-    不会因为中途 autosave 过就丢失。
+  - 不再提供显眼的手动保存或会话撤回按钮;草稿主要依靠 autosave 和保存
+    状态反馈保护用户编辑。
   - 草稿可继续走 Diff Review,但仍不会写入正式 Note。
   - 落库前必须先进入"选取目录并落库"确认流,不能从草稿页直接写入 vault。
 
@@ -387,7 +386,8 @@ API:
 - 用户没有明确确认时,AI 不能主动落库。
 - commit 前若仍有未处理 diff,系统会阻止落库并要求先接受或撤回。
 - commit 后 Raw Info 标记为已纳入,Note Draft 从草稿列表移除,正式 Note 写入 vault 并刷新索引。
-- commit 或本轮跳过后,批阅队列自动推进到下一条待处理资讯。
+- commit 或舍弃后,批阅队列自动推进到下一条待处理资讯。
+- commit/舍弃使用 2 秒目的地动画:左栏内容快照先缩小到屏幕中央,再移动到右侧目标。commit 的目标是知识库/图书馆标记,结束时显示绿色完成标志;舍弃的目标是中性垃圾箱标记,不使用红色,也不显示完成按钮。
 - 队列进入新条目时,如果没有草稿则默认停在 Raw Info;如果已有草稿则默认打开 Note Draft。
 - 已有草稿的 Raw Info 不再显示重复生成草稿入口。
 - 本轮队列没有可批阅条目时,审阅工作台显示覆盖左右栏的空状态。
@@ -396,6 +396,7 @@ API:
 
 - `POST /api/drafts/{draft_id}/commit`:落库 Draft 并返回正式 Note id/path;可传 `folder` 覆盖 Draft 推荐目录。
 - `POST /api/drafts/{draft_id}/approve`:兼容旧 approve 入口,内部复用同一 commit helper。
+- `POST /api/digest/items/{info_id}/discard`:舍弃 Raw Info;若有关联 Draft,删除该 Draft。
 
 ## 实现切片
 
@@ -428,7 +429,7 @@ API:
   - Draft 阶段不再是表单堆叠,而是接近主笔记阅读/编辑的 surface。
   - title、tags、kind、folder、source、rationale 和 body 使用主笔记同源
     组件或同源交互。
-  - Draft footer 保留保存、Diff Review、落库等草稿生命周期操作,明确
+  - Draft footer 保留保存状态、Diff Review、落库等草稿生命周期操作,明确
     仍处于入库前边界。
 
 - **C12 Directory-confirmed commit queue**
@@ -436,17 +437,21 @@ API:
   - commit 前打开目录树,默认选中 AI 推荐目录,确认后把目标 folder 传给
     commit API。
   - 已有 Draft 的 Raw Info 不可重复生成草稿;进入该条时自动打开 Draft 阶段。
-  - commit / 本轮 skip 后自动推进;队列空时显示跨左右栏空状态。
+  - commit / 舍弃后自动推进;队列空时显示跨左右栏空状态。
   - Review 左右栏初始比例调整为 6:4。
 
-- **C13 Draft autosave / session revert / completion transition**
+- **C13 Draft autosave / initial completion transition**
   - Draft footer 不再要求用户手动保存作为主路径;标题、tags、kind、folder
     和正文在停止编辑后短间隔 autosave,并显示小型保存状态。
   - 保存失败会显示可重试状态并阻止落库,避免用户把未持久化草稿误写入正式库。
-  - "撤回本次改动"以打开这份 Draft 时的快照为基线,覆盖本次打开后所有
-    metadata/body 修改。
-  - commit 或本轮 skip 后先显示覆盖工作台的完成过渡,再推进到下一条或空队列;
-    目录确认 dialog 会先关闭,避免过渡期间误点。
+  - C13 曾试验会话级撤回按钮;C14 后该显眼按钮被移除,保留 autosave 状态与重试。
+  - commit 后先显示覆盖工作台的完成过渡,再推进到下一条或空队列。
+
+- **C14 Review action consolidation + destination animation**
+  - 草稿 footer 去掉"撤回本次改动"和"保存草稿"按钮;保留 autosave 状态和重试。
+  - 批阅 footer 去掉"跳过";上一条/下一条只做浏览,不改变处理状态。
+  - 新增"舍弃"终态操作:Raw Info 标为 `discarded`,关联 Draft 会删除。
+  - 落库/舍弃动画统一为 2 秒去向动画:内容快照先缩小到中央,再进入知识库或中性垃圾箱标记。
 
 - **C8 Create draft + draft tools**
   - `create_note_draft_from_info`。
