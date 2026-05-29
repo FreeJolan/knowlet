@@ -3620,6 +3620,58 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             ],
         }
 
+    @app.post("/api/chat/raw-info/{info_id}/stream")
+    def chat_raw_info_stream(
+        info_id: str,
+        req: NoteChatRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> StreamingResponse:
+        """SSE stream for a Raw Info anchored discussion (Stage C v2 C7).
+
+        Raw Info is read-only source material. This endpoint lets the user
+        discuss it before deciding whether to settle it into a note draft.
+        """
+        from knowlet.chat.raw_info_chat import build_raw_info_grounded_turn
+        from knowlet.chat.session import ChatSession
+        from knowlet.core.digest_items import RawInfoStore
+
+        store = RawInfoStore(runtime.vault.digest_items_dir)
+        item = store.get(info_id)
+        if item is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"raw info not found: {info_id}",
+            )
+        if item.status in ("unprocessed", "viewed"):
+            item.status = "discussed"
+            store.save(item)
+        session = ChatSession(
+            llm=runtime.llm,
+            registry=runtime.session.registry,
+            ctx=runtime.session.ctx,
+        )
+        for m in req.history:
+            session.history.append({"role": m.role, "content": m.content})
+        grounded = build_raw_info_grounded_turn(item, req.text)
+
+        def event_source() -> Iterator[str]:
+            try:
+                for event in session.user_turn_stream(grounded):
+                    payload = json.dumps(event_to_dict(event), ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
+            except Exception as exc:
+                err = ErrorEvent(message=f"server error: {exc}")
+                yield f"data: {json.dumps(event_to_dict(err))}\n\n"
+
+        return StreamingResponse(
+            event_source(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     @app.post("/api/chat/draft/{draft_id}/stream")
     def chat_draft_stream(
         draft_id: str,

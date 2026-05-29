@@ -8,11 +8,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
   Clock,
   ExternalLink,
   RefreshCw,
   Rss,
+  Send,
   Sparkles,
+  Square,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -25,6 +29,9 @@ import {
   type DigestStatus,
   type RawInfoSummary,
 } from "@/api/client";
+import { ChatTranscript } from "@/components/Discuss";
+
+import { useRawInfoChat } from "./useRawInfoChat";
 
 interface Props {
   open: boolean;
@@ -48,10 +55,12 @@ export function DigestFocusMode({
   const qc = useQueryClient();
   const [groupMode, setGroupMode] = useState<GroupMode>("time");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [reviewId, setReviewId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       setSelectedId(null);
+      setReviewId(null);
       setGroupMode("time");
       return;
     }
@@ -165,6 +174,16 @@ export function DigestFocusMode({
           </button>
           <button
             type="button"
+            onClick={() => setReviewId(selected?.id ?? items[0]?.id ?? null)}
+            disabled={items.length === 0}
+            className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
+            style={{ borderColor: "var(--accent)", color: "var(--ink)" }}
+            data-testid="digest-start-review"
+          >
+            {t("digest.startReview")}
+          </button>
+          <button
+            type="button"
             onClick={onClose}
             aria-label={t("digest.close")}
             className="rounded p-1 hover:bg-accent/30"
@@ -252,6 +271,7 @@ export function DigestFocusMode({
                       item={item}
                       selected={item.id === selectedId}
                       onSelect={() => setSelectedId(item.id)}
+                      onReview={() => setReviewId(item.id)}
                     />
                   ))}
                 </div>
@@ -273,6 +293,14 @@ export function DigestFocusMode({
           )}
         </aside>
       </div>
+      {reviewId && (
+        <ReviewOverlay
+          items={items}
+          activeId={reviewId}
+          onChangeItem={setReviewId}
+          onClose={() => setReviewId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -343,10 +371,12 @@ function DigestCard({
   item,
   selected,
   onSelect,
+  onReview,
 }: {
   item: RawInfoSummary;
   selected: boolean;
   onSelect: () => void;
+  onReview: () => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -402,6 +432,18 @@ function DigestCard({
       <div className="mt-3 text-[11px] text-muted-foreground">
         {formatDate(item.fetched_at)}
       </div>
+      <button
+        type="button"
+        className="mt-3 rounded border px-2 py-1 text-[11px]"
+        style={{ borderColor: "var(--line)", color: "var(--ink)" }}
+        data-testid={`digest-card-review-${item.id}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onReview();
+        }}
+      >
+        {t("digest.startHere")}
+      </button>
     </article>
   );
 }
@@ -501,6 +543,206 @@ function SourceKind({ kind }: { kind: RawInfoSummary["source_kind"] }) {
       {kind === "rss" ? <Rss className="size-3" /> : <Sparkles className="size-3" />}
       {kind}
     </span>
+  );
+}
+
+function ReviewOverlay({
+  items,
+  activeId,
+  onChangeItem,
+  onClose,
+}: {
+  items: RawInfoSummary[];
+  activeId: string;
+  onChangeItem: (id: string) => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const index = Math.max(
+    0,
+    items.findIndex((item) => item.id === activeId),
+  );
+  const item = items[index] ?? null;
+  const previous = index > 0 ? items[index - 1] : null;
+  const next = index >= 0 && index < items.length - 1 ? items[index + 1] : null;
+  const { messages, status, error, send, stop } = useRawInfoChat(item?.id ?? null);
+  const [input, setInput] = useState("");
+
+  useEffect(() => {
+    setInput("");
+  }, [item?.id]);
+
+  if (!item) return null;
+
+  const submit = () => {
+    if (input.trim() && status !== "streaming") {
+      send(input);
+      setInput("");
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-6"
+      style={{ background: "rgba(22, 18, 12, 0.28)" }}
+      data-testid="digest-review-backdrop"
+    >
+      <div
+        className="grid h-full w-full max-w-[1320px] overflow-hidden rounded-md border shadow-2xl lg:grid-cols-[minmax(360px,0.9fr)_minmax(480px,1.1fr)]"
+        style={{ borderColor: "var(--line)", background: "var(--bg)" }}
+        data-testid="digest-review-overlay"
+      >
+        <section
+          className="min-h-0 overflow-y-auto border-r"
+          style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+        >
+          <div className="flex items-center justify-between border-b p-4" style={{ borderColor: "var(--line)" }}>
+            <div className="text-[11px] font-mono uppercase text-muted-foreground">
+              {t("digest.reviewPosition", { current: index + 1, total: items.length })}
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded p-1 hover:bg-accent/30"
+              data-testid="digest-review-close"
+              aria-label={t("digest.close")}
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+          <div className="space-y-4 p-4">
+            <div>
+              <h3
+                className="font-serif text-xl font-medium"
+                data-testid="digest-review-current-title"
+              >
+                {item.title || t("digest.untitled")}
+              </h3>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                <SourceKind kind={item.source_kind} />
+                <span>{item.source_name}</span>
+                <span>{statusLabel(item.status)}</span>
+              </div>
+              <a
+                href={item.url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 flex items-center gap-1 truncate text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                <ExternalLink className="size-3" />
+                {item.url}
+              </a>
+            </div>
+            <DetailBlock label={t("digest.summary")} value={item.summary} />
+            {item.key_points.length > 0 && (
+              <section>
+                <h4 className="mb-1 text-[11px] font-mono uppercase text-muted-foreground">
+                  {t("digest.keyPoints")}
+                </h4>
+                <ul className="list-disc space-y-1 pl-5 text-sm">
+                  {item.key_points.map((point) => (
+                    <li key={point}>{point}</li>
+                  ))}
+                </ul>
+              </section>
+            )}
+            <DetailBlock label={t("digest.whyItMatters")} value={item.why_it_matters} />
+            <DetailBlock label={t("digest.excerpt")} value={item.content_excerpt} />
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t p-4" style={{ borderColor: "var(--line)" }}>
+            <button
+              type="button"
+              disabled={!previous || status === "streaming"}
+              onClick={() => previous && onChangeItem(previous.id)}
+              className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
+              style={{ borderColor: "var(--line)" }}
+              data-testid="digest-review-prev"
+            >
+              <ArrowLeft className="size-3.5" />
+              {t("digest.previous")}
+            </button>
+            <button
+              type="button"
+              disabled={!next || status === "streaming"}
+              onClick={() => next && onChangeItem(next.id)}
+              className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
+              style={{ borderColor: "var(--line)" }}
+              data-testid="digest-review-next"
+            >
+              {t("digest.next")}
+              <ArrowRight className="size-3.5" />
+            </button>
+          </div>
+        </section>
+
+        <section className="flex min-h-0 flex-col" style={{ background: "var(--bg)" }}>
+          <div className="border-b p-4" style={{ borderColor: "var(--line)" }}>
+            <h3 className="font-serif text-lg font-medium">{t("digest.reviewChat")}</h3>
+          </div>
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4" data-testid="digest-review-chat">
+            {messages.length === 0 && !error && (
+              <div className="text-sm text-muted-foreground">
+                {t("digest.reviewChatEmpty")}
+              </div>
+            )}
+            <ChatTranscript
+              messages={messages}
+              status={status}
+              testPrefix="digest-review"
+              generatingLabel={t("digest.working")}
+            />
+            {error && (
+              <div className="text-xs" style={{ color: "var(--danger, #c0392b)" }}>
+                {error}
+              </div>
+            )}
+          </div>
+          <div className="border-t p-3" style={{ borderColor: "var(--line)" }}>
+            <textarea
+              data-testid="digest-review-chat-input"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  submit();
+                }
+              }}
+              placeholder={t("digest.chatPlaceholder")}
+              rows={3}
+              className="w-full resize-none rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none"
+              style={{ borderColor: "var(--line)", color: "var(--ink)" }}
+            />
+            <div className="mt-2 flex justify-end">
+              {status === "streaming" ? (
+                <button
+                  type="button"
+                  onClick={stop}
+                  className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs"
+                  style={{ borderColor: "var(--line)" }}
+                  data-testid="digest-review-chat-stop"
+                >
+                  <Square className="size-3" />
+                  {t("digest.stop")}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={submit}
+                  disabled={!input.trim()}
+                  className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs disabled:opacity-50"
+                  style={{ borderColor: "var(--line)" }}
+                  data-testid="digest-review-chat-send"
+                >
+                  <Send className="size-3" />
+                  {t("digest.send")}
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
   );
 }
 

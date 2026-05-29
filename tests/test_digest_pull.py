@@ -14,6 +14,7 @@ from knowlet.config import KnowletConfig, save_config
 from knowlet.core.digest_items import RawInfo, RawInfoStore
 from knowlet.core.digest_pull import maybe_auto_pull_digest_sources, pull_digest_sources
 from knowlet.core.digest_sources import DigestSource, DigestSourceStore
+from knowlet.core.events import ReplyChunkEvent, ReplyDoneEvent
 from knowlet.core.llm import AssistantMessage
 from knowlet.core.mining.sources import SourceItem
 from knowlet.core.vault import Vault
@@ -31,6 +32,12 @@ class ScriptedLLM:
         self.messages.append(messages)
         payload = self.payloads.pop(0)
         return AssistantMessage(content=json.dumps(payload), tool_calls=[])
+
+
+class StreamingLLM:
+    def chat_stream(self, messages, tools=None, max_tokens=None, temperature=None, role=None):
+        yield ReplyChunkEvent(text="Raw info answer")
+        yield ReplyDoneEvent(final_text="Raw info answer")
 
 
 def _ready_vault(tmp_path: Path) -> tuple[Vault, KnowletConfig]:
@@ -287,6 +294,37 @@ def test_digest_status_api_reports_pending_count_and_source_status(tmp_path):
     assert payload["pending_count"] == 1
     assert payload["last_error"] == "pending raw info reached 200"
     assert payload["sources"][0]["pull_status"] == "paused"
+
+
+def test_raw_info_chat_stream_marks_item_discussed(tmp_path):
+    vault, cfg = _ready_vault(tmp_path)
+    item = RawInfo(
+        source_id="source-1",
+        source_name="Research Feed",
+        source_kind="rss",
+        item_key="rss:item",
+        title="Raw chat target",
+        url="https://example.com/raw",
+        summary="A raw info item to discuss.",
+        key_points=["keep provenance"],
+    )
+    RawInfoStore(vault.digest_items_dir).save(item)
+    client = TestClient(create_app(vault, cfg))
+    runtime = client.app.state.web_state.runtime_or_init()
+    runtime.llm = StreamingLLM()
+
+    with client.stream(
+        "POST",
+        f"/api/chat/raw-info/{item.id}/stream",
+        json={"text": "What matters?", "history": []},
+    ) as res:
+        body = "".join(res.iter_text())
+
+    assert res.status_code == 200, body
+    assert "Raw info answer" in body
+    loaded = RawInfoStore(vault.digest_items_dir).get(item.id)
+    assert loaded is not None
+    assert loaded.status == "discussed"
 
 
 def test_digest_cli_run_pulls_v2_source(tmp_path, monkeypatch):

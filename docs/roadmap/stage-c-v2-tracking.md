@@ -38,7 +38,7 @@ P3 Digest inbox v2
     Final assertion: no today/week tabs remain; raw info items display source, original link, summary, and status.
 
 P4 Review mode
-    □ implemented   □ tested   □ dogfooded
+    ☑ implemented   ☑ tested   ✓ dogfooded
     Entry state: user clicks Start review or starts from one card.
     Happy path: large review overlay opens with read-only raw info on the left and conversation stream on the right.
     Branch: user skips, closes, or changes item while a conversation exists; state remains consistent.
@@ -114,8 +114,9 @@ P7 Commit note draft
 ## E.1 Path × Test Reconciliation
 
 - P1 Source config v2 → `tests/test_digest_sources.py`, `tests/test_digest.py`, `tests/test_cli.py`, `frontend/scripts/e2e/digest-sources.mjs` ☑
-- P2 Pull + normalize pipeline → `tests/test_digest_pull.py:52` RSS normalize + seen-set, `tests/test_digest_pull.py:129` Prompt Source JSON wrapper, `tests/test_digest_pull.py:180` 200 pending pause, `tests/test_digest_pull.py:219` API pull/list, `tests/test_digest_pull.py:292` CLI pull, `tests/test_digest_pull.py:337` CLI limit regression, `tests/test_digest_pull.py:394` daily auto-pull ☑
-- P3 Digest inbox v2 → `tests/test_digest_pull.py:262` status API, `frontend/scripts/e2e/digest-list.mjs` Raw Info list/group/detail/empty/overflow paths ☑
+- P2 Pull + normalize pipeline → `tests/test_digest_pull.py:59` RSS normalize + seen-set, `tests/test_digest_pull.py:136` Prompt Source JSON wrapper, `tests/test_digest_pull.py:187` 200 pending pause, `tests/test_digest_pull.py:226` API pull/list, `tests/test_digest_pull.py:330` CLI pull, `tests/test_digest_pull.py:375` CLI limit regression, `tests/test_digest_pull.py:432` daily auto-pull ☑
+- P3 Digest inbox v2 → `tests/test_digest_pull.py:269` status API, `frontend/scripts/e2e/digest-list.mjs:123` Raw Info list/group/detail/empty/overflow paths ☑
+- P4 Review mode → `tests/test_digest_pull.py:299` Raw Info chat stream + discussed state, `frontend/scripts/e2e/digest-list.mjs:191` review from header/chat/next/close, `frontend/scripts/e2e/digest-list.mjs:228` review from specific card ☑
 
 ## E.3 Dogfood Log
 
@@ -138,3 +139,9 @@ P7 Commit note draft
   - Lint/type/full backend: `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run lint --silent` → passed; `uv run pytest tests/` → 987 passed.
   - UI probes: detail panel background is opaque; card center resolves through `document.elementFromPoint`; console clean in populated / overflow / empty inbox suites.
   - Screenshot: `/tmp/knowlet-c6-digest-inbox.png`
+- P4 Review mode:
+  - Red test: `tests/test_digest_pull.py::test_raw_info_chat_stream_marks_item_discussed` initially failed with `405 Method Not Allowed`; the old UI also had no review overlay entry points.
+  - Focused green: `uv run pytest tests/test_digest_pull.py tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py` → 36 passed; `cd frontend && node scripts/e2e/digest-list.mjs` → passed.
+  - Lint/type/full backend: `uv run ruff check knowlet/chat/raw_info_chat.py knowlet/web/server.py tests/test_digest_pull.py` → passed; `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run lint --silent` → passed; `uv run pytest tests/` → 989 passed.
+  - UX check: header "Start review" opens the overlay, card "Review from here" starts at that card, right-side chat uses `/api/chat/raw-info/{id}/stream`, and Next/Close preserve a consistent selected item.
+  - Screenshot: `/tmp/knowlet-c7-review-mode.png`

@@ -188,6 +188,54 @@ try {
     );
   });
 
+  await runTest("review mode opens from header and supports raw info chat", async () => {
+    await page.route("**/api/chat/raw-info/*/stream", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body:
+          'data: {"type":"reply_chunk","text":"Review reply grounded in Raw Info."}\n\n' +
+          'data: {"type":"turn_done","final_text":"Review reply grounded in Raw Info."}\n\n',
+      });
+    });
+    await page.locator('[data-testid="digest-start-review"]').click();
+    await page.locator('[data-testid="digest-review-overlay"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    let title = await page.locator('[data-testid="digest-review-current-title"]').textContent();
+    assert(title.includes("Agent trace design"), "review starts at selected item");
+
+    await page.locator('[data-testid="digest-review-chat-input"]').fill("What matters?");
+    await page.locator('[data-testid="digest-review-chat-send"]').click();
+    await page.locator('[data-testid="digest-review-answer"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    const answer = await page.locator('[data-testid="digest-review-answer"]').textContent();
+    assert(answer.includes("Review reply grounded in Raw Info."), "review chat answer rendered");
+
+    await page.locator('[data-testid="digest-review-next"]').click();
+    title = await page.locator('[data-testid="digest-review-current-title"]').textContent();
+    assert(title.includes("RSS normalization caveat"), "next changes review item");
+    await page.locator('[data-testid="digest-review-close"]').click();
+    await page.locator('[data-testid="digest-review-overlay"]').waitFor({
+      state: "detached",
+      timeout: 3000,
+    });
+  });
+
+  await runTest("review mode can start from a specific card", async () => {
+    await page.locator('[data-testid="digest-card-review-01C6PROMPTRAWINFO00003"]').click();
+    await page.locator('[data-testid="digest-review-overlay"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    const title = await page.locator('[data-testid="digest-review-current-title"]').textContent();
+    assert(title.includes("Prompt source candidate"), "card action starts from that card");
+    await page.locator('[data-testid="digest-review-close"]').click();
+  });
+
   await runTest("no console errors during populated inbox suite", () => {
     assertConsoleClean(env);
   });
