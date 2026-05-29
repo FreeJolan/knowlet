@@ -1,6 +1,6 @@
 # Stage C v2 Tracking — 资讯审阅与入库
 
-- Status: C4-C9 implemented and verified
+- Status: C4-C10 implemented and verified
 - Started: 2026-05-30
 - Design: [`../design/stage-c-digest-inbox.md`](../design/stage-c-digest-inbox.md)
 
@@ -18,9 +18,9 @@ Knowlet should turn outside information into a reviewable inbox: raw items stay 
 
 P1 Source config v2
     ☑ implemented   ☑ tested   ✓ dogfooded
-    Entry state: Settings is open, Digest tab selected.
+    Entry state: Digest workbench is open and the source configuration panel is expanded.
     Happy path: user adds an RSS Source or Prompt Source, sees it in the source list, toggles enabled state, and can remove it.
-    Branch: invalid URL / empty prompt is rejected without writing a source.
+    Branch: invalid URL / empty prompt is rejected without writing a source; general Settings no longer contains a Digest source tab.
     Final assertion: source file is persisted under the vault and API/CLI return the same shape.
 
 P2 Pull + normalize pipeline
@@ -65,9 +65,16 @@ P7 Commit note draft
     Branch: missing title/body/folder or write failure blocks commit without deleting the draft.
     Final assertion: raw info is marked included, draft is committed, and formal Note appears in the vault.
 
+P8 Digest workspace polish
+    ☑ implemented   ☑ tested   ✓ dogfooded
+    Entry state: user is in Digest inbox or opens review mode from a card.
+    Happy path: source configuration lives in Digest, review opens as a full-screen workspace, Raw Info is selected first, Draft is disabled before generation, and generation switches into an editable Draft stage.
+    Branch: empty-source state exposes configuration; closing review returns to inbox without a window backdrop.
+    Final assertion: Digest-specific configuration is discoverable in the workbench and the Raw Info → Note Draft stage boundary is visible in DOM state.
+
 ## B.3 Persona Walkthrough
 
-- **新用户 / P1**: I open Settings because source setup feels like configuration. I need the UI to make RSS vs Prompt obvious and reject website subscription wording.
+- **新用户 / P1**: I open Digest and need the source setup to be right there because it is required for the workflow. I need the UI to make RSS vs Prompt obvious and reject website subscription wording.
 - **小红 / P1**: I add a couple of weekly feeds and expect to see whether they are enabled. I get stuck if the only route is CLI.
 - **小张 / P1**: I want to toggle and remove sources quickly while testing. I get stuck if source errors are hidden from the list.
 
@@ -85,6 +92,9 @@ P7 Commit note draft
 - Article extraction: keep existing `trafilatura 2.0.0` (locked; PyPI upload 2024-12-03). Use it only for content cleanup/fetch, not for website subscriptions.
 - Structured validation: keep existing `pydantic 2.13.3` (locked; PyPI upload 2026-04-20). It fits Prompt Source JSON validation and avoids adding another schema layer.
 - Settings/source form UI: considered `react-hook-form 7.76.1` (npm modified 2026-05-23) and `zod 4.4.3` (npm modified 2026-05-04), but rejected for C4 because the form has few fields and the app already uses local React state for settings panels.
+- Review workspace split: reuse existing `react-resizable-panels 2.1.9` (npm publish 2025-04-27) through the local `ResizablePanelGroup` wrapper. It matches AppShell's pane pattern and avoids new layout state.
+- Stage tabs: considered `@radix-ui/react-tabs 1.1.13` (npm modified 2025-12-24), but rejected for C10 because this surface needs only two stable buttons with explicit ARIA state and no new dependency.
+- Draft body editing: reuse existing `@uiw/react-codemirror 4.25.9` (npm publish 2026-03-25) indirectly through `MarkdownEditor`, the same primitive used by `NoteView`, so draft editing stays close to the main note experience.
 
 ## C.1 Similar Code Read
 
@@ -94,6 +104,7 @@ P7 Commit note draft
 - Web endpoint pattern: `knowlet/web/server.py` mining/digest endpoints
 - Frontend settings pattern: `frontend/src/components/Settings/SettingsDialog.tsx`
 - Existing E2E shape: `frontend/scripts/e2e/digest-list.mjs`
+- Digest-source workbench E2E shape: `frontend/scripts/e2e/digest-sources.mjs`
 
 ## C.2 Exact Verification Commands
 
@@ -113,18 +124,19 @@ P7 Commit note draft
 
 ## E.1 Path × Test Reconciliation
 
-- P1 Source config v2 → `tests/test_digest_sources.py`, `tests/test_digest.py`, `tests/test_cli.py`, `frontend/scripts/e2e/digest-sources.mjs` ☑
+- P1 Source config v2 → `tests/test_digest_sources.py`, `tests/test_digest.py`, `tests/test_cli.py`, `frontend/scripts/e2e/digest-sources.mjs:21` Settings no longer owns Digest sources + `frontend/scripts/e2e/digest-sources.mjs:38` workbench add/toggle/remove ☑
 - P2 Pull + normalize pipeline → `tests/test_digest_pull.py:59` RSS normalize + seen-set, `tests/test_digest_pull.py:136` Prompt Source JSON wrapper, `tests/test_digest_pull.py:187` 200 pending pause, `tests/test_digest_pull.py:226` API pull/list, `tests/test_digest_pull.py:330` CLI pull, `tests/test_digest_pull.py:375` CLI limit regression, `tests/test_digest_pull.py:432` daily auto-pull ☑
 - P3 Digest inbox v2 → `tests/test_digest_pull.py:269` status API, `frontend/scripts/e2e/digest-list.mjs:123` Raw Info list/group/detail/empty/overflow paths ☑
 - P4 Review mode → `tests/test_digest_pull.py:299` Raw Info chat stream + discussed state, `frontend/scripts/e2e/digest-list.mjs:191` review from header/chat/next/close, `frontend/scripts/e2e/digest-list.mjs:228` review from specific card ☑
 - P5 Create note draft from info → `tests/test_digest_pull.py:332` API creates Draft with library context + metadata update, `tests/test_digest_pull.py:423` invalid LLM payload writes nothing, `tests/test_digest_pull.py:450` `create_note_draft_from_info` tool uses current Raw Info, `frontend/scripts/e2e/digest-list.mjs:239` review overlay creates a Draft and edits metadata ☑
 - P6 Draft diff tools → `tests/test_digest_pull.py:531` draft diff API proposes without writing Note, `tests/test_digest_pull.py:549` reject keeps Draft body unchanged, `tests/test_digest_pull.py:564` accept mutates only Draft, `tests/test_digest_pull.py:607` conversation tool proposes/rejects/accepts current Draft, `frontend/scripts/e2e/digest-list.mjs:469` review chat opens DiffReview and can reject/accept all ☑
 - P7 Commit note draft → `tests/test_digest_pull.py:632` `commit_note_draft` tool writes Note, indexes it, deletes Draft, and marks Raw Info included, `tests/test_digest_pull.py:650` empty-body commit blocks without deleting Draft, `frontend/scripts/e2e/digest-list.mjs:499` review overlay commit writes and opens the Note, `tests/test_cli.py` exposes `drafts commit`, `drafts accept-diff`, and `drafts reject-diff` commands ☑
+- P8 Digest workspace polish → `frontend/scripts/e2e/digest-sources.mjs:21` general Settings lacks Digest tab, `frontend/scripts/e2e/digest-sources.mjs:38` source config is in Digest, `frontend/scripts/e2e/digest-list.mjs:191` review is full-screen with Raw Info/Draft stages, `frontend/scripts/e2e/digest-list.mjs:470` Draft stage enables and auto-selects after generation ☑
 
 ## E.3 Dogfood Log
 
 - P1 Source config v2:
-  - Production-build browser path: Settings → Digest → source list renders RSS / Prompt rows.
+  - Historical production-build browser path at C4: Settings → Digest → source list rendered RSS / Prompt rows; C10 moved this surface into Digest workbench.
   - Adversarial branch: invalid RSS URL returns 400 and does not persist.
   - UI probes: panel background opaque (`rgb(239, 233, 221)`), add button hit target resolves at center, no unfiltered browser errors/warnings.
   - Screenshot: `/tmp/knowlet-c4-digest-sources.png`
@@ -172,3 +184,12 @@ P7 Commit note draft
   - UI probes: review overlay background `rgb(244, 240, 232)`, `document.elementFromPoint(center)` resolved to `digest-settle-draft`, active element `BODY`, and browser console had no new errors/warnings.
   - Screenshot: `/tmp/knowlet-c9-draft-commit-dogfood.png`
   - UX check: AI/tool-driven draft lifecycle now has the same boundary as the UI: propose diff → review → accept/reject all → explicit commit. Commit is blocked if a pending diff exists or title/body are missing, so Raw Info cannot silently enter the vault.
+- P8 Digest workspace polish:
+  - Red tests: `frontend/scripts/e2e/digest-sources.mjs` initially failed because general Settings still exposed `settings-tab-digest`; `frontend/scripts/e2e/digest-list.mjs` initially failed waiting for `digest-review-workspace` while the old windowed review overlay was still present.
+  - Focused green: `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-sources.mjs` → passed; `cd frontend && SKIP_BUILD=1 node scripts/e2e/digest-list.mjs` → passed.
+  - Related green: `uv run pytest tests/test_digest_pull.py tests/test_digest_sources.py tests/test_digest.py tests/test_cli.py` → 42 passed; `cd frontend && npx tsc --noEmit` → passed; `cd frontend && npm run build --silent` → passed.
+  - Browser dogfood: production build served from `/tmp/knowlet-stage-c-demo-vault`; Digest → Configure sources showed the source panel in-workbench with opaque background `rgb(244, 240, 232)` and no Settings Digest tab.
+  - Browser dogfood: Digest → Start review opened full-screen `digest-review-workspace` with no backdrop, Raw Info selected, Draft disabled, and center hit target on `digest-settle-draft`; clicking settle reused/generated a Draft, enabled Draft, auto-selected it, and showed `digest-draft-editor`.
+  - UI probes: source panel background `rgb(244, 240, 232)`, review workspace background `rgb(244, 240, 232)`, `document.elementFromPoint(center)` resolved to `digest-config-toggle` / `digest-settle-draft`, active element `BUTTON`, and browser console had no errors/warnings.
+  - Screenshots: `/tmp/knowlet-c10-digest-config.png`, `/tmp/knowlet-c10-review-workspace.png`, `/tmp/knowlet-c10-draft-stage.png`
+  - UX check: Digest now owns source configuration; review mode is a full-screen workspace without a backdrop; Raw Info is the first selected stage; Note Draft is disabled until generation, then auto-selected and editable with the same Markdown editor primitive as the main note view.

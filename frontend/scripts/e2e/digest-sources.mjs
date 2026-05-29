@@ -1,8 +1,8 @@
-// E2E: Stage C v2 C4 — Digest source configuration.
+// E2E: Stage C v2 C10 — Digest source configuration inside Digest.
 //
-// Users configure information sources from Settings. C4 supports only
-// RSS Source and Prompt Source; website URL subscriptions are not a
-// product surface.
+// Users configure information sources from the Digest workbench itself.
+// C10 keeps RSS Source and Prompt Source as the only supported source kinds;
+// website URL subscriptions are not a product surface.
 
 import {
   assert,
@@ -18,13 +18,30 @@ const { page, baseURL, teardown } = env;
 try {
   await page.goto(baseURL, { waitUntil: "networkidle" });
 
-  await runTest("Digest settings add RSS and Prompt sources", async () => {
+  await runTest("General settings no longer owns Digest source configuration", async () => {
     await page.locator('[data-testid="header-settings-button"]').click();
     await page.locator('[data-testid="settings-dialog"]').waitFor({
       state: "visible",
       timeout: 3000,
     });
-    await page.locator('[data-testid="settings-tab-digest"]').click();
+    assert(
+      (await page.locator('[data-testid="settings-tab-digest"]').count()) === 0,
+      "Digest source configuration is not in general settings",
+    );
+    await page.locator('[data-testid="settings-dialog"]').press("Escape");
+    await page.locator('[data-testid="settings-dialog"]').waitFor({
+      state: "detached",
+      timeout: 3000,
+    });
+  });
+
+  await runTest("Digest workbench add RSS and Prompt sources", async () => {
+    await page.locator('[data-testid="header-digest-button"]').click();
+    await page.locator('[data-testid="digest-focus-mode"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-config-toggle"]').click();
     await page.locator('[data-testid="digest-source-panel"]').waitFor({
       state: "visible",
       timeout: 3000,
@@ -57,7 +74,7 @@ try {
     );
   });
 
-  await runTest("Digest settings rejects invalid RSS URL", async () => {
+  await runTest("Digest workbench rejects invalid RSS URL", async () => {
     await page.locator('[data-testid="digest-source-kind-rss"]').click();
     await page.locator('[data-testid="digest-source-name"]').fill("Broken feed");
     await page
@@ -72,7 +89,7 @@ try {
     assert(apiSources.length === 2, "invalid website source was not persisted");
   });
 
-  await runTest("Digest settings toggles and removes sources", async () => {
+  await runTest("Digest workbench toggles and removes sources", async () => {
     const sources = await (await page.request.get(`${baseURL}/api/digest/sources`)).json();
     const daily = sources.find((s) => s.name === "Daily AI");
     const prompt = sources.find((s) => s.name === "Agent watch");

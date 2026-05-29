@@ -1,6 +1,6 @@
 # Stage C v2 — 资讯审阅与入库
 
-- Status: Implemented through C9 (Source config → Raw Info review → Draft diff → commit)
+- Status: Implemented through C10 (Source config → Raw Info review → Draft diff → commit → workspace polish)
 - Date: 2026-05-30
 - Roadmap: [`../roadmap/ai-modes-roadmap.md`](../roadmap/ai-modes-roadmap.md)
 
@@ -191,6 +191,12 @@ Note
 
 取消 today/week tab。Digest 是待处理 inbox。
 
+来源配置属于 Digest 工作流自身,不放在通用 Settings 里:
+
+- Digest 顶部提供"配置来源"入口,打开 RSS / Prompt Source 管理区。
+- 当 inbox 为空且没有任何 source 时,配置区可直接展开,帮助新用户完成第一步。
+- 通用 Settings 不再出现 Digest Source tab,避免把必要工作流入口藏进全局偏好里。
+
 分组选项:
 
 - 按时间:今天、昨天、本周、更早。
@@ -212,13 +218,26 @@ Note
 - Digest 顶部"开始批阅"。
 - 卡片上的"从此处开始批阅"。
 
-审阅模式是一个大浮窗:
+审阅模式是全屏工作台,不是窗口化浮层。资讯内容和对话都可能很长,
+全屏能减少遮挡和嵌套滚动。
 
-- 左侧:当前 Raw Info。
+- 左侧:阶段化阅读/编辑区。
+  - 第一个阶段是 Raw Info。
+  - 第二个阶段是 Note Draft。
+  - 两个阶段用 Tab 呈现,并以 Raw Info → Note Draft 的顺序表达流程。
+  - 生成草稿前,Note Draft Tab 禁用;生成后自动切换到 Note Draft。
+
+- Raw Info 阶段:
   - 标题、来源、原链接。
   - 摘要、关键点、正文摘录。
   - 队列位置。
   - 操作:上一条、下一条、跳过、舍弃、沉淀为笔记。
+  - 内容只读,不可直接编辑。
+
+- Note Draft 阶段:
+  - 展示 title、tags、kind、folder 和正文。
+  - 正文编辑体验尽量贴近主笔记编辑器。
+  - 草稿阶段可保存 metadata/body,可继续走 Diff Review,但仍不会写入正式 Note。
 
 - 右侧:对话流。
   - 默认围绕当前 Raw Info 讨论。
@@ -252,14 +271,14 @@ Raw Info 本身不可直接修改。用户如果想改内容,必须先沉淀为 
 
 当前实现(2026-05-30):
 
-- UI:审阅浮窗左侧提供"沉淀为笔记草稿"按钮。
+- UI:审阅工作台的 Raw Info 阶段提供"沉淀为笔记草稿"按钮。
 - API:`POST /api/digest/items/{info_id}/draft`。
 - Tool:`create_note_draft_from_info`,可在 Raw Info review chat 中基于当前
   Raw Info 省略 `info_id` 调用。
 - 生成 Draft 后更新 Raw Info 为 `drafted` 并写入 `note_draft_id`;不会写入
  正式 Note。
-- 用户可在草稿结果卡中调整 title、tags、kind、folder,通过既有
-  `PUT /api/drafts/{draft_id}` 保存元数据。
+- 用户可在 Note Draft 阶段调整 title、tags、kind、folder 和正文,通过既有
+  `PUT /api/drafts/{draft_id}` 保存草稿内容。
 - AI 输出 JSON schema 校验失败时返回错误,不写 Draft,不改变 Raw Info 状态。
 
 ## 隐藏知识: Library Context
@@ -379,9 +398,14 @@ API:
   - 显示拉取状态和暂停提示。
 
 - **C7 Review mode**
-  - 大浮窗批阅。
+  - 全屏批阅工作台。
   - Raw Info 只读。
-  - 右侧对话流。
+  - Raw Info → Note Draft 阶段 Tab + 右侧对话流。
+
+- **C10 Digest workspace polish**
+  - Source 配置移入 Digest 工作台。
+  - Note Draft 阶段生成前禁用,生成后自动切换。
+  - Draft 正文编辑复用主笔记编辑体验。
 
 - **C8 Create draft + draft tools**
   - `create_note_draft_from_info`。

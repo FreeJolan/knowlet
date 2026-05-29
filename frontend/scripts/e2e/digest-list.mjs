@@ -188,7 +188,7 @@ try {
     );
   });
 
-  await runTest("review mode opens from header and supports raw info chat", async () => {
+  await runTest("review mode opens as a full-screen workspace and supports raw info chat", async () => {
     await page.route("**/api/chat/raw-info/*/stream", async (route) => {
       await route.fulfill({
         status: 200,
@@ -199,10 +199,30 @@ try {
       });
     });
     await page.locator('[data-testid="digest-start-review"]').click();
-    await page.locator('[data-testid="digest-review-overlay"]').waitFor({
+    await page.locator('[data-testid="digest-review-workspace"]').waitFor({
       state: "visible",
       timeout: 3000,
     });
+    assert(
+      (await page.locator('[data-testid="digest-review-backdrop"]').count()) === 0,
+      "review mode is not a windowed backdrop",
+    );
+    await page.locator('[data-testid="digest-review-stage-tab-raw"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-review-stage-tab-draft"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    assert(
+      (await page.locator('[data-testid="digest-review-stage-tab-raw"]').getAttribute("aria-selected")) === "true",
+      "Raw Info tab is selected first",
+    );
+    assert(
+      (await page.locator('[data-testid="digest-review-stage-tab-draft"]').getAttribute("aria-disabled")) === "true",
+      "Draft tab is disabled before draft generation",
+    );
     let title = await page.locator('[data-testid="digest-review-current-title"]').textContent();
     assert(title.includes("Agent trace design"), "review starts at selected item");
 
@@ -219,7 +239,7 @@ try {
     title = await page.locator('[data-testid="digest-review-current-title"]').textContent();
     assert(title.includes("RSS normalization caveat"), "next changes review item");
     await page.locator('[data-testid="digest-review-close"]').click();
-    await page.locator('[data-testid="digest-review-overlay"]').waitFor({
+    await page.locator('[data-testid="digest-review-workspace"]').waitFor({
       state: "detached",
       timeout: 3000,
     });
@@ -227,7 +247,7 @@ try {
 
   await runTest("review mode can start from a specific card", async () => {
     await page.locator('[data-testid="digest-card-review-01C6PROMPTRAWINFO00003"]').click();
-    await page.locator('[data-testid="digest-review-overlay"]').waitFor({
+    await page.locator('[data-testid="digest-review-workspace"]').waitFor({
       state: "visible",
       timeout: 3000,
     });
@@ -443,12 +463,28 @@ try {
     });
     await page.locator('[data-testid="digest-card-01C6TODAYRAWINFO000001"]').click();
     await page.locator('[data-testid="digest-start-review"]').click();
-    await page.locator('[data-testid="digest-review-overlay"]').waitFor({
+    await page.locator('[data-testid="digest-review-workspace"]').waitFor({
       state: "visible",
       timeout: 3000,
     });
+    assert(
+      (await page.locator('[data-testid="digest-review-stage-tab-draft"]').getAttribute("aria-disabled")) === "true",
+      "draft tab starts disabled",
+    );
     await page.locator('[data-testid="digest-settle-draft"]').click();
     await page.locator('[data-testid="digest-draft-result"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    assert(
+      (await page.locator('[data-testid="digest-review-stage-tab-draft"]').getAttribute("aria-disabled")) === "false",
+      "draft tab becomes enabled after draft generation",
+    );
+    assert(
+      (await page.locator('[data-testid="digest-review-stage-tab-draft"]').getAttribute("aria-selected")) === "true",
+      "draft tab is selected after draft generation",
+    );
+    await page.locator('[data-testid="digest-draft-editor"]').waitFor({
       state: "visible",
       timeout: 3000,
     });

@@ -13,9 +13,11 @@ import {
   CheckCircle2,
   Clock,
   ExternalLink,
+  FileText,
   RefreshCw,
   Rss,
   Send,
+  SlidersHorizontal,
   Sparkles,
   Square,
   X,
@@ -37,8 +39,15 @@ import {
   type RawInfoSummary,
 } from "@/api/client";
 import { ChatTranscript, DiffReview, chatHistoryForRequest } from "@/components/Discuss";
+import { MarkdownEditor } from "@/components/Editor/MarkdownEditor";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { QK } from "@/lib/queryClient";
 
+import { DigestSourcePanel } from "./DigestSourcePanel";
 import { useRawInfoChat } from "./useRawInfoChat";
 
 interface Props {
@@ -65,12 +74,14 @@ export function DigestFocusMode({
   const [groupMode, setGroupMode] = useState<GroupMode>("time");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reviewId, setReviewId] = useState<string | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setSelectedId(null);
       setReviewId(null);
       setGroupMode("time");
+      setConfigOpen(false);
       return;
     }
     const onKey = (e: KeyboardEvent) => {
@@ -139,6 +150,9 @@ export function DigestFocusMode({
     pendingCount > 200 ||
     status.data?.status === "paused" ||
     (status.data?.sources ?? []).some((source) => source.pull_status === "paused");
+  const sourceCount = status.data?.sources.length ?? 0;
+  const showSourceConfig =
+    configOpen || (rawInfo.data !== undefined && items.length === 0 && sourceCount === 0);
 
   return (
     <div
@@ -180,6 +194,20 @@ export function DigestFocusMode({
           >
             <RefreshCw className={pullMut.isPending ? "size-3 animate-spin" : "size-3"} />
             {t("digest.pullNow")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfigOpen((value) => !value)}
+            className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs"
+            style={{
+              borderColor: configOpen ? "var(--accent)" : "var(--line)",
+              background: configOpen ? "var(--accent-tint-2)" : "transparent",
+              color: "var(--ink)",
+            }}
+            data-testid="digest-config-toggle"
+          >
+            <SlidersHorizontal className="size-3.5" />
+            {t("digest.configureSources")}
           </button>
           <button
             type="button"
@@ -236,6 +264,16 @@ export function DigestFocusMode({
           </div>
         )}
       </div>
+
+      {showSourceConfig && (
+        <div
+          className="border-b px-6 py-4"
+          style={{ borderColor: "var(--line)", background: "var(--bg)" }}
+          data-testid="digest-source-config"
+        >
+          <DigestSourcePanel />
+        </div>
+      )}
 
       <div className="grid min-h-0 flex-1 gap-4 px-6 py-4 lg:grid-cols-[minmax(0,1fr)_430px]">
         <main className="min-h-0 overflow-y-auto">
@@ -556,6 +594,43 @@ function SourceKind({ kind }: { kind: RawInfoSummary["source_kind"] }) {
   );
 }
 
+function StageTabButton({
+  active,
+  disabled,
+  icon,
+  label,
+  onClick,
+  testId,
+}: {
+  active: boolean;
+  disabled?: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  testId: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      aria-disabled={disabled ? "true" : "false"}
+      disabled={disabled}
+      onClick={onClick}
+      data-testid={testId}
+      className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-45"
+      style={{
+        borderColor: active ? "var(--accent)" : "var(--line)",
+        background: active ? "var(--accent-tint-2)" : "transparent",
+        color: active ? "var(--ink)" : "var(--ink-mute)",
+      }}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
 function ReviewOverlay({
   items,
   activeId,
@@ -588,11 +663,13 @@ function ReviewOverlay({
     note_id: string;
     title: string;
   } | null>(null);
+  const [stageTab, setStageTab] = useState<"raw" | "draft">("raw");
   const [draftEdit, setDraftEdit] = useState({
     title: "",
     tags: "",
     kind: "reference" as "knowledge" | "reference",
     folder: "",
+    body: "",
   });
   const [draftError, setDraftError] = useState<string | null>(null);
 
@@ -611,7 +688,9 @@ function ReviewOverlay({
         tags: result.draft.tags.join(", "),
         kind: result.draft.kind,
         folder: result.draft.folder ?? "",
+        body: result.draft.body ?? "",
       });
+      setStageTab("draft");
       setDraftError(null);
       void qc.invalidateQueries({ queryKey: ["digest-items"] });
       void qc.invalidateQueries({ queryKey: ["digest-status"] });
@@ -626,6 +705,7 @@ function ReviewOverlay({
       if (!draftResult) throw new Error("No draft to save");
       return updateDraft(draftResult.draft.id, {
         title: draftEdit.title,
+        body: draftEdit.body,
         tags: draftEdit.tags
           .split(",")
           .map((tag) => tag.trim().replace(/^#/, ""))
@@ -641,6 +721,7 @@ function ReviewOverlay({
         tags: draft.tags.join(", "),
         kind: draft.kind,
         folder: draft.folder ?? "",
+        body: draft.body ?? "",
       });
       setDraftError(null);
     },
@@ -656,6 +737,10 @@ function ReviewOverlay({
     },
     onSuccess: (result) => {
       setDraftResult((current) => (current ? { ...current, draft: result.draft } : current));
+      setDraftEdit((current) => ({
+        ...current,
+        body: result.draft.body ?? "",
+      }));
       setPendingDiff(null);
       clearProposal();
       setDraftError(null);
@@ -672,6 +757,10 @@ function ReviewOverlay({
     },
     onSuccess: (result) => {
       setDraftResult((current) => (current ? { ...current, draft: result.draft } : current));
+      setDraftEdit((current) => ({
+        ...current,
+        body: result.draft.body ?? "",
+      }));
       setPendingDiff(null);
       clearProposal();
       setDraftError(null);
@@ -706,7 +795,8 @@ function ReviewOverlay({
     setDraftResult(null);
     setPendingDiff(null);
     setCommitResult(null);
-    setDraftEdit({ title: "", tags: "", kind: "reference", folder: "" });
+    setStageTab("raw");
+    setDraftEdit({ title: "", tags: "", kind: "reference", folder: "", body: "" });
     setDraftError(null);
     clearProposal();
   }, [clearProposal, item?.id]);
@@ -715,6 +805,7 @@ function ReviewOverlay({
     if (!proposal) return;
     if (proposal.changed) {
       setPendingDiff(proposal);
+      setStageTab("draft");
     } else {
       setDraftError(proposal.reason || proposal.summary || t("digest.noDraftDiff"));
       clearProposal();
@@ -728,7 +819,8 @@ function ReviewOverlay({
     (draftEdit.title.trim() !== draftResult.draft.title ||
       draftEdit.tags.trim() !== draftResult.draft.tags.join(", ") ||
       draftEdit.kind !== draftResult.draft.kind ||
-      draftEdit.folder.trim() !== (draftResult.draft.folder ?? ""));
+      draftEdit.folder.trim() !== (draftResult.draft.folder ?? "") ||
+      draftEdit.body !== draftResult.draft.body);
 
   const submit = () => {
     if (input.trim() && status !== "streaming") {
@@ -739,253 +831,322 @@ function ReviewOverlay({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center p-6"
-      style={{ background: "rgba(22, 18, 12, 0.28)" }}
-      data-testid="digest-review-backdrop"
+      className="fixed inset-0 z-[60] flex flex-col"
+      style={{ background: "var(--bg, #f4f0e8)" }}
+      data-testid="digest-review-workspace"
     >
-      <div
-        className="grid h-full w-full max-w-[1320px] overflow-hidden rounded-md border shadow-2xl lg:grid-cols-[minmax(360px,0.9fr)_minmax(480px,1.1fr)]"
-        style={{ borderColor: "var(--line)", background: "var(--bg)" }}
-        data-testid="digest-review-overlay"
+      <header
+        className="flex items-center justify-between gap-4 border-b px-5 py-3"
+        style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
       >
-        <section
-          className="min-h-0 overflow-y-auto border-r"
-          style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+        <div className="min-w-0">
+          <div className="text-[11px] font-mono uppercase text-muted-foreground">
+            {t("digest.reviewPosition", { current: index + 1, total: items.length })}
+          </div>
+          <h2
+            className="truncate font-serif text-xl font-medium"
+            data-testid="digest-review-current-title"
+          >
+            {item.title || t("digest.untitled")}
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded p-1 hover:bg-accent/30"
+          data-testid="digest-review-close"
+          aria-label={t("digest.close")}
         >
-          <div className="flex items-center justify-between border-b p-4" style={{ borderColor: "var(--line)" }}>
-            <div className="text-[11px] font-mono uppercase text-muted-foreground">
-              {t("digest.reviewPosition", { current: index + 1, total: items.length })}
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded p-1 hover:bg-accent/30"
-              data-testid="digest-review-close"
-              aria-label={t("digest.close")}
-            >
-              <X className="size-4" />
-            </button>
-          </div>
-          <div className="space-y-4 p-4">
-            <div>
-              <h3
-                className="font-serif text-xl font-medium"
-                data-testid="digest-review-current-title"
-              >
-                {item.title || t("digest.untitled")}
-              </h3>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                <SourceKind kind={item.source_kind} />
-                <span>{item.source_name}</span>
-                <span>{statusLabel(item.status)}</span>
-              </div>
-              <a
-                href={item.url}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-2 flex items-center gap-1 truncate text-[11px] text-muted-foreground hover:text-foreground"
-              >
-                <ExternalLink className="size-3" />
-                {item.url}
-              </a>
-            </div>
-            <DetailBlock label={t("digest.summary")} value={item.summary} />
-            {item.key_points.length > 0 && (
-              <section>
-                <h4 className="mb-1 text-[11px] font-mono uppercase text-muted-foreground">
-                  {t("digest.keyPoints")}
-                </h4>
-                <ul className="list-disc space-y-1 pl-5 text-sm">
-                  {item.key_points.map((point) => (
-                    <li key={point}>{point}</li>
-                  ))}
-                </ul>
-              </section>
-            )}
-            <DetailBlock label={t("digest.whyItMatters")} value={item.why_it_matters} />
-            <DetailBlock label={t("digest.excerpt")} value={item.content_excerpt} />
-            <button
-              type="button"
-              disabled={draftMut.isPending || status === "streaming"}
-              onClick={() => draftMut.mutate()}
-              className="inline-flex items-center gap-1.5 rounded border px-3 py-2 text-xs disabled:opacity-50"
-              style={{ borderColor: "var(--accent)", color: "var(--ink)" }}
-              data-testid="digest-settle-draft"
-            >
-              <Sparkles className="size-3.5" />
-              {draftMut.isPending ? t("digest.creatingDraft") : t("digest.settleDraft")}
-            </button>
-            {draftResult && (
-              <div
-                className="rounded-md border p-3 text-sm"
-                style={{ borderColor: "var(--line)", background: "var(--bg)" }}
-                data-testid="digest-draft-result"
-              >
-                <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <CheckCircle2 className="size-3.5" />
-                  {t("digest.draftCreated")}
-                </div>
-                <div className="space-y-2" data-testid="digest-draft-metadata">
-                  <label className="block text-[11px] text-muted-foreground">
-                    {t("digest.draftTitle")}
-                    <input
-                      data-testid="digest-draft-title-input"
-                      value={draftEdit.title}
-                      onChange={(e) =>
-                        setDraftEdit((current) => ({ ...current, title: e.target.value }))
-                      }
-                      className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
-                      style={{ borderColor: "var(--line)" }}
-                    />
-                  </label>
-                  <label className="block text-[11px] text-muted-foreground">
-                    {t("digest.draftTags")}
-                    <input
-                      data-testid="digest-draft-tags-input"
-                      value={draftEdit.tags}
-                      onChange={(e) =>
-                        setDraftEdit((current) => ({ ...current, tags: e.target.value }))
-                      }
-                      className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
-                      style={{ borderColor: "var(--line)" }}
-                    />
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="block text-[11px] text-muted-foreground">
-                      {t("digest.draftKind")}
-                      <select
-                        data-testid="digest-draft-kind-select"
-                        value={draftEdit.kind}
-                        onChange={(e) =>
-                          setDraftEdit((current) => ({
-                            ...current,
-                            kind: e.target.value as "knowledge" | "reference",
-                          }))
-                        }
-                        className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
-                        style={{ borderColor: "var(--line)" }}
-                      >
-                        <option value="knowledge">knowledge</option>
-                        <option value="reference">reference</option>
-                      </select>
-                    </label>
-                    <label className="block text-[11px] text-muted-foreground">
-                      {t("digest.draftFolder")}
-                      <input
-                        data-testid="digest-draft-folder-input"
-                        value={draftEdit.folder}
-                        onChange={(e) =>
-                          setDraftEdit((current) => ({ ...current, folder: e.target.value }))
-                        }
-                        placeholder={t("digest.rootFolder")}
-                        className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
-                        style={{ borderColor: "var(--line)" }}
-                      />
-                    </label>
-                  </div>
-                </div>
-                <div className="mt-2 text-xs text-muted-foreground">
-                  {draftResult.draft.kind} · {draftResult.draft.folder || t("digest.rootFolder")}
-                </div>
-                {draftResult.rationale && (
-                  <div className="mt-2 text-xs text-muted-foreground">
-                    {draftResult.rationale}
-                  </div>
-                )}
-                <div
-                  className="mt-3 max-h-32 overflow-y-auto rounded border px-2 py-1.5 text-xs whitespace-pre-wrap"
-                  style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
-                  data-testid="digest-draft-body-preview"
-                >
-                  {draftResult.draft.body || t("digest.emptyDraftBody")}
-                </div>
-                <button
-                  type="button"
-                  disabled={!draftChanged || saveDraftMut.isPending}
-                  onClick={() => saveDraftMut.mutate()}
-                  className="mt-3 rounded border px-2 py-1 text-xs disabled:opacity-50"
-                  style={{ borderColor: "var(--line)" }}
-                  data-testid="digest-draft-save"
-                >
-                  {saveDraftMut.isPending ? t("digest.savingDraft") : t("digest.saveDraft")}
-                </button>
-                <button
-                  type="button"
-                  disabled={
-                    commitMut.isPending ||
-                    Boolean(pendingDiff) ||
-                    !draftResult.draft.title.trim() ||
-                    !draftResult.draft.body?.trim()
-                  }
-                  onClick={() => commitMut.mutate()}
-                  className="ml-2 mt-3 rounded border px-2 py-1 text-xs disabled:opacity-50"
-                  style={{
-                    borderColor: "var(--accent)",
-                    background: "var(--accent-soft, rgba(91,122,156,0.14))",
-                  }}
-                  data-testid="digest-draft-commit"
-                >
-                  {commitMut.isPending ? t("digest.committingDraft") : t("digest.commitDraft")}
-                </button>
-                {commitResult && (
-                  <div
-                    className="mt-2 rounded border px-2 py-1.5 text-xs"
-                    style={{ borderColor: "var(--accent)", background: "var(--accent-tint)" }}
-                    data-testid="digest-draft-committed"
-                  >
-                    {t("digest.draftCommitted", { title: commitResult.title })}
-                  </div>
-                )}
-                {pendingDiff && (
-                  <div
-                    className="mt-3 h-[420px] overflow-hidden rounded-md border"
-                    style={{ borderColor: "var(--line)" }}
-                    data-testid="digest-draft-diff-panel"
-                  >
-                    <DiffReview
-                      oldBody={pendingDiff.oldBody}
-                      newBody={pendingDiff.newBody}
-                      saving={acceptDiffMut.isPending || rejectDiffMut.isPending}
-                      onAccept={(finalBody) => acceptDiffMut.mutate(finalBody)}
-                      onReject={() => rejectDiffMut.mutate()}
-                    />
-                  </div>
-                )}
-              </div>
-            )}
-            {draftError && (
-              <div className="text-xs" style={{ color: "var(--danger, #c0392b)" }}>
-                {draftError}
-              </div>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t p-4" style={{ borderColor: "var(--line)" }}>
-            <button
-              type="button"
-              disabled={!previous || status === "streaming"}
-              onClick={() => previous && onChangeItem(previous.id)}
-              className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
-              style={{ borderColor: "var(--line)" }}
-              data-testid="digest-review-prev"
-            >
-              <ArrowLeft className="size-3.5" />
-              {t("digest.previous")}
-            </button>
-            <button
-              type="button"
-              disabled={!next || status === "streaming"}
-              onClick={() => next && onChangeItem(next.id)}
-              className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
-              style={{ borderColor: "var(--line)" }}
-              data-testid="digest-review-next"
-            >
-              {t("digest.next")}
-              <ArrowRight className="size-3.5" />
-            </button>
-          </div>
-        </section>
+          <X className="size-4" />
+        </button>
+      </header>
 
-        <section className="flex min-h-0 flex-col" style={{ background: "var(--bg)" }}>
+      <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
+        <ResizablePanel defaultSize={54} minSize={38}>
+          <section
+            className="flex h-full min-h-0 flex-col"
+            style={{ background: "var(--bg-1)" }}
+          >
+            <div
+              className="flex items-center gap-2 border-b px-4 py-2"
+              role="tablist"
+              aria-label={t("digest.reviewStages")}
+              style={{ borderColor: "var(--line)" }}
+            >
+              <StageTabButton
+                active={stageTab === "raw"}
+                icon={<ExternalLink className="size-3.5" />}
+                label={t("digest.rawInfoStage")}
+                onClick={() => setStageTab("raw")}
+                testId="digest-review-stage-tab-raw"
+              />
+              <ArrowRight className="size-3.5 text-muted-foreground" />
+              <StageTabButton
+                active={stageTab === "draft"}
+                disabled={!draftResult}
+                icon={<FileText className="size-3.5" />}
+                label={t("digest.draftStage")}
+                onClick={() => draftResult && setStageTab("draft")}
+                testId="digest-review-stage-tab-draft"
+              />
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              {stageTab === "raw" ? (
+                <div className="space-y-4" data-testid="digest-review-raw-panel">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                      <SourceKind kind={item.source_kind} />
+                      <span>{item.source_name}</span>
+                      <span>{statusLabel(item.status)}</span>
+                    </div>
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-2 flex items-center gap-1 truncate text-[11px] text-muted-foreground hover:text-foreground"
+                    >
+                      <ExternalLink className="size-3" />
+                      {item.url}
+                    </a>
+                  </div>
+                  <DetailBlock label={t("digest.summary")} value={item.summary} />
+                  {item.key_points.length > 0 && (
+                    <section>
+                      <h4 className="mb-1 text-[11px] font-mono uppercase text-muted-foreground">
+                        {t("digest.keyPoints")}
+                      </h4>
+                      <ul className="list-disc space-y-1 pl-5 text-sm">
+                        {item.key_points.map((point) => (
+                          <li key={point}>{point}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+                  <DetailBlock label={t("digest.whyItMatters")} value={item.why_it_matters} />
+                  <DetailBlock label={t("digest.excerpt")} value={item.content_excerpt} />
+                  <button
+                    type="button"
+                    disabled={draftMut.isPending || status === "streaming"}
+                    onClick={() => draftMut.mutate()}
+                    className="inline-flex items-center gap-1.5 rounded border px-3 py-2 text-xs disabled:opacity-50"
+                    style={{ borderColor: "var(--accent)", color: "var(--ink)" }}
+                    data-testid="digest-settle-draft"
+                  >
+                    <Sparkles className="size-3.5" />
+                    {draftMut.isPending ? t("digest.creatingDraft") : t("digest.settleDraft")}
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4" data-testid="digest-draft-result">
+                  {draftResult ? (
+                    <>
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <CheckCircle2 className="size-3.5" />
+                        {t("digest.draftCreated")}
+                      </div>
+                      <div
+                        className="grid gap-3 lg:grid-cols-[minmax(240px,0.55fr)_minmax(320px,1fr)]"
+                        data-testid="digest-draft-metadata"
+                      >
+                        <div className="space-y-2">
+                          <label className="block text-[11px] text-muted-foreground">
+                            {t("digest.draftTitle")}
+                            <input
+                              data-testid="digest-draft-title-input"
+                              value={draftEdit.title}
+                              onChange={(e) =>
+                                setDraftEdit((current) => ({
+                                  ...current,
+                                  title: e.target.value,
+                                }))
+                              }
+                              className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
+                              style={{ borderColor: "var(--line)" }}
+                            />
+                          </label>
+                          <label className="block text-[11px] text-muted-foreground">
+                            {t("digest.draftTags")}
+                            <input
+                              data-testid="digest-draft-tags-input"
+                              value={draftEdit.tags}
+                              onChange={(e) =>
+                                setDraftEdit((current) => ({
+                                  ...current,
+                                  tags: e.target.value,
+                                }))
+                              }
+                              className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
+                              style={{ borderColor: "var(--line)" }}
+                            />
+                          </label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <label className="block text-[11px] text-muted-foreground">
+                              {t("digest.draftKind")}
+                              <select
+                                data-testid="digest-draft-kind-select"
+                                value={draftEdit.kind}
+                                onChange={(e) =>
+                                  setDraftEdit((current) => ({
+                                    ...current,
+                                    kind: e.target.value as "knowledge" | "reference",
+                                  }))
+                                }
+                                className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
+                                style={{ borderColor: "var(--line)" }}
+                              >
+                                <option value="knowledge">knowledge</option>
+                                <option value="reference">reference</option>
+                              </select>
+                            </label>
+                            <label className="block text-[11px] text-muted-foreground">
+                              {t("digest.draftFolder")}
+                              <input
+                                data-testid="digest-draft-folder-input"
+                                value={draftEdit.folder}
+                                onChange={(e) =>
+                                  setDraftEdit((current) => ({
+                                    ...current,
+                                    folder: e.target.value,
+                                  }))
+                                }
+                                placeholder={t("digest.rootFolder")}
+                                className="mt-1 w-full rounded border bg-transparent px-2 py-1 text-sm text-foreground"
+                                style={{ borderColor: "var(--line)" }}
+                              />
+                            </label>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {draftResult.draft.kind} · {draftResult.draft.folder || t("digest.rootFolder")}
+                          </div>
+                          {draftResult.rationale && (
+                            <div className="text-xs text-muted-foreground">
+                              {draftResult.rationale}
+                            </div>
+                          )}
+                        </div>
+                        <div
+                          className="min-h-[360px] overflow-hidden rounded-md border"
+                          style={{ borderColor: "var(--line)", background: "var(--bg)" }}
+                          data-testid="digest-draft-editor"
+                        >
+                          <MarkdownEditor
+                            key={`${draftResult.draft.id}:${draftResult.draft.updated_at}`}
+                            initialValue={draftResult.draft.body ?? ""}
+                            onChange={(body) =>
+                              setDraftEdit((current) => ({ ...current, body }))
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div
+                        className="max-h-32 overflow-y-auto rounded border px-2 py-1.5 text-xs whitespace-pre-wrap"
+                        style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+                        data-testid="digest-draft-body-preview"
+                      >
+                        {draftEdit.body || t("digest.emptyDraftBody")}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={!draftChanged || saveDraftMut.isPending}
+                          onClick={() => saveDraftMut.mutate()}
+                          className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                          style={{ borderColor: "var(--line)" }}
+                          data-testid="digest-draft-save"
+                        >
+                          {saveDraftMut.isPending ? t("digest.savingDraft") : t("digest.saveDraft")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            commitMut.isPending ||
+                            Boolean(pendingDiff) ||
+                            draftChanged ||
+                            !draftEdit.title.trim() ||
+                            !draftEdit.body.trim()
+                          }
+                          onClick={() => commitMut.mutate()}
+                          className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                          style={{
+                            borderColor: "var(--accent)",
+                            background: "var(--accent-soft, rgba(91,122,156,0.14))",
+                          }}
+                          data-testid="digest-draft-commit"
+                        >
+                          {commitMut.isPending ? t("digest.committingDraft") : t("digest.commitDraft")}
+                        </button>
+                      </div>
+                      {commitResult && (
+                        <div
+                          className="rounded border px-2 py-1.5 text-xs"
+                          style={{ borderColor: "var(--accent)", background: "var(--accent-tint)" }}
+                          data-testid="digest-draft-committed"
+                        >
+                          {t("digest.draftCommitted", { title: commitResult.title })}
+                        </div>
+                      )}
+                      {pendingDiff && (
+                        <div
+                          className="h-[420px] overflow-hidden rounded-md border"
+                          style={{ borderColor: "var(--line)" }}
+                          data-testid="digest-draft-diff-panel"
+                        >
+                          <DiffReview
+                            oldBody={pendingDiff.oldBody}
+                            newBody={pendingDiff.newBody}
+                            saving={acceptDiffMut.isPending || rejectDiffMut.isPending}
+                            onAccept={(finalBody) => acceptDiffMut.mutate(finalBody)}
+                            onReject={() => rejectDiffMut.mutate()}
+                          />
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      {t("digest.draftStageDisabled")}
+                    </div>
+                  )}
+                </div>
+              )}
+              {draftError && (
+                <div className="mt-4 text-xs" style={{ color: "var(--danger, #c0392b)" }}>
+                  {draftError}
+                </div>
+              )}
+            </div>
+            <div
+              className="flex flex-wrap items-center justify-between gap-2 border-t p-4"
+              style={{ borderColor: "var(--line)" }}
+            >
+              <button
+                type="button"
+                disabled={!previous || status === "streaming"}
+                onClick={() => previous && onChangeItem(previous.id)}
+                className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
+                style={{ borderColor: "var(--line)" }}
+                data-testid="digest-review-prev"
+              >
+                <ArrowLeft className="size-3.5" />
+                {t("digest.previous")}
+              </button>
+              <button
+                type="button"
+                disabled={!next || status === "streaming"}
+                onClick={() => next && onChangeItem(next.id)}
+                className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
+                style={{ borderColor: "var(--line)" }}
+                data-testid="digest-review-next"
+              >
+                {t("digest.next")}
+                <ArrowRight className="size-3.5" />
+              </button>
+            </div>
+          </section>
+        </ResizablePanel>
+        <ResizableHandle />
+        <ResizablePanel defaultSize={46} minSize={32}>
+          <section className="flex h-full min-h-0 flex-col" style={{ background: "var(--bg)" }}>
           <div className="border-b p-4" style={{ borderColor: "var(--line)" }}>
             <h3 className="font-serif text-lg font-medium">{t("digest.reviewChat")}</h3>
           </div>
@@ -1050,8 +1211,9 @@ function ReviewOverlay({
               )}
             </div>
           </div>
-        </section>
-      </div>
+          </section>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   );
 }
