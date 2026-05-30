@@ -295,8 +295,12 @@ def test_profile_update_refreshes_runtime_system_prompt(tmp_path: Path):
 # ------------------------------------------------------- index page (static mount)
 
 
-def test_root_serves_index_html(tmp_path: Path):
+def test_root_serves_index_html(tmp_path: Path, monkeypatch):
     v, cfg = _ready_vault(tmp_path)
+    dist = tmp_path / "frontend-dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><title>knowlet</title>", encoding="utf-8")
+    monkeypatch.setenv("KNOWLET_FRONTEND_DIST", str(dist))
     client = TestClient(create_app(v, cfg))
     r = client.get("/")
     assert r.status_code == 200

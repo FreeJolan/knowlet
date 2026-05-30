@@ -19,7 +19,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra embed
+        run: uv sync --extra dev --extra embed --extra sync
 
       - name: ruff lint
         run: uv run ruff check
@@ -36,7 +36,7 @@ jobs:
       - uses: codecov/codecov-action@v5
         if: always()
         with:
-          file: coverage.xml
+          files: coverage.xml
           fail_ci_if_error: false
 
   frontend:
@@ -55,7 +55,7 @@ jobs:
           enable-cache: true
 
       - name: Install backend deps (e2e fixture spawns it)
-        run: uv sync --extra dev --extra embed
+        run: uv sync --extra dev --extra embed --extra sync
 
       - name: Install frontend deps
         working-directory: frontend

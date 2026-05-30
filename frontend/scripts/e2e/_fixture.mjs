@@ -18,6 +18,13 @@ import { chromium } from "playwright";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..");
+const PLATFORM_MODIFIER =
+  process.env.E2E_SHORTCUT_MODIFIER ??
+  (process.platform === "darwin" ? "Meta" : "Control");
+
+function normalizeShortcutForPlatform(shortcut) {
+  return shortcut.replace(/\bMeta\b/g, PLATFORM_MODIFIER);
+}
 
 /** Pick a free TCP port by asking the OS for one. */
 async function freePort() {
@@ -208,6 +215,9 @@ export async function setupTestEnv(opts = {}) {
   const browser = await chromium.launch({ headless });
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   const page = await context.newPage();
+  const rawKeyboardPress = page.keyboard.press.bind(page.keyboard);
+  page.keyboard.press = (key, options) =>
+    rawKeyboardPress(normalizeShortcutForPlatform(key), options);
 
   const errors = [];
   page.on("console", (m) => {

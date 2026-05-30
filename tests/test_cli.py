@@ -20,7 +20,12 @@ runner = CliRunner()
 
 def _help(*argv: str) -> str:
     """Run `knowlet ... --help` and assert it succeeds. Returns stdout."""
-    result = runner.invoke(app, [*argv, "--help"])
+    result = runner.invoke(
+        app,
+        [*argv, "--help"],
+        color=False,
+        terminal_width=200,
+    )
     assert result.exit_code == 0, (
         f"`knowlet {' '.join(argv)} --help` exit={result.exit_code}\nstdout:\n{result.stdout}"
     )
