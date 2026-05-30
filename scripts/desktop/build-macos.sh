@@ -12,6 +12,9 @@ export LC_CTYPE="en_US.UTF-8"
 
 TEAM_ID="${KNOWLET_APPLE_TEAM_ID:-N8384H66R9}"
 NOTARY_PROFILE="${KNOWLET_NOTARY_PROFILE:-knowlet-notary}"
+NOTARY_API_KEY="${APPLE_API_KEY:-}"
+NOTARY_API_ISSUER="${APPLE_API_ISSUER:-}"
+NOTARY_API_KEY_PATH="${APPLE_API_KEY_PATH:-}"
 APP="$TAURI/target/universal-apple-darwin/release/bundle/macos/Knowlet.app"
 DMG="$TAURI/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.1_universal.dmg"
 SIGNING_IDENTITY="Developer ID Application: Junnan Guo (N8384H66R9)"
@@ -20,7 +23,10 @@ ENTITLEMENTS="$TAURI/entitlements.plist"
 "$ROOT/scripts/desktop/build-backend-sidecars.sh"
 
 cd "$FRONTEND"
-npx tauri build --target universal-apple-darwin --bundles app
+(
+  unset APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH
+  npx tauri build --target universal-apple-darwin --bundles app
+)
 
 test -x "$APP/Contents/MacOS/knowlet-backend"
 test -f "$APP/Contents/Resources/frontend-dist/index.html"
@@ -55,11 +61,11 @@ hdiutil create \
   "$DMG"
 codesign --force --sign "$SIGNING_IDENTITY" "$DMG"
 codesign --verify --deep --strict --verbose=2 "$DMG"
-if [[ -n "${APPLE_API_KEY:-}" && -n "${APPLE_API_ISSUER:-}" && -n "${APPLE_API_KEY_PATH:-}" ]]; then
+if [[ -n "$NOTARY_API_KEY" && -n "$NOTARY_API_ISSUER" && -n "$NOTARY_API_KEY_PATH" ]]; then
   xcrun notarytool submit "$DMG" \
-    --key "$APPLE_API_KEY_PATH" \
-    --key-id "$APPLE_API_KEY" \
-    --issuer "$APPLE_API_ISSUER" \
+    --key "$NOTARY_API_KEY_PATH" \
+    --key-id "$NOTARY_API_KEY" \
+    --issuer "$NOTARY_API_ISSUER" \
     --wait
 else
   xcrun notarytool submit "$DMG" \
