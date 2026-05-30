@@ -24,13 +24,37 @@ const env = await setupTestEnv({
 });
 const { page, baseURL, teardown } = env;
 
+async function openCapture() {
+  await page.keyboard.press("Meta+Shift+V");
+  await page.locator('[data-testid="capture-box"]').waitFor({
+    state: "visible",
+    timeout: 5000,
+  });
+  await page.locator('[data-testid="capture-file-input"]').waitFor({
+    state: "attached",
+    timeout: 5000,
+  });
+}
+
+async function waitForDecisionComplete() {
+  await Promise.race([
+    page.locator('[data-testid="capture-done"]').waitFor({
+      state: "visible",
+      timeout: 10000,
+    }),
+    page.locator('[data-testid="capture-box"]').waitFor({
+      state: "hidden",
+      timeout: 10000,
+    }),
+  ]);
+}
+
 try {
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await page.waitForTimeout(500);
 
   await runTest("Cmd+Shift+V opens the CaptureBox modal", async () => {
-    await page.keyboard.press("Meta+Shift+V");
-    await page.waitForTimeout(300);
+    await openCapture();
     const modal = page.locator('[data-testid="capture-box"]');
     await modal.waitFor({ state: "visible", timeout: 3000 });
     // URL input is focused on open.
@@ -51,8 +75,7 @@ try {
   });
 
   await runTest("File upload renders capsule with three decision buttons", async () => {
-    await page.keyboard.press("Meta+Shift+V");
-    await page.waitForTimeout(300);
+    await openCapture();
     // Drop a markdown file via the file input (more reliable than DnD).
     const fileInput = page.locator('[data-testid="capture-file-input"]');
     await fileInput.setInputFiles({
@@ -80,12 +103,22 @@ try {
 
   await runTest("Reference decision creates a Note kind=reference", async () => {
     // Capsule is still visible from previous test (modal stays open).
-    await page.locator('[data-testid="capture-decide-reference"]').click();
-    // "Done" state shown briefly then auto-close.
-    const done = page.locator('[data-testid="capture-done"]');
-    await done.waitFor({ state: "visible", timeout: 10000 });
-    // Wait for the auto-close (900ms) plus a margin.
-    await page.waitForTimeout(1400);
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.url().endsWith("/api/capture/decide") &&
+          r.request().method() === "POST" &&
+          r.ok(),
+        { timeout: 30000 },
+      ),
+      page.locator('[data-testid="capture-decide-reference"]').click(),
+    ]);
+    // The "done" state is intentionally brief, then the modal closes.
+    await waitForDecisionComplete();
+    await page.locator('[data-testid="capture-box"]').waitFor({
+      state: "hidden",
+      timeout: 5000,
+    });
     // Verify the note was actually written by hitting the API.
     const r = await page.request.get(`${baseURL}/api/tree`);
     assert(r.ok(), "GET /api/tree ok");
@@ -99,10 +132,7 @@ try {
   });
 
   await runTest("Defer decision creates a Draft (not a Note)", async () => {
-    await page.keyboard.press("Meta+Shift+V");
-    await page
-      .locator('[data-testid="capture-file-input"]')
-      .waitFor({ state: "attached", timeout: 5000 });
+    await openCapture();
     const fileInput = page.locator('[data-testid="capture-file-input"]');
     await fileInput.setInputFiles({
       name: "later.md",
@@ -112,11 +142,21 @@ try {
     await page
       .locator('[data-testid="capture-capsule"]')
       .waitFor({ state: "visible", timeout: 5000 });
-    await page.locator('[data-testid="capture-decide-defer"]').click();
-    await page
-      .locator('[data-testid="capture-done"]')
-      .waitFor({ state: "visible", timeout: 10000 });
-    await page.waitForTimeout(1400);
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.url().endsWith("/api/capture/decide") &&
+          r.request().method() === "POST" &&
+          r.ok(),
+        { timeout: 30000 },
+      ),
+      page.locator('[data-testid="capture-decide-defer"]').click(),
+    ]);
+    await waitForDecisionComplete();
+    await page.locator('[data-testid="capture-box"]').waitFor({
+      state: "hidden",
+      timeout: 5000,
+    });
     // Should NOT appear in /api/tree (it's in drafts/, not notes/).
     const treeRes = await page.request.get(`${baseURL}/api/tree`);
     const tree = await treeRes.json();
@@ -138,12 +178,7 @@ try {
   // ---------------- P1 cancel branch + P2 wrong-file branch ----
 
   await runTest("P1 branch: Esc before decision creates nothing", async () => {
-    await page.keyboard.press("Meta+Shift+V");
-    await page.waitForTimeout(300);
-    await page.locator('[data-testid="capture-box"]').waitFor({
-      state: "visible",
-      timeout: 2000,
-    });
+    await openCapture();
     // Upload a file so we reach the capsule-ready state, then Esc
     // BEFORE any decision button click.
     await page.locator('[data-testid="capture-file-input"]').setInputFiles({
@@ -174,11 +209,7 @@ try {
   });
 
   await runTest("P2 branch: PDF upload shows error, not capsule", async () => {
-    await page.keyboard.press("Meta+Shift+V");
-    await page.waitForTimeout(300);
-    await page
-      .locator('[data-testid="capture-box"]')
-      .waitFor({ state: "visible", timeout: 2000 });
+    await openCapture();
     await page.locator('[data-testid="capture-file-input"]').setInputFiles({
       name: "doc.pdf",
       mimeType: "application/pdf",
