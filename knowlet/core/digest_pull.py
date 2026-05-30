@@ -130,18 +130,14 @@ def maybe_auto_pull_digest_sources(
     state = _read_auto_pull_state(state_path)
     raw_last_by_source = state.get("last_by_source")
     last_by_source = (
-        {
-            str(source_id): str(last_day)
-            for source_id, last_day in raw_last_by_source.items()
-        }
+        {str(source_id): str(last_day) for source_id, last_day in raw_last_by_source.items()}
         if isinstance(raw_last_by_source, dict)
         else {}
     )
     due_sources = [
         source
         for source in enabled_sources
-        if last_by_source.get(source.id) != day
-        and not _source_succeeded_on_day(source, day)
+        if last_by_source.get(source.id) != day and not _source_succeeded_on_day(source, day)
     ]
     if not due_sources:
         return None
@@ -161,9 +157,7 @@ def maybe_auto_pull_digest_sources(
     return report
 
 
-def _select_sources(
-    store: DigestSourceStore, source_ids: list[str] | None
-) -> list[DigestSource]:
+def _select_sources(store: DigestSourceStore, source_ids: list[str] | None) -> list[DigestSource]:
     if not source_ids:
         return [source for source in store.list() if source.enabled]
     selected: list[DigestSource] = []
@@ -260,9 +254,7 @@ def _normalize_rss_item(
     )
 
 
-def _run_rss_normalizer(
-    source: DigestSource, item: SourceItem, llm: LLMClient
-) -> dict[str, Any]:
+def _run_rss_normalizer(source: DigestSource, item: SourceItem, llm: LLMClient) -> dict[str, Any]:
     prompt = f"""\
 Knowlet digest source editor
 

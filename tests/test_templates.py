@@ -62,6 +62,7 @@ def test_mkdir_rejects_templates_folder(tmp_path: Path) -> None:
 
 # -------------------------------------------------- vault helpers
 
+
 def test_iter_templates_empty_when_dir_missing(tmp_path: Path) -> None:
     v, _ = _ready_vault(tmp_path)
     assert v.iter_templates() == []

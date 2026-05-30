@@ -96,9 +96,7 @@ def push_note(
     """Push one Note. Returns either a PushResult (success) or a
     ConflictReport (412 — user must resolve)."""
     if note.path is None or not note.path.exists():
-        raise NoteFileMissingError(
-            f"Note {note.id} has no on-disk path; cannot push."
-        )
+        raise NoteFileMissingError(f"Note {note.id} has no on-disk path; cannot push.")
     content = note.path.read_bytes()
     record = state.get_file_state("note", note.id)
     name = note.path.name
@@ -209,9 +207,7 @@ def push_attachment(
     from knowlet.core.sync.oauth import APPDATA_FOLDER
 
     if not path.exists():
-        raise AttachmentFileMissingError(
-            f"Attachment {filename} missing at {path}"
-        )
+        raise AttachmentFileMissingError(f"Attachment {filename} missing at {path}")
     record = state.get_file_state(ATTACHMENT_ENTITY_TYPE, filename)
     if record is not None and record.drive_file_id:
         # Already pushed — idempotent return. Build a minimal
@@ -418,9 +414,7 @@ def resolve_keep_both(
     """
     ts = now_iso().replace(":", "-")
     label_safe = device_label.replace("/", "-").replace(" ", "_")
-    conflict_name = (
-        f"{local_path.stem} (conflict from {label_safe}) {ts}{local_path.suffix}"
-    )
+    conflict_name = f"{local_path.stem} (conflict from {label_safe}) {ts}{local_path.suffix}"
     conflict_path = local_path.parent / conflict_name
     conflict_path.write_bytes(conflict.remote_bytes)
     # The local stays untouched + advances to the remote's etag —

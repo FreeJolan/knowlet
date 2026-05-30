@@ -183,8 +183,7 @@ def preflight_scan(
             import logging
 
             logging.getLogger(__name__).warning(
-                "preflight: Drive list failed; bidirectional sync "
-                "skipped this tick",
+                "preflight: Drive list failed; bidirectional sync skipped this tick",
                 exc_info=True,
             )
 
@@ -262,10 +261,7 @@ def preflight_scan(
     # #119 bidirectional sync passes — only when we have a Drive
     # service (auth + reachable). The per-note loop above already
     # set ``unauthenticated`` if creds are missing.
-    if (
-        not unauthenticated
-        and drive_service is not None
-    ):
+    if not unauthenticated and drive_service is not None:
         # Pass A: Drive-side deletions. Any sync_state row whose
         # drive_file_id is missing from the current Drive list
         # gets its local file moved to trash. Skip dev-seeded rows
@@ -303,11 +299,7 @@ def preflight_scan(
         if materialize_drive_file is not None:
             from knowlet.core.sync.heartbeat import HEARTBEAT_SUFFIX
 
-            known_drive_ids = {
-                row.drive_file_id
-                for row in rows
-                if row.drive_file_id
-            }
+            known_drive_ids = {row.drive_file_id for row in rows if row.drive_file_id}
             for file_id, brief in drive_files.items():
                 if file_id in known_drive_ids:
                     continue
@@ -370,21 +362,15 @@ def _maybe_heartbeat_pass(
     except Exception:
         import logging
 
-        logging.getLogger(__name__).warning(
-            "preflight: heartbeat write failed", exc_info=True
-        )
+        logging.getLogger(__name__).warning("preflight: heartbeat write failed", exc_info=True)
     try:
         devices = list_alive_devices(service)
         for d in devices:
-            alive_devices_out.append(
-                {"device_id": d.device_id, "last_seen_at": d.last_seen_at}
-            )
+            alive_devices_out.append({"device_id": d.device_id, "last_seen_at": d.last_seen_at})
     except Exception:
         import logging
 
-        logging.getLogger(__name__).warning(
-            "preflight: heartbeat list failed", exc_info=True
-        )
+        logging.getLogger(__name__).warning("preflight: heartbeat list failed", exc_info=True)
     return service
 
 

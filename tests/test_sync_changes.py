@@ -64,9 +64,7 @@ def test_list_changes_parses_response() -> None:
             },
         ],
     }
-    page = list_changes(
-        _make_client_with_service(service), page_token="START"
-    )
+    page = list_changes(_make_client_with_service(service), page_token="START")
     # 5.C.1: list must scope to the hidden appDataFolder; under
     # drive.appdata we have no business reading the main Drive.
     list_kwargs = service.changes.return_value.list.call_args.kwargs
@@ -109,9 +107,7 @@ def test_list_all_changes_paginates_to_completion() -> None:
             ],
         },
     ]
-    all_changes, final_token = list_all_changes(
-        _make_client_with_service(service), page_token="P1"
-    )
+    all_changes, final_token = list_all_changes(_make_client_with_service(service), page_token="P1")
     assert final_token == "FINAL"
     assert [c.file_id for c in all_changes] == ["A", "B", "C"]
 
@@ -124,9 +120,7 @@ def test_list_all_changes_empty_response() -> None:
         "newStartPageToken": "ADVANCED",
         "changes": [],
     }
-    all_changes, token = list_all_changes(
-        _make_client_with_service(service), page_token="START"
-    )
+    all_changes, token = list_all_changes(_make_client_with_service(service), page_token="START")
     assert all_changes == []
     assert token == "ADVANCED"
 

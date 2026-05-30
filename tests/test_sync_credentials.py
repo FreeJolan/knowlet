@@ -60,9 +60,7 @@ def test_load_returns_none_when_missing(tmp_path: Path) -> None:
 
 def test_save_creates_parent_dirs(tmp_path: Path) -> None:
     target = tmp_path / "deep" / "nested" / "cred.json"
-    save_credentials(
-        target, SyncCredentials(token={"a": 1})
-    )
+    save_credentials(target, SyncCredentials(token={"a": 1}))
     assert target.exists()
 
 

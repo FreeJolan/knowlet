@@ -39,12 +39,8 @@ def _file_response(
 
 def test_upload_new_file_calls_create_with_metadata() -> None:
     service = MagicMock()
-    service.files.return_value.create.return_value.execute.return_value = (
-        _file_response()
-    )
-    df = upload_new_file(
-        service, name="alpha.md", content=b"hello"
-    )
+    service.files.return_value.create.return_value.execute.return_value = _file_response()
+    df = upload_new_file(service, name="alpha.md", content=b"hello")
     assert isinstance(df, DriveFile)
     assert df.id == "FID-1"
     assert df.head_revision_id == "rev-1"
@@ -56,9 +52,7 @@ def test_upload_new_file_calls_create_with_metadata() -> None:
 
 def test_upload_new_file_pins_parent_when_given() -> None:
     service = MagicMock()
-    service.files.return_value.create.return_value.execute.return_value = (
-        _file_response()
-    )
+    service.files.return_value.create.return_value.execute.return_value = _file_response()
     upload_new_file(
         service,
         name="beta.md",
@@ -72,11 +66,11 @@ def test_upload_new_file_pins_parent_when_given() -> None:
 def test_update_file_conditional_proceeds_when_revision_matches() -> None:
     service = MagicMock()
     # GET returns rev-1 (matches expected); update returns rev-2.
-    service.files.return_value.get.return_value.execute.return_value = (
-        _file_response(revision="rev-1")
+    service.files.return_value.get.return_value.execute.return_value = _file_response(
+        revision="rev-1"
     )
-    service.files.return_value.update.return_value.execute.return_value = (
-        _file_response(revision="rev-2")
+    service.files.return_value.update.return_value.execute.return_value = _file_response(
+        revision="rev-2"
     )
     df = update_file_conditional(
         service,
@@ -90,8 +84,8 @@ def test_update_file_conditional_proceeds_when_revision_matches() -> None:
 def test_update_file_conditional_revision_mismatch_raises() -> None:
     service = MagicMock()
     # GET returns rev-current; expected is rev-stale.
-    service.files.return_value.get.return_value.execute.return_value = (
-        _file_response(revision="rev-current")
+    service.files.return_value.get.return_value.execute.return_value = _file_response(
+        revision="rev-current"
     )
     with pytest.raises(RemoteVersionMismatchError) as ei:
         update_file_conditional(
@@ -109,8 +103,8 @@ def test_update_file_conditional_revision_mismatch_raises() -> None:
 
 def test_get_file_metadata_round_trip() -> None:
     service = MagicMock()
-    service.files.return_value.get.return_value.execute.return_value = (
-        _file_response(revision="rev-meta")
+    service.files.return_value.get.return_value.execute.return_value = _file_response(
+        revision="rev-meta"
     )
     df = get_file_metadata(service, "FID-1")
     assert df.head_revision_id == "rev-meta"
@@ -120,13 +114,11 @@ def test_force_overwrite_skips_get_check() -> None:
     """The conflict-resolution "use mine" path must skip the GET-
     revision-compare — it's the explicit clobber exit."""
     service = MagicMock()
-    service.files.return_value.update.return_value.execute.return_value = (
-        _file_response(revision="rev-new")
+    service.files.return_value.update.return_value.execute.return_value = _file_response(
+        revision="rev-new"
     )
 
-    df = force_overwrite(
-        service, file_id="FID-1", content=b"local-wins"
-    )
+    df = force_overwrite(service, file_id="FID-1", content=b"local-wins")
     # No GET on this code path — only update.
     service.files.return_value.get.assert_not_called()
     assert df.head_revision_id == "rev-new"

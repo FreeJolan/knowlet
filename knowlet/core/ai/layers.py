@@ -53,6 +53,7 @@ def knowlet_home() -> Path:
         return Path(override).expanduser()
     return Path.home() / ".knowlet"
 
+
 # ----------------------------------------------------- static layers
 
 
@@ -60,9 +61,7 @@ def knowlet_home() -> Path:
 class UserProfileSource:
     tag: str = "user-profile"
 
-    def render(
-        self, ctx: EnvelopeContext, task: dict[str, Any]
-    ) -> Layer | None:
+    def render(self, ctx: EnvelopeContext, task: dict[str, Any]) -> Layer | None:
         vault = ctx.vault
         if vault is None:
             return None
@@ -106,9 +105,7 @@ class WikiSchemaSource:
     tag: str = "wiki-schema"
     filename: str = "wiki_schema.md"
 
-    def render(
-        self, ctx: EnvelopeContext, task: dict[str, Any]
-    ) -> Layer | None:
+    def render(self, ctx: EnvelopeContext, task: dict[str, Any]) -> Layer | None:
         vault = ctx.vault
         if vault is None:
             return None
@@ -125,9 +122,7 @@ class WikiSchemaSource:
         if global_path.exists():
             global_body = global_path.read_text(encoding="utf-8").strip()
             if global_body:
-                parts.append(
-                    f"## (global) {global_path}\n\n{global_body}"
-                )
+                parts.append(f"## (global) {global_path}\n\n{global_body}")
                 srcs.append("~/.knowlet/" + self.filename)
 
         # Per-vault level. Wins by coming last (LLMs weight later
@@ -136,9 +131,7 @@ class WikiSchemaSource:
         if local_path.exists():
             local_body = local_path.read_text(encoding="utf-8").strip()
             if local_body:
-                parts.append(
-                    f"## (vault) {local_path.relative_to(vault.root)}\n\n{local_body}"
-                )
+                parts.append(f"## (vault) {local_path.relative_to(vault.root)}\n\n{local_body}")
                 srcs.append(".knowlet/" + self.filename)
 
         if not parts:
@@ -158,9 +151,7 @@ class VaultShapeSource:
     tag: str = "vault-shape"
     top_n_folders: int = 5
 
-    def render(
-        self, ctx: EnvelopeContext, task: dict[str, Any]
-    ) -> Layer | None:
+    def render(self, ctx: EnvelopeContext, task: dict[str, Any]) -> Layer | None:
         vault = ctx.vault
         if vault is None:
             return None
@@ -193,17 +184,13 @@ class RecentActivitySource:
     window_days: int = 7
     limit: int = 20
 
-    def render(
-        self, ctx: EnvelopeContext, task: dict[str, Any]
-    ) -> Layer | None:
+    def render(self, ctx: EnvelopeContext, task: dict[str, Any]) -> Layer | None:
         store = ctx.audit_store
         if store is None:
             return None
         since_dt = datetime.now(UTC) - timedelta(days=self.window_days)
         try:
-            events = list(
-                store.query(since=since_dt.isoformat(), limit=self.limit)
-            )
+            events = list(store.query(since=since_dt.isoformat(), limit=self.limit))
         except Exception:
             # Bad DB / locked / schema mismatch — skip rather than fail
             # envelope assembly. The envelope must never break LLM calls.
@@ -215,9 +202,7 @@ class RecentActivitySource:
             ts = (ev.ts or "")[:10]  # YYYY-MM-DD
             label = ev.payload.get("title") or ev.payload.get("name") or ev.entity_id
             lines.append(f"- {ts} {ev.kind} {label}".rstrip())
-        return Layer(
-            tag=self.tag, content="\n".join(lines), src="vault.events"
-        )
+        return Layer(tag=self.tag, content="\n".join(lines), src="vault.events")
 
 
 # -------------------------------------------------------- task layer
@@ -234,9 +219,7 @@ class TaskSource:
 
     tag: str = "task"
 
-    def render(
-        self, ctx: EnvelopeContext, task: dict[str, Any]
-    ) -> Layer | None:
+    def render(self, ctx: EnvelopeContext, task: dict[str, Any]) -> Layer | None:
         if not task:
             return None
         body = json.dumps(task, ensure_ascii=False, indent=2)

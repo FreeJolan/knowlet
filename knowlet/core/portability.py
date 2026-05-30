@@ -147,9 +147,7 @@ def build_export_archive(
     ``output_path``. Returns the manifest so callers can render a
     success message."""
     if not vault_root.exists():
-        raise FileNotFoundError(
-            f"vault root does not exist: {vault_root}"
-        )
+        raise FileNotFoundError(f"vault root does not exist: {vault_root}")
     notes_dir = vault_root / "notes"
     dotk_dir = vault_root / ".knowlet"
     note_count, attachment_count = _count_export_payload(notes_dir)
@@ -200,9 +198,7 @@ def _count_export_payload(notes_dir: Path) -> tuple[int, int]:
     return notes, attachments
 
 
-def _write_dir_to_zip(
-    zf: zipfile.ZipFile, src: Path, arcname_prefix: str
-) -> None:
+def _write_dir_to_zip(zf: zipfile.ZipFile, src: Path, arcname_prefix: str) -> None:
     for p in sorted(src.rglob("*")):
         if not p.is_file():
             continue
@@ -383,9 +379,7 @@ def merge_directory(
         final_rel = (Path("notes") / sub / f"{note.id}.md").as_posix()
         if not dry_run:
             target.mkdir(parents=True, exist_ok=True)
-            (target / f"{note.id}.md").write_text(
-                note.to_markdown(), encoding="utf-8"
-            )
+            (target / f"{note.id}.md").write_text(note.to_markdown(), encoding="utf-8")
         report.notes_created += 1
         report.items.append((rel_str, action, final_rel))
 

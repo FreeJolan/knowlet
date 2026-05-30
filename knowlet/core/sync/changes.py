@@ -64,10 +64,7 @@ def get_initial_start_page_token(client: DriveClient) -> str:
     res = service.changes().getStartPageToken().execute()
     token = res.get("startPageToken")
     if not token:
-        raise RuntimeError(
-            "Drive returned no startPageToken — unexpected. "
-            f"raw response: {res!r}"
-        )
+        raise RuntimeError(f"Drive returned no startPageToken — unexpected. raw response: {res!r}")
     return str(token)
 
 
@@ -125,9 +122,7 @@ def list_changes(
     )
 
 
-def list_all_changes(
-    client: DriveClient, *, page_token: str
-) -> tuple[list[DriveChange], str]:
+def list_all_changes(client: DriveClient, *, page_token: str) -> tuple[list[DriveChange], str]:
     """Pull every change since ``page_token``, paginating internally,
     and return (all_changes, next_start_page_token_to_persist).
 

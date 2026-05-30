@@ -98,9 +98,7 @@ def _file_resource_to_drive_file(res: dict[str, Any]) -> DriveFile:
         mime_type=str(res.get("mimeType") or ""),
         modified_time=res.get("modifiedTime"),
         head_revision_id=res.get("headRevisionId"),
-        last_modifying_user_display_name=(
-            luser.get("displayName") or luser.get("emailAddress")
-        ),
+        last_modifying_user_display_name=(luser.get("displayName") or luser.get("emailAddress")),
     )
 
 
@@ -108,10 +106,7 @@ def _file_resource_to_drive_file(res: dict[str, Any]) -> DriveFile:
 # 400 "Invalid field selection". headRevisionId is our OCC cursor.
 # lastModifyingUser(displayName,emailAddress) feeds S5's merge
 # editor — we'd rather show "alice" than "rev-abc123".
-_FIELDS = (
-    "id,name,mimeType,modifiedTime,headRevisionId,"
-    "lastModifyingUser(displayName,emailAddress)"
-)
+_FIELDS = "id,name,mimeType,modifiedTime,headRevisionId,lastModifyingUser(displayName,emailAddress)"
 
 
 # ----------------------------------------------------- upload (create)
@@ -134,12 +129,8 @@ def upload_new_file(
     body: dict[str, Any] = {"name": name, "mimeType": mime_type}
     if parent_folder_id:
         body["parents"] = [parent_folder_id]
-    media = MediaIoBaseUpload(
-        io.BytesIO(content), mimetype=mime_type, resumable=False
-    )
-    request = service.files().create(
-        body=body, media_body=media, fields=_FIELDS
-    )
+    media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime_type, resumable=False)
+    request = service.files().create(body=body, media_body=media, fields=_FIELDS)
     res = request.execute()
     return _file_resource_to_drive_file(res)
 
@@ -179,14 +170,8 @@ def update_file_conditional(
             expected_revision=expected_revision,
             actual_revision=current.head_revision_id or "(none)",
         )
-    media = MediaIoBaseUpload(
-        io.BytesIO(content), mimetype=mime_type, resumable=False
-    )
-    res = (
-        service.files()
-        .update(fileId=file_id, media_body=media, fields=_FIELDS)
-        .execute()
-    )
+    media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime_type, resumable=False)
+    res = service.files().update(fileId=file_id, media_body=media, fields=_FIELDS).execute()
     return _file_resource_to_drive_file(res)
 
 
@@ -208,9 +193,7 @@ def download_file(service: Any, file_id: str) -> bytes:
 
 
 def get_file_metadata(service: Any, file_id: str) -> DriveFile:
-    res = (
-        service.files().get(fileId=file_id, fields=_FIELDS).execute()
-    )
+    res = service.files().get(fileId=file_id, fields=_FIELDS).execute()
     return _file_resource_to_drive_file(res)
 
 
@@ -286,12 +269,6 @@ def force_overwrite(
     explicit "I know I'm clobbering" exit."""
     from googleapiclient.http import MediaIoBaseUpload
 
-    media = MediaIoBaseUpload(
-        io.BytesIO(content), mimetype=mime_type, resumable=False
-    )
-    res = (
-        service.files()
-        .update(fileId=file_id, media_body=media, fields=_FIELDS)
-        .execute()
-    )
+    media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime_type, resumable=False)
+    res = service.files().update(fileId=file_id, media_body=media, fields=_FIELDS).execute()
     return _file_resource_to_drive_file(res)

@@ -71,7 +71,7 @@ def test_classify_missing_closing_marker():
 
 
 def test_classify_yaml_parse_error():
-    raw = "---\nid: 01ABC\ntitle: \"unclosed quote\nbroken: : :\n---\nbody"
+    raw = '---\nid: 01ABC\ntitle: "unclosed quote\nbroken: : :\n---\nbody'
     status, _meta, body, detail = _classify_frontmatter(raw)
     assert status == "corrupted"
     assert "yaml" in (detail or "").lower()
@@ -142,7 +142,7 @@ def test_from_file_corrupted_renders_with_warning(tmp_path: Path):
     nid = "01HXBR0KEN00000000000000XX"
     p = tmp_path / f"{nid}.md"
     p.write_text(
-        "---\nid: 01ABC\ntitle: \"unclosed\nbroken: : :\n---\nthe body",
+        '---\nid: 01ABC\ntitle: "unclosed\nbroken: : :\n---\nthe body',
         encoding="utf-8",
     )
     n = Note.from_file(p)

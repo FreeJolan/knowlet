@@ -462,19 +462,13 @@ def vault_import(
 
     if detected == "restore":
         if not source.is_file() or source.suffix.lower() != ".zip":
-            err_console.print(
-                "[red]restore mode requires a .zip archive[/red]"
-            )
+            err_console.print("[red]restore mode requires a .zip archive[/red]")
             raise typer.Exit(code=2)
         dest = target or (source.parent / source.stem)
         if dest.exists() and any(dest.iterdir()):
-            err_console.print(
-                f"[red]target exists and is non-empty:[/red] {dest}"
-            )
+            err_console.print(f"[red]target exists and is non-empty:[/red] {dest}")
             raise typer.Exit(code=2)
-        report = restore_archive(
-            archive_path=source, target_dir=dest, dry_run=dry_run
-        )
+        report = restore_archive(archive_path=source, target_dir=dest, dry_run=dry_run)
         verb = "would restore" if dry_run else "restored"
         console.print(
             f"[green]{verb}[/green] {report.notes_created} note(s) + "
@@ -508,9 +502,7 @@ def vault_import(
         tmpdir = None
         walk_root = source
     else:
-        err_console.print(
-            "[red]merge mode requires a .zip or a directory[/red]"
-        )
+        err_console.print("[red]merge mode requires a .zip or a directory[/red]")
         raise typer.Exit(code=2)
 
     existing_titles = _existing_titles(vault.root)
@@ -534,10 +526,7 @@ def vault_import(
         f"[bold]{report.target_path}[/bold]"
     )
     if not dry_run:
-        console.print(
-            "[dim]· run `knowlet reindex` to surface the new notes "
-            "in search[/dim]"
-        )
+        console.print("[dim]· run `knowlet reindex` to surface the new notes in search[/dim]")
 
 
 def _existing_titles(vault_root: Path) -> list[str]:

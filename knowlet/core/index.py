@@ -265,13 +265,9 @@ class Index:
         try:
             from knowlet.core.retrieval.chunking import smart_chunk_markdown
 
-            chunks = smart_chunk_markdown(
-                body_for_chunking, size=chunk_size, overlap=chunk_overlap
-            )
+            chunks = smart_chunk_markdown(body_for_chunking, size=chunk_size, overlap=chunk_overlap)
         except ImportError:
-            chunks = chunk_text(
-                body_for_chunking, size=chunk_size, overlap=chunk_overlap
-            )
+            chunks = chunk_text(body_for_chunking, size=chunk_size, overlap=chunk_overlap)
         if not chunks:
             conn.commit()
             return
@@ -411,9 +407,7 @@ class Index:
         # users searching short prefixes / numbers (e.g. "88" should
         # match "888999910"). Detect that case + fall back to a
         # direct LIKE scan over chunks.text.
-        needs_substring_fallback = any(
-            len(t) < 3 for t in query.split() if t
-        )
+        needs_substring_fallback = any(len(t) < 3 for t in query.split() if t)
         if needs_substring_fallback:
             fts_rows = self._search_substring(conn, query, limit=top_k * 4)
         else:
@@ -505,9 +499,7 @@ class Index:
         # Constant uniform score (1.0) — RRF only cares about rank, and
         # we don't have a meaningful "relevance" measure for a LIKE
         # match. Substring match is binary: in / out.
-        sql = (
-            f"SELECT id AS chunk_id FROM chunks WHERE {where} LIMIT ?"  # noqa: S608
-        )
+        sql = f"SELECT id AS chunk_id FROM chunks WHERE {where} LIMIT ?"  # noqa: S608
         args: list[object] = [f"%{t}%" for t in tokens]
         args.append(int(limit))
         rows = conn.execute(sql, args).fetchall()

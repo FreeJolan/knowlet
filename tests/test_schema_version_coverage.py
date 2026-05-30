@@ -118,7 +118,7 @@ def test_mining_task_legacy_reads_as_v1(tmp_path: Path) -> None:
         "enabled: true\n"
         "schedule: {}\n"
         "sources: []\n"
-        "prompt: \"\"\n"
+        'prompt: ""\n'
         "created_at: 2026-05-09T10:00:00Z\n"
         "updated_at: 2026-05-09T10:00:00Z\n"
         "---\n"

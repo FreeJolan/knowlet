@@ -72,9 +72,7 @@ def _patch_service() -> Any:
 def test_unauthenticated_when_no_credentials(tmp_path: Path) -> None:
     state = SyncStateStore(tmp_path)
     try:
-        status = compute_note_sync_status(
-            vault_root=tmp_path, note_id=new_id(), state_store=state
-        )
+        status = compute_note_sync_status(vault_root=tmp_path, note_id=new_id(), state_store=state)
     finally:
         state.close()
     assert status.state == "unauthenticated"
@@ -83,15 +81,11 @@ def test_unauthenticated_when_no_credentials(tmp_path: Path) -> None:
 def test_unauthenticated_when_scope_stale(tmp_path: Path) -> None:
     save_credentials(
         credentials_path(tmp_path),
-        SyncCredentials(
-            token={"scopes": ["https://www.googleapis.com/auth/drive.file"]}
-        ),
+        SyncCredentials(token={"scopes": ["https://www.googleapis.com/auth/drive.file"]}),
     )
     state = SyncStateStore(tmp_path)
     try:
-        status = compute_note_sync_status(
-            vault_root=tmp_path, note_id=new_id(), state_store=state
-        )
+        status = compute_note_sync_status(vault_root=tmp_path, note_id=new_id(), state_store=state)
     finally:
         state.close()
     assert status.state == "unauthenticated"
@@ -104,9 +98,7 @@ def test_dirty_when_no_drive_id_yet(tmp_path: Path) -> None:
     _seed_creds(tmp_path)
     state = SyncStateStore(tmp_path)
     try:
-        status = compute_note_sync_status(
-            vault_root=tmp_path, note_id=new_id(), state_store=state
-        )
+        status = compute_note_sync_status(vault_root=tmp_path, note_id=new_id(), state_store=state)
     finally:
         state.close()
     assert status.state == "dirty"
@@ -543,10 +535,7 @@ def test_is_local_dirty_no_path() -> None:
 
 
 def test_is_local_dirty_missing_file(tmp_path: Path) -> None:
-    assert (
-        _is_local_dirty(tmp_path / "nope.md", "2026-05-10T12:00:00Z")
-        is False
-    )
+    assert _is_local_dirty(tmp_path / "nope.md", "2026-05-10T12:00:00Z") is False
 
 
 def test_is_local_dirty_unparseable_iso(tmp_path: Path) -> None:

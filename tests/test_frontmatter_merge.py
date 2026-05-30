@@ -134,9 +134,7 @@ def test_merge_body_comes_from_caller() -> None:
     the user's call."""
     mine = _note(body="mine body")
     theirs = _note(body="theirs body")
-    out = merge_notes(
-        mine=mine, theirs=theirs, merged_body="user-assembled merged body"
-    )
+    out = merge_notes(mine=mine, theirs=theirs, merged_body="user-assembled merged body")
     assert out.body == "user-assembled merged body"
 
 

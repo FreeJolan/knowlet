@@ -42,9 +42,7 @@ def backups_list(
     ] = None,
     entity_id: Annotated[
         str | None,
-        typer.Option(
-            "--id", help="Filter by entity id (typically a Note ULID)."
-        ),
+        typer.Option("--id", help="Filter by entity id (typically a Note ULID)."),
     ] = None,
 ) -> None:
     """List backup files. Newest-first within each (entity, id)."""
@@ -70,9 +68,7 @@ def backups_list(
 @app.command("restore")
 def backups_restore(
     backup: Annotated[Path, typer.Argument(help="Backup file path.")],
-    dest: Annotated[
-        Path, typer.Option("--to", help="Where to restore the backup.")
-    ],
+    dest: Annotated[Path, typer.Option("--to", help="Where to restore the backup.")],
 ) -> None:
     """Copy a backup back into the live vault. Refuses if ``--to``
     already exists — move the live file aside first so a wrong
@@ -94,9 +90,7 @@ def backups_restore(
 def backups_prune(
     keep: Annotated[
         int,
-        typer.Option(
-            "--keep", help="Per-id retention cap.", min=1, max=50
-        ),
+        typer.Option("--keep", help="Per-id retention cap.", min=1, max=50),
     ] = DEFAULT_KEEP,
 ) -> None:
     """Trim every (entity, id) stream down to the most recent `keep`

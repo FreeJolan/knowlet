@@ -101,9 +101,7 @@ def wants_current_note_edit_proposal(user_text: str) -> bool:
         return False
     if any(marker in text for marker in _EDIT_INTENT_MARKERS):
         return True
-    return "diff" in text and any(
-        marker in text for marker in _REVIEWABLE_PROPOSAL_MARKERS
-    )
+    return "diff" in text and any(marker in text for marker in _REVIEWABLE_PROPOSAL_MARKERS)
 
 
 def build_note_chat_session(
@@ -127,9 +125,7 @@ def build_note_chat_session(
         llm=llm,
         current_note_id=current_note_id,
     )
-    return ChatSession(
-        llm=llm, registry=registry, ctx=session_ctx, system_prompt=DISCUSS_SYSTEM
-    )
+    return ChatSession(llm=llm, registry=registry, ctx=session_ctx, system_prompt=DISCUSS_SYSTEM)
 
 
 def build_grounded_turn(note: Note, user_text: str) -> str:
@@ -242,9 +238,7 @@ INTERNALIZE_SYSTEM = (
 )
 
 
-def propose_draft_internalization(
-    *, llm: Any, note: Note, instruction: str
-) -> ProposedEdit:
+def propose_draft_internalization(*, llm: Any, note: Note, instruction: str) -> ProposedEdit:
     """Ask the LLM to turn a draft/source item into a knowledge-note body.
 
     This is deliberately proposal-only, mirroring :func:`propose_note_edit`:

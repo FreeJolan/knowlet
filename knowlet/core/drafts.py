@@ -51,10 +51,10 @@ DRAFT_SCHEMA_VERSION = 1
 # Phase 3 Stage 3 — ADR-0029 §4 原则 7 + ADR-0009 amendment 2026-05-16.
 # Age thresholds for anti-drift safety nets on the drafts queue. Tuned
 # to the doc's specification, not arbitrary.
-STALE_AGE_DAYS = 7        # row visually muted after this
-WARN_AGE_DAYS = 30        # one-time banner on open after this
-ARCHIVE_AGE_DAYS = 90     # auto-archive after this
-SOFT_LIMIT_DRAFTS = 20    # >this active = inline soft warning
+STALE_AGE_DAYS = 7  # row visually muted after this
+WARN_AGE_DAYS = 30  # one-time banner on open after this
+ARCHIVE_AGE_DAYS = 90  # auto-archive after this
+SOFT_LIMIT_DRAFTS = 20  # >this active = inline soft warning
 
 
 def _age_days_from_iso(iso_ts: str | None) -> int:
@@ -168,9 +168,7 @@ class Draft:
         # have no `kind` → default knowledge; bogus values fall back the
         # same way Note does.
         kind_raw = meta.get("kind")
-        kind: NoteKind = (
-            kind_raw if kind_raw in NOTE_KINDS else DEFAULT_NOTE_KIND
-        )
+        kind: NoteKind = kind_raw if kind_raw in NOTE_KINDS else DEFAULT_NOTE_KIND
         return cls(
             id=str(meta.get("id") or new_id()),
             title=str(meta.get("title") or path.stem),
@@ -253,11 +251,7 @@ class DraftStore:
         tmp.replace(target)
         # If the slug changed, delete the old file so the draft has
         # exactly one home on disk.
-        if (
-            previous_path is not None
-            and previous_path != target
-            and previous_path.exists()
-        ):
+        if previous_path is not None and previous_path != target and previous_path.exists():
             with suppress(OSError):
                 os.unlink(previous_path)
         return target

@@ -117,11 +117,7 @@ class LLMClient:
         try:
             prompt_chars = sum(len(m.get("content") or "") for m in messages)
             last_user = next(
-                (
-                    m.get("content") or ""
-                    for m in reversed(messages)
-                    if m.get("role") == "user"
-                ),
+                (m.get("content") or "" for m in reversed(messages) if m.get("role") == "user"),
                 "",
             )
             payload: dict[str, Any] = {

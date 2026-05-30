@@ -191,9 +191,7 @@ def test_resolve_use_mine_force_overwrites_and_advances_etag(
             "knowlet.core.sync.push.force_overwrite",
             return_value=_drive_file(revision="rev-mine-wins"),
         ) as fo:
-            result = resolve_use_mine(
-                service=object(), state=state, conflict=conflict
-            )
+            result = resolve_use_mine(service=object(), state=state, conflict=conflict)
         assert result.drive_file.head_revision_id == "rev-mine-wins"
         # force_overwrite was called with LOCAL bytes (the user
         # explicitly chose to clobber remote with their version).
@@ -225,9 +223,7 @@ def test_resolve_use_remote_overwrites_local_and_advances_etag(
             remote_metadata=_drive_file(revision="rev-remote"),
         )
         assert note.path is not None
-        resolve_use_remote(
-            state=state, conflict=conflict, local_path=note.path
-        )
+        resolve_use_remote(state=state, conflict=conflict, local_path=note.path)
         # Local file now has remote bytes.
         assert note.path.read_bytes() == b"REMOTE-WINS"
         # State advanced.

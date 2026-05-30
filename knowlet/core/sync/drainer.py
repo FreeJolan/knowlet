@@ -87,16 +87,10 @@ class PushDrainer:
     ) -> None:
         self.vault_root = vault_root
         self.note_lookup = note_lookup
-        self.attachment_lookup: AttachmentLookup = attachment_lookup or (
-            lambda _id: None
-        )
-        self.on_conflict: ConflictCallback = on_conflict or (
-            lambda _id, _rep: None
-        )
+        self.attachment_lookup: AttachmentLookup = attachment_lookup or (lambda _id: None)
+        self.on_conflict: ConflictCallback = on_conflict or (lambda _id, _rep: None)
         self.on_synced: SyncedCallback = on_synced or (lambda _id: None)
-        self.untracked_sweep: UntrackedSweep = untracked_sweep or (
-            lambda: []
-        )
+        self.untracked_sweep: UntrackedSweep = untracked_sweep or (lambda: [])
         self.poll_interval = poll_interval
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -182,9 +176,7 @@ class PushDrainer:
             try:
                 untracked = self.untracked_sweep()
             except Exception:
-                logger.warning(
-                    "untracked-sweep callback raised", exc_info=True
-                )
+                logger.warning("untracked-sweep callback raised", exc_info=True)
                 untracked = []
             if untracked:
                 logger.info(
@@ -289,9 +281,7 @@ class PushDrainer:
     def _clear_failure(self, note_id: str) -> None:
         self.failures.pop(note_id, None)
 
-    def _queue_untracked(
-        self, items: list[tuple[str, str]]
-    ) -> None:
+    def _queue_untracked(self, items: list[tuple[str, str]]) -> None:
         """Insert dirty first-push rows (drive_file_id=None) for
         entities that have never been tracked. Idempotent against
         the sweep firing twice."""
@@ -299,10 +289,7 @@ class PushDrainer:
 
         store = SyncStateStore(self.vault_root)
         try:
-            existing = {
-                (fs.entity_type, fs.entity_id)
-                for fs in store.list_all_files()
-            }
+            existing = {(fs.entity_type, fs.entity_id) for fs in store.list_all_files()}
             for entity_type, entity_id in items:
                 if (entity_type, entity_id) in existing:
                     continue
@@ -319,9 +306,7 @@ class PushDrainer:
         finally:
             store.close()
 
-    def _push_attachment_row(
-        self, store: SyncStateStore, service: Any, row: Any
-    ) -> None:
+    def _push_attachment_row(self, store: SyncStateStore, service: Any, row: Any) -> None:
         """Push a single attachment row. Attachments have no update /
         conflict path — they're immutable once written — so the
         outcome is success or transient failure (logged + retried
@@ -332,9 +317,7 @@ class PushDrainer:
                 "drainer: attachment %s missing on disk; dropping row",
                 row.entity_id,
             )
-            store.remove_file_state(
-                ATTACHMENT_ENTITY_TYPE, row.entity_id
-            )
+            store.remove_file_state(ATTACHMENT_ENTITY_TYPE, row.entity_id)
             self._clear_failure(row.entity_id)
             return
         try:
@@ -346,13 +329,10 @@ class PushDrainer:
             )
         except AttachmentFileMissingError:
             logger.warning(
-                "drainer: attachment %s vanished between sweep "
-                "and push; clearing row",
+                "drainer: attachment %s vanished between sweep and push; clearing row",
                 row.entity_id,
             )
-            store.remove_file_state(
-                ATTACHMENT_ENTITY_TYPE, row.entity_id
-            )
+            store.remove_file_state(ATTACHMENT_ENTITY_TYPE, row.entity_id)
             self._clear_failure(row.entity_id)
             return
         except Exception as exc:
@@ -366,9 +346,7 @@ class PushDrainer:
         self.on_synced(row.entity_id)
         self._clear_failure(row.entity_id)
 
-    def _sweep_for_attachment_orphans(
-        self, store: SyncStateStore
-    ) -> None:
+    def _sweep_for_attachment_orphans(self, store: SyncStateStore) -> None:
         """For every attachment row whose Drive copy exists
         (drive_file_id set, dirty=False, no delete_intent yet) but
         whose local file is gone, set delete_intent=hard. The next
@@ -394,9 +372,7 @@ class PushDrainer:
             # File is gone. Two cases:
             if not fs.drive_file_id:
                 # Never made it to Drive — just drop the row.
-                store.remove_file_state(
-                    ATTACHMENT_ENTITY_TYPE, fs.entity_id
-                )
+                store.remove_file_state(ATTACHMENT_ENTITY_TYPE, fs.entity_id)
                 continue
             # Already on Drive — mark for hard delete so the next
             # _process_deletions tick cleans it up.
@@ -408,9 +384,7 @@ class PushDrainer:
                 )
             )
 
-    def _process_deletions(
-        self, store: SyncStateStore, creds: Any, service: Any
-    ) -> Any:
+    def _process_deletions(self, store: SyncStateStore, creds: Any, service: Any) -> Any:
         """Drain ``delete_intent`` rows. ``soft`` calls Drive's
         ``files.update`` with ``trashed=True`` (30-day grace via
         Drive's own trash); ``hard`` calls ``files.delete`` for
@@ -439,9 +413,7 @@ class PushDrainer:
                 service = DriveClient(creds).service()
             try:
                 if row.delete_intent == "hard":
-                    service.files().delete(
-                        fileId=row.drive_file_id
-                    ).execute()
+                    service.files().delete(fileId=row.drive_file_id).execute()
                 else:
                     # default to soft trash for any other value
                     service.files().update(
@@ -450,8 +422,7 @@ class PushDrainer:
                     ).execute()
             except Exception as exc:
                 logger.warning(
-                    "drainer: Drive %s-delete failed for %s: %r — "
-                    "will retry",
+                    "drainer: Drive %s-delete failed for %s: %r — will retry",
                     row.delete_intent,
                     row.entity_id,
                     exc,

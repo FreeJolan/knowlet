@@ -69,15 +69,11 @@ def test_status_paused_by_backlog_when_set() -> None:
 # ----------------------------------- auto-pause
 
 
-def test_auto_pause_when_backlog_hits_limit(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_auto_pause_when_backlog_hits_limit(tmp_path: Path, monkeypatch) -> None:
     v = _ready_vault(tmp_path)
     drafts = DraftStore(v.drafts_dir)
     _seed_drafts(drafts, task_id="task-1", n=5)
-    monkeypatch.setattr(
-        "knowlet.core.mining.runner.fetch_source", lambda spec: []
-    )
+    monkeypatch.setattr("knowlet.core.mining.runner.fetch_source", lambda spec: [])
     task = MiningTask(
         id="task-1",
         name="t",
@@ -98,9 +94,7 @@ def test_no_auto_pause_below_limit(tmp_path: Path, monkeypatch) -> None:
     v = _ready_vault(tmp_path)
     drafts = DraftStore(v.drafts_dir)
     _seed_drafts(drafts, task_id="task-2", n=2)
-    monkeypatch.setattr(
-        "knowlet.core.mining.runner.fetch_source", lambda spec: []
-    )
+    monkeypatch.setattr("knowlet.core.mining.runner.fetch_source", lambda spec: [])
     task = MiningTask(
         id="task-2",
         name="t",
@@ -114,15 +108,11 @@ def test_no_auto_pause_below_limit(tmp_path: Path, monkeypatch) -> None:
     assert task.status == "running"
 
 
-def test_max_pending_drafts_none_disables_throttle(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_max_pending_drafts_none_disables_throttle(tmp_path: Path, monkeypatch) -> None:
     v = _ready_vault(tmp_path)
     drafts = DraftStore(v.drafts_dir)
     _seed_drafts(drafts, task_id="task-3", n=20)
-    monkeypatch.setattr(
-        "knowlet.core.mining.runner.fetch_source", lambda spec: []
-    )
+    monkeypatch.setattr("knowlet.core.mining.runner.fetch_source", lambda spec: [])
     task = MiningTask(
         id="task-3",
         name="t",
@@ -137,17 +127,13 @@ def test_max_pending_drafts_none_disables_throttle(
 # ----------------------------------- auto-resume
 
 
-def test_auto_resume_when_user_clears_backlog(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_auto_resume_when_user_clears_backlog(tmp_path: Path, monkeypatch) -> None:
     """A task previously paused-by-backlog auto-resumes once the live
     queue drops below the limit on the next eligible run."""
     v = _ready_vault(tmp_path)
     drafts = DraftStore(v.drafts_dir)
     _seed_drafts(drafts, task_id="task-4", n=2)  # below limit
-    monkeypatch.setattr(
-        "knowlet.core.mining.runner.fetch_source", lambda spec: []
-    )
+    monkeypatch.setattr("knowlet.core.mining.runner.fetch_source", lambda spec: [])
     task = MiningTask(
         id="task-4",
         name="t",
@@ -168,9 +154,7 @@ def test_user_pause_not_auto_resumed(tmp_path: Path, monkeypatch) -> None:
     enabled=False) must NOT be auto-resumed by the backlog logic —
     that would override the user's explicit decision."""
     v = _ready_vault(tmp_path)
-    monkeypatch.setattr(
-        "knowlet.core.mining.runner.fetch_source", lambda spec: []
-    )
+    monkeypatch.setattr("knowlet.core.mining.runner.fetch_source", lambda spec: [])
     task = MiningTask(
         id="task-5",
         name="t",

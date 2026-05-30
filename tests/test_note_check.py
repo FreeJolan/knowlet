@@ -29,9 +29,7 @@ class ChatStubLLM:
         return AssistantMessage(content=self._content, tool_calls=[])
 
 
-def _client_with_note(
-    tmp_path: Path, body: str, stub: Any
-) -> tuple[TestClient, Note]:
+def _client_with_note(tmp_path: Path, body: str, stub: Any) -> tuple[TestClient, Note]:
     from knowlet.core.audit_log import AuditEventStore
     from knowlet.core.backups import BackupStore
     from knowlet.web.server import create_app

@@ -179,6 +179,4 @@ def test_digest_cli_add_list_toggle_remove_v2_sources(tmp_path, monkeypatch):
 
     removed = runner.invoke(app, ["digest", "remove", sources[0].id])
     assert removed.exit_code == 0, removed.stdout
-    assert [s.name for s in DigestSourceStore(vault.digest_sources_dir).list()] == [
-        "Agent watch"
-    ]
+    assert [s.name for s in DigestSourceStore(vault.digest_sources_dir).list()] == ["Agent watch"]

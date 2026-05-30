@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -101,9 +102,7 @@ class DigestSource:
             created_at=str(raw.get("created_at") or now_iso()),
             updated_at=str(raw.get("updated_at") or now_iso()),
             last_pull_at=str(raw["last_pull_at"]) if raw.get("last_pull_at") else None,
-            last_success_at=(
-                str(raw["last_success_at"]) if raw.get("last_success_at") else None
-            ),
+            last_success_at=(str(raw["last_success_at"]) if raw.get("last_success_at") else None),
             last_error=str(raw["last_error"]) if raw.get("last_error") else None,
             pull_status=pull_status,  # type: ignore[arg-type]
             schema_version=schema_version,
@@ -122,7 +121,7 @@ class DigestSourceStore:
     def __init__(self, root: Path):
         self.root = root
 
-    def iter_paths(self):
+    def iter_paths(self) -> Iterator[Path]:
         if not self.root.exists():
             return iter(())
         return (p for p in self.root.glob("*.json") if p.is_file())

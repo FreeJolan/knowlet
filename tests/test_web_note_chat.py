@@ -38,9 +38,7 @@ class StreamStubLLM:
         self._events = list(events)
         self.seen_messages: list[dict[str, Any]] | None = None
 
-    def chat_stream(
-        self, messages, tools=None, max_tokens=None, temperature=None
-    ) -> Iterator[Any]:
+    def chat_stream(self, messages, tools=None, max_tokens=None, temperature=None) -> Iterator[Any]:
         self.seen_messages = messages
         yield from self._events
 
@@ -57,9 +55,7 @@ class CheckCurrentNoteStubLLM:
         self.stream_calls = 0
         self.check_messages: list[dict[str, Any]] | None = None
 
-    def chat_stream(
-        self, messages, tools=None, max_tokens=None, temperature=None
-    ) -> Iterator[Any]:
+    def chat_stream(self, messages, tools=None, max_tokens=None, temperature=None) -> Iterator[Any]:
         self.stream_calls += 1
         if self.stream_calls == 1:
             yield ToolCallEvent(
@@ -105,9 +101,7 @@ class ProposeCurrentNoteEditStubLLM:
         self.stream_calls = 0
         self.propose_messages: list[dict[str, Any]] | None = None
 
-    def chat_stream(
-        self, messages, tools=None, max_tokens=None, temperature=None
-    ) -> Iterator[Any]:
+    def chat_stream(self, messages, tools=None, max_tokens=None, temperature=None) -> Iterator[Any]:
         self.stream_calls += 1
         if self.stream_calls == 1:
             yield ToolCallEvent(
@@ -128,9 +122,7 @@ class ProposeCurrentNoteEditStubLLM:
         )
 
 
-def _client_with_note(
-    tmp_path: Path, body: str, stub: Any
-) -> tuple[TestClient, Note]:
+def _client_with_note(tmp_path: Path, body: str, stub: Any) -> tuple[TestClient, Note]:
     from knowlet.core.audit_log import AuditEventStore
     from knowlet.core.backups import BackupStore
     from knowlet.web.server import create_app
@@ -161,9 +153,7 @@ def _client_with_note(
     return client, note
 
 
-def _client_with_draft(
-    tmp_path: Path, body: str, stub: Any
-) -> tuple[TestClient, Draft]:
+def _client_with_draft(tmp_path: Path, body: str, stub: Any) -> tuple[TestClient, Draft]:
     from knowlet.core.audit_log import AuditEventStore
     from knowlet.core.backups import BackupStore
     from knowlet.web.server import create_app
@@ -209,12 +199,8 @@ def test_note_chat_streams_grounded_reply(tmp_path: Path):
             ReplyDoneEvent(final_text="grounded answer"),
         ]
     )
-    client, note = _client_with_note(
-        tmp_path, body="RAG retrieves then generates.", stub=stub
-    )
-    r = client.post(
-        f"/api/chat/note/{note.id}/stream", json={"text": "explain this note"}
-    )
+    client, note = _client_with_note(tmp_path, body="RAG retrieves then generates.", stub=stub)
+    r = client.post(f"/api/chat/note/{note.id}/stream", json={"text": "explain this note"})
     assert r.status_code == 200
     events = _parse_sse(r.text)
     types = [e["type"] for e in events]
@@ -225,9 +211,7 @@ def test_note_chat_streams_grounded_reply(tmp_path: Path):
     # user re-explaining it. It must ride in a USER message (not only
     # system) — some proxies drop system; see the dropped-system test.
     assert stub.seen_messages is not None
-    user_blob = "\n".join(
-        m["content"] for m in stub.seen_messages if m["role"] == "user"
-    )
+    user_blob = "\n".join(m["content"] for m in stub.seen_messages if m["role"] == "user")
     assert "RAG retrieves then generates." in user_blob
 
 
@@ -288,9 +272,7 @@ def test_note_chat_can_trigger_current_note_check_tool(tmp_path: Path):
     assert payload["summary"] == "发现一处高风险事实错误。"
     assert payload["findings"][0]["finding"] == "RAG 不是把全部笔记塞进 prompt。"
     assert stub.check_messages is not None
-    checker_prompt = "\n".join(
-        m["content"] for m in stub.check_messages if m["role"] == "user"
-    )
+    checker_prompt = "\n".join(m["content"] for m in stub.check_messages if m["role"] == "user")
     assert "RAG means putting every note into the prompt." in checker_prompt
 
     after = client.get(f"/api/notes/{note.id}").json()
@@ -331,9 +313,7 @@ def test_note_chat_can_trigger_current_note_edit_proposal_tool(tmp_path: Path):
     assert payload["new_body"] == new_body
     assert payload["summary"] == "已生成可审阅的修改提案。"
     assert stub.propose_messages is not None
-    propose_prompt = "\n".join(
-        m["content"] for m in stub.propose_messages if m["role"] == "user"
-    )
+    propose_prompt = "\n".join(m["content"] for m in stub.propose_messages if m["role"] == "user")
     assert "RAG puts every note into the prompt." in propose_prompt
 
     after = client.get(f"/api/notes/{note.id}").json()
@@ -406,16 +386,12 @@ def test_draft_chat_streams_grounded_reply(tmp_path: Path):
     client, draft = _client_with_draft(
         tmp_path, body="The feed item argues that notes need context.", stub=stub
     )
-    r = client.post(
-        f"/api/chat/draft/{draft.id}/stream", json={"text": "what matters here?"}
-    )
+    r = client.post(f"/api/chat/draft/{draft.id}/stream", json={"text": "what matters here?"})
     assert r.status_code == 200
     events = _parse_sse(r.text)
     assert "turn_done" in [e["type"] for e in events]
     assert stub.seen_messages is not None
-    user_blob = "\n".join(
-        m["content"] for m in stub.seen_messages if m["role"] == "user"
-    )
+    user_blob = "\n".join(m["content"] for m in stub.seen_messages if m["role"] == "user")
     assert "The feed item argues that notes need context." in user_blob
 
 
@@ -429,17 +405,11 @@ def test_note_grounding_and_tone_guidance_in_user_turn(tmp_path: Path):
     message, never only in system (cliproxyapi-style proxies drop the
     caller's system message; dogfood 2026-05-25)."""
     stub = StreamStubLLM([ReplyDoneEvent(final_text="")])
-    client, note = _client_with_note(
-        tmp_path, body="UNIQUE_GROUND_MARKER_42", stub=stub
-    )
+    client, note = _client_with_note(tmp_path, body="UNIQUE_GROUND_MARKER_42", stub=stub)
     client.post(f"/api/chat/note/{note.id}/stream", json={"text": "hi"})
     assert stub.seen_messages is not None
-    user_blob = "\n".join(
-        m["content"] for m in stub.seen_messages if m["role"] == "user"
-    )
-    system_blob = "\n".join(
-        m["content"] for m in stub.seen_messages if m["role"] == "system"
-    )
+    user_blob = "\n".join(m["content"] for m in stub.seen_messages if m["role"] == "user")
+    system_blob = "\n".join(m["content"] for m in stub.seen_messages if m["role"] == "system")
     assert "UNIQUE_GROUND_MARKER_42" in user_blob  # note in the user turn
     assert "内部判断这篇笔记是什么性质" in user_blob  # tone guidance in the user turn
     assert "不要把分类判断过程写给用户" in user_blob
@@ -463,9 +433,7 @@ def test_emotional_tone_guidance_is_non_fixing_and_non_cliche() -> None:
 
 
 def test_edit_intent_router_is_limited_to_applyable_note_changes() -> None:
-    assert wants_current_note_edit_proposal(
-        "请为这篇笔记生成一个可在 diff 中审阅的最小改写提案"
-    )
+    assert wants_current_note_edit_proposal("请为这篇笔记生成一个可在 diff 中审阅的最小改写提案")
     assert wants_current_note_edit_proposal("帮我把这篇笔记改写得更清楚")
     assert not wants_current_note_edit_proposal("帮我检查这篇笔记有没有错漏")
 
@@ -496,9 +464,7 @@ def test_note_chat_sends_prior_history_for_memory(tmp_path: Path):
     assert "第一个回答" in blob  # prior assistant turn forwarded
     assert "第二个问题" in blob  # current turn present
     assert "NOTE_BODY" in blob  # grounding still present
-    user_turns = [
-        m["content"] for m in stub.seen_messages if m["role"] == "user"
-    ]
+    user_turns = [m["content"] for m in stub.seen_messages if m["role"] == "user"]
     assert "第一个问题" in user_turns[0]  # prior exchange comes first
     assert "第二个问题" in user_turns[-1]  # current grounded turn is last
 
@@ -524,9 +490,7 @@ def test_propose_edit_returns_a_diff_without_writing(tmp_path: Path):
     原则 1 — nothing lands without the user's diff-accept in P4)."""
     new_body = "RAG retrieves then generates. It also reranks the chunks."
     stub = ChatStubLLM(json.dumps({"new_body": new_body}))
-    client, note = _client_with_note(
-        tmp_path, body="RAG retrieves then generates.", stub=stub
-    )
+    client, note = _client_with_note(tmp_path, body="RAG retrieves then generates.", stub=stub)
     r = client.post(
         f"/api/chat/note/{note.id}/propose-edit",
         json={"instruction": "note that it reranks"},

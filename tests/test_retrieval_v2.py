@@ -35,11 +35,13 @@ class _FakeLLM:
         self.audit_store = None
 
     def chat(self, *, messages, role=None, max_tokens=None, **_kw):
-        self.calls.append({
-            "messages": messages,
-            "role": role,
-            "max_tokens": max_tokens,
-        })
+        self.calls.append(
+            {
+                "messages": messages,
+                "role": role,
+                "max_tokens": max_tokens,
+            }
+        )
         return AssistantMessage(content=self.content)
 
 
@@ -128,11 +130,12 @@ def _cfg(rerank_model: str = "") -> LLMConfig:
 def test_rerank_reorders_by_llm_scores() -> None:
     hits = [_hit("a", 0.1), _hit("b", 0.2), _hit("c", 0.3)]
     # LLM thinks "b" is most relevant.
-    llm = _FakeLLM(
-        content='[{"id":0,"score":0.1},{"id":1,"score":0.95},{"id":2,"score":0.4}]'
-    )
+    llm = _FakeLLM(content='[{"id":0,"score":0.1},{"id":1,"score":0.95},{"id":2,"score":0.4}]')
     reranked = llm_rerank(
-        "query", hits, llm=llm, cfg=_cfg()  # type: ignore[arg-type]
+        "query",
+        hits,
+        llm=llm,
+        cfg=_cfg(),  # type: ignore[arg-type]
     )
     assert reranked[0].note_id == "b"
     assert reranked[0].score == pytest.approx(0.95)
@@ -142,7 +145,10 @@ def test_rerank_falls_back_on_bad_json() -> None:
     hits = [_hit("a"), _hit("b")]
     llm = _FakeLLM(content="not JSON at all")
     reranked = llm_rerank(
-        "q", hits, llm=llm, cfg=_cfg()  # type: ignore[arg-type]
+        "q",
+        hits,
+        llm=llm,
+        cfg=_cfg(),  # type: ignore[arg-type]
     )
     # Returns original order unchanged.
     assert [h.note_id for h in reranked] == ["a", "b"]
@@ -159,7 +165,10 @@ def test_rerank_handles_missing_ids() -> None:
     ]
     llm = _FakeLLM(content='[{"id":1,"score":0.9}]')  # only b scored
     reranked = llm_rerank(
-        "q", hits, llm=llm, cfg=_cfg()  # type: ignore[arg-type]
+        "q",
+        hits,
+        llm=llm,
+        cfg=_cfg(),  # type: ignore[arg-type]
     )
     ids = [h.note_id for h in reranked]
     # b's new score (0.9) wins; a and c keep their original (small) scores
@@ -172,9 +181,12 @@ def test_rerank_with_one_or_zero_hits_is_noop() -> None:
     llm = _FakeLLM()
     assert llm_rerank("q", [], llm=llm, cfg=_cfg()) == []  # type: ignore[arg-type]
     one = [_hit("a")]
-    assert llm_rerank(  # type: ignore[arg-type]
-        "q", one, llm=llm, cfg=_cfg()
-    ) == one
+    assert (
+        llm_rerank(  # type: ignore[arg-type]
+            "q", one, llm=llm, cfg=_cfg()
+        )
+        == one
+    )
     assert len(llm.calls) == 0  # no LLM call made
 
 
@@ -204,7 +216,10 @@ def test_rerank_uses_separate_rerank_model_when_configured() -> None:
     rerank_mod.LLMClient = _CapturedClient  # type: ignore[misc]
     try:
         llm_rerank(
-            "q", hits, llm=llm, cfg=cfg  # type: ignore[arg-type]
+            "q",
+            hits,
+            llm=llm,
+            cfg=cfg,  # type: ignore[arg-type]
         )
     finally:
         rerank_mod.LLMClient = orig  # type: ignore[misc]
@@ -212,7 +227,7 @@ def test_rerank_uses_separate_rerank_model_when_configured() -> None:
 
 
 def test_parse_scores_handles_code_fence() -> None:
-    payload = "```json\n[{\"id\":0,\"score\":0.5}]\n```"
+    payload = '```json\n[{"id":0,"score":0.5}]\n```'
     assert _parse_scores(payload) == [(0, 0.5)]
 
 

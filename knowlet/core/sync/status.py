@@ -176,9 +176,7 @@ def compute_note_sync_status(
     # using sync_state.dirty + local file mtime. Either signal alone
     # is enough to treat as a real conflict — they're independent
     # paths to "local has work that hasn't been pushed yet".
-    locally_dirty = bool(record.dirty) or _is_local_dirty(
-        local_path, record.last_synced_at
-    )
+    locally_dirty = bool(record.dirty) or _is_local_dirty(local_path, record.last_synced_at)
     return _make_status(
         "conflict" if locally_dirty else "stale",
         last_synced_at=record.last_synced_at,
@@ -191,9 +189,7 @@ def compute_note_sync_status(
 # --------------------------------------------------- helpers
 
 
-def _is_local_dirty(
-    local_path: Path | None, last_synced_at: str | None
-) -> bool:
+def _is_local_dirty(local_path: Path | None, last_synced_at: str | None) -> bool:
     """True iff the local file has been touched since ``last_synced_at``.
 
     None / missing path → False (no local work to lose). Unparseable

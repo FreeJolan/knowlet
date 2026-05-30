@@ -163,9 +163,7 @@ def test_lazy_loading_skips_layers_not_in_role(tmp_path: Path) -> None:
     """editor_advisor must NOT include user-profile, even when present."""
     v = Vault(tmp_path)
     v.init_layout()
-    write_profile(
-        v.profile_path, UserProfile(body="I am Alice.")
-    )
+    write_profile(v.profile_path, UserProfile(body="I am Alice."))
     env = build_envelope(
         "editor_advisor",
         task={"x": 1},
@@ -181,16 +179,10 @@ def test_vault_shape_with_notes(tmp_path: Path) -> None:
     v = Vault(tmp_path)
     v.init_layout()
     (v.notes_dir / "papers").mkdir()
-    (v.notes_dir / "papers" / "rag.md").write_text(
-        "---\nid: a1\n---\n# RAG\n", encoding="utf-8"
-    )
-    (v.notes_dir / "papers" / "llm.md").write_text(
-        "---\nid: a2\n---\n# LLM\n", encoding="utf-8"
-    )
+    (v.notes_dir / "papers" / "rag.md").write_text("---\nid: a1\n---\n# RAG\n", encoding="utf-8")
+    (v.notes_dir / "papers" / "llm.md").write_text("---\nid: a2\n---\n# LLM\n", encoding="utf-8")
     (v.notes_dir / "diary").mkdir()
-    (v.notes_dir / "diary" / "today.md").write_text(
-        "---\nid: a3\n---\n# Today\n", encoding="utf-8"
-    )
+    (v.notes_dir / "diary" / "today.md").write_text("---\nid: a3\n---\n# Today\n", encoding="utf-8")
 
     env = build_envelope(
         "editor_advisor",
@@ -256,9 +248,7 @@ def test_recent_activity_no_events_skipped(tmp_path: Path) -> None:
 # ------------------------------------------- wiki-schema
 
 
-def test_wiki_schema_included_when_present(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_wiki_schema_included_when_present(tmp_path: Path, monkeypatch) -> None:
     # Isolate from the dev's real ~/.knowlet so the per-vault content
     # is the only signal in the rendered layer.
     monkeypatch.setenv("KNOWLET_HOME", str(tmp_path / "knowlet-home"))
@@ -277,9 +267,7 @@ def test_wiki_schema_included_when_present(
     assert "kebab-case" in sp
 
 
-def test_wiki_schema_empty_file_skipped(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_wiki_schema_empty_file_skipped(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("KNOWLET_HOME", str(tmp_path / "knowlet-home"))
     v = Vault(tmp_path)
     v.init_layout()
@@ -292,15 +280,11 @@ def test_wiki_schema_empty_file_skipped(
     assert "<wiki-schema" not in env.system_prompt()
 
 
-def test_wiki_schema_global_layer_alone(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_wiki_schema_global_layer_alone(tmp_path: Path, monkeypatch) -> None:
     """No per-vault file, only global — global content renders."""
     home = tmp_path / "knowlet-home"
     home.mkdir()
-    (home / "wiki_schema.md").write_text(
-        "Always cite sources.\n", encoding="utf-8"
-    )
+    (home / "wiki_schema.md").write_text("Always cite sources.\n", encoding="utf-8")
     monkeypatch.setenv("KNOWLET_HOME", str(home))
     v = Vault(tmp_path / "vault")
     v.init_layout()
@@ -314,21 +298,15 @@ def test_wiki_schema_global_layer_alone(
     assert "Always cite sources" in sp
 
 
-def test_wiki_schema_global_and_per_vault_merged(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_wiki_schema_global_and_per_vault_merged(tmp_path: Path, monkeypatch) -> None:
     """Both files present — global appears first, per-vault second."""
     home = tmp_path / "knowlet-home"
     home.mkdir()
-    (home / "wiki_schema.md").write_text(
-        "GLOBAL: Always cite sources.\n", encoding="utf-8"
-    )
+    (home / "wiki_schema.md").write_text("GLOBAL: Always cite sources.\n", encoding="utf-8")
     monkeypatch.setenv("KNOWLET_HOME", str(home))
     v = Vault(tmp_path / "vault")
     v.init_layout()
-    (v.state_dir / "wiki_schema.md").write_text(
-        "PER_VAULT: Use kebab-case.\n", encoding="utf-8"
-    )
+    (v.state_dir / "wiki_schema.md").write_text("PER_VAULT: Use kebab-case.\n", encoding="utf-8")
     env = build_envelope(
         "capture_extractor",
         task={"url": "x"},
@@ -359,9 +337,7 @@ def test_task_layer_becomes_user_message(tmp_path: Path) -> None:
 
 
 def test_empty_task_skipped() -> None:
-    env = build_envelope(
-        "editor_advisor", task={}, ctx=EnvelopeContext()
-    )
+    env = build_envelope("editor_advisor", task={}, ctx=EnvelopeContext())
     assert env.task_layer is None
 
 
@@ -380,9 +356,7 @@ def test_to_chat_messages_with_user_message_override() -> None:
 
 
 def test_to_chat_messages_with_history() -> None:
-    env = build_envelope(
-        "chat_companion", task=None, ctx=EnvelopeContext()
-    )
+    env = build_envelope("chat_companion", task=None, ctx=EnvelopeContext())
     history = [
         {"role": "user", "content": "earlier question"},
         {"role": "assistant", "content": "earlier answer"},
@@ -396,9 +370,7 @@ def test_to_chat_messages_with_history() -> None:
 
 def test_to_chat_messages_no_user_input_returns_system_only() -> None:
     """Edge case: no task, no override, no history → just the system msg."""
-    env = build_envelope(
-        "chat_companion", task=None, ctx=EnvelopeContext()
-    )
+    env = build_envelope("chat_companion", task=None, ctx=EnvelopeContext())
     msgs = env.to_chat_messages()
     assert len(msgs) == 1
     assert msgs[0]["role"] == "system"

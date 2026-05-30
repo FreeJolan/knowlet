@@ -114,28 +114,19 @@ class SyncStateStore:
             """
         )
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS file_state_drive_id_idx "
-            "ON file_state(drive_file_id)"
+            "CREATE INDEX IF NOT EXISTS file_state_drive_id_idx ON file_state(drive_file_id)"
         )
         # Lazy column add (Slice 5.D.3.A v1→v2 migration). CREATE
         # TABLE IF NOT EXISTS is a no-op on existing tables, so we
         # need explicit ALTER for any new column. Cheap: SQLite
         # ADD COLUMN is metadata-only.
-        existing_cols = {
-            row[1] for row in conn.execute("PRAGMA table_info(file_state)")
-        }
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(file_state)")}
         if "dismissed_until" not in existing_cols:
-            conn.execute(
-                "ALTER TABLE file_state ADD COLUMN dismissed_until TEXT"
-            )
+            conn.execute("ALTER TABLE file_state ADD COLUMN dismissed_until TEXT")
         if "delete_intent" not in existing_cols:
-            conn.execute(
-                "ALTER TABLE file_state ADD COLUMN delete_intent TEXT"
-            )
+            conn.execute("ALTER TABLE file_state ADD COLUMN delete_intent TEXT")
         # Schema version handshake.
-        row = conn.execute(
-            "SELECT value FROM meta WHERE key='schema_version'"
-        ).fetchone()
+        row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
         if row is None:
             conn.execute(
                 "INSERT INTO meta(key, value) VALUES('schema_version', ?)",
@@ -171,9 +162,7 @@ class SyncStateStore:
     def _get_meta(self, key: str) -> str | None:
         conn = self._connect()
         with self._lock:
-            row = conn.execute(
-                "SELECT value FROM meta WHERE key=?", (key,)
-            ).fetchone()
+            row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return row[0] if row else None
 
     def _set_meta(self, key: str, value: str) -> None:
@@ -284,9 +273,7 @@ class SyncStateStore:
         "last_synced_at, dirty, dismissed_until, delete_intent FROM file_state"
     )
 
-    def get_file_state(
-        self, entity_type: str, entity_id: str
-    ) -> FileState | None:
+    def get_file_state(self, entity_type: str, entity_id: str) -> FileState | None:
         conn = self._connect()
         with self._lock:
             row = conn.execute(
@@ -336,8 +323,7 @@ class SyncStateStore:
         conn = self._connect()
         with self._lock:
             cur = conn.execute(
-                "UPDATE file_state SET dismissed_until=? "
-                "WHERE entity_type=? AND entity_id=?",
+                "UPDATE file_state SET dismissed_until=? WHERE entity_type=? AND entity_id=?",
                 (until, entity_type, entity_id),
             )
             conn.commit()
@@ -357,17 +343,14 @@ class SyncStateStore:
             rows = conn.execute(self._LIST_DELETION_PENDING_SQL).fetchall()
         return [self._row_to_file_state(r) for r in rows]
 
-    def remove_file_state(
-        self, entity_type: str, entity_id: str
-    ) -> bool:
+    def remove_file_state(self, entity_type: str, entity_id: str) -> bool:
         """Hard-delete a sync_state row. Used after the drainer
         successfully completes a Drive deletion + after orphan
         cleanup. Returns True iff a row was removed."""
         conn = self._connect()
         with self._lock:
             cur = conn.execute(
-                "DELETE FROM file_state "
-                "WHERE entity_type=? AND entity_id=?",
+                "DELETE FROM file_state WHERE entity_type=? AND entity_id=?",
                 (entity_type, entity_id),
             )
             conn.commit()
@@ -385,9 +368,7 @@ class SyncStateStore:
     def count_files(self) -> int:
         conn = self._connect()
         with self._lock:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM file_state"
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) FROM file_state").fetchone()
         return int(row[0]) if row else 0
 
     # --------------------------------------------------- disconnect

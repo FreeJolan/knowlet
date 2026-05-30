@@ -67,9 +67,7 @@ def _scope_err() -> type[Exception]:
     return ScopeUpgradeRequiredError
 
 
-def _resolve_paths(
-    vault_root: Path, sync_cfg: object
-) -> tuple[Path | None, Path]:
+def _resolve_paths(vault_root: Path, sync_cfg: object) -> tuple[Path | None, Path]:
     """Return (client_secrets_path | None, token_path) resolved
     against the vault root + config. ``client_secrets_path`` is None
     when the user hasn't configured one (don't conflate with "."
@@ -85,9 +83,7 @@ def _resolve_paths(
             cs_path = vault_root / cs_path
     else:
         cs_path = None
-    tok_path = credentials_path(
-        vault_root, getattr(sync_cfg, "token_path", "") or None
-    )
+    tok_path = credentials_path(vault_root, getattr(sync_cfg, "token_path", "") or None)
     return cs_path, tok_path
 
 
@@ -127,9 +123,7 @@ def sync_status() -> None:
             )
         return
     name = creds.user_display_name or "(unknown)"
-    console.print(
-        f"[green]Connected[/green] · {creds.user_email} ({name})"
-    )
+    console.print(f"[green]Connected[/green] · {creds.user_email} ({name})")
     console.print(f"  tokens at: {tok_path}")
     # Slice 5.C.1 — scope upgrade check. If the stored token was
     # issued under an older scope set, surface the upgrade hint
@@ -238,10 +232,7 @@ def sync_pull(
         err_console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=4) from exc
     if creds is None:
-        err_console.print(
-            "[red]Not connected.[/red] Run "
-            "[bold]knowlet sync connect[/bold] first."
-        )
+        err_console.print("[red]Not connected.[/red] Run [bold]knowlet sync connect[/bold] first.")
         raise typer.Exit(code=2)
 
     try:
@@ -262,9 +253,7 @@ def sync_pull(
         try:
             device_id = state.device_id()
             device_label = state.device_label()
-            console.print(
-                f"[dim]device_id={device_id}  label={device_label}[/dim]"
-            )
+            console.print(f"[dim]device_id={device_id}  label={device_label}[/dim]")
 
             cached_token = state.start_page_token()
             if reset_token or cached_token is None:
@@ -277,19 +266,12 @@ def sync_pull(
                         "report changes from now on."
                     )
                 else:
-                    console.print(
-                        f"[yellow]Reset[/yellow] startPageToken={token}."
-                    )
+                    console.print(f"[yellow]Reset[/yellow] startPageToken={token}.")
                 return
 
-            changes, new_token = list_all_changes(
-                client, page_token=cached_token
-            )
+            changes, new_token = list_all_changes(client, page_token=cached_token)
             state.set_start_page_token(new_token)
-            console.print(
-                f"[green]Pulled[/green] {len(changes)} change(s); "
-                f"new token cached."
-            )
+            console.print(f"[green]Pulled[/green] {len(changes)} change(s); new token cached.")
             for c in changes[:20]:
                 marker = (
                     "[red]REMOVED[/red]"
@@ -385,14 +367,11 @@ def sync_push(
                 else:
                     verb = "Created" if result.created else "Updated"
                     console.print(
-                        f"[green]{verb}[/green] {n.title} ({n.id}) → "
-                        f"drive:{result.drive_file.id}"
+                        f"[green]{verb}[/green] {n.title} ({n.id}) → drive:{result.drive_file.id}"
                     )
                     pushed += 1
 
-            console.print(
-                f"\n[bold]{pushed} pushed, {len(conflicts)} conflict(s).[/bold]"
-            )
+            console.print(f"\n[bold]{pushed} pushed, {len(conflicts)} conflict(s).[/bold]")
             if conflicts:
                 console.print(
                     "Run [bold]knowlet sync resolve <note-id>[/bold] for each "
@@ -425,9 +404,7 @@ def sync_resolve(
     earlier push attempt.
     """
     if strategy not in {"mine", "remote", "both"}:
-        err_console.print(
-            "[red]--strategy is required: one of mine | remote | both[/red]"
-        )
+        err_console.print("[red]--strategy is required: one of mine | remote | both[/red]")
         raise typer.Exit(code=2)
     vault = resolve_vault_or_die()
     cfg = load_config_or_default(vault)
@@ -466,32 +443,24 @@ def sync_resolve(
             paths = list(vault.iter_note_paths())
             target = next((p for p in paths if p.stem == note_id), None)
             if target is None:
-                err_console.print(
-                    f"[red]No note with id {note_id!r} found.[/red]"
-                )
+                err_console.print(f"[red]No note with id {note_id!r} found.[/red]")
                 raise typer.Exit(code=2)
             note = Note.from_file(target)
             # Re-trigger the push to capture a fresh conflict snapshot.
             result = push_note(service=service, state=state, note=note)
             if not isinstance(result, ConflictReport):
-                console.print(
-                    "[green]No conflict — push completed cleanly.[/green]"
-                )
+                console.print("[green]No conflict — push completed cleanly.[/green]")
                 return
 
             if strategy == "mine":
-                done = resolve_use_mine(
-                    service=service, state=state, conflict=result
-                )
+                done = resolve_use_mine(service=service, state=state, conflict=result)
                 console.print(
                     f"[green]Resolved (mine):[/green] overwrote remote with "
                     f"local; head revision now "
                     f"{done.drive_file.head_revision_id}."
                 )
             elif strategy == "remote":
-                resolve_use_remote(
-                    state=state, conflict=result, local_path=target
-                )
+                resolve_use_remote(state=state, conflict=result, local_path=target)
                 console.print(
                     "[green]Resolved (remote):[/green] local file replaced "
                     "with remote bytes. .knowlet/backups/ has the prior "
@@ -544,11 +513,5 @@ def sync_disconnect() -> None:
             "cleared sync_state.sqlite (device_id preserved)."
         )
     else:
-        console.print(
-            "[yellow]No local tokens to remove[/yellow] — sync state "
-            "still cleared."
-        )
-    console.print(
-        "Server-side revoke (manual): "
-        "https://myaccount.google.com/permissions"
-    )
+        console.print("[yellow]No local tokens to remove[/yellow] — sync state still cleared.")
+    console.print("Server-side revoke (manual): https://myaccount.google.com/permissions")

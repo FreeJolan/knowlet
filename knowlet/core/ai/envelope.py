@@ -101,9 +101,7 @@ class LayerSource(Protocol):
 
     tag: str
 
-    def render(
-        self, ctx: EnvelopeContext, task: dict[str, Any]
-    ) -> Layer | None:
+    def render(self, ctx: EnvelopeContext, task: dict[str, Any]) -> Layer | None:
         """Return a :class:`Layer`, or ``None`` to skip this layer."""
         ...
 
@@ -167,9 +165,7 @@ class Envelope:
           returned list contains only the system message — callers
           handle that case (e.g., warmup pings).
         """
-        msgs: list[dict[str, Any]] = [
-            {"role": "system", "content": self.system_prompt()}
-        ]
+        msgs: list[dict[str, Any]] = [{"role": "system", "content": self.system_prompt()}]
         if history:
             msgs.extend(history)
         if user_message is not None:
@@ -224,9 +220,7 @@ def known_tags() -> tuple[str, ...]:
 
 # Tags handled inline by :func:`build_envelope` itself (their content
 # comes from :class:`RoleConfig`, not from a registered source).
-_ROLE_OWNED_TAGS: frozenset[str] = frozenset(
-    {"knowlet-system", "rules", "examples"}
-)
+_ROLE_OWNED_TAGS: frozenset[str] = frozenset({"knowlet-system", "rules", "examples"})
 
 
 # ---------------------------------------------------- build_envelope
@@ -277,9 +271,7 @@ def build_envelope(
             continue
         if tag == "rules":
             if cfg.rules.strip():
-                system_layers.append(
-                    Layer(tag="rules", content=cfg.rules, src="role-config")
-                )
+                system_layers.append(Layer(tag="rules", content=cfg.rules, src="role-config"))
             continue
         if tag == "examples":
             if cfg.examples.strip():

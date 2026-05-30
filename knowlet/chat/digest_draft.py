@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -103,9 +103,9 @@ Rules:
 
 def build_library_context(vault: Vault, index: Index) -> LibraryContext:
     folders = [""]
-    for folder in vault.iter_folders():
+    for folder_path in vault.iter_folders():
         try:
-            rel_path = folder.relative_to(vault.notes_dir)
+            rel_path = folder_path.relative_to(vault.notes_dir)
         except ValueError:
             continue
         rel = "/".join(rel_path.parts)
@@ -116,15 +116,15 @@ def build_library_context(vault: Vault, index: Index) -> LibraryContext:
     for row in index.list_notes(limit=12):
         path_raw = str(row.get("path") or "")
         path = Path(path_raw)
-        folder = ""
+        recent_folder = ""
         if path_raw:
             if not path.is_absolute():
                 path = vault.notes_dir / path.name
-            folder = vault.folder_of(path)
+            recent_folder = vault.folder_of(path)
         recent_notes.append(
             {
                 "title": row.get("title") or "",
-                "folder": folder,
+                "folder": recent_folder,
                 "tags": row.get("tags") or [],
             }
         )
@@ -213,14 +213,17 @@ def _build_prompt(
     suggested_tags = ", ".join(item.suggested_tags) or "(none)"
     tags = "\n".join(f"- {name} ({count})" for name, count in context.tags) or "- (none)"
     folders = "\n".join(f"- {folder or '(root)'}" for folder in context.folders) or "- (root)"
-    notes = "\n".join(
-        "- {title} [{folder}] tags: {tags}".format(
-            title=note["title"],
-            folder=note["folder"] or "(root)",
-            tags=", ".join(note["tags"]) or "(none)",
+    notes = (
+        "\n".join(
+            "- {title} [{folder}] tags: {tags}".format(
+                title=note["title"],
+                folder=note["folder"] or "(root)",
+                tags=", ".join(note["tags"]) or "(none)",
+            )
+            for note in context.recent_notes
         )
-        for note in context.recent_notes
-    ) or "- (none)"
+        or "- (none)"
+    )
     discussion = _render_history(history)
     if discussion_summary.strip():
         discussion = (discussion + "\n\n" if discussion else "") + (
@@ -284,4 +287,6 @@ def _normalize_folder(folder: str, allowed_folders: Sequence[str]) -> str:
 
 
 def coerce_note_kind(value: str) -> NoteKind:
-    return value if value in NOTE_KINDS else "reference"
+    if value in NOTE_KINDS:
+        return cast(NoteKind, value)
+    return "reference"

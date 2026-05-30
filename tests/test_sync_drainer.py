@@ -183,9 +183,7 @@ def test_drainer_412_fires_conflict_and_leaves_dirty(tmp_path: Path) -> None:
             "knowlet.core.sync.drive_client.DriveClient.service",
             return_value=MagicMock(),
         ),
-        patch(
-            "knowlet.core.sync.drainer.push_note", return_value=conflict_report
-        ),
+        patch("knowlet.core.sync.drainer.push_note", return_value=conflict_report),
     ):
         drainer.tick_once()
 
@@ -546,13 +544,9 @@ def test_drainer_marks_orphan_attachment_for_hard_delete(
         drainer.tick_once()
 
     # Drive's hard-delete API was called with the correct file id.
-    call_args = [
-        c.kwargs for c in fake_service.files().delete.call_args_list
-    ]
+    call_args = [c.kwargs for c in fake_service.files().delete.call_args_list]
     fileIds = [c.get("fileId") for c in call_args]
-    assert "DRIVE-ORPHAN" in fileIds, (
-        f"expected hard-delete call for DRIVE-ORPHAN, got {fileIds}"
-    )
+    assert "DRIVE-ORPHAN" in fileIds, f"expected hard-delete call for DRIVE-ORPHAN, got {fileIds}"
     # Row was removed after successful delete.
     state2 = SyncStateStore(tmp_path)
     try:

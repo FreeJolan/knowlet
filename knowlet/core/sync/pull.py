@@ -87,9 +87,7 @@ def pull_note_to_local(
     itself."""
     record = state.get_file_state("note", note_id)
     if record is None or not record.drive_file_id:
-        raise PullStateMissingError(
-            f"cannot pull note {note_id}: no Drive id in sync_state"
-        )
+        raise PullStateMissingError(f"cannot pull note {note_id}: no Drive id in sync_state")
 
     # Fetch metadata first so we know the post-pull revision; do
     # the bytes download next. Two round trips, but they're cheap

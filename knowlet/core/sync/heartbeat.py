@@ -52,9 +52,7 @@ class AliveDevice:
     last_seen_at: str  # Drive's modifiedTime, ISO 8601 UTC
 
 
-def write_my_heartbeat(
-    service: Any, *, device_id: str, device_label: str
-) -> None:
+def write_my_heartbeat(service: Any, *, device_id: str, device_label: str) -> None:
     """Idempotent upload of THIS device's heartbeat. If the file
     already exists in appData, overwrite it (Drive bumps
     ``modifiedTime`` automatically). If not, create it."""
@@ -86,9 +84,7 @@ def write_my_heartbeat(
     )
 
 
-def list_alive_devices(
-    service: Any, ttl_days: int = HEARTBEAT_TTL_DAYS
-) -> list[AliveDevice]:
+def list_alive_devices(service: Any, ttl_days: int = HEARTBEAT_TTL_DAYS) -> list[AliveDevice]:
     """List all ``*.heartbeat.json`` files in appData; return ones
     whose ``modifiedTime`` is within ``ttl_days``. Uses metadata
     only — no body downloads — so cost is O(pages) regardless of
@@ -150,12 +146,16 @@ def _find_heartbeat_file_id(service: Any, fname: str) -> str | None:
 
     Defensive against non-dict responses (unit-test MagicMock will
     return MagicMock from ``.execute()`` unless explicitly stubbed)."""
-    resp = service.files().list(
-        spaces="appDataFolder",
-        fields="files(id,name)",
-        q=f"name = '{fname}'",
-        pageSize=10,
-    ).execute()
+    resp = (
+        service.files()
+        .list(
+            spaces="appDataFolder",
+            fields="files(id,name)",
+            q=f"name = '{fname}'",
+            pageSize=10,
+        )
+        .execute()
+    )
     if not isinstance(resp, dict):
         return None
     files = resp.get("files", [])

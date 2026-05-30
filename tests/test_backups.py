@@ -205,9 +205,7 @@ def test_quick_actions_save_creates_backup(tmp_path: Path) -> None:
     store.upsert(a)  # first write → no backup (file didn't exist yet)
     a.name = "v2"
     store.upsert(a)  # overwrite → backup the v1 toml
-    rows = BackupStore(tmp_path).list_backups(
-        entity_type="quick-actions"
-    )
+    rows = BackupStore(tmp_path).list_backups(entity_type="quick-actions")
     assert len(rows) == 1
     text = rows[0].path.read_text(encoding="utf-8")
     assert "v1" in text and "v2" not in text

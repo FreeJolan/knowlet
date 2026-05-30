@@ -1666,8 +1666,7 @@ def test_search_short_query_substring_fallback(tmp_path: Path):
     r1 = client.get("/api/search", params={"q": "88"})
     assert r1.status_code == 200
     assert any(h["title"] == "Big number" for h in r1.json()["hits"]), (
-        f"short query '88' must match '888999910' via LIKE fallback; "
-        f"got {r1.json()['hits']}"
+        f"short query '88' must match '888999910' via LIKE fallback; got {r1.json()['hits']}"
     )
     # Multi-token short query (OR semantics).
     r2 = client.get("/api/search", params={"q": "88 zz"})
@@ -1862,9 +1861,7 @@ def test_note_aliases_omitted_preserves_existing(tmp_path: Path):
         json={"title": "A", "tags": [], "body": "b"},
     )
     assert r.status_code == 200, r.text
-    assert r.json()["aliases"] == ["x", "y"], (
-        "missing aliases must preserve, not clear"
-    )
+    assert r.json()["aliases"] == ["x", "y"], "missing aliases must preserve, not clear"
 
     # Empty list — explicit clear.
     r2 = client.put(

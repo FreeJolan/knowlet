@@ -209,9 +209,7 @@ def test_prompt_source_uses_wrapped_system_prompt_and_structured_json(tmp_path):
     assert "Knowlet digest source editor" in prompt_text
     assert "Find important AI agent updates." in prompt_text
     assert "Output only strict JSON" in prompt_text
-    assert llm.responses_calls[0]["tools"] == [
-        {"type": "web_search", "external_web_access": True}
-    ]
+    assert llm.responses_calls[0]["tools"] == [{"type": "web_search", "external_web_access": True}]
 
 
 def test_prompt_source_warning_without_items_marks_source_error(tmp_path):
@@ -880,9 +878,7 @@ def test_discard_raw_info_tool_uses_current_item_and_deletes_linked_draft(tmp_pa
     assert DraftStore(vault.drafts_dir).get(draft.id) is None
 
 
-def test_digest_cli_discard_marks_raw_info_and_deletes_linked_draft(
-    tmp_path, monkeypatch
-):
+def test_digest_cli_discard_marks_raw_info_and_deletes_linked_draft(tmp_path, monkeypatch):
     vault, _cfg = _ready_vault(tmp_path)
     monkeypatch.setenv("KNOWLET_VAULT", str(vault.root))
     draft = Draft(
@@ -1142,9 +1138,7 @@ def test_auto_pull_skips_source_already_successful_today(tmp_path, monkeypatch):
     assert DigestSourceStore(vault.digest_sources_dir).get(source.id) is not None
 
 
-def test_auto_pull_only_marks_successful_sources_done_for_the_day(
-    tmp_path, monkeypatch
-):
+def test_auto_pull_only_marks_successful_sources_done_for_the_day(tmp_path, monkeypatch):
     vault, _cfg = _ready_vault(tmp_path)
     good = _save_source(
         vault,

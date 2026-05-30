@@ -42,16 +42,12 @@ def test_scope_uses_drive_appdata() -> None:
 
 
 def test_verify_scope_accepts_token_with_required_scope() -> None:
-    creds = SyncCredentials(
-        token={"scopes": ["https://www.googleapis.com/auth/drive.appdata"]}
-    )
+    creds = SyncCredentials(token={"scopes": ["https://www.googleapis.com/auth/drive.appdata"]})
     verify_scope(creds)  # should not raise
 
 
 def test_verify_scope_raises_when_required_scope_missing() -> None:
-    creds = SyncCredentials(
-        token={"scopes": ["https://www.googleapis.com/auth/drive.file"]}
-    )
+    creds = SyncCredentials(token={"scopes": ["https://www.googleapis.com/auth/drive.file"]})
     with pytest.raises(ScopeUpgradeRequiredError) as ei:
         verify_scope(creds)
     assert "drive.appdata" in ei.value.missing[0]
@@ -143,13 +139,9 @@ def test_run_connect_flow_persists_creds_and_identity(tmp_path: Path) -> None:
             "google_auth_oauthlib.flow.InstalledAppFlow.from_client_config",
             return_value=fake_flow,
         ),
-        patch(
-            "googleapiclient.discovery.build", return_value=fake_drive
-        ),
+        patch("googleapiclient.discovery.build", return_value=fake_drive),
     ):
-        result = run_connect_flow(
-            client_secrets_path=cs_path, save_to=save_to, port=0
-        )
+        result = run_connect_flow(client_secrets_path=cs_path, save_to=save_to, port=0)
 
     assert result.user_email == "alice@example.com"
     assert result.user_display_name == "Alice"
@@ -194,9 +186,7 @@ def test_run_connect_flow_falls_through_to_embedded_when_path_missing(
             "google_auth_oauthlib.flow.InstalledAppFlow.from_client_config",
             return_value=fake_flow,
         ) as from_cfg,
-        patch(
-            "googleapiclient.discovery.build", return_value=fake_drive
-        ),
+        patch("googleapiclient.discovery.build", return_value=fake_drive),
     ):
         result = run_connect_flow(
             client_secrets_path=tmp_path / "nope.json",
@@ -235,9 +225,7 @@ def test_drive_client_identity_round_trip() -> None:
         "user": {"emailAddress": "bob@example.com", "displayName": "Bob"}
     }
 
-    with patch(
-        "googleapiclient.discovery.build", return_value=fake_drive
-    ):
+    with patch("googleapiclient.discovery.build", return_value=fake_drive):
         client = DriveClient(creds)
         ident = client.identity()
         assert ident.email == "bob@example.com"

@@ -146,9 +146,7 @@ def _serialize(actions: list[QuickAction]) -> str:
             lines.append(f"folder = {_toml_value(a.params.folder)}")
             lines.append(f"title_template = {_toml_value(a.params.title_template)}")
             if a.params.content_template_id is not None:
-                lines.append(
-                    f"content_template_id = {_toml_value(a.params.content_template_id)}"
-                )
+                lines.append(f"content_template_id = {_toml_value(a.params.content_template_id)}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -202,9 +200,7 @@ class QuickActionStore:
             except Exception:
                 import logging
 
-                logging.getLogger(__name__).warning(
-                    "quick-actions backup failed", exc_info=True
-                )
+                logging.getLogger(__name__).warning("quick-actions backup failed", exc_info=True)
         _atomic_write(self.path, _serialize(actions))
 
     def upsert(self, action: QuickAction) -> QuickAction:

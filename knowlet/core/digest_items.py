@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -120,15 +121,11 @@ class RawInfo:
             fetched_at=str(raw.get("fetched_at") or now_iso()),
             summary=str(raw.get("summary") or ""),
             key_points=[
-                str(item).strip()
-                for item in (raw.get("key_points") or [])
-                if str(item).strip()
+                str(item).strip() for item in (raw.get("key_points") or []) if str(item).strip()
             ],
             why_it_matters=str(raw.get("why_it_matters") or ""),
             suggested_tags=[
-                str(item).strip()
-                for item in (raw.get("suggested_tags") or [])
-                if str(item).strip()
+                str(item).strip() for item in (raw.get("suggested_tags") or []) if str(item).strip()
             ],
             confidence=confidence,  # type: ignore[arg-type]
             content_excerpt=str(raw.get("content_excerpt") or ""),
@@ -151,7 +148,7 @@ class RawInfoStore:
     def __init__(self, root: Path):
         self.root = root
 
-    def iter_paths(self):
+    def iter_paths(self) -> Iterator[Path]:
         if not self.root.exists():
             return iter(())
         return (path for path in self.root.glob("*.json") if path.is_file())

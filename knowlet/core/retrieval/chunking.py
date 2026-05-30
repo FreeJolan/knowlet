@@ -104,16 +104,12 @@ def smart_chunk_markdown(
         if len(section_text) <= size:
             pieces.append(section_text)
         else:
-            pieces.extend(
-                p.strip() for p in char_splitter.split_text(section_text) if p.strip()
-            )
+            pieces.extend(p.strip() for p in char_splitter.split_text(section_text) if p.strip())
 
     # If the header splitter found nothing (no headers), MarkdownHeaderTextSplitter
     # returns an empty list. Fall back to the char splitter directly.
     if not pieces:
-        pieces = [
-            p.strip() for p in char_splitter.split_text(body) if p.strip()
-        ]
+        pieces = [p.strip() for p in char_splitter.split_text(body) if p.strip()]
         # Tiny inputs (single paragraph shorter than ``size``) still need
         # to be emitted as one chunk; RecursiveCharacterTextSplitter
         # returns a single-element list in that case, which is fine.

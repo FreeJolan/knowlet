@@ -319,9 +319,7 @@ def chat(
 
 @app.command("discuss")
 def discuss(
-    note: Annotated[
-        str, typer.Argument(help="Note id, or a case-insensitive title substring.")
-    ],
+    note: Annotated[str, typer.Argument(help="Note id, or a case-insensitive title substring.")],
     message: Annotated[
         str | None,
         typer.Argument(help="Your message. Omit to drop into an interactive loop."),
@@ -425,9 +423,7 @@ def discuss(
 
 @app.command("check-note")
 def check_note_cmd(
-    note: Annotated[
-        str, typer.Argument(help="Note id, or a case-insensitive title substring.")
-    ],
+    note: Annotated[str, typer.Argument(help="Note id, or a case-insensitive title substring.")],
     standard_answer: Annotated[
         str,
         typer.Option(
@@ -489,9 +485,7 @@ def check_note_cmd(
             return
         for idx, finding in enumerate(report.findings, start=1):
             location = (
-                f"paragraph {finding.paragraph}"
-                if finding.paragraph is not None
-                else "paragraph ?"
+                f"paragraph {finding.paragraph}" if finding.paragraph is not None else "paragraph ?"
             )
             console.print(
                 Panel.fit(

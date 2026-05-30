@@ -152,9 +152,7 @@ def run_doctor_checks(
                     continue
                 label = f"llm capability / {check.name}"
                 detail = (
-                    f"{check.detail} ({check.latency_ms}ms)"
-                    if check.latency_ms
-                    else check.detail
+                    f"{check.detail} ({check.latency_ms}ms)" if check.latency_ms else check.detail
                 )
                 if check.ok:
                     ok(label, detail)

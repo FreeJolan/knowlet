@@ -31,7 +31,7 @@ CHECK_USER_RULES = (
     '"fix_instruction":"给后续 diff 编辑器的一句话修改指令","confidence":0.0}]}\n'
     "规则:\n"
     "- findings 最多 5 条,按重要性排序。\n"
-    "- paragraph 必须对应下方 <paragraph n=\"...\"> 的编号;无法定位就填 null。\n"
+    '- paragraph 必须对应下方 <paragraph n="..."> 的编号;无法定位就填 null。\n'
     "- quote 必须来自笔记原文,短而具体。\n"
     "- fix_instruction 要可直接交给编辑助手生成最小 diff。\n"
     "- confidence 低于 0.5 的问题不要输出。\n"
@@ -82,10 +82,7 @@ def _render_numbered_note(note: Note) -> str:
     paragraphs = _numbered_paragraphs(note.body)
     if not paragraphs:
         return '<paragraph n="1">\n\n</paragraph>'
-    return "\n\n".join(
-        f'<paragraph n="{idx}">\n{text}\n</paragraph>'
-        for idx, text in paragraphs
-    )
+    return "\n\n".join(f'<paragraph n="{idx}">\n{text}\n</paragraph>' for idx, text in paragraphs)
 
 
 def _coerce_severity(value: Any) -> Severity:

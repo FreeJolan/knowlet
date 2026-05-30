@@ -113,9 +113,7 @@ def _set_enabled(source_id: str, enabled: bool) -> None:
         raise typer.Exit(code=1)
     source.enabled = enabled
     store.save(source)
-    console.print(
-        f"[green]{'enabled' if enabled else 'disabled'}[/green] {source.id[:8]}…"
-    )
+    console.print(f"[green]{'enabled' if enabled else 'disabled'}[/green] {source.id[:8]}…")
 
 
 @app.command("enable")
@@ -232,14 +230,14 @@ def digest_run(
     llm = LLMClient(cfg.llm)
     for task in tasks:
         console.print(f"[bold]running[/bold] {task.name} ({task.id[:8]}…)")
-        report = run_task(
+        task_report = run_task(
             task,
             vault,
             llm,
             default_output_language=cfg.general.language,
             max_items=limit,
         )
-        _render_run_report(report)
+        _render_run_report(task_report)
 
 
 @app.command("discard")
@@ -276,10 +274,7 @@ def digest_clear() -> None:
         items=RawInfoStore(vault.digest_items_dir),
         drafts=DraftStore(vault.drafts_dir),
     )
-    console.print(
-        "[green]discarded[/green] "
-        f"{result.discarded_count} pending raw info item(s)"
-    )
+    console.print(f"[green]discarded[/green] {result.discarded_count} pending raw info item(s)")
     if result.deleted_draft_ids:
         console.print(
             "[dim]deleted linked drafts:[/dim] "

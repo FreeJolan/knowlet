@@ -50,6 +50,6 @@ def require_google_libs() -> None:
     except ImportError as exc:
         raise SyncDependenciesMissingError(
             "Drive sync requires the optional `sync` extra. "
-            "Install it with: uv pip install -e \".[sync]\"  "
+            'Install it with: uv pip install -e ".[sync]"  '
             f"(missing: {exc.name})"
         ) from exc

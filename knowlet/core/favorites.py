@@ -24,6 +24,9 @@ import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeAlias
+
+FavoriteIds: TypeAlias = list[str]
 
 
 @dataclass(frozen=True)
@@ -89,7 +92,7 @@ class FavoritesStore:
             self._write(pruned)
         return pruned
 
-    def add(self, note_id: str) -> list[str]:
+    def add(self, note_id: str) -> FavoriteIds:
         """Add note_id to the end of the list if not already present.
         Returns the updated list. Idempotent."""
         ids = self._read_raw()
@@ -99,7 +102,7 @@ class FavoritesStore:
         self._write(ids)
         return ids
 
-    def remove(self, note_id: str) -> list[str]:
+    def remove(self, note_id: str) -> FavoriteIds:
         """Remove note_id if present. Returns the updated list.
         Idempotent — removing an absent id is a no-op."""
         ids = self._read_raw()

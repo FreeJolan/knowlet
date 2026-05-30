@@ -38,7 +38,7 @@ _SNIPPET_TRUNC = 400
 
 _RERANK_PROMPT = (
     "You are scoring search-result snippets for relevance to a query.\n"
-    "Return a JSON array of objects: [{{\"id\": <int>, \"score\": <0..1>}}, ...]\n"
+    'Return a JSON array of objects: [{{"id": <int>, "score": <0..1>}}, ...]\n'
     "Score 1.0 = the snippet directly answers the query.\n"
     "Score 0.0 = unrelated. Score every candidate; do not skip any.\n"
     "Return ONLY the JSON array, no preamble.\n\n"
@@ -90,8 +90,7 @@ def llm_rerank(
         return list(hits)
 
     block = "\n".join(
-        f"[{i}] {h.title}\n     {h.snippet[:_SNIPPET_TRUNC]}"
-        for i, h in enumerate(candidates)
+        f"[{i}] {h.title}\n     {h.snippet[:_SNIPPET_TRUNC]}" for i, h in enumerate(candidates)
     )
     prompt = _RERANK_PROMPT.format(query=query.strip(), candidates=block)
 

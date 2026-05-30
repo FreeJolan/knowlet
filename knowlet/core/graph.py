@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from knowlet.core.backlinks import extract_wikilinks
 from knowlet.core.note import Note
@@ -56,10 +58,10 @@ class Graph:
 
 
 def build_graph(
-    note_metas: list[dict],
+    note_metas: list[dict[str, Any]],
     *,
-    folder_for: callable,
-    read_body: callable,
+    folder_for: Callable[[Path], str],
+    read_body: Callable[[str], str],
 ) -> Graph:
     """Build the graph snapshot.
 

@@ -19,7 +19,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
@@ -42,6 +42,8 @@ from knowlet.chat.sediment import (
 from knowlet.config import KnowletConfig, find_vault, load_config
 from knowlet.core.backlinks import find_backlinks
 from knowlet.core.card import Card, parse_due
+from knowlet.core.digest_items import RawInfo
+from knowlet.core.digest_sources import DigestSource, DigestSourceStore
 from knowlet.core.drafts import Draft
 from knowlet.core.events import (
     ErrorEvent,
@@ -992,9 +994,7 @@ class WebState:
         self.digest_auto_pull_thread: threading.Thread | None = None
         self.digest_auto_pull_stop = threading.Event()
         self.digest_pull_lock = threading.Lock()
-        self.digest_pull_status: Literal["idle", "running", "ok", "error", "paused"] = (
-            "idle"
-        )
+        self.digest_pull_status: Literal["idle", "running", "ok", "error", "paused"] = "idle"
         self.digest_pull_last_report: dict[str, Any] | None = None
         self.digest_pull_last_error: str | None = None
         # Bootstrap state (production async path):
@@ -1083,10 +1083,7 @@ class WebState:
         It checks immediately when the app comes online, then periodically
         while the app stays open so a date change triggers the next daily pull.
         """
-        if (
-            self.digest_auto_pull_thread is not None
-            and self.digest_auto_pull_thread.is_alive()
-        ):
+        if self.digest_auto_pull_thread is not None and self.digest_auto_pull_thread.is_alive():
             return
         self.digest_auto_pull_stop.clear()
 
@@ -1109,22 +1106,16 @@ class WebState:
                         self.digest_pull_status = "error"
                     else:
                         self.digest_pull_status = "ok"
-                    self.digest_pull_last_report = (
-                        report.to_dict() if report is not None else None
-                    )
+                    self.digest_pull_last_report = report.to_dict() if report is not None else None
                     self.digest_pull_last_error = (
-                        "; ".join(report.errors)
-                        if report is not None and report.errors
-                        else None
+                        "; ".join(report.errors) if report is not None and report.errors else None
                     )
                 except Exception as exc:
                     self.digest_pull_status = "error"
                     self.digest_pull_last_error = f"{type(exc).__name__}: {exc}"
                     import logging as _logging
 
-                    _logging.getLogger(__name__).exception(
-                        "digest auto-pull crashed"
-                    )
+                    _logging.getLogger(__name__).exception("digest auto-pull crashed")
                 if self.digest_auto_pull_stop.wait(interval_seconds):
                     return
 
@@ -1707,9 +1698,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
         service = DriveClient(creds).service()
         try:
-            remote_meta: DriveFile = get_file_metadata(
-                service, record.drive_file_id
-            )
+            remote_meta: DriveFile = get_file_metadata(service, record.drive_file_id)
             remote_bytes = download_file(service, record.drive_file_id)
         except Exception as exc:
             raise HTTPException(
@@ -1758,9 +1747,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         }
 
     @app.post("/api/sync/resolve-merge/{note_id}")
-    def resolve_merge_endpoint(
-        note_id: str, body: ResolveMergeRequest
-    ) -> dict[str, Any]:
+    def resolve_merge_endpoint(note_id: str, body: ResolveMergeRequest) -> dict[str, Any]:
         from knowlet.core.sync.credentials import (
             credentials_path,
             load_credentials,
@@ -1813,9 +1800,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="dev conflict seed missing on disk",
                     )
-                theirs_note = Note.from_text(
-                    fake_path.read_text(encoding="utf-8")
-                )
+                theirs_note = Note.from_text(fake_path.read_text(encoding="utf-8"))
                 merged_note = merge_notes(
                     mine=mine_note,
                     theirs=theirs_note,
@@ -1921,9 +1906,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_410_GONE,
                 detail=f"local file unreadable: {exc!r}",
             ) from exc
-        remote_text = (body.remote_text if body else None) or _synth_remote(
-            local_text
-        )
+        remote_text = (body.remote_text if body else None) or _synth_remote(local_text)
 
         fake_path = _dev_conflict_path(note_id)
         fake_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2013,9 +1996,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail="local file not found",
             )
         service = DriveClient(creds).service()
-        current = download_file(service, rec.drive_file_id).decode(
-            "utf-8", errors="replace"
-        )
+        current = download_file(service, rec.drive_file_id).decode("utf-8", errors="replace")
         ts = now_iso()
 
         # Side 1 — remote-side edit
@@ -2124,21 +2105,16 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     if service is None:
                         service = DriveClient(creds).service()
                     try:
-                        service.files().delete(
-                            fileId=fs.drive_file_id
-                        ).execute()
+                        service.files().delete(fileId=fs.drive_file_id).execute()
                         deleted_drive += 1
                     except Exception as exc:
-                        drive_errors.append(
-                            f"{fs.entity_id}: {exc!r}"
-                        )
+                        drive_errors.append(f"{fs.entity_id}: {exc!r}")
                 # Drop the sync_state row. SyncStateStore doesn't
                 # expose a row delete, so we use raw SQL on the
                 # underlying connection.
                 conn = store._connect()
                 conn.execute(
-                    "DELETE FROM file_state "
-                    "WHERE entity_type=? AND entity_id=?",
+                    "DELETE FROM file_state WHERE entity_type=? AND entity_id=?",
                     (fs.entity_type, fs.entity_id),
                 )
                 conn.commit()
@@ -2351,9 +2327,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "unauthenticated": report.unauthenticated,
             "alive_devices": list(report.alive_devices),
             "cloned_from_drive_ids": list(report.cloned_from_drive_ids),
-            "trashed_for_drive_delete_ids": list(
-                report.trashed_for_drive_delete_ids
-            ),
+            "trashed_for_drive_delete_ids": list(report.trashed_for_drive_delete_ids),
         }
 
     def _invalidate_preflight_cache() -> None:
@@ -2519,9 +2493,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             return
         store = SyncStateStore(vault.root)
         try:
-            existing = store.get_file_state(
-                ATTACHMENT_ENTITY_TYPE, filename
-            )
+            existing = store.get_file_state(ATTACHMENT_ENTITY_TYPE, filename)
             if existing is not None:
                 return  # already tracked; nothing to do
             store.upsert_file_state(
@@ -2537,9 +2509,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         finally:
             store.close()
 
-    def _add_conflict_to_preflight(
-        note_id: str, drive_file_id: str | None
-    ) -> None:
+    def _add_conflict_to_preflight(note_id: str, drive_file_id: str | None) -> None:
         """S4 — drainer-discovered conflict callback. When a save-
         time push gets 412, the drainer calls this so the chip /
         Strict modal lights up within seconds of the push attempt
@@ -2722,9 +2692,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
         state.oauth_flow_state = "running"
         state.oauth_last_error = None
-        thread = threading.Thread(
-            target=_runner, daemon=True, name="knowlet-oauth-flow"
-        )
+        thread = threading.Thread(target=_runner, daemon=True, name="knowlet-oauth-flow")
         thread.start()
         state._oauth_thread = thread
         return {"started": True}
@@ -2775,9 +2743,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         sync module doesn't need to depend on the CLI module."""
         from knowlet.core.sync.credentials import credentials_path
 
-        cs = (
-            getattr(config.sync, "client_secrets_path", "") or ""
-        )
+        cs = getattr(config.sync, "client_secrets_path", "") or ""
         cs_path: Path | None
         if cs:
             cs_path = Path(cs).expanduser()
@@ -2818,9 +2784,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # shows ``device_count`` so the user knows why Auto behaves
         # like Strict.
         rep = state.preflight_report
-        device_count = (
-            len(rep.alive_devices) if rep is not None else 0
-        )
+        device_count = len(rep.alive_devices) if rep is not None else 0
         effective = ("strict" if device_count >= 2 else "lax") if mode == "auto" else mode
         return {
             "mode": mode,
@@ -2845,12 +2809,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         finally:
             store.close()
         rep = state.preflight_report
-        device_count = (
-            len(rep.alive_devices) if rep is not None else 0
-        )
-        effective = (
-            ("strict" if device_count >= 2 else "lax") if new_mode == "auto" else new_mode
-        )
+        device_count = len(rep.alive_devices) if rep is not None else 0
+        effective = ("strict" if device_count >= 2 else "lax") if new_mode == "auto" else new_mode
         return {
             "mode": new_mode,
             "effective_mode": effective,
@@ -2973,9 +2933,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     def _drainer_on_conflict(note_id: str, _report: Any) -> None:
         _add_conflict_to_preflight(note_id, _report.drive_file_id)
 
-    def _materialize_drive_file(
-        drive_file_id: str, brief: Any
-    ) -> str | None:
+    def _materialize_drive_file(drive_file_id: str, brief: Any) -> str | None:
         """#119 — pull a Drive file we've never seen, place it in
         the local vault, write the sync_state row + index. Returns
         the note id (or attachment filename, #121) on success, None
@@ -3023,7 +2981,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 )
             finally:
                 store.close()
-            return brief.name
+            return str(brief.name)
         try:
             raw = body.decode("utf-8")
         except UnicodeDecodeError:
@@ -3033,11 +2991,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # synthesized note.id won't be stable; for first-clone
         # purposes prefer the file's own name (Drive stores it as
         # ``<id>.md``).
-        if (
-            note.frontmatter_status != "valid"
-            and brief.name
-            and brief.name.endswith(".md")
-        ):
+        if note.frontmatter_status != "valid" and brief.name and brief.name.endswith(".md"):
             stem = brief.name[:-3]
             if stem:
                 note.id = stem
@@ -3161,10 +3115,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             return []
         store = SyncStateStore(vault.root)
         try:
-            tracked = {
-                (fs.entity_type, fs.entity_id)
-                for fs in store.list_all_files()
-            }
+            tracked = {(fs.entity_type, fs.entity_id) for fs in store.list_all_files()}
         finally:
             store.close()
         out: list[tuple[str, str]] = [
@@ -3525,9 +3476,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     call_id = "direct_propose_current_note_edit"
                     instruction = req.text
                     if req.history:
-                        prior = "\n".join(
-                            f"{m.role}: {m.content}" for m in req.history[-6:]
-                        )
+                        prior = "\n".join(f"{m.role}: {m.content}" for m in req.history[-6:])
                         instruction = f"此前对话:\n{prior}\n\n当前修改请求:{req.text}"
                     arguments = {"instruction": instruction}
                     call = ToolCallEvent(
@@ -3546,10 +3495,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                         name=call.name,
                         payload=payload,
                     )
-                    yield (
-                        "data: "
-                        f"{json.dumps(event_to_dict(result), ensure_ascii=False)}\n\n"
-                    )
+                    yield (f"data: {json.dumps(event_to_dict(result), ensure_ascii=False)}\n\n")
                     if isinstance(payload.get("error"), str):
                         text = f"提议失败: {payload['error']}"
                     elif payload.get("changed") is False:
@@ -3563,8 +3509,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     yield f"data: {json.dumps(event_to_dict(TurnDoneEvent(final_text=text)), ensure_ascii=False)}\n\n"
                     return
                 for event in session.user_turn_stream(grounded):
-                    payload = json.dumps(event_to_dict(event), ensure_ascii=False)
-                    yield f"data: {payload}\n\n"
+                    event_payload = json.dumps(event_to_dict(event), ensure_ascii=False)
+                    yield f"data: {event_payload}\n\n"
             except Exception as exc:
                 err = ErrorEvent(message=f"server error: {exc}")
                 yield f"data: {json.dumps(event_to_dict(err))}\n\n"
@@ -3784,10 +3730,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     yield f"data: {json.dumps(event_to_dict(call), ensure_ascii=False)}\n\n"
                     payload = session.registry.dispatch(name, arguments, session.ctx)
                     result = ToolResultEvent(id=call_id, name=name, payload=payload)
-                    yield (
-                        "data: "
-                        f"{json.dumps(event_to_dict(result), ensure_ascii=False)}\n\n"
-                    )
+                    yield (f"data: {json.dumps(event_to_dict(result), ensure_ascii=False)}\n\n")
                     text = draft_tool_reply(name, payload)
                     yield (
                         "data: "
@@ -3799,8 +3742,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     )
                     return
                 for event in session.user_turn_stream(grounded):
-                    payload = json.dumps(event_to_dict(event), ensure_ascii=False)
-                    yield f"data: {payload}\n\n"
+                    event_payload = json.dumps(event_to_dict(event), ensure_ascii=False)
+                    yield f"data: {event_payload}\n\n"
             except Exception as exc:
                 err = ErrorEvent(message=f"server error: {exc}")
                 yield f"data: {json.dumps(event_to_dict(err))}\n\n"
@@ -4143,9 +4086,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         indexed as a JSON column. ADR-0013 §3 Layer B: NO auto-grouping
         / NO taxonomy enforcement — we just surface what the user wrote.
         """
-        return [
-            TagSummary(tag=t, count=c) for t, c in runtime.index.aggregate_tags()
-        ]
+        return [TagSummary(tag=t, count=c) for t, c in runtime.index.aggregate_tags()]
 
     @app.get("/api/tags/{tag}/notes", response_model=list[NoteSummary])
     def list_notes_with_tag(
@@ -4246,9 +4187,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 )
                 for n in graph.nodes
             ],
-            edges=[
-                GraphEdgeRow(source=e.source, target=e.target) for e in graph.edges
-            ],
+            edges=[GraphEdgeRow(source=e.source, target=e.target) for e in graph.edges],
         )
 
     @app.get("/api/search", response_model=SearchPayload)
@@ -4399,8 +4338,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
-                    f"nothing to repair — note's frontmatter status is "
-                    f"'{n.frontmatter_status}'"
+                    f"nothing to repair — note's frontmatter status is '{n.frontmatter_status}'"
                 ),
             )
         # Drop the corruption marker; write_note will emit a clean
@@ -4936,9 +4874,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     continue
                 if tpl.id == params.content_template_id:
                     tpl_path = p
-                    body = runtime.vault.apply_template_placeholders(
-                        tpl.body, title=title
-                    )
+                    body = runtime.vault.apply_template_placeholders(tpl.body, title=title)
                     break
             if tpl_path is None:
                 raise HTTPException(
@@ -5320,9 +5256,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         )
 
         url = (req.url or "").strip()
-        if not url or not (
-            url.startswith("http://") or url.startswith("https://")
-        ):
+        if not url or not (url.startswith("http://") or url.startswith("https://")):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="invalid url (must start with http:// or https://)",
@@ -5337,9 +5271,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 summary_failed=False,
             )
         except FetchError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            ) from exc
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         except ExtractionError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
@@ -5374,8 +5306,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             raise HTTPException(
                 status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
                 detail=(
-                    "Only .md / .txt files are supported in Stage 3. "
-                    "PDF support is on the roadmap."
+                    "Only .md / .txt files are supported in Stage 3. PDF support is on the roadmap."
                 ),
             )
         raw = await file.read()
@@ -5445,9 +5376,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         try:
             path = runtime.vault.write_note(note)
         except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-            ) from exc
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         _mark_note_dirty_for_push(note.id)
         runtime.index.upsert_note(
             note,
@@ -5851,10 +5780,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # can show "N / max_pending_drafts" next to a paused-by-
         # backlog badge.
         try:
-            pending = len(
-                runtime_or_init_safe()
-                .ctx.drafts.list_for_task(t.id)
-            )
+            pending = len(runtime_or_init_safe().ctx.drafts.list_for_task(t.id))
         except Exception:
             pending = 0
         return TaskSummary(
@@ -5864,7 +5790,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             schedule=t.schedule.to_payload(),
             sources=[s.to_payload() for s in t.sources],
             updated_at=t.updated_at,
-            status=t.status,  # type: ignore[arg-type]
+            status=t.status,
             max_pending_drafts=t.max_pending_drafts,
             pending_drafts=pending,
         )
@@ -5873,7 +5799,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         """``runtime_or_init`` may raise during early bootstrap. _task_summary
         is also called from contexts where that's OK; this wrapper isolates
         a possible NoneType error."""
-        return app.state.web_state.runtime_or_init()
+        return cast(ChatRuntime, app.state.web_state.runtime_or_init())
 
     def _reload_scheduler() -> None:
         if state.scheduler is not None:
@@ -6070,13 +5996,11 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # so stale drafts don't accumulate. Cheap; only mutates state
         # when something actually crossed the threshold.
         runtime.ctx.drafts.enforce_age_archive()
-        return [
-            _draft_summary(d) for d in runtime.ctx.drafts.all_drafts()
-        ]
+        return [_draft_summary(d) for d in runtime.ctx.drafts.all_drafts()]
 
     # ---------------- digest sources / drafts ----------------
 
-    def _digest_source_summary(source: Any) -> DigestSourceSummary:
+    def _digest_source_summary(source: DigestSource) -> DigestSourceSummary:
         return DigestSourceSummary(
             id=source.id,
             name=source.name,
@@ -6092,7 +6016,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             pull_status=source.pull_status,
         )
 
-    def _raw_info_summary(item: Any) -> RawInfoSummary:
+    def _raw_info_summary(item: RawInfo) -> RawInfoSummary:
         return RawInfoSummary(
             id=item.id,
             source_id=item.source_id,
@@ -6113,14 +6037,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             note_id=item.note_id,
         )
 
-    def _digest_source_store(runtime: ChatRuntime):
-        from knowlet.core.digest_sources import DigestSourceStore
-
+    def _digest_source_store(runtime: ChatRuntime) -> DigestSourceStore:
         return DigestSourceStore(runtime.vault.digest_sources_dir)
 
-    def _source_from_payload(payload: DigestSourceCreate):
-        from knowlet.core.digest_sources import DigestSource
-
+    def _source_from_payload(payload: DigestSourceCreate) -> DigestSource:
         if payload.kind == "rss":
             return DigestSource(
                 name=payload.name,
@@ -6175,9 +6095,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         existing.kind = payload.kind
         existing.enabled = payload.enabled
         existing.url = (payload.url or "").strip() if payload.kind == "rss" else None
-        existing.prompt = (
-            (payload.prompt or "").strip() if payload.kind == "prompt" else None
-        )
+        existing.prompt = (payload.prompt or "").strip() if payload.kind == "prompt" else None
         try:
             store.save(existing)
         except ValueError as exc:
@@ -6386,9 +6304,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         from knowlet.core.digest import is_digest_task
 
         runtime.ctx.drafts.enforce_age_archive()
-        digest_task_ids = {
-            task.id for task in runtime.ctx.tasks.list() if is_digest_task(task)
-        }
+        digest_task_ids = {task.id for task in runtime.ctx.tasks.list() if is_digest_task(task)}
 
         def in_period(draft: Draft) -> bool:
             if period == "all":
@@ -6727,9 +6643,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
         from knowlet.core.portability import merge_directory
 
-        tmp_path = Path(
-            tempfile.mkstemp(suffix=".zip", prefix="kn-import-")[1]
-        )
+        tmp_path = Path(tempfile.mkstemp(suffix=".zip", prefix="kn-import-")[1])
         tmp_path.write_bytes(await file.read())
         walk_root = _unpack_for_merge(tmp_path)
         try:
@@ -6738,9 +6652,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             # A knowlet-format export wraps notes in a top-level
             # ``notes/`` folder; merge from that subfolder if it
             # exists so we don't try to import .knowlet/* etc.
-            walk_target = (
-                walk_root / "notes" if (walk_root / "notes").is_dir() else walk_root
-            )
+            walk_target = walk_root / "notes" if (walk_root / "notes").is_dir() else walk_root
             report = merge_directory(
                 source_dir=walk_target,
                 vault_root=vault.root,
@@ -6765,17 +6677,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
         from knowlet.core.portability import merge_directory
 
-        tmp_path = Path(
-            tempfile.mkstemp(suffix=".zip", prefix="kn-import-")[1]
-        )
+        tmp_path = Path(tempfile.mkstemp(suffix=".zip", prefix="kn-import-")[1])
         tmp_path.write_bytes(await file.read())
         walk_root = _unpack_for_merge(tmp_path)
         try:
             existing_titles = _existing_note_titles(vault.root)
             existing_ids = _existing_note_ids(vault.root)
-            walk_target = (
-                walk_root / "notes" if (walk_root / "notes").is_dir() else walk_root
-            )
+            walk_target = walk_root / "notes" if (walk_root / "notes").is_dir() else walk_root
             report = merge_directory(
                 source_dir=walk_target,
                 vault_root=vault.root,
@@ -6856,10 +6764,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "notes_renamed": report.notes_renamed,
             "attachments_copied": report.attachments_copied,
             "dry_run": report.dry_run,
-            "items": [
-                {"source": s, "action": a, "final": f}
-                for (s, a, f) in (report.items or [])
-            ],
+            "items": [{"source": s, "action": a, "final": f} for (s, a, f) in (report.items or [])],
             "manifest": (
                 {
                     "knowlet_version": report.manifest.knowlet_version,
@@ -6949,9 +6854,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # Empty string from caller = "use saved key". Caller can pass
         # whitespace-only or anything truthy to override; we don't
         # second-guess the draft.
-        effective_key = (
-            draft_key if draft_key else (config.llm.api_key or "knowlet-no-key")
-        )
+        effective_key = draft_key if draft_key else (config.llm.api_key or "knowlet-no-key")
 
         if not effective_url:
             return {"models": [], "error": "base_url not configured"}
@@ -7011,9 +6914,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         latency_ms = int((_time.monotonic() - started) * 1000)
         # LLMClient returns AssistantMessage; preview the text content.
         preview = (
-            (response.content or "")[:120]
-            if hasattr(response, "content")
-            else str(response)[:120]
+            (response.content or "")[:120] if hasattr(response, "content") else str(response)[:120]
         )
         try:
             from knowlet.core.ai.capabilities import probe_capabilities

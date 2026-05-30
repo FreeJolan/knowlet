@@ -121,9 +121,7 @@ def test_render_placeholders():
     assert render_title_placeholders("{{year}}", now=fixed) == "2026"
     assert render_title_placeholders("{{time}}", now=fixed) == "14:23"
     assert render_title_placeholders("{{datetime}}", now=fixed) == "2026-05-09 14:23"
-    assert (
-        render_title_placeholders("周报 · {{week}}", now=fixed) == "周报 · 2026-W19"
-    )
+    assert render_title_placeholders("周报 · {{week}}", now=fixed) == "周报 · 2026-W19"
 
 
 def test_unknown_placeholder_left_as_is():

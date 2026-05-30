@@ -240,8 +240,7 @@ class Note:
             # if it looks like one), first heading, file mtime/ctime.
             return cls(
                 id=_id_from_filename(path) if path else new_id(),
-                title=_first_heading(body)
-                or (path.stem if path else "Untitled"),
+                title=_first_heading(body) or (path.stem if path else "Untitled"),
                 body=body,
                 tags=[],
                 aliases=[],

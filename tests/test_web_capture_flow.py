@@ -77,9 +77,7 @@ def test_capture_file_no_heading_falls_back_to_filename(
 def test_capture_file_rejects_pdf(tmp_path: Path) -> None:
     """Stage 3 explicitly defers PDF support (per 2026-05-21 decision)."""
     client, _ = _client(tmp_path)
-    files = {
-        "file": ("doc.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")
-    }
+    files = {"file": ("doc.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")}
     r = client.post("/api/capture/file", files=files)
     assert r.status_code == 415
 
@@ -197,8 +195,7 @@ def test_defer_then_list_drafts_includes_body(tmp_path: Path) -> None:
     assert len(drafts) == 1
     body = drafts[0].get("body", "")
     assert capsule["body"] in body, (
-        f"draft body lost in transit: got {body!r}, expected to contain "
-        f"{capsule['body'][:60]!r}"
+        f"draft body lost in transit: got {body!r}, expected to contain {capsule['body'][:60]!r}"
     )
 
     # GET /api/drafts/{id} must also return it (was already correct

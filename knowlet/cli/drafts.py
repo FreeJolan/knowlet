@@ -165,9 +165,7 @@ def drafts_kind(
     from knowlet.core.drafts import DraftStore
 
     if kind not in ("knowledge", "reference"):
-        err_console.print(
-            f"[red]invalid kind:[/red] {kind!r} (must be 'knowledge' or 'reference')"
-        )
+        err_console.print(f"[red]invalid kind:[/red] {kind!r} (must be 'knowledge' or 'reference')")
         raise typer.Exit(code=1)
     vault = resolve_vault_or_die()
     store = DraftStore(vault.drafts_dir)

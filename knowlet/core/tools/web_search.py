@@ -217,8 +217,7 @@ def _results_from_urls(text: str, *, top_k: int) -> list[SearchResult]:
         if len(urls) >= top_k:
             break
     return [
-        SearchResult(title=url, url=url, snippet=text[:400], rank=i)
-        for i, url in enumerate(urls)
+        SearchResult(title=url, url=url, snippet=text[:400], rank=i) for i, url in enumerate(urls)
     ]
 
 

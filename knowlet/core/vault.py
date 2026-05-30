@@ -139,7 +139,9 @@ class Vault:
             import logging
 
             logging.getLogger(__name__).warning(
-                "audit log append failed for %s/%s", kind, entity_id,
+                "audit log append failed for %s/%s",
+                kind,
+                entity_id,
                 exc_info=True,
             )
 

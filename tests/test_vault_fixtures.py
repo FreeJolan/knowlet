@@ -76,9 +76,7 @@ def test_fixture_notes_load_without_error(name: str, tmp_path: Path) -> None:
         # Every loaded note must have a valid status — even if the
         # source file pre-dated the field. This is the forward-compat
         # contract per ADR-0018 §1.
-        assert note.status in NOTE_STATUSES, (
-            f"{f}: invalid status {note.status!r}"
-        )
+        assert note.status in NOTE_STATUSES, f"{f}: invalid status {note.status!r}"
 
 
 def test_v1_minimal_lazy_migrates_on_write(tmp_path: Path) -> None:
@@ -132,8 +130,7 @@ def test_v1_with_trash_restore_uses_trashed_from(tmp_path: Path) -> None:
             continue
         restored_path = v.restore_note(tf)
         assert restored_path.parent.name == target_folder, (
-            f"restored to {restored_path.parent.name!r}, "
-            f"expected {target_folder!r}"
+            f"restored to {restored_path.parent.name!r}, expected {target_folder!r}"
         )
 
 

@@ -165,11 +165,7 @@ class MiningTask:
         mode per ADR-0028 §6)."""
         if self.enabled:
             return "running"
-        return (
-            "paused-by-backlog"
-            if self.paused_reason == "backlog"
-            else "paused-by-user"
-        )
+        return "paused-by-backlog" if self.paused_reason == "backlog" else "paused-by-user"
 
     @property
     def slug(self) -> str:
@@ -227,9 +223,7 @@ class MiningTask:
         keep = _int_or_default(meta.get("max_keep"), 30)
         pending = _int_or_default(meta.get("max_pending_drafts"), 5)
         paused_reason_raw = meta.get("paused_reason")
-        paused_reason = (
-            str(paused_reason_raw) if paused_reason_raw in ("backlog", "user") else None
-        )
+        paused_reason = str(paused_reason_raw) if paused_reason_raw in ("backlog", "user") else None
         try:
             schema_version = int(meta.get("schema_version") or 1)
         except (TypeError, ValueError):

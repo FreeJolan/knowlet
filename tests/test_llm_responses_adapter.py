@@ -52,7 +52,7 @@ def test_chat_uses_responses_api_and_converts_function_tools() -> None:
                     "type": "function_call",
                     "call_id": "call_1",
                     "name": "search_notes",
-                    "arguments": "{\"query\":\"ping\"}",
+                    "arguments": '{"query":"ping"}',
                     "status": "completed",
                 }
             ]
@@ -129,12 +129,12 @@ def test_chat_converts_tool_history_to_responses_input_items() -> None:
             "type": "function_call",
             "call_id": "call_1",
             "name": "search_notes",
-            "arguments": "{\"query\": \"ping\"}",
+            "arguments": '{"query": "ping"}',
         },
         {
             "type": "function_call_output",
             "call_id": "call_1",
-            "output": "{\"results\": []}",
+            "output": '{"results": []}',
         },
     ]
 
@@ -156,7 +156,7 @@ def test_chat_stream_uses_responses_stream_events() -> None:
                     "type": "function_call",
                     "call_id": "call_1",
                     "name": "search_notes",
-                    "arguments": "{\"query\":\"ping\"}",
+                    "arguments": '{"query":"ping"}',
                 },
             },
             {
@@ -177,12 +177,8 @@ def test_chat_stream_uses_responses_stream_events() -> None:
     events = list(client.chat_stream([{"role": "user", "content": "hi"}]))
 
     assert [ev.text for ev in events if isinstance(ev, ReplyChunkEvent)] == ["Hel", "lo"]
-    assert [
-        (ev.id, ev.name, ev.arguments)
-        for ev in events
-        if isinstance(ev, ToolCallEvent)
-    ] == [("call_1", "search_notes", {"query": "ping"})]
-    assert [
-        ev.final_text for ev in events if isinstance(ev, ReplyDoneEvent)
-    ] == ["Hello"]
+    assert [(ev.id, ev.name, ev.arguments) for ev in events if isinstance(ev, ToolCallEvent)] == [
+        ("call_1", "search_notes", {"query": "ping"})
+    ]
+    assert [ev.final_text for ev in events if isinstance(ev, ReplyDoneEvent)] == ["Hello"]
     assert responses.calls[0]["stream"] is True

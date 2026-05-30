@@ -99,7 +99,5 @@ def test_atomic_write_via_tmp(tmp_path: Path) -> None:
     store = FavoritesStore(vault_root=tmp_path)
     store.add("a")
     # tmp file should not linger after write
-    tmp_path_with_suffix = store.path.with_suffix(
-        store.path.suffix + ".tmp"
-    )
+    tmp_path_with_suffix = store.path.with_suffix(store.path.suffix + ".tmp")
     assert not tmp_path_with_suffix.exists()

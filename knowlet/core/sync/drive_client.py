@@ -60,9 +60,7 @@ class DriveClient:
         # cache_discovery=False — the on-disk discovery cache mostly
         # invites permission warnings on multi-user systems and we
         # don't need it for a small surface.
-        self._service = build(
-            "drive", "v3", credentials=google_creds, cache_discovery=False
-        )
+        self._service = build("drive", "v3", credentials=google_creds, cache_discovery=False)
         return self._service
 
     def identity(self) -> DriveIdentity:
@@ -70,11 +68,7 @@ class DriveClient:
         still works AND the captured email is fresh. Used by ``sync
         status --verify`` (future) and as a smoke test in 5.A."""
         service = self.service()
-        about = (
-            service.about()
-            .get(fields="user(emailAddress,displayName)")
-            .execute()
-        )
+        about = service.about().get(fields="user(emailAddress,displayName)").execute()
         user = about.get("user", {})
         return DriveIdentity(
             email=user.get("emailAddress") or "(unknown)",

@@ -18,10 +18,7 @@ from knowlet.core.sync.state import (
 
 
 def test_db_path_default(tmp_path: Path) -> None:
-    assert (
-        sync_state_db_path(tmp_path)
-        == tmp_path / ".knowlet" / "sync_state.sqlite"
-    )
+    assert sync_state_db_path(tmp_path) == tmp_path / ".knowlet" / "sync_state.sqlite"
 
 
 def test_first_open_creates_db(tmp_path: Path) -> None:
@@ -181,15 +178,9 @@ def test_file_state_round_trip(tmp_path: Path) -> None:
 def test_list_dirty_filters(tmp_path: Path) -> None:
     store = SyncStateStore(tmp_path)
     try:
-        store.upsert_file_state(
-            FileState("note", "a", None, None, None, False)
-        )
-        store.upsert_file_state(
-            FileState("note", "b", None, None, None, True)
-        )
-        store.upsert_file_state(
-            FileState("note", "c", None, None, None, True)
-        )
+        store.upsert_file_state(FileState("note", "a", None, None, None, False))
+        store.upsert_file_state(FileState("note", "b", None, None, None, True))
+        store.upsert_file_state(FileState("note", "c", None, None, None, True))
         ids = {s.entity_id for s in store.list_dirty()}
         assert ids == {"b", "c"}
     finally:
@@ -200,9 +191,7 @@ def test_count_files(tmp_path: Path) -> None:
     store = SyncStateStore(tmp_path)
     try:
         assert store.count_files() == 0
-        store.upsert_file_state(
-            FileState("note", "x", None, None, None, False)
-        )
+        store.upsert_file_state(FileState("note", "x", None, None, None, False))
         assert store.count_files() == 1
     finally:
         store.close()
@@ -217,9 +206,7 @@ def test_clear_preserves_device_id(tmp_path: Path) -> None:
         original_id = store.device_id()
         original_label = store.device_label()
         store.set_start_page_token("token-xyz")
-        store.upsert_file_state(
-            FileState("note", "a", "fid", "etag", None, False)
-        )
+        store.upsert_file_state(FileState("note", "a", "fid", "etag", None, False))
         assert store.start_page_token() == "token-xyz"
         assert store.count_files() == 1
 

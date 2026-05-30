@@ -113,9 +113,7 @@ def resolve_client_config(
     return EMBEDDED_OAUTH_CLIENT
 
 
-SCOPES: tuple[str, ...] = (
-    "https://www.googleapis.com/auth/drive.appdata",
-)
+SCOPES: tuple[str, ...] = ("https://www.googleapis.com/auth/drive.appdata",)
 
 
 # The "magic" parent ID for Google's per-app hidden folder. Used as
@@ -208,9 +206,7 @@ def run_connect_flow(
     # chain. The passed-in path is only ONE of three sources;
     # ``resolve_client_config`` also checks env var + embedded.
     client_config = resolve_client_config(client_secrets_path)
-    flow = InstalledAppFlow.from_client_config(
-        client_config, scopes=list(SCOPES)
-    )
+    flow = InstalledAppFlow.from_client_config(client_config, scopes=list(SCOPES))
     try:
         # `run_local_server` opens the browser, spins a tiny HTTP
         # server on the chosen loopback port, blocks until the
@@ -231,11 +227,7 @@ def run_connect_flow(
     # Capture identity. about().get with fields=user(emailAddress, displayName)
     # is the smallest call that proves the token works.
     drive = build("drive", "v3", credentials=creds, cache_discovery=False)
-    about = (
-        drive.about()
-        .get(fields="user(emailAddress,displayName)")
-        .execute()
-    )
+    about = drive.about().get(fields="user(emailAddress,displayName)").execute()
     user_email = about.get("user", {}).get("emailAddress") or "(unknown)"
     user_display_name = about.get("user", {}).get("displayName")
 

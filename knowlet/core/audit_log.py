@@ -144,16 +144,12 @@ class AuditEventStore:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS events_ts_idx ON events(ts)")
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS events_kind_idx ON events(kind)"
-        )
+        conn.execute("CREATE INDEX IF NOT EXISTS events_kind_idx ON events(kind)")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS events_entity_idx ON events(entity_type, entity_id)"
         )
         # Schema version handshake.
-        row = conn.execute(
-            "SELECT value FROM meta WHERE key = 'schema_version'"
-        ).fetchone()
+        row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         if row is None:
             conn.execute(
                 "INSERT INTO meta(key, value) VALUES('schema_version', ?)",
@@ -337,8 +333,8 @@ def _summarize_payload(ev: AuditEvent) -> str:
         title = ev.payload["title"]
         rest = {k: v for k, v in ev.payload.items() if k != "title"}
         if not rest:
-            return f"\"{title}\""
-        return f"\"{title}\" ({_compact(rest)})"
+            return f'"{title}"'
+        return f'"{title}" ({_compact(rest)})'
     return _compact(ev.payload)
 
 

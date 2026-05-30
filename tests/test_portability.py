@@ -40,9 +40,7 @@ def _seeded_vault(tmp_path: Path) -> Vault:
     att_dir.mkdir(parents=True, exist_ok=True)
     (att_dir / "fake.png").write_bytes(b"PNGBYTES")
     # A .knowlet file we expect to round-trip.
-    (v.state_dir / "favorites.json").write_text(
-        '{"ids": ["FAKE"]}', encoding="utf-8"
-    )
+    (v.state_dir / "favorites.json").write_text('{"ids": ["FAKE"]}', encoding="utf-8")
     # And a sensitive file we expect to be EXCLUDED.
     (v.state_dir / "sync_credentials.json").write_text(
         '{"token": "should-not-be-in-archive"}', encoding="utf-8"
@@ -68,9 +66,7 @@ def test_export_writes_archive_with_manifest(tmp_path: Path) -> None:
         names = set(zf.namelist())
         # Manifest at root.
         assert MANIFEST_FILENAME in names
-        manifest = ExportManifest.from_json(
-            zf.read(MANIFEST_FILENAME).decode("utf-8")
-        )
+        manifest = ExportManifest.from_json(zf.read(MANIFEST_FILENAME).decode("utf-8"))
         assert manifest.note_count == 2
         assert manifest.attachment_count == 1
         # Notes + attachment round-trip.
@@ -80,15 +76,11 @@ def test_export_writes_archive_with_manifest(tmp_path: Path) -> None:
         # Kept .knowlet entries.
         assert ".knowlet/favorites.json" in names
         # Excluded entries.
-        assert all(
-            "sync_credentials.json" not in n for n in names
-        ), f"credentials leaked into archive: {names}"
-        assert all(
-            "snapshots/" not in n for n in names
-        ), f"snapshots leaked into archive: {names}"
-        assert all(
-            "index.sqlite" not in n for n in names
-        ), f"index leaked: {names}"
+        assert all("sync_credentials.json" not in n for n in names), (
+            f"credentials leaked into archive: {names}"
+        )
+        assert all("snapshots/" not in n for n in names), f"snapshots leaked into archive: {names}"
+        assert all("index.sqlite" not in n for n in names), f"index leaked: {names}"
 
 
 def test_export_omits_excluded_paths_even_when_present(
@@ -137,9 +129,7 @@ def test_restore_unpacks_to_target(tmp_path: Path) -> None:
     archive = tmp_path / "vault.zip"
     build_export_archive(vault_root=v.root, output_path=archive)
     target = tmp_path / "restored"
-    report = restore_archive(
-        archive_path=archive, target_dir=target, dry_run=False
-    )
+    report = restore_archive(archive_path=archive, target_dir=target, dry_run=False)
     assert report.mode == "restore"
     assert report.notes_created == 2
     assert (target / MANIFEST_FILENAME).exists()
@@ -156,9 +146,7 @@ def test_restore_refuses_non_empty_target(tmp_path: Path) -> None:
     target.mkdir()
     (target / "unrelated.txt").write_text("hi", encoding="utf-8")
     with pytest.raises(FileExistsError):
-        restore_archive(
-            archive_path=archive, target_dir=target, dry_run=False
-        )
+        restore_archive(archive_path=archive, target_dir=target, dry_run=False)
 
 
 def test_restore_dry_run_reports_without_writing(tmp_path: Path) -> None:
@@ -166,9 +154,7 @@ def test_restore_dry_run_reports_without_writing(tmp_path: Path) -> None:
     archive = tmp_path / "vault.zip"
     build_export_archive(vault_root=v.root, output_path=archive)
     target = tmp_path / "preview"
-    report = restore_archive(
-        archive_path=archive, target_dir=target, dry_run=True
-    )
+    report = restore_archive(archive_path=archive, target_dir=target, dry_run=True)
     assert report.dry_run is True
     assert not target.exists()  # nothing written
     assert report.notes_created == 2
@@ -193,9 +179,7 @@ def test_merge_synthesizes_frontmatter_for_plain_md(tmp_path: Path) -> None:
     v = _seeded_vault(tmp_path)
     src = tmp_path / "import-src"
     src.mkdir()
-    (src / "external.md").write_text(
-        "# External\n\nfrom another tool", encoding="utf-8"
-    )
+    (src / "external.md").write_text("# External\n\nfrom another tool", encoding="utf-8")
     report = merge_directory(
         source_dir=src,
         vault_root=v.root,
@@ -291,9 +275,7 @@ def test_merge_preserves_existing_knowlet_notes(tmp_path: Path) -> None:
     src.mkdir()
     existing_id = new_id()
     existing_note = Note(id=existing_id, title="preserved", body="kept")
-    (src / f"{existing_id}.md").write_text(
-        existing_note.to_markdown(), encoding="utf-8"
-    )
+    (src / f"{existing_id}.md").write_text(existing_note.to_markdown(), encoding="utf-8")
     merge_directory(
         source_dir=src,
         vault_root=v.root,
@@ -317,12 +299,8 @@ def test_merge_skips_id_collisions(tmp_path: Path) -> None:
     src.mkdir()
     duplicate_id = new_id()
     duplicate = Note(id=duplicate_id, title="dup", body="from-export")
-    (src / f"{duplicate_id}.md").write_text(
-        duplicate.to_markdown(), encoding="utf-8"
-    )
-    (src / "fresh.md").write_text(
-        "# fresh\n\nbody", encoding="utf-8"
-    )
+    (src / f"{duplicate_id}.md").write_text(duplicate.to_markdown(), encoding="utf-8")
+    (src / "fresh.md").write_text("# fresh\n\nbody", encoding="utf-8")
     report = merge_directory(
         source_dir=src,
         vault_root=v.root,
@@ -347,15 +325,9 @@ def test_export_then_restore_preserves_note_content(tmp_path: Path) -> None:
     archive = tmp_path / "vault.zip"
     build_export_archive(vault_root=v.root, output_path=archive)
     target = tmp_path / "restored"
-    restore_archive(
-        archive_path=archive, target_dir=target, dry_run=False
-    )
-    src_notes = sorted(
-        Note.from_file(p).title for p in v.notes_dir.glob("*.md")
-    )
-    restored_notes = sorted(
-        Note.from_file(p).title for p in (target / "notes").glob("*.md")
-    )
+    restore_archive(archive_path=archive, target_dir=target, dry_run=False)
+    src_notes = sorted(Note.from_file(p).title for p in v.notes_dir.glob("*.md"))
+    restored_notes = sorted(Note.from_file(p).title for p in (target / "notes").glob("*.md"))
     assert src_notes == restored_notes
 
 

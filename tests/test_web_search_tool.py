@@ -75,9 +75,7 @@ def test_web_search_returns_results_via_provider(tmp_path: Path, monkeypatch):
     assert ctx.per_turn["web_search"] == 1
 
 
-def test_web_search_auto_prefers_hosted_search_over_ddg_failure(
-    tmp_path: Path, monkeypatch
-):
+def test_web_search_auto_prefers_hosted_search_over_ddg_failure(tmp_path: Path, monkeypatch):
     """Regression for real dogfood failure: auto mode used DDG IA, which
     can SSL-fail or return sparse results even though cliproxyapi/Codex
     exposes hosted Responses web_search. Hosted search should win first."""

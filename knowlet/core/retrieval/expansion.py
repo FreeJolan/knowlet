@@ -96,13 +96,9 @@ def fuse_rrf(
     first_seen: dict[str, SearchHit] = {}
     for ranking in rankings:
         for rank, hit in enumerate(ranking, start=1):
-            fused_score[hit.note_id] = (
-                fused_score.get(hit.note_id, 0.0) + 1.0 / (rrf_k + rank)
-            )
+            fused_score[hit.note_id] = fused_score.get(hit.note_id, 0.0) + 1.0 / (rrf_k + rank)
             first_seen.setdefault(hit.note_id, hit)
-    ordered = sorted(
-        fused_score.items(), key=lambda kv: kv[1], reverse=True
-    )[:top_k]
+    ordered = sorted(fused_score.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
     out: list[SearchHit] = []
     for note_id, score in ordered:
         base = first_seen[note_id]

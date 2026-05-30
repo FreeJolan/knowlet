@@ -31,7 +31,14 @@ def _list_metas(notes: list[Note]) -> list[dict]:
     """Mimic what `KnowletIndex.list_notes(limit=None)` returns for the
     seeded notes — graph builder only uses id/title/path."""
     return [
-        {"id": n.id, "title": n.title, "path": n.filename, "tags": [], "created_at": "", "updated_at": ""}
+        {
+            "id": n.id,
+            "title": n.title,
+            "path": n.filename,
+            "tags": [],
+            "created_at": "",
+            "updated_at": "",
+        }
         for n in notes
     ]
 

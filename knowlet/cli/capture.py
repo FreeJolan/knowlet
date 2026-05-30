@@ -57,9 +57,7 @@ def _decide_interactively(default: str | None = None) -> Decision:
         console.print(f"[red]invalid:[/red] {ans!r}")
 
 
-def _commit_capsule(
-    *, title: str, body: str, source: str | None, decision: Decision
-) -> None:
+def _commit_capsule(*, title: str, body: str, source: str | None, decision: Decision) -> None:
     """Wire-equivalent of POST /api/capture/decide."""
     from knowlet.core.drafts import Draft, DraftStore
     from knowlet.core.embedding import make_backend
@@ -85,9 +83,7 @@ def _commit_capsule(
     note = Note(id=new_id(), title=title, body=body, source=source, kind=decision)
     path = vault.write_note(note)
     note.path = path
-    backend = make_backend(
-        cfg.embedding.backend, cfg.embedding.model, cfg.embedding.dim
-    )
+    backend = make_backend(cfg.embedding.backend, cfg.embedding.model, cfg.embedding.dim)
     idx = Index(vault.db_path, backend)
     idx.connect()
     try:
@@ -153,9 +149,7 @@ def capture_url_cmd(
     elif kind in ("knowledge", "reference", "defer"):
         decision = kind  # type: ignore[assignment]
     else:
-        err_console.print(
-            f"[red]invalid --kind:[/red] {kind!r} (knowledge / reference / defer)"
-        )
+        err_console.print(f"[red]invalid --kind:[/red] {kind!r} (knowledge / reference / defer)")
         raise typer.Exit(code=1)
     _commit_capsule(
         title=cap.title or url,
@@ -167,9 +161,7 @@ def capture_url_cmd(
 
 @app.command("file")
 def capture_file_cmd(
-    path: Annotated[
-        Path, typer.Argument(help="Markdown / text file to capture.")
-    ],
+    path: Annotated[Path, typer.Argument(help="Markdown / text file to capture.")],
     kind: Annotated[
         str | None,
         typer.Option(
@@ -209,10 +201,6 @@ def capture_file_cmd(
     elif kind in ("knowledge", "reference", "defer"):
         decision = kind  # type: ignore[assignment]
     else:
-        err_console.print(
-            f"[red]invalid --kind:[/red] {kind!r} (knowledge / reference / defer)"
-        )
+        err_console.print(f"[red]invalid --kind:[/red] {kind!r} (knowledge / reference / defer)")
         raise typer.Exit(code=1)
-    _commit_capsule(
-        title=title, body=text, source=str(path.name), decision=decision
-    )
+    _commit_capsule(title=title, body=text, source=str(path.name), decision=decision)

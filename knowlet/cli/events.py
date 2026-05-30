@@ -108,9 +108,7 @@ def events_list(
 def events_log(
     limit: Annotated[
         int,
-        typer.Option(
-            "--limit", help="Most recent N events to render into log.md."
-        ),
+        typer.Option("--limit", help="Most recent N events to render into log.md."),
     ] = 200,
 ) -> None:
     """Regenerate ``vault/.knowlet/log.md`` from the SQLite log.

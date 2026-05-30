@@ -338,11 +338,7 @@ def test_legacy_v1_note_reads_kind_as_knowledge(tmp_path):
     per ADR-0029 §4.5 (manual authoring path)."""
     legacy = tmp_path / "01ABC.md"
     legacy.write_text(
-        "---\n"
-        "id: 01ABC\n"
-        "title: legacy\n"
-        "---\n"
-        "body\n",
+        "---\nid: 01ABC\ntitle: legacy\n---\nbody\n",
         encoding="utf-8",
     )
     n = Note.from_file(legacy)
@@ -355,13 +351,7 @@ def test_invalid_kind_value_falls_back_to_knowledge(tmp_path):
     as status. Next write rewrites with a clean value."""
     bogus = tmp_path / "01XYZ.md"
     bogus.write_text(
-        "---\n"
-        "id: 01XYZ\n"
-        "title: bogus\n"
-        "schema_version: 2\n"
-        "kind: total-nonsense\n"
-        "---\n"
-        "body\n",
+        "---\nid: 01XYZ\ntitle: bogus\nschema_version: 2\nkind: total-nonsense\n---\nbody\n",
         encoding="utf-8",
     )
     n = Note.from_file(bogus)
@@ -390,11 +380,7 @@ def test_v1_file_reads_as_active_status(tmp_path):
     forward-compat contract of ADR-0018 §1: code at N reads N-1."""
     legacy = tmp_path / "01ABC.md"
     legacy.write_text(
-        "---\n"
-        "id: 01ABC\n"
-        "title: legacy\n"
-        "---\n"
-        "body\n",
+        "---\nid: 01ABC\ntitle: legacy\n---\nbody\n",
         encoding="utf-8",
     )
     n = Note.from_file(legacy)
@@ -413,11 +399,7 @@ def test_v1_file_writes_back_as_v2(tmp_path):
     v.init_layout()
     legacy = v.notes_dir / "01ABC.md"
     legacy.write_text(
-        "---\n"
-        "id: 01ABC\n"
-        "title: legacy\n"
-        "---\n"
-        "body\n",
+        "---\nid: 01ABC\ntitle: legacy\n---\nbody\n",
         encoding="utf-8",
     )
     n = Note.from_file(legacy)
@@ -434,13 +416,7 @@ def test_invalid_status_value_falls_back_to_active(tmp_path):
     Next write rewrites with a clean valid value."""
     bogus = tmp_path / "01XYZ.md"
     bogus.write_text(
-        "---\n"
-        "id: 01XYZ\n"
-        "title: bogus\n"
-        "schema_version: 2\n"
-        "status: total-nonsense\n"
-        "---\n"
-        "body\n",
+        "---\nid: 01XYZ\ntitle: bogus\nschema_version: 2\nstatus: total-nonsense\n---\nbody\n",
         encoding="utf-8",
     )
     n = Note.from_file(bogus)

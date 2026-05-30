@@ -22,9 +22,7 @@ from knowlet.core.drafts import (
 
 
 def _iso_days_ago(n: int) -> str:
-    return (
-        datetime.now(UTC) - timedelta(days=n)
-    ).isoformat()
+    return (datetime.now(UTC) - timedelta(days=n)).isoformat()
 
 
 # --------------------------------------------------- kind field
@@ -89,16 +87,12 @@ def test_age_helpers_at_thresholds() -> None:
     # 1 day before each threshold → not yet
     assert not Draft(created_at=_iso_days_ago(STALE_AGE_DAYS - 1)).is_stale
     assert not Draft(created_at=_iso_days_ago(WARN_AGE_DAYS - 1)).is_warn_age
-    assert not Draft(
-        created_at=_iso_days_ago(ARCHIVE_AGE_DAYS - 1)
-    ).should_auto_archive
+    assert not Draft(created_at=_iso_days_ago(ARCHIVE_AGE_DAYS - 1)).should_auto_archive
 
     # At threshold → yes
     assert Draft(created_at=_iso_days_ago(STALE_AGE_DAYS)).is_stale
     assert Draft(created_at=_iso_days_ago(WARN_AGE_DAYS)).is_warn_age
-    assert Draft(
-        created_at=_iso_days_ago(ARCHIVE_AGE_DAYS)
-    ).should_auto_archive
+    assert Draft(created_at=_iso_days_ago(ARCHIVE_AGE_DAYS)).should_auto_archive
 
 
 def test_age_days_handles_invalid_iso() -> None:
@@ -115,9 +109,7 @@ def test_enforce_age_archive_moves_old_drafts(tmp_path: Path) -> None:
     store = DraftStore(tmp_path / "drafts")
     fresh = Draft(title="fresh")
     stale = Draft(title="stale-warn", created_at=_iso_days_ago(40))
-    ancient = Draft(
-        title="ancient", created_at=_iso_days_ago(ARCHIVE_AGE_DAYS + 5)
-    )
+    ancient = Draft(title="ancient", created_at=_iso_days_ago(ARCHIVE_AGE_DAYS + 5))
     store.save(fresh)
     store.save(stale)
     store.save(ancient)
@@ -131,9 +123,7 @@ def test_enforce_age_archive_moves_old_drafts(tmp_path: Path) -> None:
 
     # Archived file is under .archive/<YYYY-MM>/ — not flat .archive/.
     archive_root = store.archive_dir
-    month_dirs = [
-        p for p in archive_root.iterdir() if p.is_dir()
-    ]
+    month_dirs = [p for p in archive_root.iterdir() if p.is_dir()]
     assert len(month_dirs) == 1
     # Month subdir name pattern YYYY-MM.
     assert len(month_dirs[0].name) == 7 and month_dirs[0].name[4] == "-"

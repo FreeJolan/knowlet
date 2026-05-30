@@ -51,9 +51,7 @@ def test_writes_create_db_file(tmp_path: Path) -> None:
     store = AuditEventStore(tmp_path)
     try:
         assert not events_db_path(tmp_path).exists()
-        store.append(
-            AuditEvent(kind="note.created", entity_type="note", entity_id="x")
-        )
+        store.append(AuditEvent(kind="note.created", entity_type="note", entity_id="x"))
         assert events_db_path(tmp_path).exists()
     finally:
         store.close()
@@ -61,9 +59,7 @@ def test_writes_create_db_file(tmp_path: Path) -> None:
 
 def test_schema_version_persisted(tmp_path: Path) -> None:
     store = AuditEventStore(tmp_path)
-    store.append(
-        AuditEvent(kind="note.created", entity_type="note", entity_id="x")
-    )
+    store.append(AuditEvent(kind="note.created", entity_type="note", entity_id="x"))
     store.close()
     # Re-open — schema_version handshake must NOT crash.
     store2 = AuditEventStore(tmp_path)
@@ -85,9 +81,7 @@ def test_schema_version_persisted(tmp_path: Path) -> None:
     conn.close()
     store3 = AuditEventStore(tmp_path)
     with pytest.raises(RuntimeError, match="schema_version"):
-        store3.append(
-            AuditEvent(kind="note.created", entity_type="note", entity_id="y")
-        )
+        store3.append(AuditEvent(kind="note.created", entity_type="note", entity_id="y"))
     store3.close()
 
 
@@ -96,16 +90,8 @@ def test_query_filters(tmp_path: Path) -> None:
     try:
         ids = ["n1", "n2", "n3"]
         for nid in ids:
-            store.append(
-                AuditEvent(
-                    kind="note.created", entity_type="note", entity_id=nid
-                )
-            )
-            store.append(
-                AuditEvent(
-                    kind="note.updated", entity_type="note", entity_id=nid
-                )
-            )
+            store.append(AuditEvent(kind="note.created", entity_type="note", entity_id=nid))
+            store.append(AuditEvent(kind="note.updated", entity_type="note", entity_id=nid))
         # Filter by kind.
         got = store.query(kinds=["note.created"])
         assert len(got) == 3
@@ -184,9 +170,7 @@ def test_no_mutation_api_exposed() -> None:
     """Append-only contract: the store class must NOT expose any
     public mutation method beyond ``append``. Migrations / repair
     tools open SQLite directly — the API is read-only."""
-    public_methods = {
-        m for m in dir(AuditEventStore) if not m.startswith("_")
-    }
+    public_methods = {m for m in dir(AuditEventStore) if not m.startswith("_")}
     forbidden = {"update", "delete", "remove", "drop", "clear"}
     leaks = public_methods & forbidden
     assert not leaks, f"audit log must stay append-only; got mutation methods: {leaks}"
@@ -284,8 +268,6 @@ def test_api_events_endpoint_round_trip(tmp_path: Path) -> None:
     kinds = [e["kind"] for e in body["events"]]
     assert "note.created" in kinds
     # Filter via the query string.
-    resp2 = client.get(
-        "/api/events", params={"kind": ["note.created"], "entity_id": note.id}
-    )
+    resp2 = client.get("/api/events", params={"kind": ["note.created"], "entity_id": note.id})
     assert resp2.status_code == 200
     assert all(e["entity_id"] == note.id for e in resp2.json()["events"])

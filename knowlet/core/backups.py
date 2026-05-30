@@ -131,9 +131,7 @@ class BackupStore:
                 # Race / permissions / external delete — log and move on.
                 import logging
 
-                logging.getLogger(__name__).warning(
-                    "could not delete backup %s", old.path
-                )
+                logging.getLogger(__name__).warning("could not delete backup %s", old.path)
 
     # ----------------------------------------------------- queries
 
@@ -147,9 +145,7 @@ class BackupStore:
         if not self._root.exists():
             return []
         out: list[BackupEntry] = []
-        type_dirs = (
-            [self._root / entity_type] if entity_type else list(self._root.iterdir())
-        )
+        type_dirs = [self._root / entity_type] if entity_type else list(self._root.iterdir())
         for tdir in type_dirs:
             if not tdir.is_dir():
                 continue
@@ -172,18 +168,11 @@ class BackupStore:
                     )
                 )
         # Newest-first within each (entity_type, entity_id).
-        out.sort(
-            key=lambda e: (e.entity_type, e.entity_id, e.timestamp), reverse=True
-        )
+        out.sort(key=lambda e: (e.entity_type, e.entity_id, e.timestamp), reverse=True)
         return out
 
     def _list_for(self, entity_type: str, entity_id: str) -> list[BackupEntry]:
-        return [
-            e
-            for e in self.list_backups(
-                entity_type=entity_type, entity_id=entity_id
-            )
-        ]
+        return [e for e in self.list_backups(entity_type=entity_type, entity_id=entity_id)]
 
     # ----------------------------------------------------- recovery
 
@@ -196,8 +185,7 @@ class BackupStore:
             raise FileNotFoundError(str(backup_path))
         if dest.exists():
             raise FileExistsError(
-                f"refusing to overwrite live file: {dest}. "
-                "Move it aside first, then restore."
+                f"refusing to overwrite live file: {dest}. Move it aside first, then restore."
             )
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(backup_path, dest)

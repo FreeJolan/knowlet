@@ -298,9 +298,7 @@ def notes_backlinks(
             exclude_id=meta["id"],
         )
         if not results:
-            console.print(
-                f"[dim]no other note links to {title!r} via [[Title]] yet.[/dim]"
-            )
+            console.print(f"[dim]no other note links to {title!r} via [[Title]] yet.[/dim]")
             return
 
         # Group by source for the same shape as the right rail.
