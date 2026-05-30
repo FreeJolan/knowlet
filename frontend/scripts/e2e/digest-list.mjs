@@ -994,7 +994,16 @@ try {
       state: "visible",
       timeout: 3000,
     });
-    await page.locator('[data-testid="diff-reject"]').click();
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.url().endsWith("/api/drafts/01C8DRAFTFROMRAWINFO/diff/reject") &&
+          r.request().method() === "POST" &&
+          r.ok(),
+        { timeout: 10000 },
+      ),
+      page.locator('[data-testid="diff-reject"]').click(),
+    ]);
     assert(rejectCalled, "reject diff endpoint is called");
     await page.locator('[data-testid="diff-review"]').waitFor({
       state: "detached",
@@ -1009,7 +1018,16 @@ try {
       state: "visible",
       timeout: 3000,
     });
-    await page.locator('[data-testid="diff-apply"]').click();
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.url().endsWith("/api/drafts/01C8DRAFTFROMRAWINFO/diff/accept") &&
+          r.request().method() === "POST" &&
+          r.ok(),
+        { timeout: 10000 },
+      ),
+      page.locator('[data-testid="diff-apply"]').click(),
+    ]);
     assert(acceptCalled, "accept diff endpoint is called");
     await page
       .locator('[data-testid="digest-draft-view-mode-toggle"] button[data-mode="preview"]')
@@ -1036,7 +1054,16 @@ try {
       timeout: 3000,
     });
     await page.locator('[data-testid="digest-folder-option-library-final"]').click();
-    await page.locator('[data-testid="digest-folder-confirm"]').click();
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.url().endsWith("/api/drafts/01C8DRAFTFROMRAWINFO/commit") &&
+          r.request().method() === "POST" &&
+          r.ok(),
+        { timeout: 10000 },
+      ),
+      page.locator('[data-testid="digest-folder-confirm"]').click(),
+    ]);
     assert(commitCalled, "commit endpoint is called");
     const commitTransition = page.locator(
       '[data-testid="digest-review-transition"][data-kind="commit"][data-target="library"][data-duration-ms="2000"][data-motion="shrink-then-horizontal"][data-distance="compact"][data-scale="large"]',
