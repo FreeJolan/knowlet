@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.4] - 2026-05-31
+
+Desktop updater ACL repair release.
+
+- Allow the signed desktop shell to use updater and relaunch commands from the
+  app's loopback backend URL.
+- Add a regression test that prevents future updater releases from omitting the
+  loopback Tauri capability.
+- Keep the app version, desktop package version, and Python package version in
+  sync for the repair release.
+
 ## [0.0.3] - 2026-05-30
 
 Desktop daily dogfood release.
