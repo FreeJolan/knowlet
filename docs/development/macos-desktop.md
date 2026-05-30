@@ -21,10 +21,20 @@ PyInstaller backend sidecars for both Apple Silicon and Intel Macs.
   - The native folder picker validates that the selected folder contains
     `.knowlet/`.
 - Runtime vault switching:
-  - The native File menu exposes `Open Vault...` with `CmdOrCtrl+O`.
+  - The native Vault menu exposes `Open Vault...` with `CmdOrCtrl+O`.
   - Choosing another valid vault starts a fresh backend on a new loopback port,
     navigates the main window to it, stops the previous backend, and records the
     vault as most recent.
+- Digest lifecycle:
+  - The bundled backend starts the existing Stage C auto-pull loop after web
+    bootstrap. It checks immediately when the desktop app comes online, then
+    checks periodically so a cross-day online session pulls the next day's
+    sources.
+  - The main header Digest icon still polls `/api/digest/status` and animates
+    while a pull is running.
+  - The native Digest menu exposes a disabled status row plus `Open Digest` and
+    `Pull Digest Now`. Menu actions are bridged into React with Tauri events,
+    and React writes the latest status back to the native menu.
 - Backend lifecycle:
   - The desktop shell picks a loopback port.
   - It starts the bundled backend sidecar on `127.0.0.1`.
@@ -111,7 +121,6 @@ PATH="/usr/bin:/bin" KNOWLET_VAULT=/path/to/vault \
 ## Current external-distribution gaps
 
 - No first-run vault onboarding beyond the native folder picker.
-- No desktop menu-bar / background status surface for Stage C automatic pulls.
 - No Dock affordance or explicit recent-vault submenu yet.
 - Hard-killing the parent process with a signal can orphan the sidecar; normal
   app shutdown still goes through the desktop lifecycle guard.

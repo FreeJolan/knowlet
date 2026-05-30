@@ -8,9 +8,14 @@ use backend::{resolve_frontend_dist, validate_vault_dir, BackendProcess, VAULT_E
 use recent_vaults::{record_recent_vault, resolve_startup_vault_with_recent};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, Submenu};
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const MENU_OPEN_VAULT: &str = "open-vault";
+const MENU_OPEN_DIGEST: &str = "open-digest";
+const MENU_PULL_DIGEST: &str = "pull-digest";
+const MENU_DIGEST_STATUS: &str = "digest-status";
+const EVENT_OPEN_DIGEST: &str = "knowlet-open-digest";
+const EVENT_PULL_DIGEST: &str = "knowlet-pull-digest";
 
 struct DesktopState {
     backend: Mutex<Option<BackendProcess>>,
@@ -37,6 +42,11 @@ fn desktop_status(state: tauri::State<'_, DesktopState>) -> Result<DesktopStatus
     })
 }
 
+#[tauri::command]
+fn desktop_set_digest_status(app: tauri::AppHandle, status: String) -> Result<(), String> {
+    update_digest_menu_status(&app, &status)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -50,10 +60,34 @@ pub fn run() {
                 true,
                 Some("CmdOrCtrl+O"),
             )?;
-            let file_menu =
-                Submenu::with_id_and_items(handle, "file", "File", true, &[&open_vault])?;
+            let vault_menu =
+                Submenu::with_id_and_items(handle, "vault", "Vault", true, &[&open_vault])?;
+            let digest_status = MenuItem::with_id(
+                handle,
+                MENU_DIGEST_STATUS,
+                digest_status_menu_label("idle"),
+                false,
+                None::<&str>,
+            )?;
+            let open_digest =
+                MenuItem::with_id(handle, MENU_OPEN_DIGEST, "Open Digest", true, None::<&str>)?;
+            let pull_digest = MenuItem::with_id(
+                handle,
+                MENU_PULL_DIGEST,
+                "Pull Digest Now",
+                true,
+                None::<&str>,
+            )?;
+            let digest_menu = Submenu::with_id_and_items(
+                handle,
+                "digest",
+                "Digest",
+                true,
+                &[&digest_status, &open_digest, &pull_digest],
+            )?;
             let menu = Menu::default(handle)?;
-            menu.insert(&file_menu, 1)?;
+            menu.insert(&vault_menu, 1)?;
+            menu.insert(&digest_menu, 2)?;
             Ok(menu)
         })
         .on_menu_event(|app, event| {
@@ -61,12 +95,19 @@ pub fn run() {
                 if let Err(err) = open_vault_from_menu(app) {
                     show_desktop_error("Knowlet could not open that vault", &err);
                 }
+            } else if event.id() == MENU_OPEN_DIGEST {
+                emit_to_main_window(app, EVENT_OPEN_DIGEST);
+            } else if event.id() == MENU_PULL_DIGEST {
+                emit_to_main_window(app, EVENT_PULL_DIGEST);
             }
         })
         .manage(DesktopState {
             backend: Mutex::new(None),
         })
-        .invoke_handler(tauri::generate_handler![desktop_status])
+        .invoke_handler(tauri::generate_handler![
+            desktop_status,
+            desktop_set_digest_status
+        ])
         .setup(|app| {
             let recent_vaults_path = app
                 .path()
@@ -163,4 +204,53 @@ fn open_vault_from_menu(app: &tauri::AppHandle) -> Result<(), String> {
         let _ = record_recent_vault(&recent_vaults_dir.join("recent-vaults.json"), &vault);
     }
     Ok(())
+}
+
+fn emit_to_main_window(app: &tauri::AppHandle, event: &str) {
+    let _ = app.emit_to("main", event, ());
+}
+
+fn update_digest_menu_status(app: &tauri::AppHandle, status: &str) -> Result<(), String> {
+    let Some(menu) = app.menu() else {
+        return Ok(());
+    };
+    let Some(item) = menu.get(MENU_DIGEST_STATUS) else {
+        return Ok(());
+    };
+    let Some(item) = item.as_menuitem() else {
+        return Ok(());
+    };
+    item.set_text(digest_status_menu_label(status))
+        .map_err(|err| format!("failed to update Digest menu status: {err}"))?;
+    item.set_enabled(false)
+        .map_err(|err| format!("failed to disable Digest menu status: {err}"))
+}
+
+fn digest_status_menu_label(status: &str) -> &'static str {
+    match status {
+        "running" => "Status: Pulling...",
+        "ok" => "Status: Updated",
+        "error" => "Status: Needs Attention",
+        "paused" => "Status: Paused",
+        _ => "Status: Idle",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn digest_status_menu_label_maps_known_states() {
+        assert_eq!(
+            super::digest_status_menu_label("running"),
+            "Status: Pulling..."
+        );
+        assert_eq!(super::digest_status_menu_label("ok"), "Status: Updated");
+        assert_eq!(
+            super::digest_status_menu_label("error"),
+            "Status: Needs Attention"
+        );
+        assert_eq!(super::digest_status_menu_label("paused"), "Status: Paused");
+        assert_eq!(super::digest_status_menu_label("idle"), "Status: Idle");
+        assert_eq!(super::digest_status_menu_label("unknown"), "Status: Idle");
+    }
 }

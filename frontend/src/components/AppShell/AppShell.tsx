@@ -6,6 +6,8 @@
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   FileText,
   LayoutTemplate,
@@ -24,7 +26,13 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { getDigestStatus, getNote, getTree, updateNote } from "@/api/client";
+import {
+  getDigestStatus,
+  getNote,
+  getTree,
+  pullDigestSources,
+  updateNote,
+} from "@/api/client";
 import type { NoteFull, TreeFolder, TreeNote } from "@/api/types";
 import { FavoritesSection } from "@/components/Favorites/FavoritesSection";
 import { FileTree } from "@/components/FileTree/FileTree";
@@ -75,6 +83,14 @@ const DEFAULT_RAIL_PX = 340;
 const MIN_RAIL_PX = 240;
 const MAX_RAIL_PERCENT = 35;
 const RAIL_COLLAPSE_KEY = "knowlet.rail.collapsed.v1";
+
+function isDesktopRuntime(): boolean {
+  try {
+    return isTauri();
+  } catch {
+    return false;
+  }
+}
 
 function pxToPercent(px: number, windowWidth: number): number {
   if (windowWidth <= 0) return 18;
@@ -175,6 +191,56 @@ export function AppShell() {
   const digestTitle = digestPullRunning
     ? `${t("app.digest")} · ${t("digest.pullRunning")}`
     : t("app.digest");
+  const pullDigestNow = useCallback(async () => {
+    try {
+      await pullDigestSources();
+    } finally {
+      void qc.invalidateQueries({ queryKey: ["digest-status"] });
+      void qc.invalidateQueries({ queryKey: ["digest-items"] });
+      void qc.invalidateQueries({ queryKey: ["digest-sources"] });
+    }
+  }, [qc]);
+
+  useEffect(() => {
+    if (!isDesktopRuntime()) return;
+    void invoke("desktop_set_digest_status", {
+      status: digestPullState,
+    }).catch(() => undefined);
+  }, [digestPullState]);
+
+  useEffect(() => {
+    if (!isDesktopRuntime()) return;
+    let disposed = false;
+    let unlistenOpen: UnlistenFn | undefined;
+    let unlistenPull: UnlistenFn | undefined;
+
+    void listen("knowlet-open-digest", () => {
+      setDigestOpen(true);
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenOpen = unlisten;
+      }
+    });
+
+    void listen("knowlet-pull-digest", () => {
+      setDigestOpen(true);
+      void pullDigestNow();
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenPull = unlisten;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unlistenOpen?.();
+      unlistenPull?.();
+    };
+  }, [pullDigestNow]);
   // Phase 3 Stage 3 §3.4 — CaptureBox modal (⌘⇧V).
   const [captureOpen, setCaptureOpen] = useState(false);
   const [captureInitialUrl, setCaptureInitialUrl] = useState<string | undefined>();
