@@ -116,16 +116,17 @@ def bootstrap_chat(
     *,
     rescan: bool = True,
     prune_days: int = 30,
+    require_llm: bool = True,
 ) -> tuple[ChatRuntime, BootstrapReport]:
     """Set everything up and return a usable chat runtime.
 
     Raises:
-        ChatNotReadyError: if api_key is empty.
+        ChatNotReadyError: if require_llm is true and api_key is empty.
         IndexDimensionMismatchError: if persisted index doesn't match the
             configured embedding dim. Caller decides UX (CLI prints + exits;
             UI shows a dialog with `reindex --rebuild` suggestion).
     """
-    if not cfg.llm.api_key:
+    if require_llm and not cfg.llm.api_key:
         raise ChatNotReadyError(
             "LLM api_key is empty — run `knowlet config init` (or `config set llm.api_key …`)."
         )

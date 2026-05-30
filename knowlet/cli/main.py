@@ -127,9 +127,6 @@ def web(
 
     vault = resolve_vault_or_die()
     cfg = load_config_or_default(vault)
-    if not cfg.llm.api_key:
-        err_console.print("[red]LLM api_key is empty. Run `knowlet config init` first.[/red]")
-        raise typer.Exit(code=2)
 
     try:
         import uvicorn

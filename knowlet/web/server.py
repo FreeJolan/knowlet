@@ -1041,28 +1041,28 @@ class WebState:
         """
         if self.bootstrap_status in ("running", "ready"):
             return
-        if not self.config.llm.api_key:
-            # Per ADR-0012, AI is optional; an unconfigured vault is a legal
-            # state. Static + Notes endpoints work; chat endpoints will 503.
-            self.bootstrap_status = "idle"
-            return
 
         self.bootstrap_status = "running"
         self.bootstrap_error = None
 
         def _run() -> None:
             try:
-                runtime, _report = bootstrap_chat(self.vault, self.config)
-                self.runtime = runtime
-                scheduler = MiningScheduler(
+                runtime, _report = bootstrap_chat(
                     self.vault,
-                    runtime.llm,
-                    default_output_language=self.config.general.language,
+                    self.config,
+                    require_llm=False,
                 )
-                scheduler.start()
-                self.scheduler = scheduler
+                self.runtime = runtime
+                if self.config.llm.api_key:
+                    scheduler = MiningScheduler(
+                        self.vault,
+                        runtime.llm,
+                        default_output_language=self.config.general.language,
+                    )
+                    scheduler.start()
+                    self.scheduler = scheduler
+                    self.start_digest_auto_pull(runtime)
                 self.bootstrap_status = "ready"
-                self.start_digest_auto_pull(runtime)
             except Exception as exc:
                 self.bootstrap_error = exc
                 self.bootstrap_status = "error"
@@ -1164,7 +1164,11 @@ class WebState:
         # This is the test path (TestClient without `with`) and the
         # api-key-empty path.
         try:
-            runtime, _report = bootstrap_chat(self.vault, self.config)
+            runtime, _report = bootstrap_chat(
+                self.vault,
+                self.config,
+                require_llm=False,
+            )
         except ChatNotReadyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -7036,9 +7040,5 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:  # pragma: no cove
         backups=BackupStore(vault_root),
     )
     cfg = load_config(vault.root)
-    if not cfg.llm.api_key:
-        raise SystemExit(
-            "LLM api_key is empty — run `knowlet config init` (or `config set llm.api_key …`)."
-        )
     app = create_app(vault, cfg)
     uvicorn.run(app, host=host, port=port, log_level="info")

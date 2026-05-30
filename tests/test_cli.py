@@ -12,6 +12,8 @@ the option-parsing surface compiles cleanly.
 """
 
 import click
+import sys
+from types import SimpleNamespace
 from typer.main import get_command
 from typer.testing import CliRunner
 
@@ -145,6 +147,37 @@ def test_top_level_command_helps():
     """Each top-level command parses --help."""
     for cmd in ("web", "ls", "reindex", "doctor", "chat", "check-note"):
         _help(cmd)
+
+
+def test_web_starts_without_llm_api_key(tmp_path, monkeypatch):
+    """Opening a desktop vault must not be blocked by missing AI credentials."""
+    from knowlet.config import KnowletConfig, save_config
+    from knowlet.core.vault import Vault
+
+    v = Vault(tmp_path)
+    v.init_layout()
+    cfg = KnowletConfig()
+    cfg.embedding.backend = "dummy"
+    cfg.embedding.dim = 32
+    cfg.llm.api_key = ""
+    save_config(v.root, cfg)
+
+    called = {}
+
+    def fake_run(app_obj, *, host, port, log_level):
+        called["host"] = host
+        called["port"] = port
+        called["log_level"] = log_level
+        called["app"] = app_obj
+
+    monkeypatch.setenv("KNOWLET_VAULT", str(tmp_path))
+    monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=fake_run))
+
+    result = runner.invoke(app, ["web", "--port", "0"])
+
+    assert result.exit_code == 0, result.stdout
+    assert called["host"] == "127.0.0.1"
+    assert called["port"] == 0
 
 
 # ----------------------------------------------------------------- second-level

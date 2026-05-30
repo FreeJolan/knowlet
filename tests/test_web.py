@@ -83,6 +83,22 @@ def test_health(tmp_path: Path):
     assert body["model"] == cfg.llm.model
 
 
+def test_tree_available_without_llm_api_key(tmp_path: Path):
+    v, cfg = _ready_vault(tmp_path)
+    cfg.llm.api_key = ""
+    save_config(v.root, cfg)
+    v.write_note(Note(id=new_id(), title="Local-only note", body="readable without AI"))
+
+    client = TestClient(create_app(v, cfg))
+
+    health = client.get("/api/health")
+    assert health.status_code == 200
+
+    tree = client.get("/api/tree")
+    assert tree.status_code == 200, tree.text
+    assert any(note["title"] == "Local-only note" for note in tree.json()["notes"])
+
+
 def test_frontend_dist_env_override(tmp_path: Path, monkeypatch):
     custom_dist = tmp_path / "desktop-dist"
     custom_dist.mkdir()

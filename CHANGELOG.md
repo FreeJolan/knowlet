@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.7] - 2026-05-31
+
+Desktop vault open hotfix release.
+
+- Allow the desktop/web backend to start when a vault has no LLM API key.
+- Keep local note browsing and the file tree available while AI credentials are
+  unconfigured.
+- Preserve the stricter API-key requirement for the chat-first CLI bootstrap.
+
 ## [0.0.6] - 2026-05-31
 
 Desktop vault creation release.
