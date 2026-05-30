@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.3] - 2026-05-30
+
+Desktop daily dogfood release.
+
+- Remember recent vaults and reopen the most recent valid vault on launch.
+- Add native `Vault` menu actions for opening a vault, opening recent vaults,
+  and switching vaults without restarting the desktop app.
+- Add native `Digest` menu actions and status bridging for opening Digest and
+  pulling sources from the macOS menu bar.
+- Harden desktop backend lifecycle with readiness checks, per-vault backend
+  startup logs, clearer startup diagnostics, and parent-process watchdog
+  cleanup.
+- Preserve normal macOS behavior by hiding the main window on close and
+  restoring it from the Dock.
+
 ## [0.0.2] - 2026-05-30
 
 Desktop updater UX release.

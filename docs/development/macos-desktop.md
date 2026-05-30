@@ -87,7 +87,7 @@ PATH="/opt/homebrew/opt/rustup/bin:$PATH" npm run desktop:build
 Expected artifact:
 
 ```text
-frontend/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.2_universal.dmg
+frontend/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.3_universal.dmg
 ```
 
 The build script creates a simple DMG, signs it, submits it for notarization,
@@ -110,8 +110,8 @@ npx tsc --noEmit
 
 ```bash
 uv run pytest tests/test_web.py::test_frontend_dist_env_override
-spctl --assess --type open --context context:primary-signature --verbose=2 frontend/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.2_universal.dmg
-xcrun stapler validate frontend/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.2_universal.dmg
+spctl --assess --type open --context context:primary-signature --verbose=2 frontend/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.3_universal.dmg
+xcrun stapler validate frontend/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.3_universal.dmg
 codesign --verify --deep --strict --verbose=2 frontend/src-tauri/target/universal-apple-darwin/release/bundle/macos/Knowlet.app
 frontend/src-tauri/target/universal-apple-darwin/release/bundle/macos/Knowlet.app/Contents/MacOS/knowlet-backend --version
 arch -x86_64 frontend/src-tauri/target/universal-apple-darwin/release/bundle/macos/Knowlet.app/Contents/MacOS/knowlet-backend --version
