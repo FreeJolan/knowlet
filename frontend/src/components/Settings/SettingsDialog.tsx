@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   Cloud,
   CloudOff,
+  Computer,
   Download,
   Eye,
   EyeOff,
@@ -54,6 +55,10 @@ import {
   updateLLMConfig,
 } from "@/api/client";
 import {
+  DesktopUpdateSettingsPanel,
+  type DesktopUpdater,
+} from "@/components/DesktopUpdate";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -72,9 +77,16 @@ import {
 interface Props {
   open: boolean;
   onClose: () => void;
+  desktopUpdater?: DesktopUpdater;
+  onOpenDesktopUpdate?: () => void;
 }
 
-export function SettingsDialog({ open, onClose }: Props) {
+export function SettingsDialog({
+  open,
+  onClose,
+  desktopUpdater,
+  onOpenDesktopUpdate,
+}: Props) {
   const { t } = useTranslation();
   const [pref, setPref] = useState<ThemePreference>(() => getThemePreference());
 
@@ -101,6 +113,7 @@ export function SettingsDialog({ open, onClose }: Props) {
     | "ai"
     | "sync"
     | "vault"
+    | "desktop"
     | "advanced";
   const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
   const tabs: { key: SettingsTab; label: string; icon: typeof Sun }[] = [
@@ -108,6 +121,7 @@ export function SettingsDialog({ open, onClose }: Props) {
     { key: "ai", label: t("settings.tabs.ai"), icon: Zap },
     { key: "sync", label: t("settings.tabs.sync"), icon: Cloud },
     { key: "vault", label: t("settings.tabs.vault"), icon: Download },
+    { key: "desktop", label: t("settings.tabs.desktop"), icon: Computer },
     // Power-user trace / diagnostics; intentionally last per VS Code-style
     // "Application" section placement.
     { key: "advanced", label: t("settings.tabs.advanced"), icon: Activity },
@@ -212,6 +226,15 @@ export function SettingsDialog({ open, onClose }: Props) {
             )}
 
             {activeTab === "vault" && <VaultPortabilityPanel />}
+
+            {activeTab === "desktop" &&
+              desktopUpdater &&
+              onOpenDesktopUpdate && (
+                <DesktopUpdateSettingsPanel
+                  updater={desktopUpdater}
+                  onOpenUpdateDialog={onOpenDesktopUpdate}
+                />
+              )}
 
             {activeTab === "advanced" && (
               <>

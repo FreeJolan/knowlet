@@ -36,6 +36,7 @@ fn desktop_status(state: tauri::State<'_, DesktopState>) -> Result<DesktopStatus
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(DesktopState {
             backend: Mutex::new(None),
         })

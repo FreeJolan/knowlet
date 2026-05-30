@@ -37,6 +37,11 @@ import { SearchFocusMode } from "@/components/Search/SearchFocusMode";
 import { DraftsFocusMode } from "@/components/Drafts";
 import { DigestFocusMode } from "@/components/Digest";
 import { CaptureBox } from "@/components/Capture";
+import {
+  DesktopUpdateButton,
+  DesktopUpdateDialog,
+  useDesktopUpdater,
+} from "@/components/DesktopUpdate";
 import { DiffReview, DiscussPane } from "@/components/Discuss";
 import { SettingsDialog } from "@/components/Settings/SettingsDialog";
 import { NewDocDialog } from "@/components/NewDoc/NewDocDialog";
@@ -151,6 +156,8 @@ export function AppShell() {
   const [graphFocusOpen, setGraphFocusOpen] = useState(false);
   // Phase 1 D slice 1 — Settings dialog (currently only Appearance).
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const desktopUpdater = useDesktopUpdater();
   // Phase 1 D slice 2 — global search focus mode (Cmd+Shift+F).
   const [searchFocusOpen, setSearchFocusOpen] = useState(false);
   // Phase 3 Stage 3 §3.5 — Drafts focus mode (⌘I).
@@ -808,6 +815,10 @@ export function AppShell() {
             >
               <Trash2 className="size-4" />
             </Button>
+            <DesktopUpdateButton
+              updater={desktopUpdater}
+              onClick={() => setUpdateDialogOpen(true)}
+            />
             <Button
               variant="ghost"
               size="icon"
@@ -1050,6 +1061,13 @@ export function AppShell() {
       <SettingsDialog
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        desktopUpdater={desktopUpdater}
+        onOpenDesktopUpdate={() => setUpdateDialogOpen(true)}
+      />
+      <DesktopUpdateDialog
+        open={updateDialogOpen}
+        onOpenChange={setUpdateDialogOpen}
+        updater={desktopUpdater}
       />
       <SearchFocusMode
         open={searchFocusOpen}

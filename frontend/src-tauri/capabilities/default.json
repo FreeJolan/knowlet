@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default permissions for the Knowlet desktop shell.",
   "windows": ["main"],
-  "permissions": ["core:default", "updater:default"]
+  "permissions": ["core:default", "updater:default", "process:allow-restart"]
 }

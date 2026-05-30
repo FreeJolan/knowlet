@@ -6,6 +6,7 @@
     "templates": "模板",
     "graph": "图谱",
     "settings": "设置",
+    "update": "更新",
     "daily": "今日笔记",
     "newDocument": "新建文档",
     "quickActions": "快捷操作",
@@ -32,6 +33,7 @@
       "digest": "Digest",
       "sync": "同步",
       "vault": "Vault",
+      "desktop": "桌面端",
       "advanced": "高级"
     },
     "appearance": {
@@ -80,6 +82,34 @@
         "paused-by-backlog": "积压暂停"
       }
     }
+  },
+  "desktopUpdate": {
+    "title": "应用更新",
+    "description": "检查 GitHub Release 中的签名更新包，并在安装完成后重启 Knowlet。",
+    "phase": {
+      "unsupported": "仅桌面端支持自动更新",
+      "idle": "尚未检查更新",
+      "checking": "正在检查更新…",
+      "up-to-date": "已是最新版本",
+      "available": "发现新版本",
+      "downloading": "正在下载更新…",
+      "installing": "正在安装更新…",
+      "restarting": "正在重启 Knowlet…",
+      "error": "更新检查失败"
+    },
+    "versionLine": "当前 {{current}} → 可用 {{next}}",
+    "checkedAt": "上次检查：{{time}}",
+    "notChecked": "打开后会自动静默检查一次，也可以手动检查。",
+    "availableBadge": "可安装",
+    "downloading": "下载中",
+    "unsupportedHint": "当前运行环境不是 Tauri 桌面端，因此不会调用系统更新器。",
+    "settingsHint": "Knowlet 会在启动后静默检查一次；你也可以手动检查并安装签名更新包。",
+    "check": "检查更新",
+    "install": "下载并重启",
+    "openCheck": "打开检查",
+    "openInstall": "安装更新",
+    "headerCheck": "检查应用更新",
+    "headerAvailable": "发现可安装的 Knowlet 更新"
   },
   "drafts": {
     "title": "草稿 / Drafts",

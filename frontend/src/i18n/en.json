@@ -6,6 +6,7 @@
     "templates": "Templates",
     "graph": "Graph",
     "settings": "Settings",
+    "update": "Update",
     "daily": "Today's note",
     "newDocument": "New document",
     "quickActions": "Quick actions",
@@ -32,6 +33,7 @@
       "digest": "Digest",
       "sync": "Sync",
       "vault": "Vault",
+      "desktop": "Desktop",
       "advanced": "Advanced"
     },
     "appearance": {
@@ -80,6 +82,34 @@
         "paused-by-backlog": "Paused (backlog)"
       }
     }
+  },
+  "desktopUpdate": {
+    "title": "App updates",
+    "description": "Check for signed update packages from GitHub Releases, install them, and restart Knowlet.",
+    "phase": {
+      "unsupported": "Automatic updates are available in the desktop app only",
+      "idle": "No update check yet",
+      "checking": "Checking for updates…",
+      "up-to-date": "You are on the latest version",
+      "available": "New version available",
+      "downloading": "Downloading update…",
+      "installing": "Installing update…",
+      "restarting": "Restarting Knowlet…",
+      "error": "Update check failed"
+    },
+    "versionLine": "Current {{current}} → available {{next}}",
+    "checkedAt": "Last checked: {{time}}",
+    "notChecked": "Knowlet checks silently after opening. You can also check manually.",
+    "availableBadge": "Installable",
+    "downloading": "Downloading",
+    "unsupportedHint": "This runtime is not the Tauri desktop app, so Knowlet will not call the system updater.",
+    "settingsHint": "Knowlet checks silently after startup. You can also manually check and install a signed update package.",
+    "check": "Check for updates",
+    "install": "Download and restart",
+    "openCheck": "Open check",
+    "openInstall": "Install update",
+    "headerCheck": "Check for app updates",
+    "headerAvailable": "A Knowlet update is ready to install"
   },
   "drafts": {
     "title": "Drafts",
