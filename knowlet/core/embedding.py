@@ -1,12 +1,14 @@
 """Embedding backends.
 
-The default backend uses sentence-transformers. A `DummyBackend` is provided
-for environments without torch (tests, smoke runs without API access).
+The bundled backend is deterministic hash embeddings so Knowlet can open a
+fresh vault without downloading ML weights. Users who install the optional
+``embed`` extra can switch to sentence-transformers for semantic retrieval.
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 from typing import Any, Protocol
 
 import numpy as np
@@ -99,5 +101,7 @@ def make_backend(backend: str, model: str, dim: int) -> EmbeddingBackend:
     if backend == "dummy":
         return DummyBackend(dim=dim)
     if backend == "sentence_transformers":
+        if importlib.util.find_spec("sentence_transformers") is None:
+            return DummyBackend(dim=dim)
         return SentenceTransformersBackend(model_name=model)
     raise ValueError(f"unknown embedding backend: {backend}")

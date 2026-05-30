@@ -7,7 +7,9 @@ Config file lives at `<vault>/.knowlet/config.toml`.
 from __future__ import annotations
 
 import os
+import tempfile
 import tomllib  # stdlib (3.11+) — read only
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -37,8 +39,8 @@ class LLMConfig(BaseModel):
 
 
 class EmbeddingConfig(BaseModel):
-    backend: str = "sentence_transformers"
-    model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    backend: str = "dummy"
+    model: str = "dummy"
     dim: int = 384
 
 
@@ -176,7 +178,14 @@ def save_config(vault: Path, cfg: KnowletConfig) -> None:
             lines.append(f"{k} = {_toml_value(v)}")
         lines.append("")
     text = "\n".join(lines).rstrip() + "\n"
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    tmp.replace(p)
+    fd, tmp_name = tempfile.mkstemp(prefix=f"{p.name}.", suffix=".tmp", dir=p.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(tmp, 0o600)
+        tmp.replace(p)
+    except Exception:
+        with suppress(OSError):
+            tmp.unlink()
+        raise

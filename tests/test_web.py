@@ -99,6 +99,37 @@ def test_tree_available_without_llm_api_key(tmp_path: Path):
     assert any(note["title"] == "Local-only note" for note in tree.json()["notes"])
 
 
+def test_tree_available_when_sentence_transformers_is_not_installed(tmp_path: Path, monkeypatch):
+    """Desktop sidecars intentionally exclude sentence-transformers.
+
+    Old/newly-created vaults may still carry the historical default config, so
+    opening the vault must fall back to the bundled embedding backend instead
+    of taking the whole tree API down.
+    """
+    import knowlet.core.embedding as embedding_module
+
+    v, cfg = _ready_vault(tmp_path)
+    cfg.embedding.backend = "sentence_transformers"
+    cfg.embedding.dim = 384
+    save_config(v.root, cfg)
+    v.write_note(Note(id=new_id(), title="Bundled desktop note", body="still readable"))
+
+    original_find_spec = embedding_module.importlib.util.find_spec
+
+    def fake_find_spec(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if name == "sentence_transformers":
+            return None
+        return original_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(embedding_module.importlib.util, "find_spec", fake_find_spec)
+
+    client = TestClient(create_app(v, cfg))
+
+    tree = client.get("/api/tree")
+    assert tree.status_code == 200, tree.text
+    assert any(note["title"] == "Bundled desktop note" for note in tree.json()["notes"])
+
+
 def test_frontend_dist_env_override(tmp_path: Path, monkeypatch):
     custom_dist = tmp_path / "desktop-dist"
     custom_dist.mkdir()

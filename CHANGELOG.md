@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.8] - 2026-05-31
+
+Desktop new-vault tree hotfix release.
+
+- Default fresh vaults to the bundled embedding backend so the self-contained
+  desktop sidecar can open a new vault without optional ML dependencies.
+- Fall back to the bundled embedding backend when an older vault is configured
+  for `sentence_transformers` but the optional package is not installed.
+- Make config writes use unique temporary files so parallel config updates do
+  not collide on `.knowlet/config.toml.tmp`.
+
 ## [0.0.7] - 2026-05-31
 
 Desktop vault open hotfix release.

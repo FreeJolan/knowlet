@@ -11,9 +11,10 @@ have their own tests) — we test that every command is *reachable* and that
 the option-parsing surface compiles cleanly.
 """
 
-import click
 import sys
 from types import SimpleNamespace
+
+import click
 from typer.main import get_command
 from typer.testing import CliRunner
 
@@ -96,6 +97,17 @@ def test_desktop_parent_pid_env_parser(monkeypatch):
 def test_vault_help():
     out = _help("vault")
     assert "init" in out
+
+
+def test_vault_init_defaults_to_bundled_embedding_backend(tmp_path):
+    """Fresh vaults must open in the self-contained desktop sidecar."""
+    from knowlet.config import load_config
+
+    result = runner.invoke(app, ["vault", "init", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    cfg = load_config(tmp_path)
+    assert cfg.embedding.backend == "dummy"
 
 
 def test_config_help():
