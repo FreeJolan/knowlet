@@ -26,15 +26,7 @@ concurrency:
 jobs:
   macos-desktop:
     name: Build notarized macOS desktop package
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner || 'macos-15' }}
-    env:
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
-      APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      SIGNING_KEYCHAIN_PASSWORD: ${{ secrets.SIGNING_KEYCHAIN_PASSWORD }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted' && 'knowlet-release' || 'macos-15' }}
     steps:
       - name: Resolve release tag
         id: release
@@ -89,6 +81,13 @@ jobs:
       - name: Install Apple signing assets
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.runner != 'self-hosted' }}
         env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGNING_KEYCHAIN_PASSWORD: ${{ secrets.SIGNING_KEYCHAIN_PASSWORD }}
           KEYCHAIN_PATH: ${{ runner.temp }}/knowlet-signing.keychain-db
           CERTIFICATE_PATH: ${{ runner.temp }}/developer-id-application.p12
           API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
@@ -130,14 +129,25 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      - name: Build signed and notarized DMG
+      - name: Build signed and notarized DMG with hosted signing assets
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.runner != 'self-hosted' }}
         working-directory: frontend
         env:
-          KNOWLET_APPLE_TEAM_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted' && 'N8384H66R9' || secrets.APPLE_TEAM_ID }}
-          APPLE_API_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted' && '' || secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted' && '' || secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted' && '' || format('{0}/private_keys/AuthKey_{1}.p8', runner.temp, secrets.APPLE_API_KEY_ID) }}
+          KNOWLET_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
         run: npm run desktop:build
+
+      - name: Build signed and notarized DMG with local keychain
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted' }}
+        working-directory: frontend
+        env:
+          KNOWLET_APPLE_TEAM_ID: N8384H66R9
+          KNOWLET_NOTARY_PROFILE: knowlet-notary
+        run: |
+          unset APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH
+          npm run desktop:build
 
       - name: Verify desktop release artifact
         id: artifact
