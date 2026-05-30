@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.6] - 2026-05-31
+
+Desktop vault creation release.
+
+- Add a first-run Vault Launcher for creating or opening a Knowlet vault when
+  no valid vault is already selected.
+- Add a native `Vault > New Vault...` action and a launcher flow that creates a
+  new folder from the chosen parent directory and vault name.
+- Handle existing-folder edge cases: empty folders require explicit
+  confirmation, non-empty folders are blocked with a suggested alternate name,
+  and already-initialized vaults are opened instead of re-created.
+- Reject nested vaults during both creation and open-vault validation.
+
 ## [0.0.5] - 2026-05-31
 
 Desktop startup hotfix release.

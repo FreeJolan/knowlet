@@ -7,8 +7,11 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use serde::Serialize;
+
 const LOOPBACK_HOST: &str = "127.0.0.1";
 const VAULT_MARKER_DIR: &str = ".knowlet";
+const EMPTY_DIR_IGNORED_ENTRIES: &[&str] = &[".DS_Store", ".localized", "Icon\r"];
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 const BACKEND_BIN_NAME: &str = "knowlet-backend";
 const FRONTEND_DIST_RESOURCE: &str = "frontend-dist";
@@ -23,6 +26,28 @@ pub struct BackendProgram {
     pub prefix_args: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NewVaultPreviewStatus {
+    Ready,
+    ExistingEmpty,
+    ExistingNonEmpty,
+    ExistingVault,
+    Invalid,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct NewVaultPreview {
+    pub status: NewVaultPreviewStatus,
+    pub name: String,
+    pub parent: String,
+    pub target: String,
+    pub can_create: bool,
+    pub requires_empty_dir_confirmation: bool,
+    pub message: String,
+    pub suggested_name: Option<String>,
+}
+
 pub fn validate_vault_dir(path: &Path) -> Result<PathBuf, String> {
     if !path.exists() {
         return Err(format!("vault path does not exist: {}", path.display()));
@@ -33,15 +58,340 @@ pub fn validate_vault_dir(path: &Path) -> Result<PathBuf, String> {
             path.display()
         ));
     }
-    let marker = path.join(VAULT_MARKER_DIR);
+    let resolved = path
+        .canonicalize()
+        .map_err(|err| format!("failed to resolve vault path: {err}"))?;
+    let marker = resolved.join(VAULT_MARKER_DIR);
     if !marker.is_dir() {
         return Err(format!(
             "selected directory is not a knowlet vault: missing {}",
             VAULT_MARKER_DIR
         ));
     }
-    path.canonicalize()
-        .map_err(|err| format!("failed to resolve vault path: {err}"))
+    if let Some(ancestor) = find_vault_ancestor(&resolved) {
+        return Err(format!(
+            "nested vaults are not supported: {} is inside {}",
+            resolved.display(),
+            ancestor.display()
+        ));
+    }
+    Ok(resolved)
+}
+
+pub fn preview_new_vault(parent: &Path, name: &str) -> NewVaultPreview {
+    match new_vault_target_state(parent, name) {
+        Ok(state) => state.into_preview(),
+        Err(message) => NewVaultPreview {
+            status: NewVaultPreviewStatus::Invalid,
+            name: name.trim().to_string(),
+            parent: parent.display().to_string(),
+            target: String::new(),
+            can_create: false,
+            requires_empty_dir_confirmation: false,
+            message,
+            suggested_name: None,
+        },
+    }
+}
+
+pub fn create_vault_dir(
+    parent: &Path,
+    name: &str,
+    allow_existing_empty: bool,
+) -> Result<PathBuf, String> {
+    create_vault_dir_with_initializer(parent, name, allow_existing_empty, initialize_vault_layout)
+}
+
+pub fn create_vault_dir_with_initializer(
+    parent: &Path,
+    name: &str,
+    allow_existing_empty: bool,
+    initializer: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<PathBuf, String> {
+    let state = new_vault_target_state(parent, name)?;
+    match state.kind {
+        NewVaultTargetKind::Ready => {
+            fs::create_dir(&state.target).map_err(|err| {
+                format!(
+                    "failed to create vault folder {}: {err}",
+                    state.target.display()
+                )
+            })?;
+        }
+        NewVaultTargetKind::ExistingEmpty => {
+            if !allow_existing_empty {
+                return Err(format!(
+                    "target folder already exists and is empty: {}",
+                    state.target.display()
+                ));
+            }
+        }
+        NewVaultTargetKind::ExistingNonEmpty => {
+            return Err(format!(
+                "target folder already exists and contains files: {}",
+                state.target.display()
+            ));
+        }
+        NewVaultTargetKind::ExistingVault => {
+            return Err(format!(
+                "target folder is already a Knowlet vault: {}",
+                state.target.display()
+            ));
+        }
+    }
+
+    initializer(&state.target)?;
+    validate_vault_dir(&state.target)
+}
+
+pub fn initialize_vault_layout(vault: &Path) -> Result<(), String> {
+    let repo_root = repo_root_from_manifest()?;
+    let current_exe = std::env::current_exe()
+        .map_err(|err| format!("failed to resolve current executable: {err}"))?;
+    let backend_program =
+        resolve_backend_program(std::env::var_os(BACKEND_BIN_ENV), &current_exe, &repo_root)?;
+    run_vault_init(&backend_program, vault)
+}
+
+pub fn run_vault_init(program: &BackendProgram, vault: &Path) -> Result<(), String> {
+    let output = Command::new(&program.executable)
+        .args(&program.prefix_args)
+        .args(["vault", "init"])
+        .arg(vault)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|err| format!("failed to initialize Knowlet vault: {err}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "Knowlet vault initialization failed with status {}{}\n{}",
+        output.status,
+        if stdout.trim().is_empty() {
+            String::new()
+        } else {
+            format!("\nstdout:\n{}", stdout.trim())
+        },
+        if stderr.trim().is_empty() {
+            "stderr: <empty>".to_string()
+        } else {
+            format!("stderr:\n{}", stderr.trim())
+        }
+    ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NewVaultTargetKind {
+    Ready,
+    ExistingEmpty,
+    ExistingNonEmpty,
+    ExistingVault,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NewVaultTargetState {
+    kind: NewVaultTargetKind,
+    name: String,
+    parent: PathBuf,
+    target: PathBuf,
+    suggested_name: Option<String>,
+}
+
+impl NewVaultTargetState {
+    fn into_preview(self) -> NewVaultPreview {
+        let (status, can_create, requires_empty_dir_confirmation, message) = match self.kind {
+            NewVaultTargetKind::Ready => (
+                NewVaultPreviewStatus::Ready,
+                true,
+                false,
+                format!("Create a new vault folder at {}", self.target.display()),
+            ),
+            NewVaultTargetKind::ExistingEmpty => (
+                NewVaultPreviewStatus::ExistingEmpty,
+                true,
+                true,
+                format!(
+                    "The folder {} already exists and is empty. Knowlet can initialize it as a vault.",
+                    self.target.display()
+                ),
+            ),
+            NewVaultTargetKind::ExistingNonEmpty => (
+                NewVaultPreviewStatus::ExistingNonEmpty,
+                false,
+                false,
+                format!(
+                    "The folder {} already exists and contains files. Choose another name or import it later.",
+                    self.target.display()
+                ),
+            ),
+            NewVaultTargetKind::ExistingVault => (
+                NewVaultPreviewStatus::ExistingVault,
+                false,
+                false,
+                format!(
+                    "The folder {} is already a Knowlet vault. Open it instead.",
+                    self.target.display()
+                ),
+            ),
+        };
+
+        NewVaultPreview {
+            status,
+            name: self.name,
+            parent: self.parent.display().to_string(),
+            target: self.target.display().to_string(),
+            can_create,
+            requires_empty_dir_confirmation,
+            message,
+            suggested_name: self.suggested_name,
+        }
+    }
+}
+
+fn new_vault_target_state(parent: &Path, name: &str) -> Result<NewVaultTargetState, String> {
+    let name = normalize_vault_name(name)?;
+    if !parent.exists() {
+        return Err(format!(
+            "vault parent folder does not exist: {}",
+            parent.display()
+        ));
+    }
+    if !parent.is_dir() {
+        return Err(format!(
+            "vault parent must be a directory: {}",
+            parent.display()
+        ));
+    }
+    let parent = parent
+        .canonicalize()
+        .map_err(|err| format!("failed to resolve vault parent folder: {err}"))?;
+    if let Some(ancestor) = vault_dir_at_or_above(&parent) {
+        return Err(format!(
+            "nested vaults are not supported: {} is inside {}",
+            parent.display(),
+            ancestor.display()
+        ));
+    }
+
+    let target = parent.join(&name);
+    if !target.exists() {
+        return Ok(NewVaultTargetState {
+            kind: NewVaultTargetKind::Ready,
+            name,
+            parent,
+            target,
+            suggested_name: None,
+        });
+    }
+    if !target.is_dir() {
+        return Err(format!(
+            "target vault path already exists and is not a directory: {}",
+            target.display()
+        ));
+    }
+
+    let target = target
+        .canonicalize()
+        .map_err(|err| format!("failed to resolve target vault folder: {err}"))?;
+    if target.join(VAULT_MARKER_DIR).is_dir() {
+        let suggested_name = suggest_available_vault_name(&parent, name.as_str());
+        return Ok(NewVaultTargetState {
+            kind: NewVaultTargetKind::ExistingVault,
+            name,
+            parent,
+            target,
+            suggested_name,
+        });
+    }
+    if !directory_is_empty_for_vault(&target)? {
+        let suggested_name = suggest_available_vault_name(&parent, name.as_str());
+        return Ok(NewVaultTargetState {
+            kind: NewVaultTargetKind::ExistingNonEmpty,
+            name,
+            parent,
+            target,
+            suggested_name,
+        });
+    }
+
+    Ok(NewVaultTargetState {
+        kind: NewVaultTargetKind::ExistingEmpty,
+        name,
+        parent,
+        target,
+        suggested_name: None,
+    })
+}
+
+fn normalize_vault_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("vault name is required".to_string());
+    }
+    if trimmed == "." || trimmed == ".." {
+        return Err("vault name cannot be . or ..".to_string());
+    }
+    if trimmed == VAULT_MARKER_DIR {
+        return Err(format!("vault name cannot be {VAULT_MARKER_DIR}"));
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains('\0') {
+        return Err("vault name cannot contain path separators".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn directory_is_empty_for_vault(path: &Path) -> Result<bool, String> {
+    for entry in fs::read_dir(path)
+        .map_err(|err| format!("failed to inspect folder {}: {err}", path.display()))?
+    {
+        let entry =
+            entry.map_err(|err| format!("failed to inspect folder {}: {err}", path.display()))?;
+        let name = entry.file_name();
+        if EMPTY_DIR_IGNORED_ENTRIES
+            .iter()
+            .any(|ignored| name.to_string_lossy() == *ignored)
+        {
+            continue;
+        }
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn suggest_available_vault_name(parent: &Path, base_name: &str) -> Option<String> {
+    for index in 2..100 {
+        let candidate = format!("{base_name} {index}");
+        if !parent.join(&candidate).exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn vault_dir_at_or_above(path: &Path) -> Option<PathBuf> {
+    let mut current = Some(path);
+    while let Some(candidate) = current {
+        if candidate.join(VAULT_MARKER_DIR).is_dir() {
+            return Some(candidate.to_path_buf());
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+fn find_vault_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut current = path.parent();
+    while let Some(candidate) = current {
+        if candidate.join(VAULT_MARKER_DIR).is_dir() {
+            return Some(candidate.to_path_buf());
+        }
+        current = candidate.parent();
+    }
+    None
 }
 
 pub fn find_available_port() -> Result<u16, String> {
@@ -366,6 +716,20 @@ mod tests {
     }
 
     #[test]
+    fn rejects_nested_vault_when_opening_existing_vault() {
+        let dir = tempdir().unwrap();
+        let outer = dir.path().join("outer");
+        let inner = outer.join("inner");
+        fs::create_dir_all(outer.join(".knowlet")).unwrap();
+        fs::create_dir_all(inner.join(".knowlet")).unwrap();
+
+        let err = super::validate_vault_dir(&inner).unwrap_err();
+
+        assert!(err.contains("nested"));
+        assert!(err.contains("outer"));
+    }
+
+    #[test]
     fn rejects_directory_without_knowlet_marker() {
         let dir = tempdir().unwrap();
 
@@ -521,6 +885,113 @@ mod tests {
             super::resolve_startup_vault(None, || Some(dir.path().to_path_buf())).unwrap_err();
 
         assert!(err.contains(".knowlet"));
+    }
+
+    #[test]
+    fn creates_new_vault_in_fresh_child_directory() {
+        let dir = tempdir().unwrap();
+        let mut initialized = false;
+
+        let vault =
+            super::create_vault_dir_with_initializer(dir.path(), "Research", false, |target| {
+                initialized = true;
+                assert_eq!(
+                    target.file_name().and_then(|name| name.to_str()),
+                    Some("Research")
+                );
+                fs::create_dir_all(target.join(".knowlet")).unwrap();
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(initialized);
+        assert_eq!(vault, dir.path().join("Research").canonicalize().unwrap());
+        assert!(vault.join(".knowlet").is_dir());
+    }
+
+    #[test]
+    fn reuses_existing_empty_directory_only_after_confirmation() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("B");
+        fs::create_dir(&target).unwrap();
+
+        let preview = super::preview_new_vault(dir.path(), "B");
+        assert_eq!(preview.status, super::NewVaultPreviewStatus::ExistingEmpty);
+        assert!(preview.can_create);
+        assert!(preview.requires_empty_dir_confirmation);
+
+        let err = super::create_vault_dir_with_initializer(dir.path(), "B", false, |_| Ok(()))
+            .unwrap_err();
+        assert!(err.contains("empty"));
+        assert!(!target.join(".knowlet").exists());
+
+        let vault = super::create_vault_dir_with_initializer(dir.path(), "B", true, |target| {
+            fs::create_dir_all(target.join(".knowlet")).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(vault, target.canonicalize().unwrap());
+        assert!(vault.join(".knowlet").is_dir());
+    }
+
+    #[test]
+    fn rejects_existing_non_empty_directory_without_modifying_it() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("B");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("existing.md"), "# keep me").unwrap();
+
+        let preview = super::preview_new_vault(dir.path(), "B");
+        assert_eq!(
+            preview.status,
+            super::NewVaultPreviewStatus::ExistingNonEmpty
+        );
+        assert!(!preview.can_create);
+        assert_eq!(preview.suggested_name.as_deref(), Some("B 2"));
+
+        let err = super::create_vault_dir_with_initializer(dir.path(), "B", true, |target| {
+            fs::create_dir_all(target.join(".knowlet")).unwrap();
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(err.contains("contains files"));
+        assert!(!target.join(".knowlet").exists());
+        assert_eq!(
+            fs::read_to_string(target.join("existing.md")).unwrap(),
+            "# keep me"
+        );
+    }
+
+    #[test]
+    fn ignores_macos_metadata_when_deciding_empty_directory() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("B");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join(".DS_Store"), "").unwrap();
+
+        let vault = super::create_vault_dir_with_initializer(dir.path(), "B", true, |target| {
+            fs::create_dir_all(target.join(".knowlet")).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(vault, target.canonicalize().unwrap());
+        assert!(vault.join(".knowlet").is_dir());
+    }
+
+    #[test]
+    fn rejects_new_vault_inside_existing_vault() {
+        let dir = tempdir().unwrap();
+        let outer = dir.path().join("outer");
+        fs::create_dir_all(outer.join(".knowlet")).unwrap();
+
+        let err = super::create_vault_dir_with_initializer(&outer, "nested", false, |_| Ok(()))
+            .unwrap_err();
+
+        assert!(err.contains("nested"));
+        assert!(!outer.join("nested").exists());
     }
 
     #[test]

@@ -10,8 +10,9 @@ import "./styles/globals.css";
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("missing #root in index.html");
 
+const desktopLauncher = new URLSearchParams(window.location.search).has("desktop-launcher");
 // Fire-and-forget: backend language wins once /api/health responds.
-void syncLanguageFromBackend();
+if (!desktopLauncher) void syncLanguageFromBackend();
 
 // Apply persisted theme + start watching system preference.
 bootThemeManager();

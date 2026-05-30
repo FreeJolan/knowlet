@@ -2,6 +2,10 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { AppShell } from "@/components/AppShell/AppShell";
+import {
+  DesktopVaultLauncher,
+  isDesktopVaultLauncherPage,
+} from "@/components/DesktopVaultLauncher";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/queryClient";
 
@@ -17,6 +21,8 @@ function isTextEditingTarget(target: EventTarget | null): boolean {
 }
 
 export default function App() {
+  const desktopLauncher = isDesktopVaultLauncherPage();
+
   // Global keyboard shortcuts. Mirrors VS Code:
   //   ⌘P     → quick switcher (files mode)
   //   ⌘⇧P    → command palette (commands mode)
@@ -27,6 +33,7 @@ export default function App() {
   // We dispatch CustomEvents so AppShell can stay the single owner of
   // dialog state without threading setters through QueryClientProvider.
   useEffect(() => {
+    if (desktopLauncher) return;
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
       const key = e.key.toLowerCase();
@@ -77,7 +84,15 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [desktopLauncher]);
+
+  if (desktopLauncher) {
+    return (
+      <ErrorBoundary>
+        <DesktopVaultLauncher />
+      </ErrorBoundary>
+    );
+  }
 
   return (
     <ErrorBoundary>

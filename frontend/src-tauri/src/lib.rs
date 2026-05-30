@@ -1,17 +1,23 @@
 pub mod backend;
 pub mod recent_vaults;
 
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use backend::{resolve_frontend_dist, validate_vault_dir, BackendProcess, VAULT_ENV};
-use recent_vaults::{
-    load_valid_recent_vaults, record_recent_vault, resolve_startup_vault_with_recent,
+use backend::{
+    create_vault_dir, preview_new_vault, resolve_frontend_dist, validate_vault_dir, BackendProcess,
+    NewVaultPreview, VAULT_ENV,
 };
+use recent_vaults::{load_valid_recent_vaults, record_recent_vault};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
+const WINDOW_MAIN: &str = "main";
+const WINDOW_VAULT_LAUNCHER: &str = "vault-launcher";
+const VAULT_LAUNCHER_URL: &str = "index.html?desktop-launcher=1";
+const MENU_NEW_VAULT: &str = "new-vault";
 const MENU_OPEN_VAULT: &str = "open-vault";
 const MENU_OPEN_RECENT_VAULT: &str = "open-recent-vault";
 const MENU_OPEN_RECENT_VAULT_EMPTY: &str = "open-recent-vault-empty";
@@ -30,6 +36,13 @@ struct DesktopState {
 struct DesktopStatus {
     backend_url: String,
     vault: String,
+}
+
+#[derive(Serialize)]
+struct RecentVaultSummary {
+    name: String,
+    parent: String,
+    path: String,
 }
 
 #[tauri::command]
@@ -52,6 +65,55 @@ fn desktop_set_digest_status(app: tauri::AppHandle, status: String) -> Result<()
     update_digest_menu_status(&app, &status)
 }
 
+#[tauri::command]
+fn desktop_recent_vaults(app: tauri::AppHandle) -> Vec<RecentVaultSummary> {
+    recent_vaults_path(&app)
+        .map(|path| load_valid_recent_vaults(&path))
+        .unwrap_or_default()
+        .iter()
+        .map(|path| recent_vault_summary(path))
+        .collect()
+}
+
+#[tauri::command]
+fn desktop_choose_vault_parent() -> Option<String> {
+    rfd::FileDialog::new()
+        .set_title("Choose where to create the Knowlet vault")
+        .pick_folder()
+        .map(|path| path.display().to_string())
+}
+
+#[tauri::command]
+fn desktop_pick_existing_vault(app: tauri::AppHandle) -> Result<Option<DesktopStatus>, String> {
+    let Some(path) = pick_vault_folder() else {
+        return Ok(None);
+    };
+    let vault = validate_vault_dir(&path)?;
+    switch_to_vault(&app, vault).map(Some)
+}
+
+#[tauri::command]
+fn desktop_preview_new_vault(parent: String, name: String) -> NewVaultPreview {
+    preview_new_vault(Path::new(&parent), &name)
+}
+
+#[tauri::command]
+fn desktop_create_vault(
+    app: tauri::AppHandle,
+    parent: String,
+    name: String,
+    allow_existing_empty: bool,
+) -> Result<DesktopStatus, String> {
+    let vault = create_vault_dir(Path::new(&parent), &name, allow_existing_empty)?;
+    switch_to_vault(&app, vault)
+}
+
+#[tauri::command]
+fn desktop_open_vault(app: tauri::AppHandle, path: String) -> Result<DesktopStatus, String> {
+    let vault = validate_vault_dir(Path::new(&path))?;
+    switch_to_vault(&app, vault)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -59,7 +121,11 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .menu(build_initial_desktop_menu)
         .on_menu_event(|app, event| {
-            if event.id() == MENU_OPEN_VAULT {
+            if event.id() == MENU_NEW_VAULT {
+                if let Err(err) = show_vault_launcher(app) {
+                    show_desktop_error("Knowlet could not open the vault launcher", &err);
+                }
+            } else if event.id() == MENU_OPEN_VAULT {
                 if let Err(err) = open_vault_from_menu(app) {
                     show_desktop_error("Knowlet could not open that vault", &err);
                 }
@@ -82,7 +148,13 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             desktop_status,
-            desktop_set_digest_status
+            desktop_set_digest_status,
+            desktop_recent_vaults,
+            desktop_choose_vault_parent,
+            desktop_pick_existing_vault,
+            desktop_preview_new_vault,
+            desktop_create_vault,
+            desktop_open_vault
         ])
         .setup(|app| {
             let recent_vaults_path = app
@@ -90,47 +162,48 @@ pub fn run() {
                 .app_config_dir()
                 .map_err(|err| format!("failed to resolve desktop config directory: {err}"))?
                 .join("recent-vaults.json");
-            let vault = resolve_startup_vault_with_recent(
-                std::env::var_os(VAULT_ENV),
-                &recent_vaults_path,
-                pick_vault_folder,
-            )
-            .map_err(|err| {
-                show_startup_error(&err);
-                err
-            })?;
-            let current_exe = std::env::current_exe()
-                .map_err(|err| format!("failed to resolve current executable: {err}"))?;
-            let dev_frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
-            let frontend_dist =
-                resolve_frontend_dist(&current_exe, &dev_frontend_dist).map_err(|err| {
+
+            if let Some(vault) =
+                resolve_startup_vault(std::env::var_os(VAULT_ENV), &recent_vaults_path).map_err(
+                    |err| {
+                        show_startup_error(&err);
+                        err
+                    },
+                )?
+            {
+                let current_exe = std::env::current_exe()
+                    .map_err(|err| format!("failed to resolve current executable: {err}"))?;
+                let dev_frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
+                let frontend_dist = resolve_frontend_dist(&current_exe, &dev_frontend_dist)
+                    .map_err(|err| {
+                        show_startup_error(&err);
+                        err
+                    })?;
+                let backend = BackendProcess::start(vault, frontend_dist).map_err(|err| {
                     show_startup_error(&err);
                     err
                 })?;
-            let backend = BackendProcess::start(vault, frontend_dist).map_err(|err| {
-                show_startup_error(&err);
-                err
-            })?;
-            let url = backend.url.clone();
-            *app.state::<DesktopState>()
-                .backend
-                .lock()
-                .map_err(|_| "desktop backend state lock poisoned".to_string())? = Some(backend);
+                let url = backend.url.clone();
+                *app.state::<DesktopState>()
+                    .backend
+                    .lock()
+                    .map_err(|_| "desktop backend state lock poisoned".to_string())? =
+                    Some(backend);
+                open_main_window(app.handle(), &url).map_err(|err| {
+                    show_startup_error(&err);
+                    err
+                })?;
+            } else {
+                show_vault_launcher(app.handle()).map_err(|err| {
+                    show_startup_error(&err);
+                    err
+                })?;
+            }
+
             refresh_desktop_menu(app.handle()).map_err(|err| {
                 show_startup_error(&err);
                 err
             })?;
-
-            WebviewWindowBuilder::new(
-                app,
-                "main",
-                WebviewUrl::External(url.parse().map_err(|err| format!("{err}"))?),
-            )
-            .title("Knowlet")
-            .inner_size(1280.0, 860.0)
-            .min_inner_size(980.0, 640.0)
-            .resizable(true)
-            .build()?;
 
             Ok(())
         })
@@ -182,14 +255,28 @@ fn handle_macos_run_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: t
     } = event
     {
         if should_show_main_window_on_reopen(has_visible_windows) {
-            let _ = show_main_window(app);
+            let _ = show_primary_window(app);
         }
+    }
+}
+
+fn show_primary_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    let state = app.state::<DesktopState>();
+    let has_backend = state
+        .backend
+        .lock()
+        .map_err(|_| "desktop backend state lock poisoned".to_string())?
+        .is_some();
+    if has_backend {
+        show_main_window(app)
+    } else {
+        show_vault_launcher(app)
     }
 }
 
 fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
     let window = app
-        .get_webview_window("main")
+        .get_webview_window(WINDOW_MAIN)
         .ok_or_else(|| "Knowlet main window is not available".to_string())?;
     window
         .show()
@@ -200,7 +287,7 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), 
 }
 
 fn should_hide_instead_of_close(label: &str) -> bool {
-    label == "main"
+    label == WINDOW_MAIN
 }
 
 fn should_show_main_window_on_reopen(has_visible_windows: bool) -> bool {
@@ -229,6 +316,13 @@ fn build_vault_menu<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     recent_vaults: &[PathBuf],
 ) -> tauri::Result<Submenu<R>> {
+    let new_vault = MenuItem::with_id(
+        handle,
+        MENU_NEW_VAULT,
+        "New Vault...",
+        true,
+        Some("CmdOrCtrl+Shift+N"),
+    )?;
     let open_vault = MenuItem::with_id(
         handle,
         MENU_OPEN_VAULT,
@@ -242,7 +336,7 @@ fn build_vault_menu<R: tauri::Runtime>(
         "vault",
         "Vault",
         true,
-        &[&open_vault, &recent_vault],
+        &[&new_vault, &open_vault, &recent_vault],
     )
 }
 
@@ -326,7 +420,7 @@ fn open_vault_from_menu(app: &tauri::AppHandle) -> Result<(), String> {
         return Ok(());
     };
     let vault = validate_vault_dir(&path)?;
-    switch_to_vault(app, vault)
+    switch_to_vault(app, vault).map(|_| ())
 }
 
 fn open_recent_vault_from_menu(app: &tauri::AppHandle, index: usize) -> Result<(), String> {
@@ -336,10 +430,10 @@ fn open_recent_vault_from_menu(app: &tauri::AppHandle, index: usize) -> Result<(
         .get(index)
         .ok_or_else(|| "recent vault is no longer available".to_string())?
         .clone();
-    switch_to_vault(app, vault)
+    switch_to_vault(app, vault).map(|_| ())
 }
 
-fn switch_to_vault(app: &tauri::AppHandle, vault: PathBuf) -> Result<(), String> {
+fn switch_to_vault(app: &tauri::AppHandle, vault: PathBuf) -> Result<DesktopStatus, String> {
     let current_vault = app
         .state::<DesktopState>()
         .backend
@@ -349,7 +443,21 @@ fn switch_to_vault(app: &tauri::AppHandle, vault: PathBuf) -> Result<(), String>
         .map(|backend| backend.vault.clone());
     if current_vault.as_ref() == Some(&vault) {
         record_vault_as_recent(app, &vault);
-        return refresh_desktop_menu(app);
+        refresh_desktop_menu(app)?;
+        close_vault_launcher(app);
+        show_main_window(app)?;
+        let state = app.state::<DesktopState>();
+        let backend = state
+            .backend
+            .lock()
+            .map_err(|_| "desktop backend state lock poisoned".to_string())?;
+        let backend = backend
+            .as_ref()
+            .ok_or_else(|| "knowlet backend is not running".to_string())?;
+        return Ok(DesktopStatus {
+            backend_url: backend.url.clone(),
+            vault: backend.vault.display().to_string(),
+        });
     }
 
     let current_exe = std::env::current_exe()
@@ -358,25 +466,113 @@ fn switch_to_vault(app: &tauri::AppHandle, vault: PathBuf) -> Result<(), String>
     let frontend_dist = resolve_frontend_dist(&current_exe, &dev_frontend_dist)?;
     let backend = BackendProcess::start(vault.clone(), frontend_dist)?;
     let url = backend.url.clone();
-
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "Knowlet main window is not available".to_string())?;
-    window
-        .navigate(url.parse().map_err(|err| format!("{err}"))?)
-        .map_err(|err| format!("failed to navigate Knowlet window: {err}"))?;
+    open_main_window(app, &url)?;
 
     *app.state::<DesktopState>()
         .backend
         .lock()
         .map_err(|_| "desktop backend state lock poisoned".to_string())? = Some(backend);
     record_vault_as_recent(app, &vault);
-    refresh_desktop_menu(app)
+    refresh_desktop_menu(app)?;
+    close_vault_launcher(app);
+
+    Ok(DesktopStatus {
+        backend_url: url,
+        vault: vault.display().to_string(),
+    })
+}
+
+fn resolve_startup_vault(
+    env_vault: Option<OsString>,
+    recent_vaults_path: &Path,
+) -> Result<Option<PathBuf>, String> {
+    if let Some(path) = env_vault {
+        let vault = validate_vault_dir(&PathBuf::from(path))?;
+        let _ = record_recent_vault(recent_vaults_path, &vault);
+        return Ok(Some(vault));
+    }
+
+    Ok(load_valid_recent_vaults(recent_vaults_path)
+        .first()
+        .cloned())
+}
+
+fn show_vault_launcher<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(WINDOW_VAULT_LAUNCHER) {
+        window
+            .show()
+            .map_err(|err| format!("failed to show vault launcher: {err}"))?;
+        return window
+            .set_focus()
+            .map_err(|err| format!("failed to focus vault launcher: {err}"));
+    }
+
+    WebviewWindowBuilder::new(
+        app,
+        WINDOW_VAULT_LAUNCHER,
+        WebviewUrl::App(VAULT_LAUNCHER_URL.into()),
+    )
+    .title("Knowlet Vaults")
+    .inner_size(920.0, 640.0)
+    .min_inner_size(760.0, 560.0)
+    .resizable(true)
+    .build()
+    .map(|_| ())
+    .map_err(|err| format!("failed to open vault launcher: {err}"))
+}
+
+fn open_main_window(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(WINDOW_MAIN) {
+        window
+            .navigate(url.parse().map_err(|err| format!("{err}"))?)
+            .map_err(|err| format!("failed to navigate Knowlet window: {err}"))?;
+        window
+            .show()
+            .map_err(|err| format!("failed to show Knowlet window: {err}"))?;
+        return window
+            .set_focus()
+            .map_err(|err| format!("failed to focus Knowlet window: {err}"));
+    }
+
+    WebviewWindowBuilder::new(
+        app,
+        WINDOW_MAIN,
+        WebviewUrl::External(url.parse().map_err(|err| format!("{err}"))?),
+    )
+    .title("Knowlet")
+    .inner_size(1280.0, 860.0)
+    .min_inner_size(980.0, 640.0)
+    .resizable(true)
+    .build()
+    .map(|_| ())
+    .map_err(|err| format!("failed to open Knowlet window: {err}"))
+}
+
+fn close_vault_launcher(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(WINDOW_VAULT_LAUNCHER) {
+        let _ = window.close();
+    }
 }
 
 fn record_vault_as_recent(app: &tauri::AppHandle, vault: &std::path::Path) {
     if let Ok(recent_vaults_path) = recent_vaults_path(app) {
         let _ = record_recent_vault(&recent_vaults_path, vault);
+    }
+}
+
+fn recent_vault_summary(path: &Path) -> RecentVaultSummary {
+    RecentVaultSummary {
+        name: path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Vault")
+            .to_string(),
+        parent: path
+            .parent()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_string(),
+        path: path.display().to_string(),
     }
 }
 
@@ -400,7 +596,7 @@ fn recent_vault_menu_label(path: &std::path::Path) -> String {
 }
 
 fn emit_to_main_window(app: &tauri::AppHandle, event: &str) {
-    let _ = app.emit_to("main", event, ());
+    let _ = app.emit_to(WINDOW_MAIN, event, ());
 }
 
 fn update_digest_menu_status(app: &tauri::AppHandle, status: &str) -> Result<(), String> {
@@ -458,6 +654,14 @@ mod tests {
 
         assert!(has_remote_url("http://127.0.0.1:*"));
         assert!(has_remote_url("http://localhost:*"));
+
+        let windows = capability
+            .get("windows")
+            .and_then(serde_json::Value::as_array)
+            .expect("desktop capability should list allowed windows");
+        let has_window = |label: &str| windows.iter().any(|value| value.as_str() == Some(label));
+        assert!(has_window(super::WINDOW_MAIN));
+        assert!(has_window(super::WINDOW_VAULT_LAUNCHER));
     }
 
     #[test]
