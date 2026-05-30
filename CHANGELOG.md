@@ -11,6 +11,6 @@ First Knowlet macOS desktop dogfood build.
 
 Known gaps:
 
-- No auto-update flow yet.
+- Updater feed and signed updater artifacts are prepared; in-app update prompt/install UX is not implemented yet.
 - No menu bar/background Stage C pull surface yet.
 - LLM provider credentials remain user/vault configuration and are not bundled.
