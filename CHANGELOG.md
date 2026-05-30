@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.5] - 2026-05-31
+
+Desktop startup hotfix release.
+
+- Fix a Tauri startup crash caused by resolving the desktop config directory
+  while the initial native menu is still being built.
+- Keep the initial native menu path-free, then refresh recent-vault entries
+  after desktop setup has initialized app path state.
+- Add a regression test that guards the desktop bootstrap menu against
+  reintroducing path-dependent initialization.
+
 ## [0.0.4] - 2026-05-31
 
 Desktop updater ACL repair release.

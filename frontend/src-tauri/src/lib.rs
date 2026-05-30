@@ -57,7 +57,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .menu(build_desktop_menu)
+        .menu(build_initial_desktop_menu)
         .on_menu_event(|app, event| {
             if event.id() == MENU_OPEN_VAULT {
                 if let Err(err) = open_vault_from_menu(app) {
@@ -207,8 +207,17 @@ fn should_show_main_window_on_reopen(has_visible_windows: bool) -> bool {
     !has_visible_windows
 }
 
-fn build_desktop_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
-    let vault_menu = build_vault_menu(handle)?;
+fn build_initial_desktop_menu<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+) -> tauri::Result<Menu<R>> {
+    build_desktop_menu(handle, &[])
+}
+
+fn build_desktop_menu<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    recent_vaults: &[PathBuf],
+) -> tauri::Result<Menu<R>> {
+    let vault_menu = build_vault_menu(handle, recent_vaults)?;
     let digest_menu = build_digest_menu(handle)?;
     let menu = Menu::default(handle)?;
     menu.insert(&vault_menu, 1)?;
@@ -216,7 +225,10 @@ fn build_desktop_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri:
     Ok(menu)
 }
 
-fn build_vault_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Submenu<R>> {
+fn build_vault_menu<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    recent_vaults: &[PathBuf],
+) -> tauri::Result<Submenu<R>> {
     let open_vault = MenuItem::with_id(
         handle,
         MENU_OPEN_VAULT,
@@ -224,7 +236,7 @@ fn build_vault_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::R
         true,
         Some("CmdOrCtrl+O"),
     )?;
-    let recent_vault = build_recent_vault_menu(handle)?;
+    let recent_vault = build_recent_vault_menu(handle, recent_vaults)?;
     Submenu::with_id_and_items(
         handle,
         "vault",
@@ -236,13 +248,9 @@ fn build_vault_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::R
 
 fn build_recent_vault_menu<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
+    vaults: &[PathBuf],
 ) -> tauri::Result<Submenu<R>> {
     let recent_menu = Submenu::with_id(handle, MENU_OPEN_RECENT_VAULT, "Open Recent", true)?;
-    let recent_vaults_path = recent_vaults_path(handle);
-    let vaults = recent_vaults_path
-        .as_ref()
-        .map(|path| load_valid_recent_vaults(path))
-        .unwrap_or_default();
 
     if vaults.is_empty() {
         let empty = MenuItem::with_id(
@@ -296,8 +304,11 @@ fn build_digest_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::
 }
 
 fn refresh_desktop_menu(app: &tauri::AppHandle) -> Result<(), String> {
-    let menu =
-        build_desktop_menu(app).map_err(|err| format!("failed to rebuild desktop menu: {err}"))?;
+    let vaults = recent_vaults_path(app)
+        .map(|path| load_valid_recent_vaults(&path))
+        .unwrap_or_default();
+    let menu = build_desktop_menu(app, &vaults)
+        .map_err(|err| format!("failed to rebuild desktop menu: {err}"))?;
     app.set_menu(menu)
         .map(|_| ())
         .map_err(|err| format!("failed to set desktop menu: {err}"))
@@ -442,14 +453,21 @@ mod tests {
             .pointer("/remote/urls")
             .and_then(serde_json::Value::as_array)
             .expect("desktop backend is served from a loopback HTTP URL");
-        let has_remote_url = |url: &str| {
-            remote_urls
-                .iter()
-                .any(|value| value.as_str() == Some(url))
-        };
+        let has_remote_url =
+            |url: &str| remote_urls.iter().any(|value| value.as_str() == Some(url));
 
         assert!(has_remote_url("http://127.0.0.1:*"));
         assert!(has_remote_url("http://localhost:*"));
+    }
+
+    #[test]
+    fn desktop_initial_menu_uses_path_free_builder() {
+        let source = include_str!("lib.rs");
+        let initial_builder_call = [".menu(", "build_initial_desktop_menu)"].concat();
+        let legacy_builder_call = [".menu(", "build_desktop_menu)"].concat();
+
+        assert!(source.contains(&initial_builder_call));
+        assert!(!source.contains(&legacy_builder_call));
     }
 
     #[test]
