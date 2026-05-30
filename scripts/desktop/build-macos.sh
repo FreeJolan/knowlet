@@ -20,6 +20,15 @@ APP="$TAURI/target/universal-apple-darwin/release/bundle/macos/Knowlet.app"
 DMG="$TAURI/target/universal-apple-darwin/release/bundle/dmg/Knowlet_${APP_VERSION}_universal.dmg"
 SIGNING_IDENTITY="Developer ID Application: Junnan Guo (N8384H66R9)"
 ENTITLEMENTS="$TAURI/entitlements.plist"
+LOCAL_UPDATER_KEY="${KNOWLET_TAURI_SIGNING_PRIVATE_KEY_FILE:-$HOME/.tauri/knowlet-updater.key}"
+LOCAL_UPDATER_PASSWORD="${KNOWLET_TAURI_SIGNING_PRIVATE_KEY_PASSWORD_FILE:-$HOME/.tauri/knowlet-updater.password}"
+
+if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" && -f "$LOCAL_UPDATER_KEY" ]]; then
+  export TAURI_SIGNING_PRIVATE_KEY="$LOCAL_UPDATER_KEY"
+fi
+if [[ -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" && -f "$LOCAL_UPDATER_PASSWORD" ]]; then
+  export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat "$LOCAL_UPDATER_PASSWORD")"
+fi
 
 "$ROOT/scripts/desktop/build-backend-sidecars.sh"
 

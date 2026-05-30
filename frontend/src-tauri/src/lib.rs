@@ -35,6 +35,7 @@ fn desktop_status(state: tauri::State<'_, DesktopState>) -> Result<DesktopStatus
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DesktopState {
             backend: Mutex::new(None),
         })

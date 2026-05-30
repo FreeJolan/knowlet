@@ -16,6 +16,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["app", "dmg"],
     "category": "Productivity",
     "copyright": "Copyright © 2026 Junnan Guo",
@@ -38,6 +39,14 @@
       "signingIdentity": "Developer ID Application: Junnan Guo (N8384H66R9)",
       "hardenedRuntime": true,
       "entitlements": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFBMTAzMkI1QjI3M0YxNjIKUldSaThYT3l0VElRcW14SDlDWXZ2Kys3NlcyUElQcGF2cGY4aFVvMHNmT01LenJuMCt1M0xKdDQK",
+      "endpoints": [
+        "https://github.com/FreeJolan/knowlet/releases/latest/download/latest.json"
+      ]
     }
   }
 }
