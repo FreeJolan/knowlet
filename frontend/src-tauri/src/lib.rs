@@ -54,7 +54,7 @@ fn desktop_set_digest_status(app: tauri::AppHandle, status: String) -> Result<()
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .menu(build_desktop_menu)
@@ -72,6 +72,10 @@ pub fn run() {
             } else if event.id() == MENU_PULL_DIGEST {
                 emit_to_main_window(app, EVENT_PULL_DIGEST);
             }
+        })
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            handle_macos_window_event(window, event);
         })
         .manage(DesktopState {
             backend: Mutex::new(None),
@@ -130,8 +134,13 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Knowlet desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building Knowlet desktop");
+
+    app.run(|app, event| {
+        #[cfg(target_os = "macos")]
+        handle_macos_run_event(app, event);
+    });
 }
 
 fn pick_vault_folder() -> Option<PathBuf> {
@@ -150,6 +159,52 @@ fn show_desktop_error(title: &str, message: &str) {
         .set_description(message)
         .set_level(rfd::MessageLevel::Error)
         .show();
+}
+
+#[cfg(target_os = "macos")]
+fn handle_macos_window_event<R: tauri::Runtime>(
+    window: &tauri::Window<R>,
+    event: &tauri::WindowEvent,
+) {
+    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        if should_hide_instead_of_close(window.label()) {
+            api.prevent_close();
+            let _ = window.hide();
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn handle_macos_run_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: tauri::RunEvent) {
+    if let tauri::RunEvent::Reopen {
+        has_visible_windows,
+        ..
+    } = event
+    {
+        if should_show_main_window_on_reopen(has_visible_windows) {
+            let _ = show_main_window(app);
+        }
+    }
+}
+
+fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Knowlet main window is not available".to_string())?;
+    window
+        .show()
+        .map_err(|err| format!("failed to show Knowlet window: {err}"))?;
+    window
+        .set_focus()
+        .map_err(|err| format!("failed to focus Knowlet window: {err}"))
+}
+
+fn should_hide_instead_of_close(label: &str) -> bool {
+    label == "main"
+}
+
+fn should_show_main_window_on_reopen(has_visible_windows: bool) -> bool {
+    !has_visible_windows
 }
 
 fn build_desktop_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -402,5 +457,17 @@ mod tests {
             super::recent_vault_menu_label(path),
             "research (/tmp/knowlet-vaults)"
         );
+    }
+
+    #[test]
+    fn dock_close_policy_only_intercepts_main_window() {
+        assert!(super::should_hide_instead_of_close("main"));
+        assert!(!super::should_hide_instead_of_close("settings"));
+    }
+
+    #[test]
+    fn dock_reopen_policy_only_shows_window_when_none_are_visible() {
+        assert!(super::should_show_main_window_on_reopen(false));
+        assert!(!super::should_show_main_window_on_reopen(true));
     }
 }

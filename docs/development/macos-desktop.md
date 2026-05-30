@@ -29,6 +29,11 @@ PyInstaller backend sidecars for both Apple Silicon and Intel Macs.
   - Choosing another valid vault starts a fresh backend on a new loopback port,
     navigates the main window to it, stops the previous backend, and records the
     vault as most recent.
+- macOS window/Dock behavior:
+  - Closing the main window hides it instead of tearing down the app, preserving
+    the active backend and window state for normal macOS app behavior.
+  - Clicking the Dock icon when no Knowlet window is visible shows and focuses
+    the existing main window.
 - Digest lifecycle:
   - The bundled backend starts the existing Stage C auto-pull loop after web
     bootstrap. It checks immediately when the desktop app comes online, then
@@ -134,6 +139,5 @@ PATH="/usr/bin:/bin" KNOWLET_VAULT=/path/to/vault \
 ## Current external-distribution gaps
 
 - No first-run vault onboarding beyond the native folder picker.
-- No Dock affordance yet.
 - Parent-process watchdog is best-effort: an immediate signal-level kill is
   handled after the backend watchdog wakes up, not synchronously.
