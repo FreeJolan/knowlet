@@ -132,7 +132,7 @@ _死掉不做:网站订阅 / 通用爬站 / RSS-Bridge / anti-drift 队列 / 自
 
 - [x] Desktop 1 打开任意文件夹作为 vault + `.knowlet/` 合法性检测。2026-05-30: Tauri app 支持 `KNOWLET_VAULT` 与 native folder picker 两条启动路径。
 - [ ] Desktop 2 本地服务生命周期:启动/停止/端口占用/日志/错误恢复。部分完成(2026-05-30):已完成随机 loopback 端口、`/api/health` readiness、bundled sidecar 启动、正常退出清理;日志、错误恢复和信号级强杀后的 orphan 防护仍待补。
-- [ ] Desktop 3 系统级入口:菜单栏 / Dock / 快捷键 / 打开最近 vault。
+- [ ] Desktop 3 系统级入口:菜单栏 / Dock / 快捷键 / 打开最近 vault。部分完成(2026-05-30):桌面端会在 app config 中维护最近 vault 列表,启动时自动重开最近仍有效的 vault;菜单栏入口、Dock 行为、快捷键和显式最近列表仍待补。
 - [ ] Desktop 4 Stage C 自动拉取承载:用户首次在线、跨日在线、后台状态提示。
 - [x] Desktop 5 打包与本机 dogfood:Developer ID 签名、公证、真实 vault 验证。2026-05-30:Developer ID universal DMG 已签名、公证、staple、Gatekeeper accepted;包内自带 React frontend、universal backend launcher、arm64/x86_64 PyInstaller sidecars。用 `PATH=/usr/bin:/bin` dogfood 确认不依赖本机 repo 或 `uv`。升级路径/auto-update 另列为后续桌面分发切片。详见 `docs/development/macos-desktop.md`。
 

@@ -13,8 +13,13 @@ PyInstaller backend sidecars for both Apple Silicon and Intel Macs.
 - Build target: universal macOS app (`x86_64` + `arm64`).
 - Runtime vault selection:
   - `KNOWLET_VAULT=/path/to/vault` is honored for tests and developer runs.
-  - Without `KNOWLET_VAULT`, the app opens a native folder picker and validates
-    that the selected folder contains `.knowlet/`.
+  - Valid vaults are remembered in the app config directory as
+    `recent-vaults.json` with atomic write-then-rename updates.
+  - Without `KNOWLET_VAULT`, the app first reopens the most recent valid vault.
+    If all remembered paths are stale, it drops them and opens the native
+    folder picker.
+  - The native folder picker validates that the selected folder contains
+    `.knowlet/`.
 - Backend lifecycle:
   - The desktop shell picks a loopback port.
   - It starts the bundled backend sidecar on `127.0.0.1`.
@@ -49,7 +54,7 @@ PATH="/opt/homebrew/opt/rustup/bin:$PATH" npm run desktop:build
 Expected artifact:
 
 ```text
-frontend/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.1_universal.dmg
+frontend/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.2_universal.dmg
 ```
 
 The build script creates a simple DMG, signs it, submits it for notarization,
@@ -85,8 +90,10 @@ Manual dogfood should cover both launch modes:
 KNOWLET_VAULT=/path/to/vault frontend/src-tauri/target/universal-apple-darwin/release/bundle/macos/Knowlet.app/Contents/MacOS/knowlet-desktop
 ```
 
-Then launch the same binary without `KNOWLET_VAULT` and select a vault from
-the native folder picker.
+Then launch the same binary without `KNOWLET_VAULT`. If the previous vault is
+still valid, the app should reopen it without showing the picker. To verify the
+first-run picker again, remove the app config `recent-vaults.json` file or point
+it at stale paths.
 
 For a self-contained launch probe, remove `uv` from `PATH` and confirm the
 child backend process comes from `Knowlet.app/Contents/Resources/knowlet-sidecars/`:
@@ -98,8 +105,9 @@ PATH="/usr/bin:/bin" KNOWLET_VAULT=/path/to/vault \
 
 ## Current external-distribution gaps
 
-- No auto-update or installer upgrade flow yet.
 - No first-run vault onboarding beyond the native folder picker.
 - No desktop menu-bar / background status surface for Stage C automatic pulls.
+- No visible menu / Dock affordance yet for switching vaults or choosing from
+  recent vaults.
 - Hard-killing the parent process with a signal can orphan the sidecar; normal
   app shutdown still goes through the desktop lifecycle guard.

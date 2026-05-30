@@ -1,9 +1,11 @@
 pub mod backend;
+pub mod recent_vaults;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use backend::{resolve_frontend_dist, resolve_startup_vault, BackendProcess, VAULT_ENV};
+use backend::{resolve_frontend_dist, BackendProcess, VAULT_ENV};
+use recent_vaults::resolve_startup_vault_with_recent;
 use serde::Serialize;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -42,11 +44,20 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![desktop_status])
         .setup(|app| {
-            let vault = resolve_startup_vault(std::env::var_os(VAULT_ENV), pick_vault_folder)
-                .map_err(|err| {
-                    show_startup_error(&err);
-                    err
-                })?;
+            let recent_vaults_path = app
+                .path()
+                .app_config_dir()
+                .map_err(|err| format!("failed to resolve desktop config directory: {err}"))?
+                .join("recent-vaults.json");
+            let vault = resolve_startup_vault_with_recent(
+                std::env::var_os(VAULT_ENV),
+                &recent_vaults_path,
+                pick_vault_folder,
+            )
+            .map_err(|err| {
+                show_startup_error(&err);
+                err
+            })?;
             let current_exe = std::env::current_exe()
                 .map_err(|err| format!("failed to resolve current executable: {err}"))?;
             let dev_frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
