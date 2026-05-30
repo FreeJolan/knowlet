@@ -3,7 +3,7 @@ pub mod backend;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use backend::{resolve_startup_vault, BackendProcess, VAULT_ENV};
+use backend::{resolve_frontend_dist, resolve_startup_vault, BackendProcess, VAULT_ENV};
 use serde::Serialize;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -45,7 +45,14 @@ pub fn run() {
                     show_startup_error(&err);
                     err
                 })?;
-            let frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
+            let current_exe = std::env::current_exe()
+                .map_err(|err| format!("failed to resolve current executable: {err}"))?;
+            let dev_frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
+            let frontend_dist =
+                resolve_frontend_dist(&current_exe, &dev_frontend_dist).map_err(|err| {
+                    show_startup_error(&err);
+                    err
+                })?;
             let backend = BackendProcess::start(vault, frontend_dist).map_err(|err| {
                 show_startup_error(&err);
                 err

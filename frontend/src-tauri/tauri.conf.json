@@ -19,12 +19,20 @@
     "targets": ["app", "dmg"],
     "category": "Productivity",
     "copyright": "Copyright © 2026 Junnan Guo",
+    "externalBin": [
+      "binaries/knowlet-backend"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns"
     ],
+    "resources": {
+      "../dist": "frontend-dist",
+      "binaries/knowlet-backend-aarch64-apple-darwin": "knowlet-sidecars/knowlet-backend-aarch64-apple-darwin",
+      "binaries/knowlet-backend-x86_64-apple-darwin": "knowlet-sidecars/knowlet-backend-x86_64-apple-darwin"
+    },
     "macOS": {
       "minimumSystemVersion": "13.0",
       "signingIdentity": "Developer ID Application: Junnan Guo (N8384H66R9)",

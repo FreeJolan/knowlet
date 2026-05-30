@@ -5,7 +5,7 @@
 - **取代**: [`phase-3-stages.md`](./phase-3-stages.md) 的 7-Stage 计划 + [`phase-3-slicing.md`](./phase-3-slicing.md) 的 slice 切分。那套（envelope 7 层 / linter 全库扫 / reorg planner / tidy advisor / vault health dashboard / 知识·资料二分 / anti-drift 队列）大部分被判为**伪需求或早产**——它们建立在发明的 persona（小红/小张/新用户）上,而非用户的真实需求。
 - **命名警告**:`AGENTS.md` 里的 Phase A/B/C/D/E 是 agent 工作流;本文件的 阶段 A/B/C/D/E 是产品 roadmap。问"下一阶段/Phase B"时,以本文件为准。
 - **当前默认 LLM(2026-05-27)**:本机 `cliproxyapi` + Codex/GPT 5.5(`http://127.0.0.1:8317/v1`, `gpt-5.5`)。历史文档里 Claude/Claude Code 相关内容只作当时参考,不再作为默认接入或 dogfood 路径。
-- **当前执行顺序(2026-05-30 四次重排)**:阶段 B 已由用户 dogfood 通过;随后插队的 **F0 — AI 底层能力重构** 已完成当前门槛。Stage C 的第一版 digest/drafts 已验证基础通路,用户 dogfood 后升级的 **Stage C v2 — 资讯审阅与入库** 已完成 C4-C14:RSS / Prompt Source → 只读资讯 → 对话审阅 → 沉淀草稿 → Diff 修正 → 目录确认后落库 → Digest 工作台体验收敛 → note-like 草稿交互 → 队列推进 → 草稿 autosave → 舍弃/落库去向动画。下一步直接进入 **Phase 3.5 桌面端客户端**。阶段 E/Quiz 暂缓到桌面端之后再评估。
+- **当前执行顺序(2026-05-30 五次重排)**:阶段 B 已由用户 dogfood 通过;随后插队的 **F0 — AI 底层能力重构** 已完成当前门槛。Stage C 的第一版 digest/drafts 已验证基础通路,用户 dogfood 后升级的 **Stage C v2 — 资讯审阅与入库** 已完成 C4-C15。**Phase 3.5 桌面端客户端** 已完成当前第一刀:合法 vault 选择、本地服务生命周期基础、self-contained universal DMG、Developer ID 签名、公证与 Gatekeeper 验证。下一步继续桌面端系统级入口与 Stage C 自动拉取承载。阶段 E/Quiz 暂缓到桌面端之后再评估。
 - 根原则锚仍是 [ADR-0029](../decisions/0029-cognitive-contract.md):**用户是最后一个字节**（现由 diff-accept 兑现）、AI 是脚手架、输出可追溯。ADR-0029 衍生的**维护类机制**（anti-drift 队列 / dashboard / 知识资料二分）**推迟到有真实大 vault 信号再说**。
 
 ## 为什么重定向（2026-05-24 讨论）
@@ -131,10 +131,10 @@ _死掉不做:网站订阅 / 通用爬站 / RSS-Bridge / anti-drift 队列 / 自
 > 这不是 AI mode,但它是 Stage C v2 后的产品下一站。原因:在资讯审阅与入库形成高频闭环后,桌面端的本地文件夹打开、系统级入口、后台常驻与跨日自动拉取,会比继续补 Quiz 更直接支撑日常 dogfood。
 
 - [x] Desktop 1 打开任意文件夹作为 vault + `.knowlet/` 合法性检测。2026-05-30: Tauri app 支持 `KNOWLET_VAULT` 与 native folder picker 两条启动路径。
-- [ ] Desktop 2 本地服务生命周期:启动/停止/端口占用/日志/错误恢复。部分完成(2026-05-30):已完成随机 loopback 端口、`/api/health` readiness、退出清理;日志与错误恢复仍待 sidecar 化时一起收口。
+- [ ] Desktop 2 本地服务生命周期:启动/停止/端口占用/日志/错误恢复。部分完成(2026-05-30):已完成随机 loopback 端口、`/api/health` readiness、bundled sidecar 启动、正常退出清理;日志、错误恢复和信号级强杀后的 orphan 防护仍待补。
 - [ ] Desktop 3 系统级入口:菜单栏 / Dock / 快捷键 / 打开最近 vault。
 - [ ] Desktop 4 Stage C 自动拉取承载:用户首次在线、跨日在线、后台状态提示。
-- [ ] Desktop 5 打包与本机 dogfood:开发签名、升级路径、真实 vault 验证。部分完成(2026-05-30):Developer ID universal DMG 已签名、公证、staple、Gatekeeper accepted;当前包仍依赖本机 repo + `uv run`,外部分发前必须补 bundled backend sidecar。详见 `docs/development/macos-desktop.md`。
+- [x] Desktop 5 打包与本机 dogfood:Developer ID 签名、公证、真实 vault 验证。2026-05-30:Developer ID universal DMG 已签名、公证、staple、Gatekeeper accepted;包内自带 React frontend、universal backend launcher、arm64/x86_64 PyInstaller sidecars。用 `PATH=/usr/bin:/bin` dogfood 确认不依赖本机 repo 或 `uv`。升级路径/auto-update 另列为后续桌面分发切片。详见 `docs/development/macos-desktop.md`。
 
 ## 阶段 E — 出题考我 quiz（need 4 下半,最低频,桌面端后再评估）
 
@@ -153,9 +153,9 @@ _死掉不做:网站订阅 / 通用爬站 / RSS-Bridge / anti-drift 队列 / 自
 
 ## 工期 & 排程
 
-**近期粗估** ≈ **2–3.5 周**（桌面端 ≈ 2–3 周 · 收尾/dogfood ≈ 1.5d）。A/B/D、F0 和 Stage C v2 当前门槛已完成(C14);阶段 E/Quiz 不计入最近一轮,桌面端后再评估。
+**近期粗估** ≈ **1.5–3 周**（桌面端剩余系统级入口/后台拉取 ≈ 1.5–2.5 周 · 收尾/dogfood ≈ 1.5d）。A/B/D、F0、Stage C v2 当前门槛和桌面 self-contained package 已完成;阶段 E/Quiz 不计入最近一轮,桌面端后再评估。
 
-**建议顺序**:A/B/D 已完成 → F0 AI 底层能力重构当前门槛完成 → **C v2(资讯审阅与入库) 当前门槛完成(C14)** → **Phase 3.5 桌面端客户端** → 桌面端 dogfood 后再决定是否回到 **E/Quiz**。不要再根据旧 `phase-3-*` 文档、本文件 2026-05-28/2026-05-30 早些时候的旧结论或 ADR-0021 旧 Phase 3 envelope 计划推进。
+**建议顺序**:A/B/D 已完成 → F0 AI 底层能力重构当前门槛完成 → **C v2(资讯审阅与入库) 当前门槛完成(C15)** → **Phase 3.5 桌面端客户端继续做 Desktop 3/4/2 收尾** → 桌面端 dogfood 后再决定是否回到 **E/Quiz**。不要再根据旧 `phase-3-*` 文档、本文件 2026-05-28/2026-05-30 早些时候的旧结论或 ADR-0021 旧 Phase 3 envelope 计划推进。
 
 ## 明确不做（旧计划里、用户场景没点到的）
 

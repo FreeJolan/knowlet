@@ -15,11 +15,32 @@ NOTARY_PROFILE="${KNOWLET_NOTARY_PROFILE:-knowlet-notary}"
 APP="$TAURI/target/universal-apple-darwin/release/bundle/macos/Knowlet.app"
 DMG="$TAURI/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.1_universal.dmg"
 SIGNING_IDENTITY="Developer ID Application: Junnan Guo (N8384H66R9)"
+ENTITLEMENTS="$TAURI/entitlements.plist"
+
+"$ROOT/scripts/desktop/build-backend-sidecars.sh"
 
 cd "$FRONTEND"
 npx tauri build --target universal-apple-darwin --bundles app
 
+test -x "$APP/Contents/MacOS/knowlet-backend"
+test -f "$APP/Contents/Resources/frontend-dist/index.html"
+test -x "$APP/Contents/Resources/knowlet-sidecars/knowlet-backend-aarch64-apple-darwin"
+test -x "$APP/Contents/Resources/knowlet-sidecars/knowlet-backend-x86_64-apple-darwin"
+file "$APP/Contents/MacOS/knowlet-backend"
+file "$APP/Contents/Resources/knowlet-sidecars/knowlet-backend-aarch64-apple-darwin"
+file "$APP/Contents/Resources/knowlet-sidecars/knowlet-backend-x86_64-apple-darwin"
+codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" \
+  "$APP/Contents/Resources/knowlet-sidecars/knowlet-backend-aarch64-apple-darwin"
+codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" \
+  "$APP/Contents/Resources/knowlet-sidecars/knowlet-backend-x86_64-apple-darwin"
+codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
+  "$APP/Contents/MacOS/knowlet-backend"
+codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
+  "$APP/Contents/MacOS/knowlet-desktop"
+codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
+"$APP/Contents/MacOS/knowlet-backend" --version
+arch -x86_64 "$APP/Contents/MacOS/knowlet-backend" --version
 rm -f "$DMG"
 mkdir -p "$(dirname "$DMG")"
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/knowlet-dmg.XXXXXX")"
