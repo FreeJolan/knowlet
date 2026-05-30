@@ -20,6 +20,11 @@ PyInstaller backend sidecars for both Apple Silicon and Intel Macs.
     folder picker.
   - The native folder picker validates that the selected folder contains
     `.knowlet/`.
+- Runtime vault switching:
+  - The native File menu exposes `Open Vault...` with `CmdOrCtrl+O`.
+  - Choosing another valid vault starts a fresh backend on a new loopback port,
+    navigates the main window to it, stops the previous backend, and records the
+    vault as most recent.
 - Backend lifecycle:
   - The desktop shell picks a loopback port.
   - It starts the bundled backend sidecar on `127.0.0.1`.
@@ -107,7 +112,6 @@ PATH="/usr/bin:/bin" KNOWLET_VAULT=/path/to/vault \
 
 - No first-run vault onboarding beyond the native folder picker.
 - No desktop menu-bar / background status surface for Stage C automatic pulls.
-- No visible menu / Dock affordance yet for switching vaults or choosing from
-  recent vaults.
+- No Dock affordance or explicit recent-vault submenu yet.
 - Hard-killing the parent process with a signal can orphan the sidecar; normal
   app shutdown still goes through the desktop lifecycle guard.

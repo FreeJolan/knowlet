@@ -4,10 +4,13 @@ pub mod recent_vaults;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use backend::{resolve_frontend_dist, BackendProcess, VAULT_ENV};
-use recent_vaults::resolve_startup_vault_with_recent;
+use backend::{resolve_frontend_dist, validate_vault_dir, BackendProcess, VAULT_ENV};
+use recent_vaults::{record_recent_vault, resolve_startup_vault_with_recent};
 use serde::Serialize;
+use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+const MENU_OPEN_VAULT: &str = "open-vault";
 
 struct DesktopState {
     backend: Mutex<Option<BackendProcess>>,
@@ -39,6 +42,27 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .menu(|handle| {
+            let open_vault = MenuItem::with_id(
+                handle,
+                MENU_OPEN_VAULT,
+                "Open Vault...",
+                true,
+                Some("CmdOrCtrl+O"),
+            )?;
+            let file_menu =
+                Submenu::with_id_and_items(handle, "file", "File", true, &[&open_vault])?;
+            let menu = Menu::default(handle)?;
+            menu.insert(&file_menu, 1)?;
+            Ok(menu)
+        })
+        .on_menu_event(|app, event| {
+            if event.id() == MENU_OPEN_VAULT {
+                if let Err(err) = open_vault_from_menu(app) {
+                    show_desktop_error("Knowlet could not open that vault", &err);
+                }
+            }
+        })
         .manage(DesktopState {
             backend: Mutex::new(None),
         })
@@ -100,9 +124,43 @@ fn pick_vault_folder() -> Option<PathBuf> {
 }
 
 fn show_startup_error(message: &str) {
+    show_desktop_error("Knowlet could not start", message);
+}
+
+fn show_desktop_error(title: &str, message: &str) {
     let _ = rfd::MessageDialog::new()
-        .set_title("Knowlet could not start")
+        .set_title(title)
         .set_description(message)
         .set_level(rfd::MessageLevel::Error)
         .show();
+}
+
+fn open_vault_from_menu(app: &tauri::AppHandle) -> Result<(), String> {
+    let Some(path) = pick_vault_folder() else {
+        return Ok(());
+    };
+    let vault = validate_vault_dir(&path)?;
+    let current_exe = std::env::current_exe()
+        .map_err(|err| format!("failed to resolve current executable: {err}"))?;
+    let dev_frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
+    let frontend_dist = resolve_frontend_dist(&current_exe, &dev_frontend_dist)?;
+    let backend = BackendProcess::start(vault.clone(), frontend_dist)?;
+    let url = backend.url.clone();
+
+    *app.state::<DesktopState>()
+        .backend
+        .lock()
+        .map_err(|_| "desktop backend state lock poisoned".to_string())? = Some(backend);
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Knowlet main window is not available".to_string())?;
+    window
+        .navigate(url.parse().map_err(|err| format!("{err}"))?)
+        .map_err(|err| format!("failed to navigate Knowlet window: {err}"))?;
+
+    if let Ok(recent_vaults_dir) = app.path().app_config_dir() {
+        let _ = record_recent_vault(&recent_vaults_dir.join("recent-vaults.json"), &vault);
+    }
+    Ok(())
 }
