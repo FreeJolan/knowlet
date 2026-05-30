@@ -59,6 +59,18 @@ pub fn record_recent_vault(path: &Path, vault: &Path) -> Result<(), String> {
     save_recent_vaults(path, &vaults)
 }
 
+pub fn load_valid_recent_vaults(path: &Path) -> Vec<PathBuf> {
+    let recent_vaults = load_recent_vaults(path).unwrap_or_default();
+    let still_valid = recent_vaults
+        .iter()
+        .filter_map(|candidate| validate_vault_dir(candidate).ok())
+        .collect::<Vec<_>>();
+    if recent_vaults != still_valid {
+        let _ = save_recent_vaults(path, &still_valid);
+    }
+    still_valid
+}
+
 pub fn resolve_startup_vault_with_recent(
     env_vault: Option<OsString>,
     recent_vaults_path: &Path,
@@ -70,20 +82,9 @@ pub fn resolve_startup_vault_with_recent(
         return Ok(vault);
     }
 
-    let recent_vaults = load_recent_vaults(recent_vaults_path).unwrap_or_default();
-    let had_recent_vaults = !recent_vaults.is_empty();
-    let mut still_valid = Vec::new();
-    for candidate in recent_vaults {
-        if let Ok(vault) = validate_vault_dir(&candidate) {
-            still_valid.push(vault);
-        }
-    }
+    let still_valid = load_valid_recent_vaults(recent_vaults_path);
     if let Some(vault) = still_valid.first() {
-        let _ = save_recent_vaults(recent_vaults_path, &still_valid);
         return Ok(vault.clone());
-    }
-    if had_recent_vaults {
-        let _ = save_recent_vaults(recent_vaults_path, &still_valid);
     }
 
     let Some(path) = pick_folder() else {
@@ -219,5 +220,19 @@ mod tests {
 
         assert_eq!(selected, picked);
         assert_eq!(super::load_recent_vaults(&store).unwrap(), vec![picked]);
+    }
+
+    #[test]
+    fn valid_recent_vaults_prunes_stale_entries() {
+        let dir = tempdir().unwrap();
+        let store = dir.path().join("recent-vaults.json");
+        let stale = dir.path().join("stale-vault");
+        let valid = make_vault(dir.path(), "valid-vault");
+        super::save_recent_vaults(&store, &[stale.clone(), valid.clone()]).unwrap();
+
+        let valid_vaults = super::load_valid_recent_vaults(&store);
+
+        assert_eq!(valid_vaults, vec![valid.clone()]);
+        assert_eq!(super::load_recent_vaults(&store).unwrap(), vec![valid]);
     }
 }

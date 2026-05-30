@@ -22,6 +22,10 @@ PyInstaller backend sidecars for both Apple Silicon and Intel Macs.
     `.knowlet/`.
 - Runtime vault switching:
   - The native Vault menu exposes `Open Vault...` with `CmdOrCtrl+O`.
+  - The native Vault menu also exposes `Open Recent`, populated from the same
+    valid recent-vault list used by startup auto-reopen. Stale paths are pruned
+    before display, and the menu is refreshed after startup and after each
+    vault switch.
   - Choosing another valid vault starts a fresh backend on a new loopback port,
     navigates the main window to it, stops the previous backend, and records the
     vault as most recent.
@@ -130,6 +134,6 @@ PATH="/usr/bin:/bin" KNOWLET_VAULT=/path/to/vault \
 ## Current external-distribution gaps
 
 - No first-run vault onboarding beyond the native folder picker.
-- No Dock affordance or explicit recent-vault submenu yet.
+- No Dock affordance yet.
 - Parent-process watchdog is best-effort: an immediate signal-level kill is
   handled after the backend watchdog wakes up, not synchronously.

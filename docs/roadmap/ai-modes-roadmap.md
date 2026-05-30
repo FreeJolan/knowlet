@@ -132,7 +132,7 @@ _死掉不做:网站订阅 / 通用爬站 / RSS-Bridge / anti-drift 队列 / 自
 
 - [x] Desktop 1 打开任意文件夹作为 vault + `.knowlet/` 合法性检测。2026-05-30: Tauri app 支持 `KNOWLET_VAULT` 与 native folder picker 两条启动路径。
 - [x] Desktop 2 本地服务生命周期:启动/停止/端口占用/日志/错误恢复。2026-05-30:已完成随机 loopback 端口、`/api/health` readiness、bundled sidecar 启动、正常退出清理;桌面 backend stdout/stderr 写入 `.knowlet/desktop-backend.log` 并在每次启动截断;启动失败会带最近 backend log tail;`knowlet web` 识别 `KNOWLET_DESKTOP_PARENT_PID` 并在桌面父进程消失后自行退出,降低强杀后的 orphan sidecar 风险。
-- [ ] Desktop 3 系统级入口:菜单栏 / Dock / 快捷键 / 打开最近 vault。部分完成(2026-05-30):桌面端会在 app config 中维护最近 vault 列表,启动时自动重开最近仍有效的 vault;已提供 Vault → Open Vault... 与 Cmd/Ctrl+O 显式切库入口。Dock 行为和显式最近 vault 列表仍待补。
+- [ ] Desktop 3 系统级入口:菜单栏 / Dock / 快捷键 / 打开最近 vault。部分完成(2026-05-30):桌面端会在 app config 中维护最近 vault 列表,启动时自动重开最近仍有效的 vault;已提供 Vault → Open Vault... 与 Cmd/Ctrl+O 显式切库入口;Vault → Open Recent 会展示仍有效的最近 vault,切换后刷新菜单并把目标 vault 移到最前。Dock 行为仍待补。
 - [x] Desktop 4 Stage C 自动拉取承载:用户首次在线、跨日在线、后台状态提示。2026-05-30:桌面后端启动后沿用 WebState 的 Stage C auto-pull loop,首次在线立即检查,随后周期检查以覆盖跨日在线;主界面 Digest 图标轮询 `/api/digest/status` 并在拉取中显示动画;原生 Digest 菜单提供状态行、Open Digest 和 Pull Digest Now,并通过 Tauri event bridge 驱动 React 工作台。
 - [x] Desktop 5 打包与本机 dogfood:Developer ID 签名、公证、真实 vault 验证。2026-05-30:Developer ID universal DMG 已签名、公证、staple、Gatekeeper accepted;包内自带 React frontend、universal backend launcher、arm64/x86_64 PyInstaller sidecars。用 `PATH=/usr/bin:/bin` dogfood 确认不依赖本机 repo 或 `uv`。升级路径/auto-update 另列为后续桌面分发切片。详见 `docs/development/macos-desktop.md`。
 
