@@ -55,10 +55,18 @@ hdiutil create \
   "$DMG"
 codesign --force --sign "$SIGNING_IDENTITY" "$DMG"
 codesign --verify --deep --strict --verbose=2 "$DMG"
-xcrun notarytool submit "$DMG" \
-  --keychain-profile "$NOTARY_PROFILE" \
-  --team-id "$TEAM_ID" \
-  --wait
+if [[ -n "${APPLE_API_KEY:-}" && -n "${APPLE_API_ISSUER:-}" && -n "${APPLE_API_KEY_PATH:-}" ]]; then
+  xcrun notarytool submit "$DMG" \
+    --key "$APPLE_API_KEY_PATH" \
+    --key-id "$APPLE_API_KEY" \
+    --issuer "$APPLE_API_ISSUER" \
+    --wait
+else
+  xcrun notarytool submit "$DMG" \
+    --keychain-profile "$NOTARY_PROFILE" \
+    --team-id "$TEAM_ID" \
+    --wait
+fi
 xcrun stapler staple "$DMG"
 xcrun stapler validate "$DMG"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
