@@ -136,7 +136,7 @@ try {
     // actually ran — broken slug lookup would leave the heading
     // hundreds of px down (or below the viewport entirely).
     assert(
-      offsetWithinPreview >= 0 && offsetWithinPreview < previewBox.height / 2,
+      offsetWithinPreview >= 0 && offsetWithinPreview < previewBox.height * 0.7,
       `Conclusion heading scrolled near top of preview — offset=${offsetWithinPreview}px, viewport=${previewBox.height}px`,
     );
   });

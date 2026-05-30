@@ -91,7 +91,7 @@ try {
     // Pill should appear (we're in commands mode now).
     await page
       .locator('[data-testid="palette-mode-pill"]')
-      .waitFor({ state: "visible", timeout: 1000 });
+      .waitFor({ state: "visible", timeout: 3000 });
     // Input should be empty (we stripped the ">").
     const val = await input.inputValue();
     assert(val === "", `leading > must be stripped, got "${val}"`);

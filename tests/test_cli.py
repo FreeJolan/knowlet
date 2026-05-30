@@ -11,6 +11,8 @@ have their own tests) — we test that every command is *reachable* and that
 the option-parsing surface compiles cleanly.
 """
 
+import click
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from knowlet.cli.main import DESKTOP_PARENT_PID_ENV, _desktop_parent_pid_from_env, app
@@ -30,6 +32,19 @@ def _help(*argv: str) -> str:
         f"`knowlet {' '.join(argv)} --help` exit={result.exit_code}\nstdout:\n{result.stdout}"
     )
     return result.stdout
+
+
+def _option_names(*argv: str) -> set[str]:
+    command: click.Command = get_command(app)
+    for name in argv:
+        assert isinstance(command, click.Group)
+        command = command.commands[name]
+    return {
+        option
+        for param in command.params
+        if isinstance(param, click.Option)
+        for option in [*param.opts, *param.secondary_opts]
+    }
 
 
 def test_root_help_lists_all_subcommands():
@@ -137,23 +152,23 @@ def test_top_level_command_helps():
 
 def test_cards_new_options_parse():
     """Verify a sample option-rich command's signature compiles."""
-    out = _help("cards", "new")
-    assert "--front" in out
-    assert "--back" in out
-    assert "--tags" in out
+    opts = _option_names("cards", "new")
+    assert "--front" in opts
+    assert "--back" in opts
+    assert "--tags" in opts
 
 
 def test_mining_add_options_parse():
-    out = _help("mining", "add")
+    opts = _option_names("mining", "add")
     for opt in ("--name", "--rss", "--url", "--every", "--cron", "--prompt", "--output-language"):
-        assert opt in out
+        assert opt in opts
 
 
 def test_digest_add_options_parse():
-    out = _help("digest", "add")
+    opts = _option_names("digest", "add")
     for opt in ("--name", "--rss", "--prompt"):
-        assert opt in out
-    assert "--url" not in out
+        assert opt in opts
+    assert "--url" not in opts
 
 
 def test_config_set_takes_two_arguments():

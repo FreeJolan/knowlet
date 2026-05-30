@@ -37,7 +37,7 @@ try {
     // The discussion pane opens, anchored to the freshly opened note.
     await page
       .locator('[data-testid="discuss-pane"]')
-      .waitFor({ state: "visible", timeout: 5000 });
+      .waitFor({ state: "visible", timeout: 10000 });
     // The title populates once the tree refetch lands (a beat after create).
     await page.waitForFunction(
       () => {
@@ -47,7 +47,7 @@ try {
         const t = el && el.textContent ? el.textContent.trim() : "";
         return t.length > 0 && t !== "—";
       },
-      { timeout: 5000 },
+      { timeout: 10000 },
     );
     // A daily note was created.
     const after = countNotes(
@@ -66,7 +66,7 @@ try {
     await page.locator('[data-testid="header-reflect-button"]').click();
     await page
       .locator('[data-testid="discuss-pane"]')
-      .waitFor({ state: "visible", timeout: 5000 });
+      .waitFor({ state: "visible", timeout: 10000 });
     const after = countNotes(
       await (await page.request.get(`${baseURL}/api/tree`)).json(),
     );

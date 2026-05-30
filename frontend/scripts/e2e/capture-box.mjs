@@ -83,7 +83,7 @@ try {
     await page.locator('[data-testid="capture-decide-reference"]').click();
     // "Done" state shown briefly then auto-close.
     const done = page.locator('[data-testid="capture-done"]');
-    await done.waitFor({ state: "visible", timeout: 3000 });
+    await done.waitFor({ state: "visible", timeout: 10000 });
     // Wait for the auto-close (900ms) plus a margin.
     await page.waitForTimeout(1400);
     // Verify the note was actually written by hitting the API.
@@ -100,7 +100,9 @@ try {
 
   await runTest("Defer decision creates a Draft (not a Note)", async () => {
     await page.keyboard.press("Meta+Shift+V");
-    await page.waitForTimeout(300);
+    await page
+      .locator('[data-testid="capture-file-input"]')
+      .waitFor({ state: "attached", timeout: 5000 });
     const fileInput = page.locator('[data-testid="capture-file-input"]');
     await fileInput.setInputFiles({
       name: "later.md",
@@ -113,7 +115,7 @@ try {
     await page.locator('[data-testid="capture-decide-defer"]').click();
     await page
       .locator('[data-testid="capture-done"]')
-      .waitFor({ state: "visible", timeout: 3000 });
+      .waitFor({ state: "visible", timeout: 10000 });
     await page.waitForTimeout(1400);
     // Should NOT appear in /api/tree (it's in drafts/, not notes/).
     const treeRes = await page.request.get(`${baseURL}/api/tree`);

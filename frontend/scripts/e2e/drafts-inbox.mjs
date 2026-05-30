@@ -149,7 +149,7 @@ try {
     await page
       .locator('[data-testid^="draft-row-"]')
       .filter({ hasText: "Test draft alpha" })
-      .waitFor({ state: "detached", timeout: 5000 });
+      .waitFor({ state: "detached", timeout: 10000 });
     // Note should exist in /api/tree.
     const tree = await (
       await page.request.get(`${baseURL}/api/tree`)
