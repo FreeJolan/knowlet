@@ -56,7 +56,7 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "git_ref=$git_ref" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           ref: ${{ steps.release.outputs.git_ref }}
           fetch-depth: 0
@@ -79,7 +79,7 @@ jobs:
 
       - name: Set up Node with npm cache
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.runner != 'self-hosted' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v6.4.0
         with:
           node-version: "22"
           cache: "npm"
@@ -87,11 +87,11 @@ jobs:
 
       - name: Set up Node without npm cache
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v6.4.0
         with:
           node-version: "22"
 
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: true
 
