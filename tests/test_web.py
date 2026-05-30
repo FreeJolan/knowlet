@@ -83,6 +83,16 @@ def test_health(tmp_path: Path):
     assert body["model"] == cfg.llm.model
 
 
+def test_frontend_dist_env_override(tmp_path: Path, monkeypatch):
+    custom_dist = tmp_path / "desktop-dist"
+    custom_dist.mkdir()
+    monkeypatch.setenv("KNOWLET_FRONTEND_DIST", str(custom_dist))
+
+    from knowlet.web.server import frontend_dist
+
+    assert frontend_dist() == custom_dist
+
+
 # ------------------------------------------------------- chat turn
 
 

@@ -1,0 +1,35 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Knowlet",
+  "version": "0.0.1",
+  "identifier": "com.meowjolan.knowlet",
+  "build": {
+    "frontendDist": "../dist",
+    "beforeDevCommand": "npm run build",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "category": "Productivity",
+    "copyright": "Copyright © 2026 Junnan Guo",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "signingIdentity": "Developer ID Application: Junnan Guo (N8384H66R9)",
+      "hardenedRuntime": true,
+      "entitlements": null
+    }
+  }
+}

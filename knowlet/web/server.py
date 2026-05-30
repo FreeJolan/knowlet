@@ -13,6 +13,7 @@ need a real auth design that is out of scope for the MVP.
 from __future__ import annotations
 
 import json
+import os
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, suppress
@@ -102,7 +103,14 @@ from knowlet.core.vault import Vault
 # UI. Path is resolved relative to the repo root (server.py → web/ → knowlet/
 # → repo). `knowlet web` mounts it if present; in dev we usually run
 # `bun/npm run dev` separately on :5173 instead and let Vite proxy /api/*.
-FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+def frontend_dist() -> Path:
+    override = os.environ.get("KNOWLET_FRONTEND_DIST")
+    if override:
+        return Path(override).expanduser()
+    return DEFAULT_FRONTEND_DIST
 
 
 # ----------------------------------------------------------------- request/response models
@@ -7074,11 +7082,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     # ---------------- static UI ----------------
 
-    if FRONTEND_DIST.exists():
+    dist_dir = frontend_dist()
+    if dist_dir.exists():
         # Vite emits hashed bundles under `dist/assets/`. Mount that as a real
         # static dir; everything else falls through to the SPA index so deep
         # links + browser-refresh on a route work without a per-route handler.
-        assets_dir = FRONTEND_DIST / "assets"
+        assets_dir = dist_dir / "assets"
         if assets_dir.exists():
             app.mount(
                 "/assets",
@@ -7088,7 +7097,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
         @app.get("/")
         def index() -> FileResponse:
-            return FileResponse(FRONTEND_DIST / "index.html")
+            return FileResponse(dist_dir / "index.html")
 
         # SPA fallback. Anything that isn't /api/* / /assets/* / /files/*
         # gets index.html and lets React Router (Phase 1 B+) handle it.
@@ -7101,10 +7110,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             ):
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
             # Phase 1 B may serve favicon/manifest from `dist/` root.
-            candidate = FRONTEND_DIST / full_path
+            candidate = dist_dir / full_path
             if candidate.is_file():
                 return FileResponse(candidate)
-            return FileResponse(FRONTEND_DIST / "index.html")
+            return FileResponse(dist_dir / "index.html")
 
     return app
 

@@ -130,11 +130,11 @@ _死掉不做:网站订阅 / 通用爬站 / RSS-Bridge / anti-drift 队列 / 自
 
 > 这不是 AI mode,但它是 Stage C v2 后的产品下一站。原因:在资讯审阅与入库形成高频闭环后,桌面端的本地文件夹打开、系统级入口、后台常驻与跨日自动拉取,会比继续补 Quiz 更直接支撑日常 dogfood。
 
-- [ ] Desktop 1 打开任意文件夹作为 vault + `.knowlet/` 合法性检测。
-- [ ] Desktop 2 本地服务生命周期:启动/停止/端口占用/日志/错误恢复。
+- [x] Desktop 1 打开任意文件夹作为 vault + `.knowlet/` 合法性检测。2026-05-30: Tauri app 支持 `KNOWLET_VAULT` 与 native folder picker 两条启动路径。
+- [ ] Desktop 2 本地服务生命周期:启动/停止/端口占用/日志/错误恢复。部分完成(2026-05-30):已完成随机 loopback 端口、`/api/health` readiness、退出清理;日志与错误恢复仍待 sidecar 化时一起收口。
 - [ ] Desktop 3 系统级入口:菜单栏 / Dock / 快捷键 / 打开最近 vault。
 - [ ] Desktop 4 Stage C 自动拉取承载:用户首次在线、跨日在线、后台状态提示。
-- [ ] Desktop 5 打包与本机 dogfood:开发签名、升级路径、真实 vault 验证。
+- [ ] Desktop 5 打包与本机 dogfood:开发签名、升级路径、真实 vault 验证。部分完成(2026-05-30):Developer ID universal DMG 已签名、公证、staple、Gatekeeper accepted;当前包仍依赖本机 repo + `uv run`,外部分发前必须补 bundled backend sidecar。详见 `docs/development/macos-desktop.md`。
 
 ## 阶段 E — 出题考我 quiz（need 4 下半,最低频,桌面端后再评估）
 
