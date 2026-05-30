@@ -23,6 +23,12 @@ class RawInfoDiscardResult:
     draft_deleted: bool = False
 
 
+@dataclass(frozen=True)
+class RawInfoBulkDiscardResult:
+    discarded_count: int
+    deleted_draft_ids: list[str]
+
+
 def discard_raw_info(
     *,
     items: RawInfoStore,
@@ -44,4 +50,25 @@ def discard_raw_info(
         item=item,
         deleted_draft_id=linked_draft_id,
         draft_deleted=draft_deleted,
+    )
+
+
+def discard_pending_raw_infos(
+    *,
+    items: RawInfoStore,
+    drafts: DraftStore,
+) -> RawInfoBulkDiscardResult:
+    """Discard every pending Raw Info item in one review-queue action."""
+    deleted_draft_ids: list[str] = []
+    discarded_count = 0
+    for item in items.list():
+        if not item.is_pending:
+            continue
+        result = discard_raw_info(items=items, drafts=drafts, info_id=item.id)
+        discarded_count += 1
+        if result.deleted_draft_id and result.draft_deleted:
+            deleted_draft_ids.append(result.deleted_draft_id)
+    return RawInfoBulkDiscardResult(
+        discarded_count=discarded_count,
+        deleted_draft_ids=deleted_draft_ids,
     )

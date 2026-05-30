@@ -16,7 +16,7 @@ from knowlet.core.digest_pull import maybe_auto_pull_digest_sources, pull_digest
 from knowlet.core.digest_sources import DigestSource, DigestSourceStore
 from knowlet.core.drafts import Draft, DraftStore
 from knowlet.core.events import ReplyChunkEvent, ReplyDoneEvent
-from knowlet.core.llm import AssistantMessage
+from knowlet.core.llm import AssistantMessage, ResponsesMessage
 from knowlet.core.mining.sources import SourceItem
 from knowlet.core.note import Note
 from knowlet.core.vault import Vault
@@ -29,11 +29,36 @@ class ScriptedLLM:
     def __init__(self, payloads: list[dict[str, Any]]):
         self.payloads = list(payloads)
         self.messages: list[list[dict[str, Any]]] = []
+        self.responses_calls: list[dict[str, Any]] = []
 
     def chat(self, messages, tools=None, max_tokens=None, temperature=None):
         self.messages.append(messages)
         payload = self.payloads.pop(0)
         return AssistantMessage(content=json.dumps(payload), tool_calls=[])
+
+    def responses(
+        self,
+        input_text,
+        *,
+        tools=None,
+        max_output_tokens=None,
+        role=None,
+        temperature=None,
+    ):
+        self.responses_calls.append(
+            {
+                "input_text": input_text,
+                "tools": tools,
+                "max_output_tokens": max_output_tokens,
+                "role": role,
+                "temperature": temperature,
+            }
+        )
+        payload = self.payloads.pop(0)
+        raw: dict[str, Any] = {"output": [{"type": "message"}]}
+        if tools:
+            raw["output"].insert(0, {"type": "web_search_call"})
+        return ResponsesMessage(content=json.dumps(payload), raw=raw)
 
 
 class StreamingLLM:
@@ -180,10 +205,43 @@ def test_prompt_source_uses_wrapped_system_prompt_and_structured_json(tmp_path):
     assert stored[0].title == "Agent paper"
     assert stored[0].source_kind == "prompt"
     assert stored[0].summary == "A new agent paper shipped."
-    prompt_text = llm.messages[0][0]["content"]
+    prompt_text = llm.responses_calls[0]["input_text"]
     assert "Knowlet digest source editor" in prompt_text
     assert "Find important AI agent updates." in prompt_text
     assert "Output only strict JSON" in prompt_text
+    assert llm.responses_calls[0]["tools"] == [
+        {"type": "web_search", "external_web_access": True}
+    ]
+
+
+def test_prompt_source_warning_without_items_marks_source_error(tmp_path):
+    vault, _cfg = _ready_vault(tmp_path)
+    source = _save_source(
+        vault,
+        DigestSource(
+            name="Policy watch",
+            kind="prompt",
+            prompt="获取今日政治新闻",
+        ),
+    )
+    llm = ScriptedLLM(
+        [
+            {
+                "items": [],
+                "warnings": ["无法访问实时新闻源或验证今日政治新闻"],
+            }
+        ]
+    )
+
+    report = pull_digest_sources(vault=vault, llm=llm, source_ids=[source.id])
+
+    assert report.created == 0
+    assert any("无法访问实时新闻源" in error for error in report.errors)
+    loaded = DigestSourceStore(vault.digest_sources_dir).get(source.id)
+    assert loaded is not None
+    assert loaded.pull_status == "error"
+    assert loaded.last_error is not None
+    assert "无法访问实时新闻源" in loaded.last_error
 
 
 def test_pull_pauses_when_pending_raw_info_reaches_limit(tmp_path, monkeypatch):
@@ -724,6 +782,68 @@ def test_discard_raw_info_api_marks_discarded_and_deletes_linked_draft(tmp_path)
     assert RawInfoStore(vault.digest_items_dir).pending_count() == 0
 
 
+def test_discard_pending_raw_info_api_marks_all_pending_and_deletes_linked_drafts(
+    tmp_path,
+):
+    vault, cfg = _ready_vault(tmp_path)
+    draft = Draft(
+        title="Bulk discard candidate",
+        body="Draft body",
+        tags=["digest"],
+        source="https://example.com/bulk-discard",
+    )
+    DraftStore(vault.drafts_dir).save(draft)
+    pending = RawInfo(
+        source_id="source-1",
+        source_name="Research Feed",
+        source_kind="rss",
+        item_key="rss:bulk-pending",
+        title="Pending bulk item",
+        url="https://example.com/bulk-pending",
+        summary="A pending raw info item.",
+        status="drafted",
+        note_draft_id=draft.id,
+    )
+    viewed = RawInfo(
+        source_id="source-1",
+        source_name="Research Feed",
+        source_kind="rss",
+        item_key="rss:bulk-viewed",
+        title="Viewed bulk item",
+        url="https://example.com/bulk-viewed",
+        summary="A viewed raw info item.",
+        status="viewed",
+    )
+    included = RawInfo(
+        source_id="source-1",
+        source_name="Research Feed",
+        source_kind="rss",
+        item_key="rss:bulk-included",
+        title="Already included item",
+        url="https://example.com/bulk-included",
+        summary="This should not be touched.",
+        status="included",
+    )
+    store = RawInfoStore(vault.digest_items_dir)
+    for item in (pending, viewed, included):
+        store.save(item)
+    client = TestClient(create_app(vault, cfg))
+
+    res = client.post("/api/digest/items/discard-pending")
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload == {
+        "discarded_count": 2,
+        "deleted_draft_ids": [draft.id],
+    }
+    assert store.get(pending.id).status == "discarded"  # type: ignore[union-attr]
+    assert store.get(viewed.id).status == "discarded"  # type: ignore[union-attr]
+    assert store.get(included.id).status == "included"  # type: ignore[union-attr]
+    assert DraftStore(vault.drafts_dir).get(draft.id) is None
+    assert store.pending_count() == 0
+
+
 def test_discard_raw_info_tool_uses_current_item_and_deletes_linked_draft(tmp_path):
     vault, cfg = _ready_vault(tmp_path)
     draft = Draft(
@@ -793,6 +913,42 @@ def test_digest_cli_discard_marks_raw_info_and_deletes_linked_draft(
     assert loaded is not None
     assert loaded.status == "discarded"
     assert DraftStore(vault.drafts_dir).get(draft.id) is None
+
+
+def test_digest_cli_clear_discards_all_pending_raw_info(tmp_path, monkeypatch):
+    vault, _cfg = _ready_vault(tmp_path)
+    monkeypatch.setenv("KNOWLET_VAULT", str(vault.root))
+    first = RawInfo(
+        source_id="source-1",
+        source_name="Research Feed",
+        source_kind="rss",
+        item_key="rss:cli-clear-1",
+        title="CLI clear item 1",
+        url="https://example.com/cli-clear-1",
+        summary="First pending raw info item.",
+        status="unprocessed",
+    )
+    second = RawInfo(
+        source_id="source-1",
+        source_name="Research Feed",
+        source_kind="rss",
+        item_key="rss:cli-clear-2",
+        title="CLI clear item 2",
+        url="https://example.com/cli-clear-2",
+        summary="Second pending raw info item.",
+        status="discussed",
+    )
+    store = RawInfoStore(vault.digest_items_dir)
+    store.save(first)
+    store.save(second)
+
+    result = runner.invoke(app, ["digest", "clear"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "discarded 2 pending raw info item" in result.stdout
+    assert store.get(first.id).status == "discarded"  # type: ignore[union-attr]
+    assert store.get(second.id).status == "discarded"  # type: ignore[union-attr]
+    assert store.pending_count() == 0
 
 
 def test_digest_cli_run_pulls_v2_source(tmp_path, monkeypatch):
@@ -955,3 +1111,123 @@ def test_auto_pull_runs_once_per_day_and_rechecks_next_day(tmp_path, monkeypatch
     assert next_day.created == 0
     assert calls == 2
     assert DigestSourceStore(vault.digest_sources_dir).get(source.id) is not None
+
+
+def test_auto_pull_skips_source_already_successful_today(tmp_path, monkeypatch):
+    vault, _cfg = _ready_vault(tmp_path)
+    source = _save_source(
+        vault,
+        DigestSource(
+            name="Already pulled feed",
+            kind="rss",
+            url="https://example.com/feed.xml",
+            last_pull_at="2026-05-30T01:00:00Z",
+            last_success_at="2026-05-30T01:00:00Z",
+            pull_status="ok",
+        ),
+    )
+
+    def fake_fetch(_spec):
+        raise AssertionError("auto pull should trust today's source success")
+
+    monkeypatch.setattr("knowlet.core.digest_pull.fetch_source", fake_fetch)
+
+    report = maybe_auto_pull_digest_sources(
+        vault=vault,
+        llm=ScriptedLLM([]),
+        today="2026-05-30",
+    )
+
+    assert report is None
+    assert DigestSourceStore(vault.digest_sources_dir).get(source.id) is not None
+
+
+def test_auto_pull_only_marks_successful_sources_done_for_the_day(
+    tmp_path, monkeypatch
+):
+    vault, _cfg = _ready_vault(tmp_path)
+    good = _save_source(
+        vault,
+        DigestSource(
+            name="Successful feed",
+            kind="rss",
+            url="https://example.com/good.xml",
+        ),
+    )
+    flaky = _save_source(
+        vault,
+        DigestSource(
+            name="Flaky feed",
+            kind="rss",
+            url="https://example.com/flaky.xml",
+        ),
+    )
+    fail_flaky = True
+    calls: list[str] = []
+
+    def fake_fetch(spec):
+        nonlocal fail_flaky
+        calls.append(spec.url)
+        if spec.url == "https://example.com/flaky.xml" and fail_flaky:
+            raise RuntimeError("temporary upstream failure")
+        suffix = "flaky" if spec.url == "https://example.com/flaky.xml" else "good"
+        return [
+            SourceItem(
+                source_url=spec.url,
+                item_id=f"{suffix}-entry-1",
+                title=f"{suffix.title()} RSS title",
+                url=f"https://example.com/{suffix}/a",
+                published=None,
+                content="body",
+            )
+        ]
+
+    monkeypatch.setattr("knowlet.core.digest_pull.fetch_source", fake_fetch)
+    llm = ScriptedLLM(
+        [
+            {
+                "title": "Good normalized item",
+                "summary": "The successful source should count for today.",
+                "key_points": ["good"],
+                "why_it_matters": "A source that worked should not repeat today.",
+                "suggested_tags": ["digest"],
+                "confidence": "high",
+            },
+            {
+                "title": "Flaky normalized item",
+                "summary": "The flaky source should retry later the same day.",
+                "key_points": ["retry"],
+                "why_it_matters": "Failed sources should not be hidden until tomorrow.",
+                "suggested_tags": ["digest"],
+                "confidence": "medium",
+            },
+        ]
+    )
+
+    first = maybe_auto_pull_digest_sources(
+        vault=vault,
+        llm=llm,
+        today="2026-05-30",
+    )
+    assert first is not None
+    assert first.created == 1
+    assert any("Flaky feed" in error for error in first.errors)
+    state_path = vault.state_dir / "digest" / "auto_pull.json"
+    state = json.loads(state_path.read_text("utf-8"))
+    assert state["last_by_source"] == {good.id: "2026-05-30"}
+    assert calls == ["https://example.com/good.xml", "https://example.com/flaky.xml"]
+
+    fail_flaky = False
+    second = maybe_auto_pull_digest_sources(
+        vault=vault,
+        llm=llm,
+        today="2026-05-30",
+    )
+    assert second is not None
+    assert second.source_ids == [flaky.id]
+    assert second.created == 1
+    state = json.loads(state_path.read_text("utf-8"))
+    assert state["last_by_source"] == {
+        good.id: "2026-05-30",
+        flaky.id: "2026-05-30",
+    }

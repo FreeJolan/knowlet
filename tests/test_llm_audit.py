@@ -2,7 +2,7 @@
 
 We don't make real LLM calls. Instead we monkey-patch
 ``LLMClient._ensure`` to return a fake OpenAI client whose
-``chat.completions.create`` returns canned responses. That lets us
+``responses.create`` returns canned responses. That lets us
 assert the audit-emission path without needing network / a real
 provider.
 """
@@ -21,25 +21,17 @@ from knowlet.core.llm import LLMClient
 # ----------------------------------------------- fakes
 
 
-class _FakeMessage:
-    def __init__(
-        self, content: str, tool_calls: list[Any] | None = None
-    ) -> None:
-        self.content = content
-        self.tool_calls = tool_calls or []
-
-
-class _FakeChoice:
-    def __init__(self, message: _FakeMessage) -> None:
-        self.message = message
-
-
 class _FakeResponse:
     def __init__(self, content: str) -> None:
-        self.choices = [_FakeChoice(_FakeMessage(content))]
+        self.output = [
+            {
+                "type": "message",
+                "content": [{"type": "output_text", "text": content}],
+            }
+        ]
 
 
-class _FakeCompletions:
+class _FakeResponses:
     def __init__(self, response_text: str = "ok", raises: Exception | None = None) -> None:
         self._response_text = response_text
         self._raises = raises
@@ -52,14 +44,9 @@ class _FakeCompletions:
         return _FakeResponse(self._response_text)
 
 
-class _FakeChat:
-    def __init__(self, completions: _FakeCompletions) -> None:
-        self.completions = completions
-
-
 class _FakeOpenAI:
     def __init__(self, response_text: str = "ok", raises: Exception | None = None) -> None:
-        self.chat = _FakeChat(_FakeCompletions(response_text=response_text, raises=raises))
+        self.responses = _FakeResponses(response_text=response_text, raises=raises)
 
 
 def _make_client(
@@ -157,36 +144,29 @@ def _drain_stream(client: LLMClient, **kwargs: Any) -> list[Any]:
 def test_chat_stream_emits_audit_after_completion(tmp_path: Path) -> None:
     """Streaming path also emits ai.call after the stream exhausts."""
 
-    # Build a small "stream" of chunks.
-    class _Delta:
-        def __init__(self, content: str = "", tool_calls: Any = None) -> None:
-            self.content = content
-            self.tool_calls = tool_calls
-
-    class _StreamChoice:
-        def __init__(self, delta: _Delta) -> None:
-            self.delta = delta
-
-    class _StreamChunk:
-        def __init__(self, content: str = "") -> None:
-            self.choices = [_StreamChoice(_Delta(content=content))]
-
     class _FakeStream:
         def __iter__(self):
-            yield _StreamChunk("Hel")
-            yield _StreamChunk("lo!")
+            yield {"type": "response.output_text.delta", "delta": "Hel"}
+            yield {"type": "response.output_text.delta", "delta": "lo!"}
+            yield {
+                "type": "response.completed",
+                "response": {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": "Hello!"}],
+                        }
+                    ]
+                },
+            }
 
-    class _StreamingCompletions:
+    class _StreamingResponses:
         def create(self, **kwargs: Any) -> _FakeStream:
             return _FakeStream()
 
-    class _StreamingChat:
-        def __init__(self) -> None:
-            self.completions = _StreamingCompletions()
-
     class _StreamingOpenAI:
         def __init__(self) -> None:
-            self.chat = _StreamingChat()
+            self.responses = _StreamingResponses()
 
     cfg = LLMConfig(
         base_url="http://fake",

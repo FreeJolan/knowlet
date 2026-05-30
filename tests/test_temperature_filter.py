@@ -23,9 +23,14 @@ def _temp_rejection() -> BadRequestError:
 
 
 def _ok_response(content: str = "ok"):
-    resp = mock.Mock()
-    resp.choices = [mock.Mock(message=mock.Mock(content=content, tool_calls=None))]
-    return resp
+    return {
+        "output": [
+            {
+                "type": "message",
+                "content": [{"type": "output_text", "text": content}],
+            }
+        ]
+    }
 
 
 def setup_function():
@@ -36,11 +41,11 @@ def test_temperature_sent_on_first_call_for_unknown_model():
     cfg = LLMConfig(api_key="stub", model="gpt-4o-mini", temperature=0.3)
     client = LLMClient(cfg)
     fake_client = mock.Mock()
-    fake_client.chat.completions.create.return_value = _ok_response()
+    fake_client.responses.create.return_value = _ok_response()
     client._client = fake_client
 
     client.chat([{"role": "user", "content": "hi"}])
-    kwargs = fake_client.chat.completions.create.call_args.kwargs
+    kwargs = fake_client.responses.create.call_args.kwargs
     assert kwargs["temperature"] == 0.3
 
 
@@ -48,7 +53,7 @@ def test_temperature_rejection_is_cached_and_retried_transparently():
     cfg = LLMConfig(api_key="stub", model=DEFAULT_LLM_MODEL, temperature=0.3)
     client = LLMClient(cfg)
     fake_client = mock.Mock()
-    fake_client.chat.completions.create.side_effect = [
+    fake_client.responses.create.side_effect = [
         _temp_rejection(),  # first attempt: rejected
         _ok_response("hello"),  # retry without temperature: succeeds
     ]
@@ -56,10 +61,10 @@ def test_temperature_rejection_is_cached_and_retried_transparently():
 
     msg = client.chat([{"role": "user", "content": "hi"}])
     assert msg.content == "hello"
-    assert fake_client.chat.completions.create.call_count == 2
+    assert fake_client.responses.create.call_count == 2
     # First call had temperature; retry did not.
-    first_call = fake_client.chat.completions.create.call_args_list[0].kwargs
-    second_call = fake_client.chat.completions.create.call_args_list[1].kwargs
+    first_call = fake_client.responses.create.call_args_list[0].kwargs
+    second_call = fake_client.responses.create.call_args_list[1].kwargs
     assert first_call["temperature"] == 0.3
     assert "temperature" not in second_call
     # Cache now holds this model.
@@ -71,12 +76,12 @@ def test_subsequent_call_skips_temperature_for_cached_model():
     client = LLMClient(cfg)
     _no_temp_cache.add(DEFAULT_LLM_MODEL)
     fake_client = mock.Mock()
-    fake_client.chat.completions.create.return_value = _ok_response()
+    fake_client.responses.create.return_value = _ok_response()
     client._client = fake_client
 
     client.chat([{"role": "user", "content": "hi"}])
-    assert fake_client.chat.completions.create.call_count == 1
-    kwargs = fake_client.chat.completions.create.call_args.kwargs
+    assert fake_client.responses.create.call_count == 1
+    kwargs = fake_client.responses.create.call_args.kwargs
     assert "temperature" not in kwargs
 
 
@@ -94,7 +99,7 @@ def test_non_temperature_400_propagates():
     cfg = LLMConfig(api_key="stub", model="gpt-4o-mini", temperature=0.3)
     client = LLMClient(cfg)
     fake_client = mock.Mock()
-    fake_client.chat.completions.create.side_effect = BadRequestError(
+    fake_client.responses.create.side_effect = BadRequestError(
         message="some other validation error",
         response=mock.Mock(status_code=400, request=mock.Mock()),
         body=None,
@@ -108,5 +113,5 @@ def test_non_temperature_400_propagates():
     else:
         raise AssertionError("expected BadRequestError to propagate")
     # Did not retry; did not poison the cache.
-    assert fake_client.chat.completions.create.call_count == 1
+    assert fake_client.responses.create.call_count == 1
     assert "gpt-4o-mini" not in _no_temp_cache

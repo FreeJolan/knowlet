@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Power, Rss, Sparkles, Trash2 } from "lucide-react";
+import { Plus, Rss, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -95,6 +95,12 @@ export function DigestSourcePanel(): React.ReactNode {
           </h3>
           <p className="mt-1 text-xs text-muted-foreground">
             {t("digest.sourceConfigHint")}
+          </p>
+          <p
+            className="mt-1 text-xs text-muted-foreground"
+            data-testid="digest-source-schedule-hint"
+          >
+            {t("digest.sourceScheduleHint")}
           </p>
         </div>
       </div>
@@ -298,19 +304,23 @@ function DigestSourceRow({
             )}
             {source.kind}
           </span>
-          <span className="text-muted-foreground">
-            {source.enabled
-              ? t("settings.digest.enabled")
-              : t("settings.digest.disabled")}
-          </span>
           {source.pull_status && source.pull_status !== "idle" && (
-            <span className="font-mono text-[10px] text-muted-foreground">
-              {source.pull_status}
+            <span
+              className="text-[10px] text-muted-foreground"
+              data-testid={`digest-source-pull-status-${source.id}`}
+            >
+              {sourcePullStatusLabel(source, t)}
             </span>
           )}
         </div>
         <div className="mt-1 truncate text-[11px] text-muted-foreground">
           {value || "-"}
+        </div>
+        <div
+          className="mt-1 text-[11px] text-muted-foreground"
+          data-testid={`digest-source-row-schedule-${source.id}`}
+        >
+          {t("digest.sourceRowScheduleHint")}
         </div>
         {source.last_error && (
           <div className="mt-1 text-[11px]" style={{ color: "var(--danger, #c0392b)" }}>
@@ -321,6 +331,13 @@ function DigestSourceRow({
       <div className="flex shrink-0 items-center gap-1">
         <button
           type="button"
+          role="switch"
+          aria-checked={source.enabled}
+          aria-label={
+            source.enabled
+              ? t("settings.digest.disable")
+              : t("settings.digest.enable")
+          }
           onClick={onToggle}
           disabled={busy}
           title={
@@ -329,10 +346,22 @@ function DigestSourceRow({
               : t("settings.digest.enable")
           }
           data-testid={`digest-source-toggle-${source.id}`}
-          className="rounded border p-1 disabled:opacity-50"
-          style={{ borderColor: "var(--line)" }}
+          data-state={source.enabled ? "checked" : "unchecked"}
+          className="inline-flex h-5 w-9 items-center rounded-full border p-0.5 transition-colors disabled:opacity-50"
+          style={{
+            borderColor: source.enabled ? "var(--accent)" : "var(--line)",
+            background: source.enabled ? "var(--accent-tint-2)" : "var(--bg)",
+          }}
         >
-          <Power className="size-3.5" />
+          <span
+            aria-hidden="true"
+            className={`size-3.5 rounded-full transition-transform ${
+              source.enabled ? "translate-x-3.5" : "translate-x-0"
+            }`}
+            style={{
+              background: source.enabled ? "var(--accent)" : "var(--ink-mute)",
+            }}
+          />
         </button>
         <button
           type="button"
@@ -376,4 +405,14 @@ function apiErrorMessage(err: unknown, fallback: string): string {
     if (Array.isArray(detail)) return fallback;
   }
   return fallback;
+}
+
+function sourcePullStatusLabel(
+  source: DigestSourceSummary,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  if (source.pull_status === "ok") return t("digest.sourcePullOk");
+  if (source.pull_status === "error") return t("digest.sourcePullError");
+  if (source.pull_status === "paused") return t("digest.sourcePullPaused");
+  return t("digest.sourcePullIdle");
 }

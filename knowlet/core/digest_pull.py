@@ -11,7 +11,7 @@ from typing import Any
 
 from knowlet.core.digest_items import RawInfo, RawInfoStore
 from knowlet.core.digest_sources import DigestSource, DigestSourceStore
-from knowlet.core.llm import LLMClient
+from knowlet.core.llm import LLMClient, response_has_output_type
 from knowlet.core.mining.sources import SourceItem, fetch_source
 from knowlet.core.mining.task import SourceSpec
 from knowlet.core.note import now_iso
@@ -138,7 +138,10 @@ def maybe_auto_pull_digest_sources(
         else {}
     )
     due_sources = [
-        source for source in enabled_sources if last_by_source.get(source.id) != day
+        source
+        for source in enabled_sources
+        if last_by_source.get(source.id) != day
+        and not _source_succeeded_on_day(source, day)
     ]
     if not due_sources:
         return None
@@ -149,8 +152,11 @@ def maybe_auto_pull_digest_sources(
         max_pending=max_pending,
     )
     if not report.paused:
+        refreshed_store = DigestSourceStore(vault.digest_sources_dir)
         for source in due_sources:
-            last_by_source[source.id] = day
+            refreshed = refreshed_store.get(source.id)
+            if refreshed is not None and refreshed.pull_status == "ok":
+                last_by_source[source.id] = day
         _write_auto_pull_state(state_path, last_by_source=last_by_source)
     return report
 
@@ -201,6 +207,9 @@ def _pull_one_source(
         items = payload.get("items") or []
         if not isinstance(items, list):
             raise ValueError("prompt source JSON must contain items: []")
+        warnings = _prompt_source_warnings(payload)
+        if warnings and not items:
+            raise ValueError("; ".join(warnings))
         report.fetched += len(items)
         for raw in items:
             if max_items is not None and report.created >= max_items:
@@ -332,12 +341,37 @@ Rules:
 - Every saved item needs a real original URL.
 - Do not output Markdown fences, prose, or commentary outside JSON.
 """
-    response = llm.chat(
-        messages=[{"role": "user", "content": prompt}],
-        tools=None,
-        temperature=0.2,
-    )
-    return _parse_json_object(response.content)
+    last_error: Exception | None = None
+    tool_variants: list[list[dict[str, Any]]] = [
+        [{"type": "web_search", "external_web_access": True}],
+        [{"type": "web_search"}],
+        [{"type": "web_search_preview"}],
+        [],
+    ]
+    for tools in tool_variants:
+        try:
+            response = llm.responses(
+                prompt,
+                tools=tools or None,
+                max_output_tokens=4000,
+                temperature=0.2,
+                role="digest_prompt_source",
+            )
+            if tools and not response_has_output_type(response.raw, "web_search_call"):
+                raise ValueError("Responses returned no web_search_call")
+            return _parse_json_object(response.content)
+        except Exception as exc:
+            last_error = exc
+    assert last_error is not None
+    raise last_error
+
+
+def _prompt_source_warnings(payload: dict[str, Any]) -> list[str]:
+    warnings = payload.get("warnings")
+    if not isinstance(warnings, list):
+        return []
+    out = [str(item).strip() for item in warnings if str(item).strip()]
+    return out
 
 
 def _raw_info_from_payload(
@@ -441,6 +475,10 @@ def _save_seen(vault: Vault, source_id: str, seen: list[str]) -> None:
 
 def _auto_pull_state_path(vault: Vault) -> Path:
     return vault.state_dir / "digest" / AUTO_PULL_STATE_FILE
+
+
+def _source_succeeded_on_day(source: DigestSource, day: str) -> bool:
+    return bool(source.last_success_at and source.last_success_at.startswith(f"{day}T"))
 
 
 def _read_auto_pull_state(path: Path) -> dict[str, Any]:

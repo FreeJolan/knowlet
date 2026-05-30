@@ -2,8 +2,8 @@
 
 knowlet does not store or proxy LLM credentials anywhere outside the local
 config file. The same client speaks to OpenAI / Codex-via-compat /
-Ollama / OpenRouter — anything that implements the OpenAI Chat
-Completions shape with tool-calls.
+Ollama / OpenRouter — anything that implements the OpenAI Responses API
+shape with hosted tools and function-calls.
 
 Every call (sync ``chat`` and streaming ``chat_stream``) emits an
 ``ai.call`` audit event when an :class:`AuditEventStore` is provided
@@ -159,57 +159,31 @@ class LLMClient:
         temperature: float | None = None,
         role: str | None = None,
     ) -> AssistantMessage:
-        client = self._ensure()
         kwargs: dict[str, Any] = {
             "model": self.cfg.model,
-            "messages": messages,
-            "max_tokens": max_tokens or self.cfg.max_tokens,
+            "input": responses_input_from_messages(messages),
+            "max_output_tokens": max_tokens or self.cfg.max_tokens,
         }
         temp = self.cfg.temperature if temperature is None else temperature
         if temp is not None and self.cfg.model not in _no_temp_cache:
             kwargs["temperature"] = temp
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = responses_tools_from_openai_schema(tools)
             kwargs["tool_choice"] = "auto"
 
         started = time.monotonic()
         error_repr: str | None = None
         output_text = ""
         tool_calls: list[ToolCall] = []
+        raw_resp: Any = None
         try:
-            try:
-                resp = client.chat.completions.create(**kwargs)
-            except BadRequestError as exc:
-                if "temperature" in kwargs and _is_temp_rejection(exc):
-                    _no_temp_cache.add(self.cfg.model)
-                    log.info(
-                        "model %r rejected `temperature`; will omit it for the rest of this process.",
-                        self.cfg.model,
-                    )
-                    kwargs.pop("temperature", None)
-                    resp = client.chat.completions.create(**kwargs)
-                else:
-                    raise
-            choice = resp.choices[0].message
-            output_text = choice.content or ""
-            for tc in choice.tool_calls or []:
-                try:
-                    args = (
-                        json.loads(tc.function.arguments)
-                        if tc.function.arguments
-                        else {}
-                    )
-                except json.JSONDecodeError:
-                    args = {"_raw": tc.function.arguments}
-                tool_calls.append(
-                    ToolCall(
-                        id=tc.id, name=tc.function.name, arguments=args
-                    )
-                )
+            raw_resp = self._create_response(kwargs)
+            output_text = response_output_text(raw_resp)
+            tool_calls = response_tool_calls(raw_resp)
             return AssistantMessage(
                 content=output_text,
                 tool_calls=tool_calls,
-                raw=resp,
+                raw=raw_resp,
             )
         except Exception as exc:
             error_repr = repr(exc)[:500]
@@ -249,71 +223,54 @@ class LLMClient:
         Emits an ``ai.call`` audit event when the stream finishes
         (success or exception) and an audit store is configured.
         """
-        client = self._ensure()
         kwargs: dict[str, Any] = {
             "model": self.cfg.model,
-            "messages": messages,
-            "max_tokens": max_tokens or self.cfg.max_tokens,
+            "input": responses_input_from_messages(messages),
+            "max_output_tokens": max_tokens or self.cfg.max_tokens,
             "stream": True,
         }
         temp = self.cfg.temperature if temperature is None else temperature
         if temp is not None and self.cfg.model not in _no_temp_cache:
             kwargs["temperature"] = temp
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = responses_tools_from_openai_schema(tools)
             kwargs["tool_choice"] = "auto"
 
         content_buf: list[str] = []
-        tc_buf: dict[int, dict[str, Any]] = {}
+        tool_calls_count = 0
+        completed_response: Any = None
 
         started = time.monotonic()
         error_repr: str | None = None
+        final_text = ""
         try:
-            try:
-                stream = client.chat.completions.create(**kwargs)
-            except BadRequestError as exc:
-                if "temperature" in kwargs and _is_temp_rejection(exc):
-                    _no_temp_cache.add(self.cfg.model)
-                    log.info(
-                        "model %r rejected `temperature`; will omit it for the rest of this process.",
-                        self.cfg.model,
-                    )
-                    kwargs.pop("temperature", None)
-                    stream = client.chat.completions.create(**kwargs)
-                else:
-                    raise
+            stream = self._create_response(kwargs)
 
-            for chunk in stream:
-                if not chunk.choices:
+            for event in stream:
+                data = _to_plain(event)
+                if not isinstance(data, dict):
                     continue
-                delta = chunk.choices[0].delta
-                if delta is None:
-                    continue
-                if getattr(delta, "content", None):
-                    text = delta.content
+                event_type = data.get("type")
+                if event_type == "response.output_text.delta":
+                    text = str(data.get("delta") or "")
+                    if not text:
+                        continue
                     content_buf.append(text)
                     yield ReplyChunkEvent(text=text)
-                for tc_delta in getattr(delta, "tool_calls", None) or []:
-                    idx = tc_delta.index
-                    slot = tc_buf.setdefault(idx, {"id": "", "name": "", "args": ""})
-                    if tc_delta.id:
-                        slot["id"] = tc_delta.id
-                    fn = getattr(tc_delta, "function", None)
-                    if fn is not None:
-                        if fn.name:
-                            slot["name"] = fn.name
-                        if fn.arguments:
-                            slot["args"] += fn.arguments
+                elif event_type == "response.output_item.done":
+                    tc = response_tool_call_from_item(data.get("item"))
+                    if tc is not None:
+                        tool_calls_count += 1
+                        yield ToolCallEvent(id=tc.id, name=tc.name, arguments=tc.arguments)
+                elif event_type == "response.completed":
+                    completed_response = data.get("response")
 
-            for idx in sorted(tc_buf):
-                slot = tc_buf[idx]
-                try:
-                    args = json.loads(slot["args"]) if slot["args"] else {}
-                except json.JSONDecodeError:
-                    args = {"_raw": slot["args"]}
-                yield ToolCallEvent(id=slot["id"], name=slot["name"], arguments=args)
-
-            yield ReplyDoneEvent(final_text="".join(content_buf))
+            final_text = "".join(content_buf)
+            if completed_response is not None:
+                response_text = response_output_text(completed_response)
+                if response_text:
+                    final_text = response_text
+            yield ReplyDoneEvent(final_text=final_text)
         except Exception as exc:
             error_repr = repr(exc)[:500]
             raise
@@ -321,9 +278,9 @@ class LLMClient:
             self._emit_call_audit(
                 role=role,
                 messages=messages,
-                output_text="".join(content_buf),
+                output_text=final_text,
                 latency_ms=int((time.monotonic() - started) * 1000),
-                tool_calls_count=len(tc_buf),
+                tool_calls_count=tool_calls_count,
                 stream=True,
                 error=error_repr,
             )
@@ -337,6 +294,7 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         max_output_tokens: int | None = None,
         role: str | None = None,
+        temperature: float | None = None,
     ) -> ResponsesMessage:
         """Call the Responses API when the configured endpoint exposes it.
 
@@ -345,38 +303,26 @@ class LLMClient:
         `/v1/responses`; callers should treat failure as a capability result,
         not as proof that the model itself lacks the feature.
         """
-        client = self._ensure()
-        responses_api = getattr(client, "responses", None)
-        if responses_api is None:
-            raise RuntimeError("OpenAI SDK does not expose responses API")
-
         kwargs: dict[str, Any] = {
             "model": self.cfg.model,
             "input": input_text,
         }
+        temp = self.cfg.temperature if temperature is None else temperature
+        if temp is not None and self.cfg.model not in _no_temp_cache:
+            kwargs["temperature"] = temp
         if max_output_tokens is not None:
             kwargs["max_output_tokens"] = max_output_tokens
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = responses_tools_from_openai_schema(tools)
 
         started = time.monotonic()
         error_repr: str | None = None
         output_text = ""
         raw_resp: Any = None
         try:
-            try:
-                resp = responses_api.create(**kwargs)
-            except BadRequestError as exc:
-                # Some compatible gateways implement Responses but reject
-                # OpenAI's newer max_output_tokens name. Retry once without it.
-                if "max_output_tokens" in kwargs and "max_output_tokens" in str(exc):
-                    kwargs.pop("max_output_tokens", None)
-                    resp = responses_api.create(**kwargs)
-                else:
-                    raise
-            raw_resp = resp
-            output_text = response_output_text(resp)
-            return ResponsesMessage(content=output_text, raw=resp)
+            raw_resp = self._create_response(kwargs)
+            output_text = response_output_text(raw_resp)
+            return ResponsesMessage(content=output_text, raw=raw_resp)
         except Exception as exc:
             error_repr = repr(exc)[:500]
             raise
@@ -396,6 +342,29 @@ class LLMClient:
                 error=error_repr,
             )
 
+    def _create_response(self, kwargs: dict[str, Any]) -> Any:
+        client = self._ensure()
+        responses_api = getattr(client, "responses", None)
+        if responses_api is None:
+            raise RuntimeError("OpenAI SDK does not expose responses API")
+        try:
+            return responses_api.create(**kwargs)
+        except BadRequestError as exc:
+            if "temperature" in kwargs and _is_temp_rejection(exc):
+                _no_temp_cache.add(self.cfg.model)
+                log.info(
+                    "model %r rejected `temperature`; will omit it for the rest of this process.",
+                    self.cfg.model,
+                )
+                kwargs = dict(kwargs)
+                kwargs.pop("temperature", None)
+                return responses_api.create(**kwargs)
+            if "max_output_tokens" in kwargs and "max_output_tokens" in str(exc):
+                kwargs = dict(kwargs)
+                kwargs.pop("max_output_tokens", None)
+                return responses_api.create(**kwargs)
+            raise
+
 
 def _to_plain(obj: Any) -> Any:
     if hasattr(obj, "model_dump"):
@@ -403,6 +372,81 @@ def _to_plain(obj: Any) -> Any:
     if isinstance(obj, dict):
         return obj
     return getattr(obj, "__dict__", obj)
+
+
+def responses_input_from_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert Chat Completions-style history into Responses input items."""
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        role = message.get("role")
+        if role == "tool":
+            out.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": str(message.get("tool_call_id") or ""),
+                    "output": str(message.get("content") or ""),
+                }
+            )
+            continue
+
+        if role in {"system", "developer", "user", "assistant"}:
+            content = message.get("content")
+            if content:
+                out.append(
+                    {
+                        "role": role,
+                        "content": content,
+                        "type": "message",
+                    }
+                )
+            for tool_call in message.get("tool_calls") or []:
+                converted = _responses_function_call_from_chat_tool_call(tool_call)
+                if converted is not None:
+                    out.append(converted)
+    return out
+
+
+def _responses_function_call_from_chat_tool_call(
+    tool_call: dict[str, Any],
+) -> dict[str, Any] | None:
+    fn = tool_call.get("function")
+    if not isinstance(fn, dict):
+        return None
+    name = str(fn.get("name") or "").strip()
+    if not name:
+        return None
+    return {
+        "type": "function_call",
+        "call_id": str(tool_call.get("id") or ""),
+        "name": name,
+        "arguments": str(fn.get("arguments") or "{}"),
+    }
+
+
+def responses_tools_from_openai_schema(
+    tools: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert Chat Completions function tools to Responses function tools.
+
+    Hosted Responses tools such as web_search are already in Responses shape and
+    pass through unchanged.
+    """
+    converted: list[dict[str, Any]] = []
+    for tool in tools:
+        if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
+            fn = tool["function"]
+            item: dict[str, Any] = {
+                "type": "function",
+                "name": fn.get("name"),
+                "parameters": fn.get("parameters") or {},
+                "strict": fn.get("strict", False),
+            }
+            if fn.get("description") is not None:
+                item["description"] = fn.get("description")
+            converted.append(item)
+        else:
+            converted.append(tool)
+    return converted
 
 
 def response_output_text(resp: Any) -> str:
@@ -425,6 +469,36 @@ def response_output_text(resp: Any) -> str:
             if isinstance(value, str):
                 out.append(value)
     return "".join(out)
+
+
+def response_tool_call_from_item(item: Any) -> ToolCall | None:
+    data = _to_plain(item)
+    if not isinstance(data, dict) or data.get("type") != "function_call":
+        return None
+    name = str(data.get("name") or "").strip()
+    call_id = str(data.get("call_id") or data.get("id") or "").strip()
+    if not name or not call_id:
+        return None
+    raw_args = str(data.get("arguments") or "{}")
+    try:
+        args = json.loads(raw_args) if raw_args else {}
+    except json.JSONDecodeError:
+        args = {"_raw": raw_args}
+    if not isinstance(args, dict):
+        args = {"_value": args}
+    return ToolCall(id=call_id, name=name, arguments=args)
+
+
+def response_tool_calls(resp: Any) -> list[ToolCall]:
+    data = _to_plain(resp)
+    if not isinstance(data, dict):
+        return []
+    calls: list[ToolCall] = []
+    for item in data.get("output") or []:
+        call = response_tool_call_from_item(item)
+        if call is not None:
+            calls.append(call)
+    return calls
 
 
 def response_has_output_type(resp: Any, type_name: str) -> bool:

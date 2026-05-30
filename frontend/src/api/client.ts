@@ -837,6 +837,14 @@ export const createRawInfoDraft = (
 export const discardRawInfo = (id: string): Promise<RawInfoSummary> =>
   request("POST", `/api/digest/items/${encodeURIComponent(id)}/discard`);
 
+export interface RawInfoBulkDiscardResult {
+  discarded_count: number;
+  deleted_draft_ids: string[];
+}
+
+export const discardPendingRawInfo = (): Promise<RawInfoBulkDiscardResult> =>
+  request("POST", "/api/digest/items/discard-pending");
+
 export interface DraftDiffProposal {
   kind: "draft_edit_proposal";
   draft_id: string;

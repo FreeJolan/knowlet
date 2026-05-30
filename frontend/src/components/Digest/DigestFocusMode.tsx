@@ -12,6 +12,7 @@ import {
   ArrowLeft,
   ArrowRight,
   BookOpen,
+  ChevronDown,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -32,6 +33,7 @@ import {
   acceptDraftDiff,
   commitNoteDraft,
   createRawInfoDraft,
+  discardPendingRawInfo,
   discardRawInfo,
   getDigestStatus,
   getDraft,
@@ -40,6 +42,7 @@ import {
   rejectDraftDiff,
   updateDraft,
   type DigestStatus,
+  type DigestSourceSummary,
   type RawInfoDraftResult,
   type RawInfoSummary,
 } from "@/api/client";
@@ -54,6 +57,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Tooltip,
   TooltipContent,
@@ -99,6 +108,7 @@ interface DigestGroup {
   id: string;
   label: string;
   items: RawInfoSummary[];
+  empty?: boolean;
 }
 
 export function DigestFocusMode({
@@ -112,6 +122,10 @@ export function DigestFocusMode({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   useEffect(() => {
     if (!open) {
@@ -119,17 +133,31 @@ export function DigestFocusMode({
       setReviewId(null);
       setGroupMode("time");
       setConfigOpen(false);
+      setClearConfirmOpen(false);
+      setCollapsedGroups(new Set());
       return;
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
+        if (configOpen) {
+          setConfigOpen(false);
+          return;
+        }
+        if (clearConfirmOpen) {
+          setClearConfirmOpen(false);
+          return;
+        }
         onClose();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [clearConfirmOpen, configOpen, open, onClose]);
+
+  useEffect(() => {
+    setCollapsedGroups(new Set());
+  }, [groupMode]);
 
   const rawInfo = useQuery({
     queryKey: ["digest-items"],
@@ -154,21 +182,33 @@ export function DigestFocusMode({
     },
   });
 
-  const items = useMemo(
+  const clearMut = useMutation({
+    mutationFn: discardPendingRawInfo,
+    onSuccess: () => {
+      setClearConfirmOpen(false);
+      setSelectedId(null);
+      setReviewId(null);
+      void qc.invalidateQueries({ queryKey: ["digest-items"] });
+      void qc.invalidateQueries({ queryKey: ["digest-status"] });
+      void qc.invalidateQueries({ queryKey: ["drafts"] });
+    },
+  });
+
+  const allItems = useMemo(
     () => sortRawInfo(rawInfo.data ?? []),
     [rawInfo.data],
   );
-  const pendingItems = useMemo(
-    () => items.filter((item) => isPending(item)),
-    [items],
+  const items = useMemo(
+    () => allItems.filter((item) => isPending(item)),
+    [allItems],
   );
   const selected = useMemo(
     () => items.find((item) => item.id === selectedId) ?? null,
     [items, selectedId],
   );
   const groups = useMemo(
-    () => groupRawInfo(items, groupMode, t),
-    [items, groupMode, t],
+    () => groupRawInfo(items, groupMode, t, status.data?.sources ?? []),
+    [items, groupMode, t, status.data?.sources],
   );
 
   useEffect(() => {
@@ -185,15 +225,22 @@ export function DigestFocusMode({
 
   if (!open) return null;
 
-  const pendingCount =
-    status.data?.pending_count ?? pendingItems.length;
-  const paused =
-    pendingCount > 200 ||
-    status.data?.status === "paused" ||
-    (status.data?.sources ?? []).some((source) => source.pull_status === "paused");
-  const sourceCount = status.data?.sources.length ?? 0;
-  const showSourceConfig =
-    configOpen || (rawInfo.data !== undefined && items.length === 0 && sourceCount === 0);
+  const pendingCount = status.data?.pending_count ?? items.length;
+  const backlogPaused = pendingCount > 200;
+  const todayPullCopy = getTodayPullCopy(status.data, t);
+  const isPulling = pullMut.isPending || status.data?.status === "running";
+  const hasPendingItems = items.length > 0;
+  const toggleGroup = (key: string) => {
+    setCollapsedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
 
   return (
     <div
@@ -219,11 +266,6 @@ export function DigestFocusMode({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <PullStatusBadge
-            status={status.data}
-            pending={pullMut.isPending || status.isFetching}
-            fallbackPaused={paused}
-          />
           <button
             type="button"
             onClick={() => pullMut.mutate()}
@@ -238,7 +280,7 @@ export function DigestFocusMode({
           </button>
           <button
             type="button"
-            onClick={() => setConfigOpen((value) => !value)}
+            onClick={() => setConfigOpen(true)}
             className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs"
             style={{
               borderColor: configOpen ? "var(--accent)" : "var(--line)",
@@ -253,15 +295,15 @@ export function DigestFocusMode({
           <button
             type="button"
             onClick={() => {
-              const target = selected && isPending(selected) ? selected : pendingItems[0] ?? null;
+              const target = selected ?? items[0] ?? null;
               setReviewId(target?.id ?? null);
             }}
-            disabled={pendingItems.length === 0}
+            disabled={items.length === 0}
             className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:opacity-50"
             style={{ borderColor: "var(--accent)", color: "var(--ink)" }}
             data-testid="digest-start-review"
             title={
-              pendingItems.length === 0
+              items.length === 0
                 ? t("digest.noPendingReview")
                 : t("digest.startReview")
             }
@@ -284,48 +326,141 @@ export function DigestFocusMode({
         className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-2"
         style={{ borderColor: "var(--line)" }}
       >
-        <div className="flex items-center gap-2">
-          <GroupButton
-            mode="time"
-            active={groupMode === "time"}
-            label={t("digest.groupTime")}
-            onClick={() => setGroupMode("time")}
-          />
-          <GroupButton
-            mode="source"
-            active={groupMode === "source"}
-            label={t("digest.groupSource")}
-            onClick={() => setGroupMode("source")}
-          />
-        </div>
-        {paused && (
-          <div
-            className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs"
-            style={{
-              borderColor: "var(--warning, #b7791f)",
-              background: "var(--bg-1)",
-              color: "var(--ink)",
-            }}
-            data-testid="digest-pause-banner"
-          >
-            <AlertTriangle className="size-3.5" />
-            {t("digest.pauseBanner")}
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <GroupButton
+              mode="time"
+              active={groupMode === "time"}
+              label={t("digest.groupTime")}
+              onClick={() => setGroupMode("time")}
+            />
+            <GroupButton
+              mode="source"
+              active={groupMode === "source"}
+              label={t("digest.groupSource")}
+              onClick={() => setGroupMode("source")}
+            />
           </div>
-        )}
+          <div
+            className="flex min-w-0 items-center gap-2"
+            data-testid="digest-list-status-row"
+          >
+            <PullStatusBadge
+              status={status.data}
+              pending={isPulling}
+              fallbackPaused={backlogPaused}
+            />
+            <span
+              className="truncate text-[11px] text-muted-foreground"
+              data-testid="digest-today-pull-copy"
+            >
+              {todayPullCopy}
+            </span>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {backlogPaused && (
+            <div
+              className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs"
+              style={{
+                borderColor: "var(--warning, #b7791f)",
+                background: "var(--bg-1)",
+                color: "var(--ink)",
+              }}
+              data-testid="digest-pause-banner"
+            >
+              <AlertTriangle className="size-3.5" />
+              {t("digest.pauseBanner")}
+            </div>
+          )}
+          <Popover open={clearConfirmOpen} onOpenChange={setClearConfirmOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                disabled={items.length === 0 || clearMut.isPending}
+                className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs disabled:pointer-events-none disabled:opacity-50"
+                style={{ borderColor: "var(--line)", color: "var(--ink)" }}
+                data-testid="digest-clear-pending"
+                title={
+                  items.length === 0
+                    ? t("digest.clearPendingDisabled")
+                    : t("digest.clearPending")
+                }
+              >
+                <Trash2 className="size-3.5" />
+                {clearMut.isPending ? t("digest.clearingPending") : t("digest.clearPending")}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              side="bottom"
+              align="end"
+              sideOffset={8}
+              className="z-[80] w-72 rounded-md border p-3 text-xs"
+              style={{
+                borderColor: "var(--line)",
+                background: "var(--bg-1)",
+                color: "var(--ink)",
+              }}
+              data-testid="digest-clear-confirm-popover"
+            >
+              <div className="font-medium">{t("digest.clearPendingConfirmTitle")}</div>
+              <p className="mt-1 leading-relaxed text-muted-foreground">
+                {t("digest.clearPendingConfirmDescription", { count: items.length })}
+              </p>
+              <div className="mt-3 flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="rounded border px-2 py-1"
+                  style={{ borderColor: "var(--line)" }}
+                  onClick={() => setClearConfirmOpen(false)}
+                  data-testid="digest-clear-cancel"
+                >
+                  {t("digest.cancel")}
+                </button>
+                <button
+                  type="button"
+                  className="rounded border px-2 py-1"
+                  style={{
+                    borderColor: "var(--line)",
+                    background: "var(--bg)",
+                  }}
+                  onClick={() => clearMut.mutate()}
+                  data-testid="digest-clear-confirm"
+                >
+                  {t("digest.clearPendingConfirm")}
+                </button>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
       </div>
 
-      {showSourceConfig && (
-        <div
-          className="border-b px-6 py-4"
-          style={{ borderColor: "var(--line)", background: "var(--bg)" }}
-          data-testid="digest-source-config"
+      <Dialog open={configOpen} onOpenChange={setConfigOpen}>
+        <DialogContent
+          className="max-h-[82vh] overflow-hidden sm:max-w-3xl"
+          data-testid="digest-source-config-dialog"
+          onEscapeKeyDown={(event) => event.stopPropagation()}
         >
-          <DigestSourcePanel />
-        </div>
-      )}
+          <DialogTitle className="sr-only">{t("settings.digest.title")}</DialogTitle>
+          <DialogDescription className="sr-only">
+            {t("digest.sourceScheduleHint")}
+          </DialogDescription>
+          <div className="max-h-[calc(82vh-2rem)] overflow-y-auto pr-1">
+            <DigestSourcePanel />
+          </div>
+        </DialogContent>
+      </Dialog>
 
-      <div className="grid min-h-0 flex-1 gap-4 px-6 py-4 lg:grid-cols-[minmax(0,1fr)_430px]">
-        <main className="min-h-0 overflow-y-auto">
+      <div
+        className={`grid min-h-0 flex-1 gap-4 px-6 py-4 ${
+          hasPendingItems ? "lg:grid-cols-[minmax(0,1fr)_430px]" : "lg:grid-cols-1"
+        }`}
+      >
+        <main
+          className="min-h-0 overflow-y-auto rounded-md border p-3"
+          style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+          data-testid="digest-list-pane"
+        >
           {rawInfo.isLoading && (
             <div className="text-sm text-muted-foreground">
               {t("digest.loading")}
@@ -347,48 +482,87 @@ export function DigestFocusMode({
           )}
 
           <div className="space-y-5">
-            {groups.map((group) => (
-              <section
-                key={group.id}
-                data-testid={`digest-group-${groupMode}-${slugId(group.id)}`}
-              >
-                <div className="mb-2 flex items-center justify-between">
-                  <h3 className="font-mono text-[11px] uppercase text-muted-foreground">
-                    {group.label}
-                  </h3>
-                  <span className="text-[11px] text-muted-foreground">
-                    {t("digest.count", { count: group.items.length })}
-                  </span>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {group.items.map((item) => (
-                    <DigestCard
-                      key={item.id}
-                      item={item}
-                      selected={item.id === selectedId}
-                      reviewable={isPending(item)}
-                      onSelect={() => setSelectedId(item.id)}
-                      onReview={() => setReviewId(item.id)}
-                    />
-                  ))}
-                </div>
-              </section>
-            ))}
+            {groups.map((group) => {
+              const collapseKey = groupCollapseKey(groupMode, group.id);
+              const collapsed = collapsedGroups.has(collapseKey);
+              const slug = slugId(group.id);
+              return (
+                <section
+                  key={group.id}
+                  data-testid={`digest-group-${groupMode}-${slug}`}
+                >
+                  <div className="mb-2 flex items-center justify-between">
+                    <h3>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1.5 rounded px-1 py-0.5 font-mono text-[11px] uppercase text-muted-foreground hover:bg-accent/20"
+                        onClick={() => toggleGroup(collapseKey)}
+                        aria-expanded={!collapsed}
+                        data-testid={`digest-group-toggle-${groupMode}-${slug}`}
+                      >
+                        <ChevronDown
+                          className={`size-3 transition-transform ${
+                            collapsed ? "-rotate-90" : ""
+                          }`}
+                        />
+                        {group.label}
+                      </button>
+                    </h3>
+                    <span className="text-[11px] text-muted-foreground">
+                      {t("digest.count", { count: group.items.length })}
+                    </span>
+                  </div>
+                  {collapsed ? (
+                    <div
+                      className="rounded border px-3 py-2 text-xs text-muted-foreground"
+                      style={{ borderColor: "var(--line)", background: "var(--bg)" }}
+                      data-testid={`digest-group-collapsed-${groupMode}-${slug}`}
+                    >
+                      {t("digest.groupCollapsed", { count: group.items.length })}
+                    </div>
+                  ) : group.empty ? (
+                    <div
+                      className="rounded border px-3 py-2 text-xs text-muted-foreground"
+                      style={{ borderColor: "var(--line)", background: "var(--bg)" }}
+                      data-testid={`digest-group-empty-${groupMode}-${slug}`}
+                    >
+                      {t("digest.sourceGroupEmpty")}
+                    </div>
+                  ) : (
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {group.items.map((item) => (
+                        <DigestCard
+                          key={item.id}
+                          item={item}
+                          selected={item.id === selectedId}
+                          reviewable
+                          onSelect={() => setSelectedId(item.id)}
+                          onReview={() => setReviewId(item.id)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
           </div>
         </main>
 
-        <aside className="min-h-0">
-          {selected ? (
-            <DigestDetail item={selected} />
-          ) : (
-            <div
-              className="rounded-md border p-4 text-sm text-muted-foreground"
-              style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
-            >
-              {t("digest.selectHint")}
-            </div>
-          )}
-        </aside>
+        {hasPendingItems && (
+          <aside className="min-h-0" data-testid="digest-preview-pane">
+            {selected ? (
+              <DigestDetail item={selected} />
+            ) : (
+              <div
+                className="rounded-md border p-4 text-sm text-muted-foreground"
+                style={{ borderColor: "var(--line)", background: "var(--bg)" }}
+                data-testid="digest-select-hint"
+              >
+                {t("digest.selectHint")}
+              </div>
+            )}
+          </aside>
+        )}
       </div>
       {reviewId && (
         <ReviewOverlay
@@ -413,7 +587,8 @@ function PullStatusBadge({
   fallbackPaused: boolean;
 }) {
   const { t } = useTranslation();
-  const state = pending ? "running" : fallbackPaused ? "paused" : status?.status ?? "idle";
+  const remoteState = status?.status === "paused" && !fallbackPaused ? "idle" : status?.status;
+  const state = pending ? "running" : fallbackPaused ? "paused" : remoteState ?? "idle";
   const label =
     state === "running"
       ? t("digest.pullRunning")
@@ -426,13 +601,43 @@ function PullStatusBadge({
             : t("digest.pullIdle");
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs"
-      style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+      className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground"
       data-testid="digest-pull-status"
+      data-state={state}
     >
-      <Clock className="size-3.5" />
+      <Clock className={state === "running" ? "size-3.5 animate-pulse" : "size-3.5"} />
       {label}
     </span>
+  );
+}
+
+type Translate = (key: string, options?: Record<string, unknown>) => string;
+
+function getTodayPullCopy(status: DigestStatus | undefined, t: Translate): string {
+  if (!status) return t("digest.todayPullChecking");
+  if (status.status === "running") return t("digest.todayPullRunning");
+  if (status.status === "error") return t("digest.todayPullError");
+  if (status.status === "paused" || status.pending_count > 200) {
+    return t("digest.todayPullPaused");
+  }
+  if (status.sources.length === 0) return t("digest.todayPullNoSources");
+  const enabledSources = status.sources.filter((source) => source.enabled);
+  if (enabledSources.length === 0) return t("digest.todayPullNoEnabledSources");
+  const allPulledToday = enabledSources.every(
+    (source) => source.last_success_at && isSameLocalDay(source.last_success_at, new Date()),
+  );
+  return allPulledToday
+    ? t("digest.todayPullComplete", { count: enabledSources.length })
+    : t("digest.todayPullPending", { count: enabledSources.length });
+}
+
+function isSameLocalDay(raw: string, today: Date): boolean {
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return (
+    parsed.getFullYear() === today.getFullYear() &&
+    parsed.getMonth() === today.getMonth() &&
+    parsed.getDate() === today.getDate()
   );
 }
 
@@ -484,7 +689,7 @@ function DigestCard({
       className="min-h-[172px] cursor-pointer rounded-md border p-4 outline-none"
       style={{
         borderColor: selected ? "var(--accent)" : "var(--line)",
-        background: selected ? "var(--accent-tint-2)" : "var(--bg-1)",
+        background: selected ? "var(--accent-tint-2)" : "var(--bg)",
       }}
       data-testid={`digest-card-${item.id}`}
       data-selected={selected ? "true" : "false"}
@@ -506,7 +711,7 @@ function DigestCard({
       </div>
       <div className="mb-2 flex items-center gap-2 text-[11px] text-muted-foreground">
         <span className="truncate">{item.source_name}</span>
-        <span>{statusLabel(item.status)}</span>
+        <span>{statusLabel(item.status, t)}</span>
       </div>
       <a
         href={item.url}
@@ -556,7 +761,7 @@ function DigestDetail({ item }: { item: RawInfoSummary }) {
   return (
     <div
       className="flex h-full min-h-[520px] flex-col overflow-hidden rounded-md border"
-      style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+      style={{ borderColor: "var(--line)", background: "var(--bg)" }}
       data-testid="digest-detail"
     >
       <div className="border-b p-4" style={{ borderColor: "var(--line)" }}>
@@ -569,7 +774,7 @@ function DigestDetail({ item }: { item: RawInfoSummary }) {
         <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
           <SourceKind kind={item.source_kind} />
           <span>{item.source_name}</span>
-          <span>{statusLabel(item.status)}</span>
+          <span>{statusLabel(item.status, t)}</span>
           <span>{t("digest.confidenceLabel", { confidence: item.confidence })}</span>
         </div>
         <a
@@ -1320,7 +1525,7 @@ function ReviewOverlay({
                     <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                       <SourceKind kind={item.source_kind} />
                       <span>{item.source_name}</span>
-                      <span>{statusLabel(item.status)}</span>
+                      <span>{statusLabel(item.status, t)}</span>
                     </div>
                     <a
                       href={item.url}
@@ -1392,14 +1597,6 @@ function ReviewOverlay({
                       rationale={draftResult.rationale}
                       footer={
                         <div className="space-y-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <DraftAutosaveStatus
-                                state={draftSaveState}
-                                onRetry={() => startDraftSave()}
-                              />
-                            </div>
-                          </div>
                           {commitResult && (
                             <div
                               className="rounded border px-2 py-1.5 text-xs"
@@ -1470,6 +1667,10 @@ function ReviewOverlay({
                 </ReviewActionTooltip>
               </div>
               <div className="flex items-center gap-2">
+                <DraftAutosaveStatus
+                  state={draftSaveState}
+                  onRetry={() => startDraftSave()}
+                />
                 <TooltipProvider delayDuration={350}>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1716,16 +1917,16 @@ function DraftAutosaveStatus({
   onRetry: () => void;
 }) {
   const { t } = useTranslation();
+  if (state === "idle" || state === "dirty") return null;
+
   const label =
     state === "saving"
       ? t("digest.draftAutosaveSaving")
       : state === "saved"
         ? t("digest.draftAutosaveSaved")
-        : state === "dirty"
-          ? t("digest.draftAutosaveDirty")
-          : state === "error"
-            ? t("digest.draftAutosaveError")
-            : t("digest.draftAutosaveIdle");
+        : state === "error"
+          ? t("digest.draftAutosaveError")
+          : t("digest.draftAutosaveIdle");
   return (
     <span
       className="inline-flex min-h-7 items-center gap-1.5 rounded px-1 text-[11px] text-muted-foreground"
@@ -1736,7 +1937,7 @@ function DraftAutosaveStatus({
         <RefreshCw className="size-3 animate-spin" />
       ) : state === "error" ? (
         <AlertTriangle className="size-3" />
-      ) : state === "saved" || state === "idle" ? (
+      ) : state === "saved" ? (
         <CheckCircle2 className="size-3" />
       ) : null}
       <span>{label}</span>
@@ -1847,6 +2048,7 @@ function groupRawInfo(
   items: RawInfoSummary[],
   mode: GroupMode,
   t: ReturnType<typeof useTranslation>["t"],
+  sources: DigestSourceSummary[],
 ): DigestGroup[] {
   const grouped = new Map<string, DigestGroup>();
   for (const item of items) {
@@ -1859,7 +2061,26 @@ function groupRawInfo(
       grouped.set(id, { id, label, items: [item] });
     }
   }
-  return Array.from(grouped.values());
+  const groups = Array.from(grouped.values());
+  if (mode !== "source") return groups;
+  const seen = new Set(groups.map((group) => group.id));
+  for (const source of sources) {
+    if (!source.enabled) continue;
+    const id = source.name || source.id;
+    if (seen.has(id)) continue;
+    groups.push({
+      id,
+      label: source.name || source.id,
+      items: [],
+      empty: true,
+    });
+    seen.add(id);
+  }
+  return groups;
+}
+
+function groupCollapseKey(mode: GroupMode, id: string): string {
+  return `${mode}:${id}`;
 }
 
 function timeGroupId(raw: string): string {
@@ -1895,7 +2116,7 @@ function startOfDay(date: Date): Date {
 }
 
 function slugId(raw: string): string {
-  return raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "unknown";
 }
 
 function formatDate(raw: string): string {
@@ -1909,8 +2130,8 @@ function formatDate(raw: string): string {
   });
 }
 
-function statusLabel(status: RawInfoSummary["status"]): string {
-  return status.replace(/_/g, " ");
+function statusLabel(status: RawInfoSummary["status"], t: Translate): string {
+  return t(`digest.rawInfoStatus.${status}`);
 }
 
 function isPending(item: RawInfoSummary): boolean {

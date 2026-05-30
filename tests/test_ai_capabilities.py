@@ -77,10 +77,10 @@ def test_probe_capabilities_builds_runtime_profile() -> None:
 
     assert profile.model == "fake-gpt"
     assert profile.supported == {
-        "chat_completions": True,
-        "streaming": True,
-        "chat_tools": True,
-        "responses": True,
+        "responses_chat": True,
+        "responses_streaming": True,
+        "responses_tools": True,
+        "responses_api": True,
         "hosted_web_search": True,
     }
     web = next(check for check in profile.checks if check.name == "hosted_web_search")

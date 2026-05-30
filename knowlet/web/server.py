@@ -929,6 +929,11 @@ class RawInfoDraftResponse(BaseModel):
     rationale: str = ""
 
 
+class RawInfoBulkDiscardResponse(BaseModel):
+    discarded_count: int
+    deleted_draft_ids: list[str]
+
+
 class DraftDiffResponse(BaseModel):
     kind: str = "draft_edit_proposal"
     draft_id: str
@@ -6203,11 +6208,23 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail=f"digest source not found: {source_id}",
             )
         with state.digest_pull_lock:
-            report = pull_digest_sources(
-                vault=runtime.vault,
-                llm=runtime.llm,
-                source_ids=[source_id],
+            state.digest_pull_status = "running"
+            state.digest_pull_last_error = None
+            try:
+                report = pull_digest_sources(
+                    vault=runtime.vault,
+                    llm=runtime.llm,
+                    source_ids=[source_id],
+                )
+            except Exception as exc:
+                state.digest_pull_status = "error"
+                state.digest_pull_last_error = f"{type(exc).__name__}: {exc}"
+                raise
+            state.digest_pull_status = (
+                "paused" if report.paused else "error" if report.errors else "ok"
             )
+            state.digest_pull_last_report = report.to_dict()
+            state.digest_pull_last_error = "; ".join(report.errors) if report.errors else None
         return DigestPullReportPayload(**report.to_dict())
 
     @app.post("/api/digest/pull", response_model=DigestPullReportPayload)
@@ -6217,7 +6234,19 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         from knowlet.core.digest_pull import pull_digest_sources
 
         with state.digest_pull_lock:
-            report = pull_digest_sources(vault=runtime.vault, llm=runtime.llm)
+            state.digest_pull_status = "running"
+            state.digest_pull_last_error = None
+            try:
+                report = pull_digest_sources(vault=runtime.vault, llm=runtime.llm)
+            except Exception as exc:
+                state.digest_pull_status = "error"
+                state.digest_pull_last_error = f"{type(exc).__name__}: {exc}"
+                raise
+            state.digest_pull_status = (
+                "paused" if report.paused else "error" if report.errors else "ok"
+            )
+            state.digest_pull_last_report = report.to_dict()
+            state.digest_pull_last_error = "; ".join(report.errors) if report.errors else None
         return DigestPullReportPayload(**report.to_dict())
 
     @app.get("/api/digest/status", response_model=DigestStatusPayload)
@@ -6244,6 +6273,25 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
         store = RawInfoStore(runtime.vault.digest_items_dir)
         return [_raw_info_summary(item) for item in store.list()]
+
+    @app.post(
+        "/api/digest/items/discard-pending",
+        response_model=RawInfoBulkDiscardResponse,
+    )
+    def discard_pending_raw_info_endpoint(
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> RawInfoBulkDiscardResponse:
+        from knowlet.core.digest_items import RawInfoStore
+        from knowlet.core.digest_review import discard_pending_raw_infos
+
+        result = discard_pending_raw_infos(
+            items=RawInfoStore(runtime.vault.digest_items_dir),
+            drafts=runtime.ctx.drafts,
+        )
+        return RawInfoBulkDiscardResponse(
+            discarded_count=result.discarded_count,
+            deleted_draft_ids=result.deleted_draft_ids,
+        )
 
     @app.post("/api/digest/items/{info_id}/draft", response_model=RawInfoDraftResponse)
     def create_raw_info_draft_endpoint(

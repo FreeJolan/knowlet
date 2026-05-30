@@ -15,6 +15,7 @@ import {
   Newspaper,
   PanelRight,
   PanelRightOpen,
+  RefreshCw,
   Settings as SettingsIcon,
   Tag as TagIcon,
   Trash2,
@@ -23,7 +24,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { getNote, getTree, updateNote } from "@/api/client";
+import { getDigestStatus, getNote, getTree, updateNote } from "@/api/client";
 import type { NoteFull, TreeFolder, TreeNote } from "@/api/types";
 import { FavoritesSection } from "@/components/Favorites/FavoritesSection";
 import { FileTree } from "@/components/FileTree/FileTree";
@@ -156,6 +157,17 @@ export function AppShell() {
   const [draftsOpen, setDraftsOpen] = useState(false);
   // Stage C2 — digest intake focus mode.
   const [digestOpen, setDigestOpen] = useState(false);
+  const digestStatus = useQuery({
+    queryKey: ["digest-status"],
+    queryFn: getDigestStatus,
+    refetchInterval: 5000,
+    staleTime: 2000,
+  });
+  const digestPullState = digestStatus.data?.status ?? "idle";
+  const digestPullRunning = digestPullState === "running";
+  const digestTitle = digestPullRunning
+    ? `${t("app.digest")} · ${t("digest.pullRunning")}`
+    : t("app.digest");
   // Phase 3 Stage 3 §3.4 — CaptureBox modal (⌘⇧V).
   const [captureOpen, setCaptureOpen] = useState(false);
   const [captureInitialUrl, setCaptureInitialUrl] = useState<string | undefined>();
@@ -751,11 +763,21 @@ export function AppShell() {
               variant="ghost"
               size="icon"
               aria-label={t("app.digest")}
-              title={t("app.digest")}
+              title={digestTitle}
               onClick={() => setDigestOpen(true)}
               data-testid="header-digest-button"
+              data-pull-state={digestPullState}
             >
-              <Newspaper className="size-4" />
+              <span className="relative inline-flex">
+                <Newspaper className={digestPullRunning ? "size-4 animate-pulse" : "size-4"} />
+                {digestPullRunning && (
+                  <RefreshCw
+                    className="absolute -right-1.5 -top-1.5 size-3 animate-spin"
+                    style={{ color: "var(--accent)" }}
+                    data-testid="header-digest-pulling-indicator"
+                  />
+                )}
+              </span>
             </Button>
             <Button
               variant="ghost"

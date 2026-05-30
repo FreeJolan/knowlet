@@ -69,6 +69,37 @@ function writeRawInfos(vaultDir, items) {
   }
 }
 
+function digestSource(overrides) {
+  return {
+    schema_version: 1,
+    id: overrides.id,
+    name: overrides.name ?? "Paused historical source",
+    kind: overrides.kind ?? "rss",
+    enabled: overrides.enabled ?? false,
+    url: overrides.url ?? "https://example.com/feed.xml",
+    prompt: overrides.prompt ?? null,
+    created_at: overrides.created_at ?? isoDaysAgo(1),
+    updated_at: overrides.updated_at ?? isoDaysAgo(0),
+    last_pull_at: overrides.last_pull_at ?? isoDaysAgo(0),
+    last_success_at: overrides.last_success_at ?? null,
+    last_error: overrides.last_error ?? "pending raw info reached 200",
+    pull_status: overrides.pull_status ?? "paused",
+  };
+}
+
+function writeDigestSources(vaultDir, sources) {
+  const root = join(vaultDir, ".knowlet", "digest", "sources");
+  mkdirSync(root, { recursive: true });
+  for (const source of sources) {
+    const slug = source.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    writeFileSync(
+      join(root, `${source.id}-${slug}.json`),
+      JSON.stringify(source, null, 2) + "\n",
+      "utf8",
+    );
+  }
+}
+
 async function waitForDraftAutosave(page, state) {
   await page.locator(`[data-testid="digest-draft-autosave-state"][data-state="${state}"]`).waitFor({
     state: "visible",
@@ -91,6 +122,27 @@ async function replaceDraftBody(page, body) {
 function seedThreeItems(vaultDir) {
   mkdirSync(join(vaultDir, "notes", "ai", "notes"), { recursive: true });
   mkdirSync(join(vaultDir, "notes", "library", "final"), { recursive: true });
+  writeDigestSources(vaultDir, [
+    digestSource({
+      id: "01C6SRCRESEARCH",
+      name: "Research Feed",
+      enabled: true,
+      pull_status: "ok",
+      last_error: null,
+      last_success_at: isoDaysAgo(0),
+    }),
+    digestSource({
+      id: "01C6SRCPROMPT",
+      name: "Prompt Watch",
+      kind: "prompt",
+      enabled: true,
+      url: null,
+      prompt: "Find important AI agent updates.",
+      pull_status: "ok",
+      last_error: null,
+      last_success_at: isoDaysAgo(0),
+    }),
+  ]);
   writeRawInfos(vaultDir, [
     rawInfo({
       id: "01C6TODAYRAWINFO000001",
@@ -120,6 +172,14 @@ function seedThreeItems(vaultDir) {
       status: "discussed",
       suggested_tags: ["agents", "prompt-source"],
     }),
+    rawInfo({
+      id: "01C6INCLUDEDMIXED0001",
+      title: "Already processed library item",
+      url: "https://example.com/processed-library-item",
+      fetched_at: isoDaysAgo(0),
+      summary: "This item has already been saved and should not remain in the review inbox.",
+      status: "included",
+    }),
   ]);
 }
 
@@ -137,6 +197,13 @@ function seedOneItem(vaultDir) {
 }
 
 function seedProcessedItems(vaultDir) {
+  writeDigestSources(vaultDir, [
+    digestSource({
+      id: "01C6PAUSEDSOURCE0001",
+      name: "Paused stale source",
+      pull_status: "paused",
+    }),
+  ]);
   writeRawInfos(vaultDir, [
     rawInfo({
       id: "01C6INCLUDEDRAWINFO01",
@@ -149,6 +216,41 @@ function seedProcessedItems(vaultDir) {
       title: "Already discarded item",
       url: "https://example.com/discarded",
       status: "discarded",
+    }),
+  ]);
+}
+
+function seedSourceCoverage(vaultDir) {
+  writeDigestSources(vaultDir, [
+    digestSource({
+      id: "01C6SRCWITHITEMS",
+      name: "Research Feed",
+      enabled: true,
+      pull_status: "ok",
+      last_error: null,
+      last_success_at: isoDaysAgo(0),
+    }),
+    digestSource({
+      id: "01C6SRCWITHOUTITEMS",
+      name: "Prompt Watch",
+      kind: "prompt",
+      enabled: true,
+      url: null,
+      prompt: "Find important AI agent updates.",
+      pull_status: "ok",
+      last_error: null,
+      last_success_at: isoDaysAgo(0),
+    }),
+  ]);
+  writeRawInfos(vaultDir, [
+    rawInfo({
+      id: "01C6SINGLECOVERAGE01",
+      source_id: "01C6SRCWITHITEMS",
+      source_name: "Research Feed",
+      title: "Single sourced item",
+      fetched_at: isoDaysAgo(0),
+      summary: "One source produced a pending item.",
+      status: "unprocessed",
     }),
   ]);
 }
@@ -193,10 +295,70 @@ try {
       state: "visible",
       timeout: 3000,
     });
+    await page.locator('[data-testid="digest-today-pull-copy"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    const todayPullCopy = await page
+      .locator('[data-testid="digest-today-pull-copy"]')
+      .textContent();
+    assert(
+      /today.*complete/i.test(todayPullCopy),
+      `Digest list explains today's pull is complete, got ${JSON.stringify(todayPullCopy)}`,
+    );
+    assert(
+      /2 enabled sources/i.test(todayPullCopy),
+      `Digest list names the enabled source coverage, got ${JSON.stringify(todayPullCopy)}`,
+    );
+    const statusPlacement = await page
+      .locator('[data-testid="digest-pull-status"]')
+      .evaluate((el) => {
+        const style = getComputedStyle(el);
+        return {
+          parent: el.closest('[data-testid="digest-list-status-row"]')?.getAttribute("data-testid"),
+          borderWidth: style.borderTopWidth,
+          borderStyle: style.borderTopStyle,
+        };
+      });
+    assert(
+      statusPlacement.parent === "digest-list-status-row",
+      "pull status sits in the left status row instead of the right action cluster",
+    );
+    assert(
+      statusPlacement.borderWidth === "0px" || statusPlacement.borderStyle === "none",
+      `pull status reads as passive status, got border ${statusPlacement.borderWidth} ${statusPlacement.borderStyle}`,
+    );
+    assert(
+      (await page.locator('[data-testid="digest-card-01C6INCLUDEDMIXED0001"]').count()) === 0,
+      "processed Raw Info is hidden from the review inbox",
+    );
+    await page.locator('[data-testid="digest-list-pane"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
     const detailBg = await page
       .locator('[data-testid="digest-detail"]')
       .evaluate((el) => getComputedStyle(el).backgroundColor);
     assert(detailBg !== "rgba(0, 0, 0, 0)", "detail panel background is opaque");
+    const listDetailVisuals = await page.evaluate(() => {
+      const list = document.querySelector('[data-testid="digest-list-pane"]');
+      const detail = document.querySelector('[data-testid="digest-detail"]');
+      const listStyle = list ? getComputedStyle(list) : null;
+      const detailStyle = detail ? getComputedStyle(detail) : null;
+      return {
+        listBg: listStyle?.backgroundColor,
+        detailBg: detailStyle?.backgroundColor,
+        listBorder: listStyle?.borderTopColor,
+      };
+    });
+    assert(
+      listDetailVisuals.listBg !== listDetailVisuals.detailBg,
+      `list and detail panes need distinct backgrounds, got ${JSON.stringify(listDetailVisuals)}`,
+    );
+    assert(
+      listDetailVisuals.listBorder !== "rgba(0, 0, 0, 0)",
+      "left list pane has a visible boundary",
+    );
     const hitCard = await page
       .locator('[data-testid="digest-card-01C6TODAYRAWINFO000001"]')
       .evaluate((el) => {
@@ -221,6 +383,29 @@ try {
       timeout: 3000,
     });
     await page.locator('[data-testid="digest-group-source-prompt-watch"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    const researchToggle = page.locator('[data-testid="digest-group-toggle-source-research-feed"]');
+    assert(
+      (await researchToggle.getAttribute("aria-expanded")) === "true",
+      "source group starts expanded",
+    );
+    await researchToggle.click();
+    assert(
+      (await researchToggle.getAttribute("aria-expanded")) === "false",
+      "source group can collapse",
+    );
+    await page.locator('[data-testid="digest-card-01C6TODAYRAWINFO000001"]').waitFor({
+      state: "hidden",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-card-01C6PROMPTRAWINFO00003"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await researchToggle.click();
+    await page.locator('[data-testid="digest-card-01C6TODAYRAWINFO000001"]').waitFor({
       state: "visible",
       timeout: 3000,
     });
@@ -334,6 +519,111 @@ try {
     });
     const title = await page.locator('[data-testid="digest-review-current-title"]').textContent();
     assert(title.includes("Prompt source candidate"), "card action starts from that card");
+    await page.locator('[data-testid="digest-review-close"]').click();
+  });
+
+  await runTest("draft autosave status appears only after a save and clears on item switch", async () => {
+    await page.route("**/api/digest/items/01C6TODAYRAWINFO000001/draft", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          raw_info: {
+            ...rawInfo({
+              id: "01C6TODAYRAWINFO000001",
+              title: "Agent trace design",
+              url: "https://example.com/agent-trace",
+            }),
+            status: "drafted",
+            note_draft_id: "01C8AUTOSAVESCOPE",
+          },
+          draft: {
+            id: "01C8AUTOSAVESCOPE",
+            title: "Autosave Scope",
+            body: "## Core\n\nAutosave status should be scoped to the active review item.",
+            source: "https://example.com/agent-trace",
+            tags: ["agents"],
+            kind: "knowledge",
+            folder: "ai/research",
+            task_id: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            age_days: 0,
+            is_stale: false,
+            is_warn_age: false,
+          },
+          rationale: "A small draft for autosave status scoping.",
+        }),
+      });
+    });
+    await page.route("**/api/drafts/01C8AUTOSAVESCOPE", async (route) => {
+      if (route.request().method() !== "PUT") return route.fallback();
+      const body = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "01C8AUTOSAVESCOPE",
+          title: body.title,
+          body: body.body,
+          source: "https://example.com/agent-trace",
+          tags: body.tags,
+          kind: body.kind,
+          folder: body.folder,
+          task_id: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          age_days: 0,
+          is_stale: false,
+          is_warn_age: false,
+        }),
+      });
+    });
+
+    await page.locator('[data-testid="digest-card-01C6TODAYRAWINFO000001"]').click();
+    await page.locator('[data-testid="digest-start-review"]').click();
+    await page.locator('[data-testid="digest-settle-draft"]').click();
+    await page.locator('[data-testid="digest-draft-editor"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    assert(
+      (await page.locator('[data-testid="digest-draft-autosave-state"]').count()) === 0,
+      "autosave status is hidden before the user triggers a save",
+    );
+
+    await page.locator('[data-testid="digest-draft-title"]').click();
+    await page.locator('[data-testid="digest-draft-title-input"]').fill("Autosave Scope Updated");
+    await page.locator('[data-testid="digest-draft-title-input"]').press("Enter");
+    await waitForDraftAutosave(page, "saved");
+    await page
+      .locator(
+        '[data-testid="digest-review-footer"] [data-testid="digest-draft-autosave-state"][data-state="saved"]',
+      )
+      .waitFor({ state: "visible", timeout: 3000 });
+    const footerOrder = await page
+      .locator('[data-testid="digest-review-footer"]')
+      .evaluate((footer) =>
+        Array.from(
+          footer.querySelectorAll(
+            '[data-testid="digest-draft-autosave-state"], [data-testid="digest-review-discard"]',
+          ),
+        ).map((el) => el.getAttribute("data-testid")),
+      );
+    assert(
+      footerOrder.join(" > ") === "digest-draft-autosave-state > digest-review-discard",
+      `autosave status sits immediately before discard, got ${footerOrder.join(" > ")}`,
+    );
+
+    await page.locator('[data-testid="digest-review-next"]').click();
+    await page
+      .locator('[data-testid="digest-review-current-title"]')
+      .filter({ hasText: "RSS normalization caveat" })
+      .waitFor({ state: "visible", timeout: 3000 });
+    assert(
+      (await page.locator('[data-testid="digest-draft-autosave-state"]').count()) === 0,
+      "autosave status is hidden after switching to another Raw Info item",
+    );
     await page.locator('[data-testid="digest-review-close"]').click();
   });
 
@@ -611,7 +901,10 @@ try {
       "raw info with a draft does not offer duplicate draft generation",
     );
     await page.locator('[data-testid="digest-review-stage-tab-draft"]').click();
-    await waitForDraftAutosave(page, "idle");
+    assert(
+      (await page.locator('[data-testid="digest-draft-autosave-state"]').count()) === 0,
+      "newly generated draft does not show saved status before a real autosave",
+    );
     assert(
       (await page.locator('[data-testid="digest-draft-revert-session"]').count()) === 0,
       "draft footer does not expose a session revert button",
@@ -656,6 +949,11 @@ try {
       "## Core\n\nTool traces should be visible, separate from the final answer, and pleasant to review.",
     );
     await waitForDraftAutosave(page, "saved");
+    await page
+      .locator(
+        '[data-testid="digest-review-footer"] [data-testid="digest-draft-autosave-state"][data-state="saved"]',
+      )
+      .waitFor({ state: "visible", timeout: 3000 });
     assert(
       draftSaveBodies.some(
         (body) =>
@@ -786,6 +1084,42 @@ try {
   await env.teardown();
 }
 
+env = await setupDigestEnv(seedThreeItems);
+try {
+  const { page, baseURL } = env;
+  await runTest("Digest list can clear all pending Raw Info items", async () => {
+    await page.locator('[data-testid="header-digest-button"]').click();
+    await page.locator('[data-testid="digest-clear-pending"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-clear-pending"]').click();
+    await page.locator('[data-testid="digest-clear-confirm-popover"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-clear-cancel"]').click();
+    await page.locator('[data-testid="digest-clear-confirm-popover"]').waitFor({
+      state: "detached",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-clear-pending"]').click();
+    await page.locator('[data-testid="digest-clear-confirm"]').click();
+    await page.locator('[data-testid="digest-empty"]').waitFor({
+      state: "visible",
+      timeout: 5000,
+    });
+    const items = await (await page.request.get(`${baseURL}/api/digest/items`)).json();
+    const pending = items.filter((item) => !["discarded", "included"].includes(item.status));
+    assert(pending.length === 0, `all pending Raw Info items are discarded, got ${JSON.stringify(pending)}`);
+  });
+  await runTest("no console errors during clear-pending suite", () => {
+    assertConsoleClean(env);
+  });
+} finally {
+  await env.teardown();
+}
+
 env = await setupDigestEnv(seedOneItem);
 try {
   const { page } = env;
@@ -867,12 +1201,21 @@ try {
       "top-level review entry is disabled with no pending items",
     );
     assert(
-      await page.locator('[data-testid="digest-card-review-01C6INCLUDEDRAWINFO01"]').isDisabled(),
-      "included item card cannot enter review mode",
+      (await page.locator('[data-testid="digest-pause-banner"]').count()) === 0,
+      "stale paused source status does not show the backlog pause banner",
+    );
+    const pullStatus = await page.locator('[data-testid="digest-pull-status"]').textContent();
+    assert(
+      !pullStatus.includes("paused") && !pullStatus.includes("Paused"),
+      `stale paused source status does not mark the whole Digest as paused — got ${pullStatus}`,
     );
     assert(
-      await page.locator('[data-testid="digest-card-review-01C6DISCARDEDRAWINFO1"]').isDisabled(),
-      "discarded item card cannot enter review mode",
+      (await page.locator('[data-testid="digest-card-01C6INCLUDEDRAWINFO01"]').count()) === 0,
+      "included item is hidden from the review inbox",
+    );
+    assert(
+      (await page.locator('[data-testid="digest-card-01C6DISCARDEDRAWINFO1"]').count()) === 0,
+      "discarded item is hidden from the review inbox",
     );
     assert(
       (await page.locator('[data-testid="digest-review-workspace"]').count()) === 0,
@@ -880,6 +1223,46 @@ try {
     );
   });
   await runTest("no console errors during processed-only suite", () => {
+    assertConsoleClean(env);
+  });
+} finally {
+  await env.teardown();
+}
+
+env = await setupDigestEnv(seedSourceCoverage);
+try {
+  const { page } = env;
+  await runTest("source grouping shows enabled sources with no pending items", async () => {
+    await page.locator('[data-testid="header-digest-button"]').click();
+    await page.locator('[data-testid="digest-focus-mode"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    const todayPullCopy = await page
+      .locator('[data-testid="digest-today-pull-copy"]')
+      .textContent();
+    assert(
+      /2 enabled sources/i.test(todayPullCopy),
+      `source coverage copy includes empty enabled sources, got ${JSON.stringify(todayPullCopy)}`,
+    );
+    await page.locator('[data-testid="digest-group-mode-source"]').click();
+    await page.locator('[data-testid="digest-group-source-research-feed"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    await page.locator('[data-testid="digest-group-source-prompt-watch"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    const emptyGroup = await page
+      .locator('[data-testid="digest-group-empty-source-prompt-watch"]')
+      .textContent();
+    assert(
+      emptyGroup.includes("no pending items"),
+      `empty source group explains why no cards appear, got ${JSON.stringify(emptyGroup)}`,
+    );
+  });
+  await runTest("no console errors during source coverage suite", () => {
     assertConsoleClean(env);
   });
 } finally {
@@ -914,8 +1297,48 @@ try {
       state: "visible",
       timeout: 3000,
     });
+    assert(
+      (await page.getByText("Select raw information to read it.").count()) === 0,
+      "empty inbox does not also show the select-a-row placeholder",
+    );
   });
   await runTest("no console errors during empty suite", () => {
+    assertConsoleClean(env);
+  });
+} finally {
+  await env.teardown();
+}
+
+env = await setupTestEnv({ notes: [], language: "en" });
+try {
+  const { page, baseURL } = env;
+  await runTest("main Digest icon animates while sources are pulling", async () => {
+    await page.route("**/api/digest/status", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "running",
+          pending_count: 0,
+          last_report: null,
+          last_error: null,
+          sources: [],
+        }),
+      });
+    });
+    await page.goto(baseURL, { waitUntil: "networkidle" });
+    const digestButton = page.locator('[data-testid="header-digest-button"]');
+    await digestButton.waitFor({ state: "visible", timeout: 3000 });
+    await page.locator('[data-testid="header-digest-pulling-indicator"]').waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+    assert(
+      (await digestButton.getAttribute("data-pull-state")) === "running",
+      "main Digest button exposes the running pull state",
+    );
+  });
+  await runTest("no console errors during header pull indicator suite", () => {
     assertConsoleClean(env);
   });
 } finally {

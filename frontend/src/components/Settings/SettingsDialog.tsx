@@ -1026,12 +1026,16 @@ function LLMConfigPanel(): React.ReactNode {
 function capabilityLabel(name: string, t: (k: string) => string): string {
   switch (name) {
     case "chat_completions":
+    case "responses_chat":
       return t("llm.capabilityChat");
     case "streaming":
+    case "responses_streaming":
       return t("llm.capabilityStreaming");
     case "chat_tools":
+    case "responses_tools":
       return t("llm.capabilityTools");
     case "responses":
+    case "responses_api":
       return t("llm.capabilityResponses");
     case "hosted_web_search":
       return t("llm.capabilityHostedSearch");

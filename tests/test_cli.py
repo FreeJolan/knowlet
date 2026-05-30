@@ -88,7 +88,7 @@ def test_mining_help():
 
 def test_digest_help():
     out = _help("digest")
-    for cmd in ("list", "add", "enable", "disable", "remove", "run", "discard"):
+    for cmd in ("list", "add", "enable", "disable", "remove", "run", "discard", "clear"):
         assert cmd in out
 
 

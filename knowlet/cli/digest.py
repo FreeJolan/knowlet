@@ -17,7 +17,11 @@ from knowlet.cli.mining import _render_run_report
 from knowlet.core.digest import is_digest_task, list_digest_tasks
 from knowlet.core.digest_items import RawInfoStore
 from knowlet.core.digest_pull import pull_digest_sources
-from knowlet.core.digest_review import DigestReviewError, discard_raw_info
+from knowlet.core.digest_review import (
+    DigestReviewError,
+    discard_pending_raw_infos,
+    discard_raw_info,
+)
 from knowlet.core.digest_sources import DigestSource, DigestSourceStore
 from knowlet.core.drafts import DraftStore
 from knowlet.core.mining.task_store import TaskStore
@@ -262,3 +266,22 @@ def digest_discard(
         else ""
     )
     console.print(f"[green]discarded[/green] {result.item.id[:8]}…{suffix}")
+
+
+@app.command("clear")
+def digest_clear() -> None:
+    """Discard every pending Raw Info item in the digest queue."""
+    vault = resolve_vault_or_die()
+    result = discard_pending_raw_infos(
+        items=RawInfoStore(vault.digest_items_dir),
+        drafts=DraftStore(vault.drafts_dir),
+    )
+    console.print(
+        "[green]discarded[/green] "
+        f"{result.discarded_count} pending raw info item(s)"
+    )
+    if result.deleted_draft_ids:
+        console.print(
+            "[dim]deleted linked drafts:[/dim] "
+            + ", ".join(draft_id[:8] + "…" for draft_id in result.deleted_draft_ids)
+        )

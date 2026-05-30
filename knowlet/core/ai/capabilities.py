@@ -85,10 +85,10 @@ def probe_capabilities(
                 return profile
 
     checks: list[CapabilityCheck] = [
-        _timed("chat_completions", lambda: _probe_chat(llm)),
-        _timed("streaming", lambda: _probe_stream(llm)),
-        _timed("chat_tools", lambda: _probe_chat_tools(llm)),
-        _timed("responses", lambda: _probe_responses(llm)),
+        _timed("responses_chat", lambda: _probe_chat(llm)),
+        _timed("responses_streaming", lambda: _probe_stream(llm)),
+        _timed("responses_tools", lambda: _probe_chat_tools(llm)),
+        _timed("responses_api", lambda: _probe_responses(llm)),
     ]
     if include_hosted_web_search:
         checks.append(

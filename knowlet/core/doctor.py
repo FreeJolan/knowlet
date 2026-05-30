@@ -148,7 +148,7 @@ def run_doctor_checks(
 
             profile = probe_capabilities(llm, include_hosted_web_search=True)
             for check in profile.checks:
-                if check.name in {"chat_completions", "chat_tools"}:
+                if check.name in {"responses_chat", "responses_tools"}:
                     continue
                 label = f"llm capability / {check.name}"
                 detail = (
