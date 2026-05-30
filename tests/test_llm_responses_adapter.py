@@ -4,7 +4,12 @@ from typing import Any
 
 from knowlet.config import LLMConfig
 from knowlet.core.events import ReplyChunkEvent, ReplyDoneEvent, ToolCallEvent
-from knowlet.core.llm import LLMClient, ToolCall, messages_with_assistant, messages_with_tool_results
+from knowlet.core.llm import (
+    LLMClient,
+    ToolCall,
+    messages_with_assistant,
+    messages_with_tool_results,
+)
 
 
 class _FakeResponses:
