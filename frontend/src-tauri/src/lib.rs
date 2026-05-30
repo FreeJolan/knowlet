@@ -421,6 +421,38 @@ fn digest_status_menu_label(status: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn desktop_capability_allows_updater_from_loopback_backend() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json"))
+                .expect("default desktop capability should be valid JSON");
+        let permissions = capability
+            .get("permissions")
+            .and_then(serde_json::Value::as_array)
+            .expect("default desktop capability should declare permissions");
+        let has_permission = |permission: &str| {
+            permissions
+                .iter()
+                .any(|value| value.as_str() == Some(permission))
+        };
+
+        assert!(has_permission("updater:default"));
+        assert!(has_permission("process:allow-restart"));
+
+        let remote_urls = capability
+            .pointer("/remote/urls")
+            .and_then(serde_json::Value::as_array)
+            .expect("desktop backend is served from a loopback HTTP URL");
+        let has_remote_url = |url: &str| {
+            remote_urls
+                .iter()
+                .any(|value| value.as_str() == Some(url))
+        };
+
+        assert!(has_remote_url("http://127.0.0.1:*"));
+        assert!(has_remote_url("http://localhost:*"));
+    }
+
+    #[test]
     fn digest_status_menu_label_maps_known_states() {
         assert_eq!(
             super::digest_status_menu_label("running"),
