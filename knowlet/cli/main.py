@@ -10,7 +10,10 @@ own module under `knowlet.cli.*`; the chat REPL implementation lives in
 from __future__ import annotations
 
 import json
+import os
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -78,6 +81,8 @@ app.add_typer(events_cli.app, name="events")
 app.add_typer(backups_cli.app, name="backups")
 app.add_typer(sync_cli.app, name="sync")
 
+DESKTOP_PARENT_PID_ENV = "KNOWLET_DESKTOP_PARENT_PID"
+
 
 # ------------------------------------------------------------------ root
 
@@ -139,6 +144,7 @@ def web(
     from knowlet._logging import configure_logging
 
     configure_logging(vault.root)
+    _start_desktop_parent_watchdog_from_env()
 
     fastapi_app = create_app(vault, cfg)
 
@@ -151,6 +157,55 @@ def web(
         )
     )
     uvicorn.run(fastapi_app, host=host, port=port, log_level="info")
+
+
+def _desktop_parent_pid_from_env() -> int | None:
+    raw = os.environ.get(DESKTOP_PARENT_PID_ENV)
+    if not raw:
+        return None
+    try:
+        pid = int(raw)
+    except ValueError:
+        return None
+    current_pid = os.getpid()
+    if pid <= 0 or pid == current_pid:
+        return None
+    return pid
+
+
+def _process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _start_desktop_parent_watchdog_from_env(*, interval_seconds: float = 2.0) -> None:
+    parent_pid = _desktop_parent_pid_from_env()
+    if parent_pid is None:
+        return
+
+    def _watch() -> None:
+        import logging
+
+        log = logging.getLogger(__name__)
+        while True:
+            time.sleep(interval_seconds)
+            if not _process_exists(parent_pid):
+                log.warning(
+                    "desktop parent process %s is gone; stopping knowlet web",
+                    parent_pid,
+                )
+                os._exit(0)
+
+    threading.Thread(
+        target=_watch,
+        name="knowlet-desktop-parent-watchdog",
+        daemon=True,
+    ).start()
 
 
 # ------------------------------------------------------------------ ls / reindex

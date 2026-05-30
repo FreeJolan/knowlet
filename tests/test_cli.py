@@ -13,7 +13,7 @@ the option-parsing surface compiles cleanly.
 
 from typer.testing import CliRunner
 
-from knowlet.cli.main import app
+from knowlet.cli.main import DESKTOP_PARENT_PID_ENV, _desktop_parent_pid_from_env, app
 
 runner = CliRunner()
 
@@ -52,6 +52,20 @@ def test_version_flag():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     assert "knowlet" in result.stdout
+
+
+def test_desktop_parent_pid_env_parser(monkeypatch):
+    monkeypatch.delenv(DESKTOP_PARENT_PID_ENV, raising=False)
+    assert _desktop_parent_pid_from_env() is None
+
+    monkeypatch.setenv(DESKTOP_PARENT_PID_ENV, "4242")
+    assert _desktop_parent_pid_from_env() == 4242
+
+    monkeypatch.setenv(DESKTOP_PARENT_PID_ENV, "not-a-pid")
+    assert _desktop_parent_pid_from_env() is None
+
+    monkeypatch.setenv(DESKTOP_PARENT_PID_ENV, "0")
+    assert _desktop_parent_pid_from_env() is None
 
 
 # ----------------------------------------------------------------- sub-apps

@@ -40,6 +40,15 @@ PyInstaller backend sidecars for both Apple Silicon and Intel Macs.
   - It starts the bundled backend sidecar on `127.0.0.1`.
   - It waits for `GET /api/health` to return HTTP 200 before opening the window.
   - It kills the backend process when the desktop app exits.
+  - Backend stdout/stderr are written to `<vault>/.knowlet/desktop-backend.log`.
+    The file is truncated for each launch so startup diagnostics only show the
+    current attempt. Normal Python logging still goes to
+    `<vault>/.knowlet/knowlet.log`.
+  - If readiness fails, the desktop startup error includes the recent backend
+    log tail and the full log path.
+  - The desktop shell passes `KNOWLET_DESKTOP_PARENT_PID` to `knowlet web`; the
+    backend exits itself if the desktop parent process disappears, reducing
+    orphan sidecars after force-kill or crash cases.
 - Bundle contents:
   - `Contents/MacOS/knowlet-backend` is a small universal launcher.
   - `Contents/Resources/knowlet-sidecars/` contains the real `arm64` and
@@ -92,8 +101,8 @@ npx tsc --noEmit
 
 ```bash
 uv run pytest tests/test_web.py::test_frontend_dist_env_override
-spctl --assess --type open --context context:primary-signature --verbose=2 frontend/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.1_universal.dmg
-xcrun stapler validate frontend/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.1_universal.dmg
+spctl --assess --type open --context context:primary-signature --verbose=2 frontend/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.2_universal.dmg
+xcrun stapler validate frontend/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Knowlet_0.0.2_universal.dmg
 codesign --verify --deep --strict --verbose=2 frontend/src-tauri/target/universal-apple-darwin/release/bundle/macos/Knowlet.app
 frontend/src-tauri/target/universal-apple-darwin/release/bundle/macos/Knowlet.app/Contents/MacOS/knowlet-backend --version
 arch -x86_64 frontend/src-tauri/target/universal-apple-darwin/release/bundle/macos/Knowlet.app/Contents/MacOS/knowlet-backend --version
@@ -122,5 +131,5 @@ PATH="/usr/bin:/bin" KNOWLET_VAULT=/path/to/vault \
 
 - No first-run vault onboarding beyond the native folder picker.
 - No Dock affordance or explicit recent-vault submenu yet.
-- Hard-killing the parent process with a signal can orphan the sidecar; normal
-  app shutdown still goes through the desktop lifecycle guard.
+- Parent-process watchdog is best-effort: an immediate signal-level kill is
+  handled after the backend watchdog wakes up, not synchronously.

@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -13,6 +14,8 @@ const BACKEND_BIN_NAME: &str = "knowlet-backend";
 const FRONTEND_DIST_RESOURCE: &str = "frontend-dist";
 pub const BACKEND_BIN_ENV: &str = "KNOWLET_BACKEND_BIN";
 pub const VAULT_ENV: &str = "KNOWLET_VAULT";
+pub const DESKTOP_PARENT_PID_ENV: &str = "KNOWLET_DESKTOP_PARENT_PID";
+const DESKTOP_BACKEND_STDIO_LOG: &str = "desktop-backend.log";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackendProgram {
@@ -151,6 +154,7 @@ pub struct BackendProcess {
     child: Child,
     pub url: String,
     pub vault: PathBuf,
+    pub log_path: PathBuf,
 }
 
 impl BackendProcess {
@@ -164,27 +168,37 @@ impl BackendProcess {
             .map_err(|err| format!("failed to resolve current executable: {err}"))?;
         let backend_program =
             resolve_backend_program(std::env::var_os(BACKEND_BIN_ENV), &current_exe, &repo_root)?;
+        let log_path = desktop_backend_log_path(&vault);
+        reset_backend_stdio_log(&log_path)?;
+        let stdout_log = open_backend_stdio_log(&log_path)?;
+        let stderr_log = open_backend_stdio_log(&log_path)?;
 
         let mut cmd = Command::new(&backend_program.executable);
         cmd.args(&backend_program.prefix_args)
             .args(["web", "--host", LOOPBACK_HOST, "--port", &port.to_string()])
             .env("KNOWLET_VAULT", &vault)
             .env("KNOWLET_FRONTEND_DIST", &frontend_dist)
+            .env(DESKTOP_PARENT_PID_ENV, std::process::id().to_string())
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdout(Stdio::from(stdout_log))
+            .stderr(Stdio::from(stderr_log));
 
         let child = cmd
             .spawn()
             .map_err(|err| format!("failed to start knowlet backend: {err}"))?;
         let mut child = child;
-        if let Err(err) = wait_for_health(port, HEALTH_TIMEOUT) {
+        if let Err(err) = wait_for_backend_health(&mut child, port, HEALTH_TIMEOUT, &log_path) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(err);
         }
 
-        Ok(Self { child, url, vault })
+        Ok(Self {
+            child,
+            url,
+            vault,
+            log_path,
+        })
     }
 
     pub fn stop(&mut self) {
@@ -199,6 +213,81 @@ impl Drop for BackendProcess {
     }
 }
 
+pub fn desktop_backend_log_path(vault: &Path) -> PathBuf {
+    vault.join(VAULT_MARKER_DIR).join(DESKTOP_BACKEND_STDIO_LOG)
+}
+
+fn reset_backend_stdio_log(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "failed to create desktop backend log directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map(|_| ())
+        .map_err(|err| {
+            format!(
+                "failed to reset desktop backend log {}: {err}",
+                path.display()
+            )
+        })
+}
+
+fn open_backend_stdio_log(path: &Path) -> Result<File, String> {
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|err| {
+            format!(
+                "failed to open desktop backend log {}: {err}",
+                path.display()
+            )
+        })
+}
+
+pub fn wait_for_backend_health(
+    child: &mut Child,
+    port: u16,
+    timeout: Duration,
+    log_path: &Path,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if health_check(port) {
+            return Ok(());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(format!(
+                    "knowlet backend exited before health check passed ({status}){}",
+                    backend_log_hint(log_path)
+                ));
+            }
+            Ok(None) => {}
+            Err(err) => {
+                return Err(format!(
+                    "failed to observe knowlet backend process: {err}{}",
+                    backend_log_hint(log_path)
+                ));
+            }
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+    Err(format!(
+        "knowlet backend health check did not pass at http://{LOOPBACK_HOST}:{port}/api/health within {}s{}",
+        timeout.as_secs(),
+        backend_log_hint(log_path)
+    ))
+}
+
 pub fn wait_for_health(port: u16, timeout: Duration) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -211,6 +300,28 @@ pub fn wait_for_health(port: u16, timeout: Duration) -> Result<(), String> {
         "knowlet backend health check did not pass at http://{LOOPBACK_HOST}:{port}/api/health within {}s",
         timeout.as_secs()
     ))
+}
+
+fn backend_log_hint(log_path: &Path) -> String {
+    let tail = read_log_tail(log_path, 20);
+    if tail.is_empty() {
+        format!("\nBackend log: {}", log_path.display())
+    } else {
+        format!(
+            "\nBackend log: {}\nRecent backend log:\n{}",
+            log_path.display(),
+            tail
+        )
+    }
+}
+
+pub fn read_log_tail(path: &Path, max_lines: usize) -> String {
+    let Ok(content) = fs::read_to_string(path) else {
+        return String::new();
+    };
+    let mut lines = content.lines().rev().take(max_lines).collect::<Vec<_>>();
+    lines.reverse();
+    lines.join("\n")
 }
 
 fn health_check(port: u16) -> bool {
@@ -239,6 +350,7 @@ mod tests {
     use std::fs;
     use std::net::TcpListener;
     use std::path::Path;
+    use std::process::{Command, Stdio};
     use std::time::Duration;
 
     use tempfile::tempdir;
@@ -260,6 +372,61 @@ mod tests {
         let err = super::validate_vault_dir(dir.path()).unwrap_err();
 
         assert!(err.contains(".knowlet"));
+    }
+
+    #[test]
+    fn desktop_backend_log_path_lives_under_vault_state() {
+        let dir = tempdir().unwrap();
+
+        assert_eq!(
+            super::desktop_backend_log_path(dir.path()),
+            dir.path().join(".knowlet").join("desktop-backend.log")
+        );
+    }
+
+    #[test]
+    fn read_log_tail_returns_recent_lines() {
+        let dir = tempdir().unwrap();
+        let log = dir.path().join("backend.log");
+        fs::write(&log, "one\ntwo\nthree\nfour\n").unwrap();
+
+        assert_eq!(super::read_log_tail(&log, 2), "three\nfour");
+    }
+
+    #[test]
+    fn reset_backend_stdio_log_truncates_previous_launch() {
+        let dir = tempdir().unwrap();
+        let log = dir.path().join(".knowlet").join("desktop-backend.log");
+        fs::create_dir_all(log.parent().unwrap()).unwrap();
+        fs::write(&log, "old launch\n").unwrap();
+
+        super::reset_backend_stdio_log(&log).unwrap();
+
+        assert_eq!(fs::read_to_string(&log).unwrap(), "");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backend_health_reports_child_exit_with_log_tail() {
+        let dir = tempdir().unwrap();
+        let log = dir.path().join("backend.log");
+        let stdout = super::open_backend_stdio_log(&log).unwrap();
+        let stderr = super::open_backend_stdio_log(&log).unwrap();
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("echo backend exploded; exit 42")
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr))
+            .spawn()
+            .unwrap();
+        let port = super::find_available_port().unwrap();
+
+        let err = super::wait_for_backend_health(&mut child, port, Duration::from_secs(1), &log)
+            .unwrap_err();
+
+        assert!(err.contains("exited before health check passed"));
+        assert!(err.contains("backend exploded"));
+        assert!(err.contains("backend.log"));
     }
 
     #[test]
