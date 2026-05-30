@@ -22,6 +22,8 @@ installed; the CLI wraps such calls in a friendly install hint.
 
 from __future__ import annotations
 
+import importlib
+
 # Public re-exports — kept narrow on purpose.
 from knowlet.core.sync.credentials import (  # noqa: F401
     CREDENTIALS_SCHEMA_VERSION,
@@ -44,9 +46,9 @@ def require_google_libs() -> None:
     Google client libs. Raises SyncDependenciesMissingError with a
     clear hint when the optional extra hasn't been installed."""
     try:
-        import google.auth  # noqa: F401
-        import google_auth_oauthlib.flow  # noqa: F401
-        import googleapiclient.discovery  # noqa: F401
+        importlib.import_module("google.auth")
+        importlib.import_module("google_auth_oauthlib.flow")
+        importlib.import_module("googleapiclient.discovery")
     except ImportError as exc:
         raise SyncDependenciesMissingError(
             "Drive sync requires the optional `sync` extra. "

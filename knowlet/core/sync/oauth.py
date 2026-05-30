@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 from knowlet.core.sync.credentials import (
     SyncCredentials,
@@ -261,7 +262,7 @@ def credentials_to_google(creds: SyncCredentials) -> object:
 
         raise SyncDependenciesMissingError(str(exc)) from exc
     # google-auth doesn't ship typed stubs (see pyproject mypy
-    # overrides); the boundary is intentionally untyped.
-    return Credentials.from_authorized_user_info(  # type: ignore[no-untyped-call]
-        creds.token, list(SCOPES)
-    )
+    # overrides); keep the untyped boundary explicit without relying on
+    # platform-dependent ignore comments.
+    credentials_cls = cast(Any, Credentials)
+    return credentials_cls.from_authorized_user_info(creds.token, list(SCOPES))
