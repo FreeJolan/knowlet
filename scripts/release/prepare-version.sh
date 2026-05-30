@@ -41,6 +41,10 @@ toml_package_version() {
   awk -F '"' '/^version = "/ { print $2; exit }' "$1"
 }
 
+python_module_version() {
+  awk -F '"' '/^__version__ = "/ { print $2; exit }' "$1"
+}
+
 check_version() {
   local source="$1"
   local actual="$2"
@@ -95,6 +99,7 @@ check_version "frontend/package-lock.json" "$(json_version frontend/package-lock
 check_version "frontend/package-lock.json packages.root" "$(package_lock_root_version frontend/package-lock.json)"
 check_version "frontend/src-tauri/tauri.conf.json" "$(json_version frontend/src-tauri/tauri.conf.json)"
 check_version "frontend/src-tauri/Cargo.toml" "$(toml_package_version frontend/src-tauri/Cargo.toml)"
+check_version "knowlet/__init__.py" "$(python_module_version knowlet/__init__.py)"
 
 if [[ "$ALLOW_EXISTING_TAG" -eq 0 ]]; then
   ! git rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null || fail "local tag already exists: $TAG"
