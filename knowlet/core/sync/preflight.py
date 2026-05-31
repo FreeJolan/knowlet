@@ -333,12 +333,15 @@ def preflight_scan(
         # down. Skip heartbeat files (those aren't notes).
         if materialize_drive_file is not None:
             from knowlet.core.sync.heartbeat import HEARTBEAT_SUFFIX
+            from knowlet.core.sync.namespace import name_belongs_to_vault
 
             known_drive_ids = {row.drive_file_id for row in rows if row.drive_file_id}
             for file_id, brief in drive_files.items():
                 if file_id in known_drive_ids:
                     continue
                 if brief.name and brief.name.endswith(HEARTBEAT_SUFFIX):
+                    continue
+                if not name_belongs_to_vault(brief.name, state_store.vault_root):
                     continue
                 try:
                     materialized_id = materialize_drive_file(file_id, brief)
@@ -393,13 +396,14 @@ def _maybe_heartbeat_pass(
             service,
             device_id=state_store.device_id(),
             device_label=state_store.device_label(),
+            vault_root=state_store.vault_root,
         )
     except Exception:
         import logging
 
         logging.getLogger(__name__).warning("preflight: heartbeat write failed", exc_info=True)
     try:
-        devices = list_alive_devices(service)
+        devices = list_alive_devices(service, vault_root=state_store.vault_root)
         for d in devices:
             alive_devices_out.append({"device_id": d.device_id, "last_seen_at": d.last_seen_at})
     except Exception:

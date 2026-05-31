@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from knowlet.core.sync.changes import DriveChange
 from knowlet.core.sync.freshness import check_sync_freshness, mark_freshness_synced
+from knowlet.core.sync.push import drive_appdata_name
 from knowlet.core.sync.state import FileState, SyncStateStore
 
 
@@ -102,7 +103,10 @@ def test_relevant_remote_change_requires_blocking_sync_without_advancing_token(
                 file_id="remote-new",
                 removed=False,
                 trashed=False,
-                file={"name": "01REMOTE.md", "headRevisionId": "rev-1"},
+                file={
+                    "name": drive_appdata_name("note", "01REMOTE.md", vault_root=tmp_path),
+                    "headRevisionId": "rev-1",
+                },
             )
         ]
         with patch(
@@ -122,6 +126,44 @@ def test_relevant_remote_change_requires_blocking_sync_without_advancing_token(
     assert report.requires_sync is True
     assert report.changed_count == 1
     assert report.next_start_page_token == "tok-2"
+
+
+def test_other_vault_remote_change_is_ignored_for_realtime_freshness(
+    tmp_path: Path,
+) -> None:
+    current = tmp_path / "current"
+    other = tmp_path / "other"
+    current.mkdir()
+    other.mkdir()
+    store = SyncStateStore(current)
+    try:
+        store.set_start_page_token("tok-1")
+        other_name = drive_appdata_name("note", "01OTHER.md", vault_root=other)
+        changes = [
+            DriveChange(
+                file_id="drive-other",
+                removed=False,
+                trashed=False,
+                file={
+                    "name": other_name,
+                    "headRevisionId": "rev-other",
+                },
+            )
+        ]
+        with patch(
+            "knowlet.core.sync.freshness.list_all_changes",
+            return_value=(changes, "tok-2"),
+        ):
+            report = check_sync_freshness(
+                state_store=store,
+                client_factory=lambda: object(),
+            )
+
+        assert report.state == "up_to_date"
+        assert report.requires_sync is False
+        assert report.changed_count == 0
+    finally:
+        store.close()
 
 
 def test_mark_freshness_synced_bootstraps_cursor_to_now(tmp_path: Path) -> None:

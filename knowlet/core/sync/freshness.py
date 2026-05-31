@@ -26,6 +26,7 @@ from knowlet.core.sync.changes import (
 )
 from knowlet.core.sync.drive_client import DriveClient
 from knowlet.core.sync.heartbeat import HEARTBEAT_SUFFIX
+from knowlet.core.sync.namespace import name_belongs_to_vault
 from knowlet.core.sync.state import SyncStateStore
 
 SyncModeV2 = Literal["realtime", "backup"]
@@ -162,6 +163,8 @@ def _relevant_changes(
         if _is_system_file(name):
             continue
         known = known_by_drive_id.get(change.file_id)
+        if known is None and not name_belongs_to_vault(name, state_store.vault_root):
+            continue
         if change.removed or change.trashed:
             if known is not None and known.delete_intent is None:
                 relevant.append(change)

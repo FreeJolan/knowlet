@@ -102,6 +102,26 @@ pub fn create_vault_dir(
     create_vault_dir_with_initializer(parent, name, allow_existing_empty, initialize_vault_layout)
 }
 
+pub fn delete_vault_local_files(path: &Path) -> Result<PathBuf, String> {
+    delete_vault_local_files_with_remover(path, |vault| {
+        trash::delete(vault).map_err(|err| {
+            format!(
+                "failed to move vault to the system trash {}: {err}",
+                vault.display()
+            )
+        })
+    })
+}
+
+pub fn delete_vault_local_files_with_remover(
+    path: &Path,
+    mut remover: impl FnMut(&Path) -> Result<(), String>,
+) -> Result<PathBuf, String> {
+    let vault = validate_vault_dir(path)?;
+    remover(&vault)?;
+    Ok(vault)
+}
+
 pub fn create_vault_dir_with_initializer(
     parent: &Path,
     name: &str,
@@ -998,6 +1018,38 @@ mod tests {
 
         assert!(err.contains("nested"));
         assert!(!outer.join("nested").exists());
+    }
+
+    #[test]
+    fn delete_vault_local_files_uses_supplied_trash_remover() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("delete-me");
+        fs::create_dir_all(vault.join(".knowlet")).unwrap();
+        fs::write(vault.join("note.md"), "# keep recoverable").unwrap();
+        let mut removed = Vec::new();
+
+        super::delete_vault_local_files_with_remover(&vault, |path| {
+            removed.push(path.to_path_buf());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(removed, vec![vault.canonicalize().unwrap()]);
+    }
+
+    #[test]
+    fn delete_vault_local_files_rejects_non_vault_folder() {
+        let dir = tempdir().unwrap();
+        let mut removed = false;
+
+        let err = super::delete_vault_local_files_with_remover(dir.path(), |_| {
+            removed = true;
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(err.contains(".knowlet"));
+        assert!(!removed);
     }
 
     #[test]

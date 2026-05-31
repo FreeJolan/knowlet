@@ -120,6 +120,68 @@ def test_preflight_auto_pulls_stale_tracked_raw_info_file(tmp_path: Path) -> Non
     assert report.auto_pulled_ids == ["01RAW-item.json"]
 
 
+def test_preflight_materializes_only_current_vault_remote_additions(
+    tmp_path: Path,
+) -> None:
+    current = tmp_path / "current"
+    other = tmp_path / "other"
+    current.mkdir()
+    other.mkdir()
+    state = SyncStateStore(current)
+    materialized: list[tuple[str, DriveFile]] = []
+    try:
+        current_brief = DriveFile(
+            id="DRIVE-CURRENT",
+            name=drive_appdata_name("note", "01CURRENT.md", vault_root=current),
+            mime_type="text/markdown",
+            modified_time="2026-05-31T00:00:00Z",
+            head_revision_id="rev-current",
+        )
+        other_brief = DriveFile(
+            id="DRIVE-OTHER",
+            name=drive_appdata_name("note", "01OTHER.md", vault_root=other),
+            mime_type="text/markdown",
+            modified_time="2026-05-31T00:00:00Z",
+            head_revision_id="rev-other",
+        )
+        legacy_brief = DriveFile(
+            id="DRIVE-LEGACY-FLAT",
+            name="01LEGACY.md",
+            mime_type="text/markdown",
+            modified_time="2026-05-31T00:00:00Z",
+            head_revision_id="rev-legacy",
+        )
+        with (
+            patch(
+                "knowlet.core.sync.preflight._maybe_heartbeat_pass",
+                return_value=object(),
+            ),
+            patch(
+                "knowlet.core.sync.files.list_appdata_revisions",
+                return_value={
+                    "DRIVE-CURRENT": current_brief,
+                    "DRIVE-OTHER": other_brief,
+                    "DRIVE-LEGACY-FLAT": legacy_brief,
+                },
+            ),
+        ):
+            report = preflight_scan(
+                vault_root=current,
+                state_store=state,
+                note_meta_lookup=lambda _id: None,
+                note_path_lookup=lambda _id: None,
+                auto_pull_service_factory=lambda: object(),
+                materialize_drive_file=lambda file_id, file: (
+                    materialized.append((file_id, file)) or file_id
+                ),
+            )
+    finally:
+        state.close()
+
+    assert materialized == [("DRIVE-CURRENT", current_brief)]
+    assert report.cloned_from_drive_ids == ["DRIVE-CURRENT"]
+
+
 def test_unauthenticated_short_circuits(tmp_path: Path) -> None:
     """Alice (single device, no Drive creds) must not see a chip.
     The scan returns ``unauthenticated=True`` and stops at the

@@ -145,6 +145,7 @@ def update_file_conditional(
     content: bytes,
     expected_revision: str,
     mime_type: str = NOTE_MIME_TYPE,
+    name: str | None = None,
 ) -> DriveFile:
     """Conditional overwrite via GET-then-compare-then-upload.
 
@@ -171,7 +172,10 @@ def update_file_conditional(
             actual_revision=current.head_revision_id or "(none)",
         )
     media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime_type, resumable=False)
-    res = service.files().update(fileId=file_id, media_body=media, fields=_FIELDS).execute()
+    kwargs: dict[str, Any] = {"fileId": file_id, "media_body": media, "fields": _FIELDS}
+    if name:
+        kwargs["body"] = {"name": name}
+    res = service.files().update(**kwargs).execute()
     return _file_resource_to_drive_file(res)
 
 
@@ -262,6 +266,7 @@ def force_overwrite(
     file_id: str,
     content: bytes,
     mime_type: str = NOTE_MIME_TYPE,
+    name: str | None = None,
 ) -> DriveFile:
     """Used by the conflict UI's "use mine — overwrite remote" path.
     Does NOT set If-Match (i.e. unconditional update). The caller
@@ -270,5 +275,8 @@ def force_overwrite(
     from googleapiclient.http import MediaIoBaseUpload
 
     media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime_type, resumable=False)
-    res = service.files().update(fileId=file_id, media_body=media, fields=_FIELDS).execute()
+    kwargs: dict[str, Any] = {"fileId": file_id, "media_body": media, "fields": _FIELDS}
+    if name:
+        kwargs["body"] = {"name": name}
+    res = service.files().update(**kwargs).execute()
     return _file_resource_to_drive_file(res)

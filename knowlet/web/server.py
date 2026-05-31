@@ -2995,7 +2995,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         from knowlet.core.sync.files import download_file
         from knowlet.core.sync.push import (
             ATTACHMENT_ENTITY_TYPE,
-            synced_json_entity_from_drive_name,
+            DIGEST_SOURCE_ENTITY_TYPE,
+            NOTE_ENTITY_TYPE,
+            RAW_INFO_ENTITY_TYPE,
+            appdata_entity_from_drive_name,
         )
         from knowlet.core.sync.state import FileState, SyncStateStore
 
@@ -3007,15 +3010,17 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             return None
         service = DriveClient(creds).service()
         body = download_file(service, drive_file_id)
-        synced_json = synced_json_entity_from_drive_name(str(brief.name or ""))
-        if synced_json is not None:
-            entity_type, entity_id = synced_json
+        parsed = appdata_entity_from_drive_name(
+            str(brief.name or ""),
+            vault_root=vault.root,
+            allow_legacy_flat_json=True,
+        )
+        if parsed is None:
+            return None
+        entity_type, entity_id = parsed
+        if entity_type in {DIGEST_SOURCE_ENTITY_TYPE, RAW_INFO_ENTITY_TYPE}:
             if Path(entity_id).name != entity_id:
                 return None
-            from knowlet.core.sync.push import (
-                DIGEST_SOURCE_ENTITY_TYPE,
-                RAW_INFO_ENTITY_TYPE,
-            )
 
             if entity_type == DIGEST_SOURCE_ENTITY_TYPE:
                 target_dir = runtime.vault.digest_sources_dir
@@ -3047,10 +3052,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # filename extension since the appData folder is flat and
         # filenames are authoritative (notes are always ``<id>.md``;
         # attachments are ``<ulid>.<png|jpg|...>``).
-        if brief.name and not brief.name.endswith(".md"):
+        if entity_type == ATTACHMENT_ENTITY_TYPE:
+            if Path(entity_id).name != entity_id:
+                return None
             att_dir = runtime.vault.attachments_dir
             att_dir.mkdir(parents=True, exist_ok=True)
-            target = att_dir / brief.name
+            target = att_dir / entity_id
             tmp = target.with_suffix(target.suffix + ".tmp")
             tmp.write_bytes(body)
             tmp.replace(target)
@@ -3059,7 +3066,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 store.upsert_file_state(
                     FileState(
                         entity_type=ATTACHMENT_ENTITY_TYPE,
-                        entity_id=brief.name,
+                        entity_id=entity_id,
                         drive_file_id=drive_file_id,
                         last_known_etag=brief.head_revision_id,
                         last_synced_at=now_iso(),
@@ -3068,7 +3075,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 )
             finally:
                 store.close()
-            return str(brief.name)
+            return entity_id
+        if entity_type != NOTE_ENTITY_TYPE:
+            return None
         try:
             raw = body.decode("utf-8")
         except UnicodeDecodeError:
@@ -3079,9 +3088,11 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # purposes prefer the file's own name (Drive stores it as
         # ``<id>.md``).
         if note.frontmatter_status != "valid" and brief.name and brief.name.endswith(".md"):
-            stem = brief.name[:-3]
+            stem = entity_id
             if stem:
                 note.id = stem
+        elif entity_id:
+            note.id = entity_id
         # Place into the vault honoring the ``folder`` frontmatter
         # field (#120). None → root.
         folder = note.folder
@@ -3098,7 +3109,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         try:
             store.upsert_file_state(
                 FileState(
-                    entity_type="note",
+                    entity_type=NOTE_ENTITY_TYPE,
                     entity_id=note.id,
                     drive_file_id=drive_file_id,
                     last_known_etag=brief.head_revision_id,

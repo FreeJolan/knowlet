@@ -35,6 +35,7 @@ from knowlet.core.sync.files import (
     update_file_conditional,
     upload_new_file,
 )
+from knowlet.core.sync.namespace import parse_scoped_appdata_name, scoped_appdata_name
 from knowlet.core.sync.state import FileState, SyncStateStore
 
 
@@ -88,11 +89,14 @@ class SyncedFileMissingError(FileNotFoundError):
 ATTACHMENT_ENTITY_TYPE = "attachment"
 DIGEST_SOURCE_ENTITY_TYPE = "digest_source"
 RAW_INFO_ENTITY_TYPE = "raw_info"
+NOTE_ENTITY_TYPE = "note"
 SYNCED_JSON_ENTITY_TYPES = {
     DIGEST_SOURCE_ENTITY_TYPE,
     RAW_INFO_ENTITY_TYPE,
 }
 _APPDATA_NAME_PREFIX = {
+    NOTE_ENTITY_TYPE: "note__",
+    ATTACHMENT_ENTITY_TYPE: "attachment__",
     DIGEST_SOURCE_ENTITY_TYPE: "digest-source__",
     RAW_INFO_ENTITY_TYPE: "raw-info__",
 }
@@ -112,8 +116,8 @@ def push_note(
     if note.path is None or not note.path.exists():
         raise NoteFileMissingError(f"Note {note.id} has no on-disk path; cannot push.")
     content = note.path.read_bytes()
-    record = state.get_file_state("note", note.id)
-    name = note.path.name
+    record = state.get_file_state(NOTE_ENTITY_TYPE, note.id)
+    name = drive_appdata_name(NOTE_ENTITY_TYPE, note.path.name, vault_root=state.vault_root)
     if record is None or not record.drive_file_id:
         # First push: create in the hidden appDataFolder (per 5.C.1).
         # Without an explicit parent on drive.appdata scope, Drive
@@ -128,7 +132,7 @@ def push_note(
         )
         state.upsert_file_state(
             FileState(
-                entity_type="note",
+                entity_type=NOTE_ENTITY_TYPE,
                 entity_id=note.id,
                 drive_file_id=df.id,
                 last_known_etag=df.head_revision_id,
@@ -137,7 +141,7 @@ def push_note(
             )
         )
         return PushResult(
-            entity_type="note",
+            entity_type=NOTE_ENTITY_TYPE,
             entity_id=note.id,
             drive_file=df,
             created=True,
@@ -165,6 +169,7 @@ def push_note(
             file_id=record.drive_file_id,
             content=content,
             expected_revision=expected,
+            name=name,
         )
     except RemoteVersionMismatchError:
         # Build the conflict report — fetch remote bytes + metadata
@@ -172,7 +177,7 @@ def push_note(
         remote_meta = get_file_metadata(service, record.drive_file_id)
         remote_content = download_file(service, record.drive_file_id)
         return ConflictReport(
-            entity_type="note",
+            entity_type=NOTE_ENTITY_TYPE,
             entity_id=note.id,
             drive_file_id=record.drive_file_id,
             expected_revision=expected,
@@ -182,7 +187,7 @@ def push_note(
         )
     state.upsert_file_state(
         FileState(
-            entity_type="note",
+            entity_type=NOTE_ENTITY_TYPE,
             entity_id=note.id,
             drive_file_id=df.id,
             last_known_etag=df.head_revision_id,
@@ -191,7 +196,7 @@ def push_note(
         )
     )
     return PushResult(
-        entity_type="note",
+        entity_type=NOTE_ENTITY_TYPE,
         entity_id=note.id,
         drive_file=df,
         created=False,
@@ -247,9 +252,10 @@ def push_attachment(
     # files browsable in Drive's web UI if a future scope upgrade ever
     # surfaces them.
     mime, _ = mimetypes.guess_type(filename)
+    name = drive_appdata_name(ATTACHMENT_ENTITY_TYPE, filename, vault_root=state.vault_root)
     df = upload_new_file(
         service,
-        name=filename,
+        name=name,
         content=content,
         mime_type=mime or "application/octet-stream",
         parent_folder_id=APPDATA_FOLDER,
@@ -275,7 +281,12 @@ def push_attachment(
 # ----------------------------------------------------- synced JSON files
 
 
-def drive_appdata_name(entity_type: str, entity_id: str) -> str:
+def drive_appdata_name(
+    entity_type: str,
+    entity_id: str,
+    *,
+    vault_root: Path | None = None,
+) -> str:
     """Drive appData is flat; prefix file names by logical type.
 
     ``entity_id`` is the local filename. The prefix lets first-connect
@@ -285,11 +296,36 @@ def drive_appdata_name(entity_type: str, entity_id: str) -> str:
     prefix = _APPDATA_NAME_PREFIX.get(entity_type)
     if prefix is None:
         raise ValueError(f"unsupported synced file entity_type: {entity_type!r}")
+    if vault_root is not None:
+        return scoped_appdata_name(vault_root, prefix, entity_id)
     return f"{prefix}{entity_id}"
+
+
+def appdata_entity_from_drive_name(
+    name: str,
+    *,
+    vault_root: Path,
+    allow_legacy_flat_json: bool = False,
+) -> tuple[str, str] | None:
+    scoped = parse_scoped_appdata_name(
+        name,
+        vault_root=vault_root,
+        type_prefixes=_APPDATA_NAME_PREFIX,
+    )
+    if scoped is not None:
+        entity_id = scoped.entity_id
+        if scoped.entity_type == NOTE_ENTITY_TYPE and entity_id.endswith(".md"):
+            entity_id = entity_id[:-3]
+        return scoped.entity_type, entity_id
+    if allow_legacy_flat_json:
+        return synced_json_entity_from_drive_name(name)
+    return None
 
 
 def synced_json_entity_from_drive_name(name: str) -> tuple[str, str] | None:
     for entity_type, prefix in _APPDATA_NAME_PREFIX.items():
+        if entity_type not in SYNCED_JSON_ENTITY_TYPES:
+            continue
         if name.startswith(prefix):
             entity_id = name[len(prefix) :]
             if entity_id:
@@ -319,7 +355,7 @@ def push_vault_file(
         raise SyncedFileMissingError(f"{entity_type} {entity_id} missing at {path}")
 
     content = path.read_bytes()
-    name = drive_appdata_name(entity_type, entity_id)
+    name = drive_appdata_name(entity_type, entity_id, vault_root=state.vault_root)
     record = state.get_file_state(entity_type, entity_id)
     if record is None or not record.drive_file_id:
         df = upload_new_file(
@@ -360,6 +396,8 @@ def push_vault_file(
         file_id=record.drive_file_id,
         content=content,
         expected_revision=expected,
+        mime_type="application/json",
+        name=name,
     )
     state.upsert_file_state(
         FileState(
@@ -490,7 +528,7 @@ def resolve_with_merge(
 
     state.upsert_file_state(
         FileState(
-            entity_type="note",
+            entity_type=NOTE_ENTITY_TYPE,
             entity_id=note_id,
             drive_file_id=df.id,
             last_known_etag=df.head_revision_id,
@@ -499,7 +537,7 @@ def resolve_with_merge(
         )
     )
     return PushResult(
-        entity_type="note",
+        entity_type=NOTE_ENTITY_TYPE,
         entity_id=note_id,
         drive_file=df,
         created=False,

@@ -10,6 +10,7 @@ from knowlet.config import VAULT_MARKER_DIR
 from knowlet.core.audit_log import AuditEvent, AuditEventStore
 from knowlet.core.backups import BackupStore
 from knowlet.core.note import Note, now_iso
+from knowlet.core.vault_identity import ensure_vault_id
 
 NOTES_DIR = "notes"
 USERS_DIR = "users"
@@ -208,6 +209,7 @@ class Vault:
         # Phase 3 Stage 2 — write a starter wiki_schema.md if none
         # exists. The template demonstrates the Rule + Why pattern
         # (per ADR-0024 §3.4) and explains what wiki_schema is for.
+        ensure_vault_id(self.root)
         _ensure_wiki_schema_template(self.state_dir / "wiki_schema.md")
 
     def iter_note_paths(self) -> Iterator[Path]:

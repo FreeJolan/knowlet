@@ -30,10 +30,12 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from knowlet.core.note import now_iso
 from knowlet.core.sync.files import force_overwrite, upload_new_file
+from knowlet.core.sync.namespace import scoped_appdata_name, strip_current_vault_prefix
 from knowlet.core.sync.oauth import APPDATA_FOLDER
 
 logger = logging.getLogger(__name__)
@@ -52,7 +54,13 @@ class AliveDevice:
     last_seen_at: str  # Drive's modifiedTime, ISO 8601 UTC
 
 
-def write_my_heartbeat(service: Any, *, device_id: str, device_label: str) -> None:
+def write_my_heartbeat(
+    service: Any,
+    *,
+    device_id: str,
+    device_label: str,
+    vault_root: Path | None = None,
+) -> None:
     """Idempotent upload of THIS device's heartbeat. If the file
     already exists in appData, overwrite it (Drive bumps
     ``modifiedTime`` automatically). If not, create it."""
@@ -64,7 +72,10 @@ def write_my_heartbeat(service: Any, *, device_id: str, device_label: str) -> No
         },
         ensure_ascii=False,
     ).encode("utf-8")
-    fname = f"{device_id}{HEARTBEAT_SUFFIX}"
+    legacy_name = f"{device_id}{HEARTBEAT_SUFFIX}"
+    fname = (
+        scoped_appdata_name(vault_root, "", legacy_name) if vault_root is not None else legacy_name
+    )
 
     existing_id = _find_heartbeat_file_id(service, fname)
     if existing_id is not None:
@@ -84,7 +95,12 @@ def write_my_heartbeat(service: Any, *, device_id: str, device_label: str) -> No
     )
 
 
-def list_alive_devices(service: Any, ttl_days: int = HEARTBEAT_TTL_DAYS) -> list[AliveDevice]:
+def list_alive_devices(
+    service: Any,
+    ttl_days: int = HEARTBEAT_TTL_DAYS,
+    *,
+    vault_root: Path | None = None,
+) -> list[AliveDevice]:
     """List all ``*.heartbeat.json`` files in appData; return ones
     whose ``modifiedTime`` is within ``ttl_days``. Uses metadata
     only — no body downloads — so cost is O(pages) regardless of
@@ -115,7 +131,13 @@ def list_alive_devices(service: Any, ttl_days: int = HEARTBEAT_TTL_DAYS) -> list
             name = str(f.get("name") or "")
             if not name.endswith(HEARTBEAT_SUFFIX):
                 continue
-            device_id = name[: -len(HEARTBEAT_SUFFIX)]
+            if vault_root is not None:
+                tail = strip_current_vault_prefix(name, vault_root)
+                if tail is None:
+                    continue
+                device_id = tail[: -len(HEARTBEAT_SUFFIX)]
+            else:
+                device_id = name[: -len(HEARTBEAT_SUFFIX)]
             if not device_id:
                 continue
             mtime = f.get("modifiedTime")

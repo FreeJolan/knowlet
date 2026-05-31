@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use backend::{
-    create_vault_dir, preview_new_vault, resolve_frontend_dist, validate_vault_dir, BackendProcess,
-    NewVaultPreview, VAULT_ENV,
+    create_vault_dir, delete_vault_local_files, preview_new_vault, resolve_frontend_dist,
+    validate_vault_dir, BackendProcess, NewVaultPreview, VAULT_ENV,
 };
-use recent_vaults::{load_valid_recent_vaults, record_recent_vault};
+use recent_vaults::{forget_recent_vault, load_valid_recent_vaults, record_recent_vault};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -45,6 +45,13 @@ struct RecentVaultSummary {
     name: String,
     parent: String,
     path: String,
+}
+
+#[derive(Serialize)]
+struct DeleteVaultResult {
+    path: String,
+    removed_record: bool,
+    deleted_local_files: bool,
 }
 
 #[tauri::command]
@@ -116,6 +123,54 @@ fn desktop_open_vault(app: tauri::AppHandle, path: String) -> Result<DesktopStat
     switch_to_vault(&app, vault)
 }
 
+#[tauri::command]
+fn desktop_delete_vault(
+    app: tauri::AppHandle,
+    path: String,
+    delete_local_files: bool,
+) -> Result<DeleteVaultResult, String> {
+    let requested = PathBuf::from(&path);
+    let vault = if delete_local_files {
+        validate_vault_dir(&requested)?
+    } else if requested.exists() {
+        validate_vault_dir(&requested)?
+    } else {
+        requested
+    };
+
+    if delete_local_files {
+        let current_vault = app
+            .state::<DesktopState>()
+            .backend
+            .lock()
+            .map_err(|_| "desktop backend state lock poisoned".to_string())?
+            .as_ref()
+            .map(|backend| backend.vault.clone());
+        if current_vault.as_ref() == Some(&vault) {
+            let _stopped = app
+                .state::<DesktopState>()
+                .backend
+                .lock()
+                .map_err(|_| "desktop backend state lock poisoned".to_string())?
+                .take();
+            if let Some(window) = app.get_webview_window(WINDOW_MAIN) {
+                let _ = window.close();
+            }
+        }
+        delete_vault_local_files(&vault)?;
+    }
+
+    let removed_record = recent_vaults_path(&app)
+        .and_then(|store| forget_recent_vault(&store, &vault))
+        .unwrap_or(false);
+    refresh_desktop_menu(&app)?;
+    Ok(DeleteVaultResult {
+        path: vault.display().to_string(),
+        removed_record,
+        deleted_local_files: delete_local_files,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -161,7 +216,8 @@ pub fn run() {
             desktop_pick_existing_vault,
             desktop_preview_new_vault,
             desktop_create_vault,
-            desktop_open_vault
+            desktop_open_vault,
+            desktop_delete_vault
         ])
         .setup(|app| {
             let recent_vaults_path = app

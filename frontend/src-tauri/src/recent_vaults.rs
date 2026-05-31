@@ -59,6 +59,17 @@ pub fn record_recent_vault(path: &Path, vault: &Path) -> Result<(), String> {
     save_recent_vaults(path, &vaults)
 }
 
+pub fn forget_recent_vault(path: &Path, vault: &Path) -> Result<bool, String> {
+    let mut vaults = load_recent_vaults(path).unwrap_or_default();
+    let before = vaults.len();
+    vaults.retain(|candidate| candidate != vault);
+    if vaults.len() == before {
+        return Ok(false);
+    }
+    save_recent_vaults(path, &vaults)?;
+    Ok(true)
+}
+
 pub fn load_valid_recent_vaults(path: &Path) -> Vec<PathBuf> {
     let recent_vaults = load_recent_vaults(path).unwrap_or_default();
     let still_valid = recent_vaults
@@ -234,5 +245,33 @@ mod tests {
 
         assert_eq!(valid_vaults, vec![valid.clone()]);
         assert_eq!(super::load_recent_vaults(&store).unwrap(), vec![valid]);
+    }
+
+    #[test]
+    fn forget_recent_vault_removes_record_without_touching_folder() {
+        let dir = tempdir().unwrap();
+        let store = dir.path().join("recent-vaults.json");
+        let first = make_vault(dir.path(), "first");
+        let second = make_vault(dir.path(), "second");
+        super::save_recent_vaults(&store, &[first.clone(), second.clone()]).unwrap();
+
+        let removed = super::forget_recent_vault(&store, &first).unwrap();
+
+        assert!(removed);
+        assert!(first.exists());
+        assert_eq!(super::load_recent_vaults(&store).unwrap(), vec![second]);
+    }
+
+    #[test]
+    fn forget_recent_vault_reports_missing_without_rewriting() {
+        let dir = tempdir().unwrap();
+        let store = dir.path().join("recent-vaults.json");
+        let first = make_vault(dir.path(), "first");
+        super::save_recent_vaults(&store, std::slice::from_ref(&first)).unwrap();
+
+        let removed = super::forget_recent_vault(&store, &dir.path().join("missing")).unwrap();
+
+        assert!(!removed);
+        assert_eq!(super::load_recent_vaults(&store).unwrap(), vec![first]);
     }
 }

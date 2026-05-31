@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.14] - 2026-05-31
+
+Desktop vault deletion and sync namespace release.
+
+- Add a desktop vault deletion flow that removes a vault from the recent list
+  by default, with an explicit opt-in checkbox to move local files to the
+  system Trash.
+- Scope new Google Drive appData files by stable vault id so multiple Knowlet
+  vaults can share one Google account without mixing notes, Raw Info, digest
+  source configs, attachments, or heartbeats.
+- Preserve tracked legacy sync files while ignoring unrelated remote appData
+  objects from other vaults during freshness checks and preflight materializing.
+
 ## [0.0.13] - 2026-05-31
 
 Desktop sync OAuth hotfix release.

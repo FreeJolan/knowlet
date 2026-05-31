@@ -54,8 +54,8 @@ def _drive_file(*, id_: str = "FID-1", revision: str = "rev-1") -> DriveFile:
 
 
 def test_push_first_time_uploads_and_records(tmp_path: Path) -> None:
-    _vault, note = _vault_with_note(tmp_path)
-    state = SyncStateStore(tmp_path)
+    vault, note = _vault_with_note(tmp_path)
+    state = SyncStateStore(vault.root)
     try:
         with patch(
             "knowlet.core.sync.push.upload_new_file",
@@ -73,22 +73,40 @@ def test_push_first_time_uploads_and_records(tmp_path: Path) -> None:
         assert rec.dirty is False
         # The upload was called with the note's bytes.
         kwargs = up.call_args.kwargs
-        assert kwargs["name"] == note.path.name
         assert kwargs["content"] == note.path.read_bytes()
         # 5.C.1: first push must land in the hidden appDataFolder,
         # NOT in the user's main Drive root. Without a parent under
         # drive.appdata scope the Drive API 403s.
         assert kwargs["parent_folder_id"] == "appDataFolder"
+        assert kwargs["name"] == drive_appdata_name(
+            "note",
+            note.path.name,
+            vault_root=vault.root,
+        )
     finally:
         state.close()
+
+
+def test_drive_appdata_name_scopes_names_by_vault_id(tmp_path: Path) -> None:
+    left = Vault(tmp_path / "left")
+    right = Vault(tmp_path / "right")
+    left.init_layout()
+    right.init_layout()
+
+    left_name = drive_appdata_name("note", "01NOTE.md", vault_root=left.root)
+    right_name = drive_appdata_name("note", "01NOTE.md", vault_root=right.root)
+
+    assert left_name != right_name
+    assert left_name.endswith("__note__01NOTE.md")
+    assert right_name.endswith("__note__01NOTE.md")
 
 
 # ----------------------------------------------------- update (clean)
 
 
 def test_push_subsequent_uses_conditional_update(tmp_path: Path) -> None:
-    _vault, note = _vault_with_note(tmp_path)
-    state = SyncStateStore(tmp_path)
+    vault, note = _vault_with_note(tmp_path)
+    state = SyncStateStore(vault.root)
     try:
         # Pre-seed sync_state with a previous push.
         state.upsert_file_state(
@@ -110,6 +128,11 @@ def test_push_subsequent_uses_conditional_update(tmp_path: Path) -> None:
         assert result.created is False
         kwargs = upd.call_args.kwargs
         assert kwargs["expected_revision"] == "rev-1"
+        assert kwargs["name"] == drive_appdata_name(
+            "note",
+            note.path.name,
+            vault_root=vault.root,
+        )
         # State advanced.
         rec = state.get_file_state("note", note.id)
         assert rec is not None
@@ -276,7 +299,12 @@ def test_push_attachment_uploads_with_correct_mime_and_records(
         assert result.entity_id == "01HX.png"
         assert result.created is True
         kwargs = up.call_args.kwargs
-        assert kwargs["name"] == "01HX.png"
+        assert kwargs["name"] == drive_appdata_name(
+            ATTACHMENT_ENTITY_TYPE,
+            "01HX.png",
+            vault_root=tmp_path,
+        )
+        assert kwargs["name"].endswith("__attachment__01HX.png")
         assert kwargs["content"] == b"\x89PNG fake bytes"
         assert kwargs["mime_type"] == "image/png"
         assert kwargs["parent_folder_id"] == "appDataFolder"
@@ -395,7 +423,12 @@ def test_push_digest_source_file_uploads_prefixed_name_and_records(
         assert result.entity_id == path.name
         assert result.created is True
         kwargs = up.call_args.kwargs
-        assert kwargs["name"] == "digest-source__01SRC-ai-feed.json"
+        assert kwargs["name"] == drive_appdata_name(
+            DIGEST_SOURCE_ENTITY_TYPE,
+            "01SRC-ai-feed.json",
+            vault_root=tmp_path,
+        )
+        assert kwargs["name"].endswith("__digest-source__01SRC-ai-feed.json")
         assert kwargs["content"] == b'{"name":"AI feed"}\n'
         assert kwargs["mime_type"] == "application/json"
         assert kwargs["parent_folder_id"] == "appDataFolder"
