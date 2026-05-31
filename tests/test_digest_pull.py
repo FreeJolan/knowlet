@@ -1085,7 +1085,7 @@ def test_auto_pull_runs_once_per_day_and_rechecks_next_day(tmp_path, monkeypatch
         ]
     )
 
-    first = maybe_auto_pull_digest_sources(vault=vault, llm=llm, today="2026-05-30")
+    first = maybe_auto_pull_digest_sources(vault=vault, llm=llm, today="2000-01-01")
     assert first is not None
     assert first.created == 1
     assert calls == 1
@@ -1093,7 +1093,7 @@ def test_auto_pull_runs_once_per_day_and_rechecks_next_day(tmp_path, monkeypatch
     same_day = maybe_auto_pull_digest_sources(
         vault=vault,
         llm=llm,
-        today="2026-05-30",
+        today="2000-01-01",
     )
     assert same_day is None
     assert calls == 1
@@ -1101,7 +1101,7 @@ def test_auto_pull_runs_once_per_day_and_rechecks_next_day(tmp_path, monkeypatch
     next_day = maybe_auto_pull_digest_sources(
         vault=vault,
         llm=llm,
-        today="2026-05-31",
+        today="2000-01-02",
     )
     assert next_day is not None
     assert next_day.created == 0

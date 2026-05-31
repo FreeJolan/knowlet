@@ -470,7 +470,26 @@ def _auto_pull_state_path(vault: Vault) -> Path:
 
 
 def _source_succeeded_on_day(source: DigestSource, day: str) -> bool:
-    return bool(source.last_success_at and source.last_success_at.startswith(f"{day}T"))
+    if not source.last_success_at:
+        return False
+    return _iso_local_day(source.last_success_at) == day
+
+
+def _iso_local_day(raw: str) -> str | None:
+    """Return the local calendar day for an ISO timestamp.
+
+    Digest auto-pull is a "first time online today" product concept, so
+    the day boundary should follow the user's machine. Source metadata is
+    stored in UTC via ``now_iso()``, which means string-prefix checks can
+    be wrong near UTC/local midnight.
+    """
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw[:10] if len(raw) >= 10 else None
+    if parsed.tzinfo is None:
+        return parsed.date().isoformat()
+    return parsed.astimezone().date().isoformat()
 
 
 def _read_auto_pull_state(path: Path) -> dict[str, Any]:

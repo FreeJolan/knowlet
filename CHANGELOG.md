@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.10] - 2026-05-31
+
+Sync v2 CI repair release.
+
+- Interpret digest source success timestamps using the user's local calendar
+  day so daily auto-pull checks behave correctly near UTC/local midnight.
+- Stabilize the daily digest auto-pull regression test so CI no longer depends
+  on the date the suite happens to run.
+
 ## [0.0.9] - 2026-05-31
 
 Sync v2 multi-device release.
