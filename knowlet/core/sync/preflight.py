@@ -262,6 +262,41 @@ def preflight_scan(
     # service (auth + reachable). The per-note loop above already
     # set ``unauthenticated`` if creds are missing.
     if not unauthenticated and drive_service is not None:
+        # Sync v2: non-note JSON files (digest sources / Raw Info)
+        # are vault data too. They do not need merge UI today; clean
+        # local rows auto-pull when Drive's revision moved. Dirty rows
+        # stay dirty and the drainer will attempt a conditional push.
+        if materialize_drive_file is not None:
+            from knowlet.core.sync.push import SYNCED_JSON_ENTITY_TYPES
+
+            for row in rows:
+                if row.entity_type not in SYNCED_JSON_ENTITY_TYPES:
+                    continue
+                if row.dirty:
+                    dirty += 1
+                    continue
+                if not row.drive_file_id or row.delete_intent is not None:
+                    continue
+                brief = drive_files.get(row.drive_file_id)
+                if brief is None:
+                    continue
+                if brief.head_revision_id and brief.head_revision_id == row.last_known_etag:
+                    synced += 1
+                    continue
+                try:
+                    materialized_id = materialize_drive_file(row.drive_file_id, brief)
+                    if materialized_id:
+                        auto_pulled.append(row.entity_id)
+                        synced += 1
+                except Exception as exc:
+                    offline.append(
+                        PreflightOffline(
+                            note_id=row.entity_id,
+                            note_title=None,
+                            detail=f"auto-pull failed: {exc!r}",
+                        )
+                    )
+
         # Pass A: Drive-side deletions. Any sync_state row whose
         # drive_file_id is missing from the current Drive list
         # gets its local file moved to trash. Skip dev-seeded rows

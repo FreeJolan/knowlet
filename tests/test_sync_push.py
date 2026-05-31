@@ -14,11 +14,14 @@ from knowlet.core.note import Note, new_id
 from knowlet.core.sync.files import DriveFile
 from knowlet.core.sync.push import (
     ATTACHMENT_ENTITY_TYPE,
+    DIGEST_SOURCE_ENTITY_TYPE,
     AttachmentFileMissingError,
     ConflictReport,
     PushResult,
+    drive_appdata_name,
     push_attachment,
     push_note,
+    push_vault_file,
     resolve_keep_both,
     resolve_use_mine,
     resolve_use_remote,
@@ -359,6 +362,59 @@ def test_push_attachment_falls_back_to_octet_stream_for_unknown_ext(
         assert up.call_args.kwargs["mime_type"] == "application/octet-stream"
     finally:
         state.close()
+
+
+# ----------------------------------------------------- synced JSON files
+
+
+def test_push_digest_source_file_uploads_prefixed_name_and_records(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "01SRC-ai-feed.json"
+    path.write_text('{"name":"AI feed"}\n', encoding="utf-8")
+    state = SyncStateStore(tmp_path)
+    try:
+        with patch(
+            "knowlet.core.sync.push.upload_new_file",
+            return_value=DriveFile(
+                id="FID-DIGEST-SOURCE",
+                name="digest-source__01SRC-ai-feed.json",
+                mime_type="application/json",
+                modified_time="2026-05-31T00:00:00Z",
+                head_revision_id="digest-rev-1",
+            ),
+        ) as up:
+            result = push_vault_file(
+                service=object(),
+                state=state,
+                entity_type=DIGEST_SOURCE_ENTITY_TYPE,
+                entity_id=path.name,
+                path=path,
+            )
+        assert result.entity_type == DIGEST_SOURCE_ENTITY_TYPE
+        assert result.entity_id == path.name
+        assert result.created is True
+        kwargs = up.call_args.kwargs
+        assert kwargs["name"] == "digest-source__01SRC-ai-feed.json"
+        assert kwargs["content"] == b'{"name":"AI feed"}\n'
+        assert kwargs["mime_type"] == "application/json"
+        assert kwargs["parent_folder_id"] == "appDataFolder"
+        rec = state.get_file_state(DIGEST_SOURCE_ENTITY_TYPE, path.name)
+        assert rec is not None
+        assert rec.drive_file_id == "FID-DIGEST-SOURCE"
+        assert rec.last_known_etag == "digest-rev-1"
+        assert rec.dirty is False
+    finally:
+        state.close()
+
+
+def test_drive_appdata_name_rejects_unknown_json_entity() -> None:
+    try:
+        drive_appdata_name("unknown", "x.json")
+    except ValueError as exc:
+        assert "unsupported" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
 
 
 def test_resolve_keep_both_writes_sibling_and_keeps_local_dirty(

@@ -48,11 +48,14 @@ from knowlet.core.sync.credentials import (
 from knowlet.core.sync.drive_client import DriveClient
 from knowlet.core.sync.push import (
     ATTACHMENT_ENTITY_TYPE,
+    SYNCED_JSON_ENTITY_TYPES,
     AttachmentFileMissingError,
     ConflictReport,
     NoteFileMissingError,
+    SyncedFileMissingError,
     push_attachment,
     push_note,
+    push_vault_file,
 )
 from knowlet.core.sync.state import SyncStateStore
 from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
@@ -64,6 +67,7 @@ NoteLookup = Callable[[str], Note | None]
 # Resolves an attachment filename (e.g. ``01HX....png``) to its
 # absolute path on disk, or None if it's missing.
 AttachmentLookup = Callable[[str], Path | None]
+SyncedFileLookup = Callable[[str, str], Path | None]
 ConflictCallback = Callable[[str, ConflictReport], None]
 SyncedCallback = Callable[[str], None]
 # Returns ``(entity_type, entity_id)`` pairs for items that exist on
@@ -80,6 +84,7 @@ class PushDrainer:
         vault_root: Path,
         note_lookup: NoteLookup,
         attachment_lookup: AttachmentLookup | None = None,
+        synced_file_lookup: SyncedFileLookup | None = None,
         on_conflict: ConflictCallback | None = None,
         on_synced: SyncedCallback | None = None,
         untracked_sweep: UntrackedSweep | None = None,
@@ -88,6 +93,9 @@ class PushDrainer:
         self.vault_root = vault_root
         self.note_lookup = note_lookup
         self.attachment_lookup: AttachmentLookup = attachment_lookup or (lambda _id: None)
+        self.synced_file_lookup: SyncedFileLookup = synced_file_lookup or (
+            lambda _entity_type, _entity_id: None
+        )
         self.on_conflict: ConflictCallback = on_conflict or (lambda _id, _rep: None)
         self.on_synced: SyncedCallback = on_synced or (lambda _id: None)
         self.untracked_sweep: UntrackedSweep = untracked_sweep or (lambda: [])
@@ -211,6 +219,11 @@ class PushDrainer:
                     if service is None:
                         service = DriveClient(creds).service()
                     self._push_attachment_row(store, service, row)
+                    continue
+                if row.entity_type in SYNCED_JSON_ENTITY_TYPES:
+                    if service is None:
+                        service = DriveClient(creds).service()
+                    self._push_synced_file_row(store, service, row)
                     continue
                 if row.entity_type != "note":
                     # Unknown type — leave it alone so a future
@@ -346,6 +359,47 @@ class PushDrainer:
         self.on_synced(row.entity_id)
         self._clear_failure(row.entity_id)
 
+    def _push_synced_file_row(self, store: SyncStateStore, service: Any, row: Any) -> None:
+        """Push a JSON data file such as a digest source or Raw Info item."""
+        path = self.synced_file_lookup(row.entity_type, row.entity_id)
+        if path is None or not path.exists():
+            logger.warning(
+                "drainer: synced file %s/%s missing on disk; dropping row",
+                row.entity_type,
+                row.entity_id,
+            )
+            store.remove_file_state(row.entity_type, row.entity_id)
+            self._clear_failure(row.entity_id)
+            return
+        try:
+            push_vault_file(
+                service=service,
+                state=store,
+                entity_type=row.entity_type,
+                entity_id=row.entity_id,
+                path=path,
+            )
+        except SyncedFileMissingError:
+            logger.warning(
+                "drainer: synced file %s/%s vanished between sweep and push; clearing row",
+                row.entity_type,
+                row.entity_id,
+            )
+            store.remove_file_state(row.entity_type, row.entity_id)
+            self._clear_failure(row.entity_id)
+            return
+        except Exception as exc:
+            logger.warning(
+                "drainer: synced file push failed for %s/%s: %r — will retry",
+                row.entity_type,
+                row.entity_id,
+                exc,
+            )
+            self._record_failure(row.entity_id, exc)
+            return
+        self.on_synced(row.entity_id)
+        self._clear_failure(row.entity_id)
+
     def _sweep_for_attachment_orphans(self, store: SyncStateStore) -> None:
         """For every attachment row whose Drive copy exists
         (drive_file_id set, dirty=False, no delete_intent yet) but
@@ -397,7 +451,11 @@ class PushDrainer:
         without re-authenticating."""
         deletions = store.list_deletion_pending()
         for row in deletions:
-            if row.entity_type not in ("note", ATTACHMENT_ENTITY_TYPE):
+            if row.entity_type not in (
+                "note",
+                ATTACHMENT_ENTITY_TYPE,
+                *SYNCED_JSON_ENTITY_TYPES,
+            ):
                 # Unknown type — leave alone so a future slice can
                 # handle it. The intent row stays, which is safe:
                 # nothing reads it that doesn't also know about the

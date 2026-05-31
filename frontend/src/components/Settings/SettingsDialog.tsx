@@ -405,19 +405,13 @@ function SyncModePicker(): React.ReactNode {
     mutationFn: apiSetSyncMode,
     onSuccess: (resp) => {
       qc.setQueryData(QK.syncMode, resp);
-      // Strict mode might want to escalate the inbox immediately —
+      // Realtime mode might escalate the inbox immediately —
       // refetching conflicts so the chip / blocking modal reacts.
       void qc.invalidateQueries({ queryKey: QK.syncConflicts });
     },
   });
 
-  const current = q.data?.mode ?? "auto";
-  const effective = q.data?.effective_mode ?? current;
-  const deviceCount = q.data?.device_count ?? 0;
-  // #111 — only the Auto pill needs the auto-upgrade hint; Strict /
-  // Quiet are explicit user choices and don't have a hidden mode
-  // promotion to explain.
-  const autoUpgraded = current === "auto" && effective === "strict";
+  const current = q.data?.mode ?? "realtime";
 
   return (
     <Section title={t("syncMode.label")}>
@@ -425,37 +419,21 @@ function SyncModePicker(): React.ReactNode {
         {t("syncMode.description")}
       </div>
       <ModePill
-        icon={<Zap size={14} />}
-        label={t("syncMode.auto")}
-        hint={t("syncMode.autoHint")}
-        active={current === "auto"}
-        onClick={() => mut.mutate("auto")}
-        testid="sync-mode-pill-auto"
-      />
-      <ModePill
         icon={<ShieldAlert size={14} />}
-        label={t("syncMode.strict")}
-        hint={t("syncMode.strictHint")}
-        active={current === "strict"}
-        onClick={() => mut.mutate("strict")}
-        testid="sync-mode-pill-strict"
+        label={t("syncMode.realtime")}
+        hint={t("syncMode.realtimeHint")}
+        active={current === "realtime"}
+        onClick={() => mut.mutate("realtime")}
+        testid="sync-mode-pill-realtime"
       />
       <ModePill
         icon={<CloudOff size={14} />}
-        label={t("syncMode.lax")}
-        hint={t("syncMode.laxHint")}
-        active={current === "lax"}
-        onClick={() => mut.mutate("lax")}
-        testid="sync-mode-pill-lax"
+        label={t("syncMode.backup")}
+        hint={t("syncMode.backupHint")}
+        active={current === "backup"}
+        onClick={() => mut.mutate("backup")}
+        testid="sync-mode-pill-backup"
       />
-      {autoUpgraded && (
-        <div
-          data-testid="sync-mode-auto-upgraded-hint"
-          className="text-warn-fg dark:text-warn-fg-dark mt-2 w-full text-xs"
-        >
-          {t("syncMode.autoUpgradedHint", { count: deviceCount })}
-        </div>
-      )}
     </Section>
   );
 }

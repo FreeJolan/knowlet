@@ -95,10 +95,10 @@ def test_device_label_defaults_to_hostname(tmp_path: Path) -> None:
 # ----------------------------------------------------- start_page_token
 
 
-def test_sync_mode_default_is_auto(tmp_path: Path) -> None:
+def test_sync_mode_default_is_realtime(tmp_path: Path) -> None:
     store = SyncStateStore(tmp_path)
     try:
-        assert store.sync_mode() == "auto"
+        assert store.sync_mode() == "realtime"
     finally:
         store.close()
 
@@ -106,12 +106,39 @@ def test_sync_mode_default_is_auto(tmp_path: Path) -> None:
 def test_sync_mode_round_trip(tmp_path: Path) -> None:
     store = SyncStateStore(tmp_path)
     try:
-        store.set_sync_mode("strict")
-        assert store.sync_mode() == "strict"
-        store.set_sync_mode("lax")
-        assert store.sync_mode() == "lax"
-        store.set_sync_mode("auto")
-        assert store.sync_mode() == "auto"
+        store.set_sync_mode("backup")
+        assert store.sync_mode() == "backup"
+        store.set_sync_mode("realtime")
+        assert store.sync_mode() == "realtime"
+    finally:
+        store.close()
+
+
+def test_sync_mode_migrates_legacy_values(tmp_path: Path) -> None:
+    store = SyncStateStore(tmp_path)
+    try:
+        store.device_id()
+        conn = sqlite3.connect(sync_state_db_path(tmp_path))
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('sync_mode', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            ("lax",),
+        )
+        conn.commit()
+        conn.close()
+        assert store.sync_mode() == "backup"
+
+        conn = sqlite3.connect(sync_state_db_path(tmp_path))
+        conn.execute("UPDATE meta SET value=? WHERE key='sync_mode'", ("strict",))
+        conn.commit()
+        conn.close()
+        assert store.sync_mode() == "realtime"
+
+        conn = sqlite3.connect(sync_state_db_path(tmp_path))
+        conn.execute("UPDATE meta SET value=? WHERE key='sync_mode'", ("auto",))
+        conn.commit()
+        conn.close()
+        assert store.sync_mode() == "realtime"
     finally:
         store.close()
 
@@ -124,7 +151,7 @@ def test_sync_mode_rejects_invalid(tmp_path: Path) -> None:
         with pytest.raises(ValueError):
             store.set_sync_mode("paranoid")
         # Bogus value never written → still default.
-        assert store.sync_mode() == "auto"
+        assert store.sync_mode() == "realtime"
     finally:
         store.close()
 

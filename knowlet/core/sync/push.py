@@ -77,11 +77,25 @@ class AttachmentFileMissingError(FileNotFoundError):
     Means the binary was deleted locally between sweep and push."""
 
 
+class SyncedFileMissingError(FileNotFoundError):
+    """A non-note vault data file disappeared before the drainer pushed it."""
+
+
 # Attachments are immutable: the filename is a ULID assigned at
 # creation, the bytes never change. So we only need first-push (no
 # update / conflict path). Two devices can't collide on a filename
 # because ULIDs are time + random.
 ATTACHMENT_ENTITY_TYPE = "attachment"
+DIGEST_SOURCE_ENTITY_TYPE = "digest_source"
+RAW_INFO_ENTITY_TYPE = "raw_info"
+SYNCED_JSON_ENTITY_TYPES = {
+    DIGEST_SOURCE_ENTITY_TYPE,
+    RAW_INFO_ENTITY_TYPE,
+}
+_APPDATA_NAME_PREFIX = {
+    DIGEST_SOURCE_ENTITY_TYPE: "digest-source__",
+    RAW_INFO_ENTITY_TYPE: "raw-info__",
+}
 
 
 # ----------------------------------------------------- core ops
@@ -255,6 +269,113 @@ def push_attachment(
         entity_id=filename,
         drive_file=df,
         created=True,
+    )
+
+
+# ----------------------------------------------------- synced JSON files
+
+
+def drive_appdata_name(entity_type: str, entity_id: str) -> str:
+    """Drive appData is flat; prefix file names by logical type.
+
+    ``entity_id`` is the local filename. The prefix lets first-connect
+    materialization route JSON files back to the right vault directory
+    instead of mistaking them for immutable attachments.
+    """
+    prefix = _APPDATA_NAME_PREFIX.get(entity_type)
+    if prefix is None:
+        raise ValueError(f"unsupported synced file entity_type: {entity_type!r}")
+    return f"{prefix}{entity_id}"
+
+
+def synced_json_entity_from_drive_name(name: str) -> tuple[str, str] | None:
+    for entity_type, prefix in _APPDATA_NAME_PREFIX.items():
+        if name.startswith(prefix):
+            entity_id = name[len(prefix) :]
+            if entity_id:
+                return entity_type, entity_id
+    return None
+
+
+def push_vault_file(
+    *,
+    service: Any,
+    state: SyncStateStore,
+    entity_type: str,
+    entity_id: str,
+    path: Path,
+) -> PushResult:
+    """Push a synced JSON data file to Drive appData.
+
+    Used for digest source configs and Raw Info inbox items. These are
+    vault data, not binary attachments, so they get stable typed Drive
+    names and can be materialized on another device during preflight.
+    """
+    from knowlet.core.sync.oauth import APPDATA_FOLDER
+
+    if entity_type not in SYNCED_JSON_ENTITY_TYPES:
+        raise ValueError(f"unsupported synced file entity_type: {entity_type!r}")
+    if not path.exists():
+        raise SyncedFileMissingError(f"{entity_type} {entity_id} missing at {path}")
+
+    content = path.read_bytes()
+    name = drive_appdata_name(entity_type, entity_id)
+    record = state.get_file_state(entity_type, entity_id)
+    if record is None or not record.drive_file_id:
+        df = upload_new_file(
+            service,
+            name=name,
+            content=content,
+            mime_type="application/json",
+            parent_folder_id=APPDATA_FOLDER,
+        )
+        state.upsert_file_state(
+            FileState(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                drive_file_id=df.id,
+                last_known_etag=df.head_revision_id,
+                last_synced_at=now_iso(),
+                dirty=False,
+            )
+        )
+        return PushResult(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            drive_file=df,
+            created=True,
+        )
+
+    expected = record.last_known_etag
+    if not expected:
+        record_meta = get_file_metadata(service, record.drive_file_id)
+        if not record_meta.head_revision_id:
+            raise RuntimeError(
+                f"Drive returned no headRevisionId for {record.drive_file_id}; "
+                "can't do conditional update."
+            )
+        expected = record_meta.head_revision_id
+    df = update_file_conditional(
+        service,
+        file_id=record.drive_file_id,
+        content=content,
+        expected_revision=expected,
+    )
+    state.upsert_file_state(
+        FileState(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            drive_file_id=df.id,
+            last_known_etag=df.head_revision_id,
+            last_synced_at=now_iso(),
+            dirty=False,
+        )
+    )
+    return PushResult(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        drive_file=df,
+        created=False,
     )
 
 

@@ -23,6 +23,7 @@ from knowlet.core.sync.credentials import (
 from knowlet.core.sync.files import DriveFile
 from knowlet.core.sync.oauth import SCOPES
 from knowlet.core.sync.preflight import preflight_scan
+from knowlet.core.sync.push import RAW_INFO_ENTITY_TYPE, drive_appdata_name
 from knowlet.core.sync.state import FileState, SyncStateStore
 
 
@@ -69,6 +70,54 @@ def test_empty_vault_returns_empty_report(tmp_path: Path) -> None:
     assert report.conflicts == []
     assert report.offline == []
     assert report.unauthenticated is False
+
+
+def test_preflight_auto_pulls_stale_tracked_raw_info_file(tmp_path: Path) -> None:
+    state = SyncStateStore(tmp_path)
+    materialized: list[tuple[str, DriveFile]] = []
+    try:
+        state.upsert_file_state(
+            FileState(
+                entity_type=RAW_INFO_ENTITY_TYPE,
+                entity_id="01RAW-item.json",
+                drive_file_id="DRIVE-RAW",
+                last_known_etag="rev-1",
+                last_synced_at="2026-05-30T00:00:00Z",
+                dirty=False,
+            )
+        )
+        brief = DriveFile(
+            id="DRIVE-RAW",
+            name=drive_appdata_name(RAW_INFO_ENTITY_TYPE, "01RAW-item.json"),
+            mime_type="application/json",
+            modified_time="2026-05-31T00:00:00Z",
+            head_revision_id="rev-2",
+        )
+        with (
+            patch(
+                "knowlet.core.sync.preflight._maybe_heartbeat_pass",
+                return_value=object(),
+            ),
+            patch(
+                "knowlet.core.sync.files.list_appdata_revisions",
+                return_value={"DRIVE-RAW": brief},
+            ),
+        ):
+            report = preflight_scan(
+                vault_root=tmp_path,
+                state_store=state,
+                note_meta_lookup=lambda _id: None,
+                note_path_lookup=lambda _id: None,
+                auto_pull_service_factory=lambda: object(),
+                materialize_drive_file=lambda file_id, file: (
+                    materialized.append((file_id, file)) or file_id
+                ),
+            )
+    finally:
+        state.close()
+
+    assert materialized == [("DRIVE-RAW", brief)]
+    assert report.auto_pulled_ids == ["01RAW-item.json"]
 
 
 def test_unauthenticated_short_circuits(tmp_path: Path) -> None:

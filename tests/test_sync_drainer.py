@@ -31,7 +31,11 @@ from knowlet.core.sync.credentials import (
 from knowlet.core.sync.drainer import PushDrainer
 from knowlet.core.sync.files import DriveFile
 from knowlet.core.sync.oauth import SCOPES
-from knowlet.core.sync.push import ConflictReport, PushResult
+from knowlet.core.sync.push import (
+    DIGEST_SOURCE_ENTITY_TYPE,
+    ConflictReport,
+    PushResult,
+)
 from knowlet.core.sync.state import FileState, SyncStateStore
 from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
 
@@ -467,6 +471,70 @@ def test_drainer_drops_attachment_row_when_file_vanishes(
         assert state2.get_file_state("attachment", "01HGONE.png") is None
     finally:
         state2.close()
+
+
+def test_drainer_pushes_dirty_digest_source_file(
+    tmp_path: Path,
+) -> None:
+    """Digest source configs are vault data too; the drainer should
+    push them as appData JSON files so another device sees the same
+    source list after realtime sync."""
+    _seed_creds(tmp_path)
+    source_path = tmp_path / "01SRC-ai-feed.json"
+    source_path.write_text('{"name":"AI feed"}\n', encoding="utf-8")
+
+    state = SyncStateStore(tmp_path)
+    try:
+        state.upsert_file_state(
+            FileState(
+                entity_type=DIGEST_SOURCE_ENTITY_TYPE,
+                entity_id=source_path.name,
+                drive_file_id=None,
+                last_known_etag=None,
+                last_synced_at=None,
+                dirty=True,
+            )
+        )
+    finally:
+        state.close()
+
+    synced_seen: list[str] = []
+    drainer = PushDrainer(
+        vault_root=tmp_path,
+        note_lookup=lambda _id: None,
+        synced_file_lookup=lambda entity_type, entity_id: (
+            source_path
+            if entity_type == DIGEST_SOURCE_ENTITY_TYPE and entity_id == source_path.name
+            else None
+        ),
+        on_synced=synced_seen.append,
+    )
+
+    push_result = PushResult(
+        entity_type=DIGEST_SOURCE_ENTITY_TYPE,
+        entity_id=source_path.name,
+        drive_file=_drive_file("digest-rev-1"),
+        created=True,
+    )
+    with (
+        patch(
+            "knowlet.core.sync.drive_client.DriveClient.service",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "knowlet.core.sync.drainer.push_vault_file",
+            return_value=push_result,
+        ) as file_push,
+        patch("knowlet.core.sync.drainer.push_note") as note_push,
+    ):
+        drainer.tick_once()
+
+    note_push.assert_not_called()
+    file_push.assert_called_once()
+    assert file_push.call_args.kwargs["entity_type"] == DIGEST_SOURCE_ENTITY_TYPE
+    assert file_push.call_args.kwargs["entity_id"] == source_path.name
+    assert file_push.call_args.kwargs["path"] == source_path
+    assert synced_seen == [source_path.name]
 
 
 def test_drainer_untracked_sweep_queues_notes_and_attachments(

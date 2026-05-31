@@ -111,6 +111,9 @@ export interface PreflightReport {
   synced_count: number;
   dirty_count: number;
   unauthenticated: boolean;
+  alive_devices: Array<Record<string, string>>;
+  cloned_from_drive_ids: string[];
+  trashed_for_drive_delete_ids: string[];
 }
 
 export const runPreflight = (): Promise<PreflightReport> =>
@@ -119,16 +122,33 @@ export const runPreflight = (): Promise<PreflightReport> =>
 export const getConflicts = (): Promise<PreflightReport> =>
   request("GET", "/api/sync/conflicts");
 
-// ---------- sync mode (#107b) ----------
+export type SyncFreshnessState =
+  | "backup"
+  | "up_to_date"
+  | "needs_sync"
+  | "offline";
 
-export type SyncMode = "auto" | "strict" | "lax";
+export interface SyncFreshnessResponse {
+  mode: SyncMode;
+  state: SyncFreshnessState;
+  checked_at: string;
+  requires_sync: boolean;
+  reason: string | null;
+  changed_count: number;
+  next_start_page_token: string | null;
+  detail: string | null;
+}
+
+export const getSyncFreshness = (): Promise<SyncFreshnessResponse> =>
+  request("GET", "/api/sync/freshness");
+
+// ---------- sync mode (#107b → v2) ----------
+
+export type SyncMode = "realtime" | "backup";
 
 export interface SyncModeResponse {
   mode: SyncMode;
-  /** What the UI should react to. Differs from ``mode`` when Auto
-   *  auto-promotes to Strict via cross-device heartbeat detection
-   *  (#111). Settings UI shows ``device_count`` so the user knows
-   *  why. */
+  /** Retained for compatibility; equal to ``mode`` in Sync v2. */
   effective_mode: SyncMode;
   /** Number of distinct knowlet installations seen on this vault's
    *  Drive appData within the heartbeat TTL (30 days). 0 when no

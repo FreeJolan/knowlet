@@ -2,8 +2,16 @@
 
 > **中文**(English to follow if needed)
 
-- Status: Accepted (设计 — 实现待 phase)
+- Status: Accepted (Sync v2 implementation active)
 - Date: 2026-05-10
+
+> **2026-05-31 Sync v2 amendment**:旧的 Auto/Strict/Lax 三档策略已经被废弃。
+> 当前产品只保留两种模式:
+>
+> - **多设备实时同步(realtime,默认)**:Drive 连接后默认使用。打开应用、首次进入前台、或长时间后台后恢复前台时,先做一次轻量 Drive Changes freshness probe。这个探针本身不阻塞 UI;只有探针发现远端确实有更新、或实时模式下无法确认远端状态时,才进入阻塞同步 gate 并跑 preflight/pull/conflict 流程。
+> - **纯数据备份(backup)**:面向单设备用户。Knowlet 仍保持 local-first,只把本地变更后台上传到 Drive,不因远端 freshness 检查阻塞读写。
+>
+> 资讯(Stage C Raw Info)也被纳入同步边界:Digest Source 配置和 Raw Info inbox item 作为 typed JSON 文件写入 Drive appData。实时模式下,另一台设备拉取过的资讯会先同步到本机,本机的每日 auto-pull 再根据 synced Raw Info item_key / source 状态去重,降低多设备重复拉取概率。当前不承诺跨设备全局原子 lease;两台设备在完全同时、且都尚未看到对方 appData 更新时,仍可能产生竞态,后续再评估是否需要 Drive 侧 lease。
 
 ## Context
 
@@ -99,7 +107,7 @@ sync agent (异步) 调 Drive API PUT (If-Match: <last_known_etag>)
 ### 3. UX 不变式(从用户故事推导)
 
 - **保存即同步**:Save 必须等 Drive ACK 才算 done。不接受"乐观本地 + 后台 push"。
-- **打开即拉最新**:打开应用 / 笔记 → 先 fetch Drive ETag → 完成后才允许编辑(默认 Strict / Auto-多设备)。
+- **打开即确认 freshness**:realtime 模式打开应用 / 长时间恢复前台 → 先做轻量 Drive Changes probe;无远端更新不阻塞,有更新才阻塞并拉取 / 合并 / 显示冲突。
 - **编辑期持续 poll**:每 15-30s 调 Changes API。远端有变 → **立即** banner 通知,不等 Save 时才告知。
 - **关闭前必须同步完**:有 pending save → 关闭时强 modal "X 篇未同步,等完成或选离线保留"。
 - **状态永久可见**:header 顶部 always-on 指示器:`synced 5s ago` / `syncing...` / `offline · N pending` / `error · retry`。
@@ -109,15 +117,18 @@ sync agent (异步) 调 Drive API PUT (If-Match: <last_known_etag>)
   - 编辑期断线 → 状态指示器变 "offline · N pending",first poll 失败时 banner 一次。
   - Token 失效 → 红条 "Drive disconnected — reconnect"。
 
-### 4. 三档 fetch 策略 + 智能默认
+### 4. Sync v2 模式:realtime / backup
 
 | 选项 | 行为 | 适用 |
 |---|---|---|
-| **Auto**(默认) | Drive 上 sync_state 里近 30 天有其它 device_id → 走 Strict;否则走 Lax | 不用想,跟着实际用法走 |
-| **Strict** | 永远 block-on-open(打开前 fetch ETag,200-500ms 阻塞) | 多设备重度用户 |
-| **Lax** | 永远 lazy(秒开 + 后台对账,远端有变就 banner) | 单设备 / Drive 纯备份 |
+| **realtime**(默认) | 轻量 freshness probe 先判断 Drive 是否有远端更新;无更新不阻塞,有更新才阻塞并同步;冲突未解决时阻塞 | 多设备轮流使用 |
+| **backup** | 不做 freshness 阻塞;本地编辑照常,Drive 只作为后台备份出口 | 单设备 + 防丢数据 |
 
-Auto 实现:每个 device 有唯一 `device_id`(本地生成 ULID,持久化在 `sync_state.sqlite`)。每次同步时把"我看到的活跃 device_id 列表 + 最后心跳"上报到 Drive 的 `sync_state` 索引。打开应用时读这个索引,30 天内见过 ≥2 个 device → Strict;否则 Lax。
+旧值迁移:`auto` / `strict` → `realtime`,`lax` → `backup`。`effective_mode` API 字段保留兼容,但 Sync v2 中始终等于 `mode`。
+
+realtime 的前台恢复规则:当窗口恢复前台且距离上次 freshness probe 足够久时,先发一个很小的 Drive Changes 请求。这个请求 pending 期间不遮挡 UI;只有返回结果说明远端确实有 relevant changes 时,才显示阻塞同步 UI 并跑 preflight。这样避免"只是判断有没有更新"也让用户等。
+
+backup 模式不代表不上传。写入仍会被 drainer 标记为 dirty 并尽快推到 Drive;区别只是它不把"远端是否最新"作为用户读写前置条件。
 
 ### 5. 冲突处理
 
@@ -177,6 +188,7 @@ Auto 实现:每个 device 有唯一 `device_id`(本地生成 ULID,持久化在 `
 - **Slice 5.E**:三档 Auto/Strict/Lax 设置 + 设备数自检测。
 - **Slice 5.F**:离线 / token 失效全套 UX(冷启动 modal、状态指示器、关闭前阻拦)。
 - **Slice 5.G**:CLI 平价(`knowlet sync status` / `knowlet sync force` / `knowlet sync conflicts`)。
+- **Sync v2 (2026-05-31)**:realtime/backup 替代 Auto/Strict/Lax;新增 freshness probe API + 前端阻塞 gate;preflight 成功后推进 Drive cursor;Digest Source / Raw Info typed JSON 文件纳入 appData 同步。
 
 每 slice 独立可 ship,失败/回滚的影响面被局限在该 slice 范围内。Slice 顺序遵循"读路径先于写路径,简单触发先于复杂触发"的安全梯度。
 
@@ -221,27 +233,29 @@ Auto 实现:每个 device 有唯一 `device_id`(本地生成 ULID,持久化在 `
 - `credentials.py` — token 存取
 - `state.py` — `sync_state.sqlite` schema + `FileState` 行 + `delete_intent` tombstone(#118)
 - `drive_client.py`、`files.py` — Drive Files API wrapper (5.C / 5.C.1 切到 drive.appdata)
-- `push.py` — `push_note` 主体 + 5.C 的 OCC + 5.5 的合并解析 + `push_attachment`(#121,immutable)
+- `push.py` — `push_note` 主体 + 5.C 的 OCC + 5.5 的合并解析 + `push_attachment`(#121,immutable)+ Digest Source / Raw Info typed JSON push
 - `pull.py` — 拉取路径 + 单笔记 force-pull
 - `changes.py` — Slice 5.B + 5.D 的 Drive Changes API poller
 - `heartbeat.py` — #107c 多设备心跳 + `alive_devices` 派生
-- `preflight.py` — vault-wide scan(#107a / S2 / #119 双向克隆 + Drive-delete trash-local)
-- `drainer.py` — S4 后台 push 队列(#117 auto-track / #118 deletions / #122 失败可见 / #121 attachment dispatch + untracked sweep)
+- `freshness.py` — Sync v2 轻量 Drive Changes freshness probe;只判断是否需要阻塞同步,不推进 cursor
+- `preflight.py` — vault-wide scan(#107a / S2 / #119 双向克隆 + Drive-delete trash-local + Digest JSON auto-pull)
+- `drainer.py` — S4 后台 push 队列(#117 auto-track / #118 deletions / #122 失败可见 / #121 attachment dispatch + Digest JSON dispatch + untracked sweep)
 - `status.py` — 单 note 状态计算
+- `tracked_files.py` — 非 note vault 数据(Digest Source / Raw Info)的 sync_state queue helpers
 
 CLI 平价 `knowlet/cli/sync.py`:`status` / `connect` / `pull` / `push` / `resolve` / `disconnect`。
 
 前端 sync UI:
-- `frontend/src/components/Sync/SyncChip.tsx` — 统一 chip(#114),覆盖 conflicts / unpushed / offline / push-failing / strict-blocking modal
+- `frontend/src/components/Sync/SyncChip.tsx` — 统一 chip(#114),覆盖 conflicts / unpushed / offline / push-failing / realtime blocking modal / freshness gate
 - `frontend/src/components/Settings/SettingsDialog.tsx` `DriveAuthPanel` — connect / disconnect / cancel(#116 + dogfood-found OAuth cancel)
 - `frontend/src/components/Sync/MergeEditor.tsx` — S5 内联合并编辑器(三栏 + gutter take-mine/take-remote 按钮)
 - `frontend/src/api/client.ts` § Drive auth + 状态 API
 
-配置项 `KnowletConfig.sync.*`:`client_secrets_path`(可选 escape hatch,#115 后通常空)、`token_path`、`mode`(auto/strict/lax,#107b)。
+配置项 `KnowletConfig.sync.*`:`client_secrets_path`(可选 escape hatch,#115 后通常空)、`token_path`。Sync mode 存在 `sync_state.sqlite` meta 中,当前只允许 `realtime` / `backup`;旧 `auto` / `strict` / `lax` 会自动迁移。
 
 本文档 `docs/decisions/0027-sync-via-drive-api.md` ← 当前文件。
 
-## 状态(2026-05-11)
+## 状态(2026-05-31)
 
 **Slice 5.A → 5.G 全部已实现并通过单设备 dogfood**:
 
@@ -252,7 +266,7 @@ CLI 平价 `knowlet/cli/sync.py`:`status` / `connect` / `pull` / `push` / `resol
 | 5.C 写路径 PUT-with-revisionId + 412 冲突 | ✅ | `bf49f9e`(etag → headRevisionId 在 v3 上的等价物) |
 | 5.C.1 drive.file → drive.appdata 切换 | ✅ | `a1ab9ae` |
 | 5.D 编辑期 Changes poller + banner | ✅ | `fe854f9` + 5.D.1/5.D.2/5.D.3.A 合并解析 / 状态收敛 / snooze / bulk |
-| 5.E Auto/Strict/Lax 三档 + 设备数自检测 | ✅ | #107b + #107c heartbeat 多设备 Auto→Strict |
+| 5.E Sync mode | ✅ / v2 superseded | 原 Auto/Strict/Lax 已由 Sync v2 realtime/backup 取代;heartbeat 仍用于设备状态展示 |
 | 5.F 离线 / token 失效 UX | ✅ | DriveAuthPanel(#116)+ SyncChip 失败计数器(#122)+ OAuth cancel + timeout(2026-05-11 dogfood 修复) |
 | 5.G CLI 平价 | ✅ | `knowlet sync {status,connect,pull,push,resolve,disconnect}` |
 
@@ -270,14 +284,16 @@ CLI 平价 `knowlet/cli/sync.py`:`status` / `connect` / `pull` / `push` / `resol
 | #120 | 文件夹层级 via frontmatter `folder` 字段 |
 | #121 | 附件(`_attachments/`)纳入 sync 闭环(push + pull + untracked sweep + live-paste auto-track) |
 | #122 | Push 失败可见性:drainer error counter + chip 红色警示 |
+| Sync v2 freshness | realtime 默认;`/api/sync/freshness` 只做轻量 probe,发现 remote changes 后才阻塞并触发 preflight;clean preflight 后推进 cursor |
+| Digest sync | Digest Source / Raw Info JSON 纳入 Drive appData push / preflight materialize / dirty queue;Stage C auto-pull 可基于同步后的 item_key 去重 |
 | OAuth cancel/timeout | `run_local_server(timeout_seconds=300)` + session counter + cancel endpoint |
 | Connect 后立刻刷新 | DriveAuthPanel 监听 connecting→connected 主动 invalidate sync queries |
 | Untracked sweep | 首次连接 / 进程重启时,drainer 自动把磁盘上但 sync_state 里没行的 note + attachment 排进 dirty 队列 |
 
 **仍未完全闭环(留作后续 dogfood-driven 增量)**:
 
-- **附件 delete-sync**:本地删除一张 paste,Drive 上副本不会自动清。Orphan GC 需要附件引用计数 + tombstone。**触发**:dogfood 撞到"Drive 端越积越多废图"再做。
-- **多设备真实场景验证**:#107c heartbeat 已实现,但单设备 dogfood 无法验证 Auto→Strict 自动促升 / 跨设备 banner 触发。**触发**:用户开始用第二台设备 OR 主动配置一份 second-device fixture。
+- **Digest global lease**:Digest Source / Raw Info 已同步,但没有 Drive 侧原子 lease。两台设备完全同时启动同一来源 pull 时仍可能竞态。**触发**:dogfood 出现真实重复资讯再做。
+- **多设备真实场景验证**:Sync v2 已有 probe/gate,但仍需要真实两设备 Drive dogfood 验证打开/恢复前台阻塞逻辑。**触发**:用户开始用第二台设备 OR 主动配置一份 second-device fixture。
 - **Conflict UI 视觉收敛**:S5 merge editor 落地基础版,但仍有"合并完得手动 push"等小动作。**触发**:用户在真实场景里撞到冲突。
 
 **结论**:Slice 5 主线 + 关键 dogfood 缺口已闭环。剩余项不阻塞当前推进;但按用户 2026-05-11 策略(AI 重做硬前置 = 笔记软件能力完整),Phase 2 D 和这些 sync 收尾**都**要在 Phase 3 之前完成。

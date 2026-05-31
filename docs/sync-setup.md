@@ -24,10 +24,24 @@ That's it. The first connect triggers a one-time bootstrap:
 
 - Any pre-existing notes on disk get queued for first-push.
 - Any pre-existing attachments (`_attachments/*`) get queued too.
+- Digest Source configs and Raw Info inbox JSON files are queued too.
 - The background drainer drains them over the next few minutes.
 
 You can watch progress via the sync chip in the header (it surfaces a
 running count of "N to push" until everything is up).
+
+## Sync modes
+
+After Drive is connected, knowlet defaults to **Realtime multi-device**.
+The older Auto / Strict / Quiet setting no longer exists.
+
+| Mode | Behavior | Best for |
+|---|---|---|
+| Realtime multi-device | On app open and long foreground resumes, knowlet runs a lightweight Drive Changes freshness probe. The probe itself does not block. If it finds remote updates, knowlet shows a blocking sync gate and runs preflight/pull/conflict handling before normal work continues. | Multiple devices used in rotation |
+| Data backup only | No freshness gate. Local reads/writes stay local-first; the drainer uploads changes in the background. | One main device plus Drive backup |
+
+Legacy stored values migrate automatically: `auto` / `strict` become
+`realtime`; `lax` becomes `backup`.
 
 ### CLI parity
 
@@ -127,19 +141,37 @@ equally authoritative copies" — exactly the failure mode
 | Entity | First-push | Updates | Delete | Conflict |
 |---|---|---|---|---|
 | Notes (`*.md`) | ✅ on save / on first connect | ✅ via revisionId OCC | ✅ trash → Drive trash; purge → Drive hard delete | ✅ inline merge editor |
-| Attachments (`_attachments/*`) | ✅ on paste / on first connect | N/A (immutable) | ⚠️ not auto-cleaned on local delete (see "known gaps") |  N/A (immutable) |
+| Attachments (`_attachments/*`) | ✅ on paste / on first connect | N/A (immutable) | ✅ missing local file → Drive hard delete |  N/A (immutable) |
+| Digest Source configs (`.knowlet/digest/sources/*.json`) | ✅ on create / first connect | ✅ appData JSON revision sync | ✅ delete → Drive hard delete | ⚠️ no merge UI; latest clean remote revision auto-pulls |
+| Raw Info inbox (`.knowlet/digest/items/*.json`) | ✅ on pull / first connect | ✅ appData JSON revision sync | N/A (items are status-marked, not unlinked) | ⚠️ no merge UI; latest clean remote revision auto-pulls |
 | Heartbeat (`.knowlet/heartbeat-*.json`) | ✅ periodic | ✅ periodic | — | — |
 
-## Known gaps (2026-05-11)
+### Digest auto-pull in multi-device mode
+
+Digest pulls run locally, so realtime sync must happen before the daily
+auto-pull decision. The current mitigation is:
+
+- Digest sources and Raw Info items sync through Drive appData.
+- Realtime freshness gate runs before the user is unblocked after a stale
+  foreground/open.
+- `item_key` and source success state dedupe after remote Raw Info arrives.
+
+This is not a global atomic lease. Two devices that start the same source
+pull at exactly the same time before seeing each other's appData writes may
+still race; that is the remaining edge case to revisit if dogfood shows real
+duplicates.
+
+## Known gaps (2026-05-31)
 
 These are tracked in [ADR-0027 § Status (2026-05-11)](./decisions/0027-sync-via-drive-api.md):
 
-- **Attachment delete-sync**: deleting a local paste does not yet
-  remove the Drive copy. Orphan attachments accumulate.
-- **Multi-device scenario validation**: heartbeat + Auto→Strict
-  auto-promotion are implemented but only single-device dogfood-tested.
-- **Conflict UI polish**: merge editor lands the basics; some edge
-  cases (e.g. "merged but not auto-pushed") still need cleanup.
+- **Digest global lease**:source/item sync lowers duplicate pulls, but there is
+  no Drive-side atomic lease yet.
+- **Non-note JSON conflict UI**:Digest Source / Raw Info files auto-pull clean
+  remote revisions; if both devices edit the same JSON before syncing, we do
+  not yet have a user-facing merge UI for those files.
+- **Conflict UI polish**:merge editor lands the basics; some edge cases
+  (e.g. "merged but not auto-pushed") still need cleanup.
 
 ## Troubleshooting
 

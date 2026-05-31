@@ -210,17 +210,29 @@ class SyncStateStore:
     # --------------------------------------------------- sync mode (#107b)
 
     def sync_mode(self) -> str:
-        """One of "auto" / "strict" / "lax". Default "auto" — current
-        behavior matches "lax" (inbox only, no blocking modal); the
-        cross-device heartbeat slice (#107c) will let auto promote
-        itself to strict when a second device shows up."""
+        """One of "realtime" / "backup".
+
+        Sync v2 defaults to realtime because multi-device safety is
+        the product default once a user connects Drive. Legacy
+        ``auto`` / ``strict`` / ``lax`` values from Slice 5 are
+        migrated on read:
+
+        - ``auto`` and ``strict`` → ``realtime``
+        - ``lax`` → ``backup``
+        """
         cached = self._get_meta("sync_mode")
-        if cached in {"auto", "strict", "lax"}:
+        if cached in {"realtime", "backup"}:
             return cached
-        return "auto"
+        if cached in {"auto", "strict"}:
+            self._set_meta("sync_mode", "realtime")
+            return "realtime"
+        if cached == "lax":
+            self._set_meta("sync_mode", "backup")
+            return "backup"
+        return "realtime"
 
     def set_sync_mode(self, mode: str) -> None:
-        if mode not in {"auto", "strict", "lax"}:
+        if mode not in {"realtime", "backup"}:
             raise ValueError(f"invalid sync_mode: {mode!r}")
         self._set_meta("sync_mode", mode)
 

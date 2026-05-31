@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.0.9] - 2026-05-31
+
+Sync v2 multi-device release.
+
+- Default Google Drive sync to multi-device realtime mode, with a separate
+  backup-only mode for single-device users.
+- Add a lightweight Drive freshness probe that only blocks the app after
+  remote changes are detected or the app cannot prove local data is current.
+- Add blocking sync UX for confirmed remote updates and an offline fallback
+  path when Drive cannot be reached.
+- Sync Digest Source configuration and Raw Info inbox JSON through Drive
+  appData alongside notes and attachments.
+- Update sync docs and roadmap to retire the old Auto / Strict / Lax model.
+
 ## [0.0.8] - 2026-05-31
 
 Desktop new-vault tree hotfix release.

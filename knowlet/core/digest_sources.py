@@ -163,14 +163,51 @@ class DigestSourceStore:
             encoding="utf-8",
         )
         tmp.replace(target)
+        self._queue_sync(source)
         return target
 
     def delete(self, source_id: str) -> bool:
         source = self.get(source_id)
         if source is None or source.path is None:
             return False
+        filename = source.path.name
         os.unlink(source.path)
+        self._queue_delete_sync(filename)
         return True
+
+    def _queue_sync(self, source: DigestSource) -> None:
+        if source.path is None:
+            return
+        from knowlet.core.sync.push import DIGEST_SOURCE_ENTITY_TYPE
+        from knowlet.core.sync.tracked_files import (
+            infer_vault_root_from_digest_dir,
+            queue_synced_json_if_authenticated,
+        )
+
+        vault_root = infer_vault_root_from_digest_dir(self.root)
+        if vault_root is None:
+            return
+        queue_synced_json_if_authenticated(
+            vault_root=vault_root,
+            entity_type=DIGEST_SOURCE_ENTITY_TYPE,
+            entity_id=source.path.name,
+        )
+
+    def _queue_delete_sync(self, filename: str) -> None:
+        from knowlet.core.sync.push import DIGEST_SOURCE_ENTITY_TYPE
+        from knowlet.core.sync.tracked_files import (
+            infer_vault_root_from_digest_dir,
+            queue_synced_json_delete_if_authenticated,
+        )
+
+        vault_root = infer_vault_root_from_digest_dir(self.root)
+        if vault_root is None:
+            return
+        queue_synced_json_delete_if_authenticated(
+            vault_root=vault_root,
+            entity_type=DIGEST_SOURCE_ENTITY_TYPE,
+            entity_id=filename,
+        )
 
 
 def _is_http_url(raw: str) -> bool:

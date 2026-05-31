@@ -186,6 +186,7 @@ class RawInfoStore:
             encoding="utf-8",
         )
         tmp.replace(target)
+        self._queue_sync(item)
         return target
 
     def pending_count(self) -> int:
@@ -193,6 +194,24 @@ class RawInfoStore:
 
     def has_item_key(self, item_key: str) -> bool:
         return any(item.item_key == item_key for item in self.list())
+
+    def _queue_sync(self, item: RawInfo) -> None:
+        if item.path is None:
+            return
+        from knowlet.core.sync.push import RAW_INFO_ENTITY_TYPE
+        from knowlet.core.sync.tracked_files import (
+            infer_vault_root_from_digest_dir,
+            queue_synced_json_if_authenticated,
+        )
+
+        vault_root = infer_vault_root_from_digest_dir(self.root)
+        if vault_root is None:
+            return
+        queue_synced_json_if_authenticated(
+            vault_root=vault_root,
+            entity_type=RAW_INFO_ENTITY_TYPE,
+            entity_id=item.path.name,
+        )
 
 
 def _mtime_ns(path: Path | None) -> int:

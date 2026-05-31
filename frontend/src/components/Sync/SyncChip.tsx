@@ -12,8 +12,9 @@
  *   collapsible section, informational.
  *
  * Visibility rule: chip hidden iff no creds AND nothing in any
- * bucket. Strict mode's blocking modal triggers ONLY on conflicts;
- * unpushed notes don't block the app, they just nag via the chip.
+ * bucket. Realtime mode's blocking modal triggers ONLY on conflicts
+ * or confirmed remote freshness work; unpushed notes don't block the
+ * app, they just nag via the chip.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,14 +22,17 @@ import {
   AlertTriangle,
   ArrowUpFromLine,
   CloudOff,
+  Loader2,
   RefreshCw,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
   getConflicts,
   getPushErrors,
+  getAuthStatus,
+  getSyncFreshness,
   getSyncMode,
   getUnpushedStatus,
   type PreflightConflict,
@@ -36,6 +40,8 @@ import {
   type PushError,
   pushAllUnpushed,
   runPreflight,
+  type SyncAuthStatus,
+  type SyncFreshnessResponse,
   type SyncModeResponse,
   type UnpushedStatus,
 } from "@/api/client";
@@ -43,6 +49,8 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import {
   Popover,
@@ -52,6 +60,7 @@ import {
 import { QK } from "@/lib/queryClient";
 
 const POLL_MS = 60_000;
+const FRESHNESS_RECHECK_MS = 5 * 60_000;
 
 export function SyncChip({
   onOpenNote,
@@ -91,28 +100,19 @@ export function SyncChip({
     onSuccess: (report) => {
       qc.setQueryData(QK.syncConflicts, report);
       void qc.invalidateQueries({ queryKey: QK.syncUnpushed });
+      void qc.invalidateQueries({ queryKey: QK.syncFreshness });
     },
   });
-  useEffect(() => {
-    if (
-      conflicts.data &&
-      conflicts.data.ran_at === null &&
-      !conflicts.data.unauthenticated &&
-      !refresh.isPending
-    ) {
-      refresh.mutate();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conflicts.data?.ran_at]);
+  const freshnessGate = <SyncFreshnessGate />;
 
-  if (!conflicts.data) return null;
-  if (conflicts.data.unauthenticated) return null;
+  if (!conflicts.data) return freshnessGate;
+  if (conflicts.data.unauthenticated) return freshnessGate;
 
   const conflictCount = conflicts.data.conflicts.length;
   const offlineCount = conflicts.data.offline.length;
   const unpushedCount = unpushed.data?.count ?? 0;
   const pushFailingCount = pushErrors.data?.errors.length ?? 0;
-  const effectiveMode = mode.data?.effective_mode ?? "auto";
+  const effectiveMode = mode.data?.effective_mode ?? "realtime";
 
   if (
     conflictCount === 0 &&
@@ -120,20 +120,23 @@ export function SyncChip({
     unpushedCount === 0 &&
     pushFailingCount === 0
   ) {
-    return null;
+    return freshnessGate;
   }
 
-  // Strict mode blocks ONLY on real conflicts. Unpushed notes are
-  // chrome, not work — never blocking.
-  const isStrictBlocking = effectiveMode === "strict" && conflictCount > 0;
-  if (isStrictBlocking) {
+  // Realtime mode blocks ONLY on real conflicts or required remote
+  // pulls. Unpushed notes are chrome, not work — never blocking.
+  const isRealtimeBlocking = effectiveMode === "realtime" && conflictCount > 0;
+  if (isRealtimeBlocking) {
     return (
-      <BlockingConflictsModal
-        report={conflicts.data}
-        onOpenNote={onOpenNote}
-        onRefresh={() => refresh.mutate()}
-        refreshing={refresh.isPending}
-      />
+      <>
+        {freshnessGate}
+        <BlockingConflictsModal
+          report={conflicts.data}
+          onOpenNote={onOpenNote}
+          onRefresh={() => refresh.mutate()}
+          refreshing={refresh.isPending}
+        />
+      </>
     );
   }
 
@@ -171,44 +174,229 @@ export function SyncChip({
           : t("syncInbox.offline", { count: offlineCount });
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          data-testid="sync-chip"
-          data-conflicts={conflictCount}
-          data-unpushed={unpushedCount}
-          className={[
-            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1",
-            "hover:opacity-90 focus-visible:outline-none focus-visible:ring-2",
-            tone,
-          ].join(" ")}
+    <>
+      {freshnessGate}
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            data-testid="sync-chip"
+            data-conflicts={conflictCount}
+            data-unpushed={unpushedCount}
+            className={[
+              "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1",
+              "hover:opacity-90 focus-visible:outline-none focus-visible:ring-2",
+              tone,
+            ].join(" ")}
+          >
+            <Icon className="size-3.5" />
+            <span>{label}</span>
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end"
+          className="w-[420px] p-0"
+          data-testid="sync-inbox"
         >
-          <Icon className="size-3.5" />
-          <span>{label}</span>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        className="w-[420px] p-0"
-        data-testid="sync-inbox"
-      >
-        <InboxPanel
-          report={conflicts.data}
-          unpushedCount={unpushedCount}
-          pushErrors={pushErrors.data?.errors ?? []}
-          onOpenNote={(id) => {
-            setOpen(false);
-            onOpenNote(id);
-          }}
-          onRefresh={() => refresh.mutate()}
-          refreshing={refresh.isPending}
-        />
-      </PopoverContent>
-    </Popover>
+          <InboxPanel
+            report={conflicts.data}
+            unpushedCount={unpushedCount}
+            pushErrors={pushErrors.data?.errors ?? []}
+            onOpenNote={(id) => {
+              setOpen(false);
+              onOpenNote(id);
+            }}
+            onRefresh={() => refresh.mutate()}
+            refreshing={refresh.isPending}
+          />
+        </PopoverContent>
+      </Popover>
+    </>
   );
 }
 
+function SyncFreshnessGate(): React.ReactNode {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const [offlineOverride, setOfflineOverride] = useState(false);
+  const lastProbeAtRef = useRef(0);
+  const lastRunKeyRef = useRef<string | null>(null);
+
+  const auth = useQuery<SyncAuthStatus>({
+    queryKey: QK.syncAuth,
+    queryFn: getAuthStatus,
+    staleTime: 30_000,
+  });
+  const freshness = useQuery<SyncFreshnessResponse>({
+    queryKey: QK.syncFreshness,
+    queryFn: getSyncFreshness,
+    refetchOnWindowFocus: false,
+    retry: false,
+    enabled: auth.data?.connected === true,
+  });
+  const preflight = useMutation({
+    mutationFn: runPreflight,
+    onSuccess: (report) => {
+      qc.setQueryData(QK.syncConflicts, report);
+      void qc.invalidateQueries({ queryKey: QK.tree });
+      void qc.invalidateQueries({ queryKey: ["note"] });
+      void qc.invalidateQueries({ queryKey: QK.syncConflicts });
+      void qc.invalidateQueries({ queryKey: QK.syncUnpushed });
+      void qc.invalidateQueries({ queryKey: QK.syncFreshness });
+    },
+  });
+  const freshnessReport = freshness.data;
+  const refetchFreshness = freshness.refetch;
+  const freshnessFetching = freshness.isFetching;
+  const preflightReport = preflight.data;
+  const runBlockingPreflight = preflight.mutate;
+  const preflightPending = preflight.isPending;
+  const checkedAt = freshnessReport?.checked_at;
+
+  useEffect(() => {
+    if (checkedAt) {
+      lastProbeAtRef.current = Date.now();
+    }
+  }, [checkedAt]);
+
+  useEffect(() => {
+    const maybeRefetch = () => {
+      if (auth.data?.connected !== true) return;
+      if (Date.now() - lastProbeAtRef.current < FRESHNESS_RECHECK_MS) {
+        return;
+      }
+      void refetchFreshness();
+    };
+    window.addEventListener("focus", maybeRefetch);
+    window.addEventListener("online", maybeRefetch);
+    document.addEventListener("visibilitychange", maybeRefetch);
+    return () => {
+      window.removeEventListener("focus", maybeRefetch);
+      window.removeEventListener("online", maybeRefetch);
+      document.removeEventListener("visibilitychange", maybeRefetch);
+    };
+  }, [auth.data?.connected, refetchFreshness]);
+
+  useEffect(() => {
+    const report = freshnessReport;
+    if (!report || offlineOverride) return;
+    if (report.mode !== "realtime" || report.state !== "needs_sync") return;
+    if (preflightPending) return;
+    const runKey = [
+      report.checked_at,
+      report.reason ?? "",
+      report.changed_count,
+      report.next_start_page_token ?? "",
+    ].join(":");
+    if (lastRunKeyRef.current === runKey) return;
+    lastRunKeyRef.current = runKey;
+    runBlockingPreflight();
+  }, [freshnessReport, offlineOverride, preflightPending, runBlockingPreflight]);
+
+  if (auth.data?.connected !== true) return null;
+  if (offlineOverride) return null;
+  const report = freshnessReport;
+  if (!report || report.mode === "backup" || !report.requires_sync) return null;
+
+  const preflightCleared =
+    preflightReport &&
+    !preflightReport.unauthenticated &&
+    preflightReport.conflicts.length === 0 &&
+    preflightReport.offline.length === 0;
+  if (preflightCleared) return null;
+  if (preflightReport?.conflicts.length) return null;
+
+  if (
+    report.state === "offline" ||
+    preflight.isError ||
+    preflightReport?.unauthenticated ||
+    preflightReport?.offline.length
+  ) {
+    return (
+      <Dialog open onOpenChange={() => {}}>
+        <DialogContent
+          data-testid="sync-freshness-offline-modal"
+          showCloseButton={false}
+          className="w-[90vw] sm:max-w-md"
+          onEscapeKeyDown={(e) => e.preventDefault()}
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
+          <div className="flex items-start gap-3">
+            <CloudOff className="text-muted-foreground mt-0.5 size-5 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <DialogTitle>
+                {t("syncMode.freshnessOfflineTitle")}
+              </DialogTitle>
+              <DialogDescription className="mt-1 leading-relaxed">
+                {t("syncMode.freshnessOfflineBody")}
+              </DialogDescription>
+              {report.detail && (
+                <p className="text-muted-foreground mt-2 truncate font-mono text-[11px]">
+                  {report.detail}
+                </p>
+              )}
+              <div className="mt-4 flex flex-wrap justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    lastRunKeyRef.current = null;
+                    void refetchFreshness();
+                  }}
+                  disabled={freshnessFetching || preflightPending}
+                >
+                  <RefreshCw
+                    className={`mr-1.5 size-4 ${
+                      freshnessFetching ? "animate-spin" : ""
+                    }`}
+                  />
+                  {t("syncMode.freshnessRetry")}
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => setOfflineOverride(true)}
+                  data-testid="sync-freshness-offline-continue"
+                >
+                  {t("syncMode.freshnessContinueOffline")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Dialog open onOpenChange={() => {}}>
+      <DialogContent
+        data-testid="sync-freshness-blocking-modal"
+        showCloseButton={false}
+        className="w-[90vw] sm:max-w-md"
+        onEscapeKeyDown={(e) => e.preventDefault()}
+        onPointerDownOutside={(e) => e.preventDefault()}
+      >
+        <div className="flex items-start gap-3">
+          <Loader2 className="text-primary mt-0.5 size-5 shrink-0 animate-spin" />
+          <div className="min-w-0 flex-1">
+            <DialogTitle>
+              {t("syncMode.freshnessBlockingTitle")}
+            </DialogTitle>
+            <DialogDescription className="mt-1 leading-relaxed">
+              {t("syncMode.freshnessBlockingBody")}
+            </DialogDescription>
+            {report.reason === "remote_changes" && report.changed_count > 0 && (
+              <p className="text-muted-foreground mt-2 text-xs">
+                {t("syncMode.freshnessRemoteChanges", {
+                  count: report.changed_count,
+                })}
+              </p>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function InboxPanel({
   report,
@@ -445,7 +633,7 @@ function BlockingConflictsModal({
   return (
     <Dialog open onOpenChange={() => {}}>
       <DialogContent
-        data-testid="strict-blocking-modal"
+        data-testid="realtime-blocking-modal"
         showCloseButton={false}
         className="!flex flex-col top-[10vh] left-1/2 -translate-x-1/2 translate-y-0 w-[90vw] sm:max-w-lg max-h-[80vh] gap-3 overflow-hidden"
         onEscapeKeyDown={(e) => e.preventDefault()}
@@ -454,15 +642,15 @@ function BlockingConflictsModal({
         <div className="flex shrink-0 items-start gap-3 border-b pb-3">
           <AlertTriangle className="text-warn-fg dark:text-warn-fg-dark mt-0.5 size-5 shrink-0" />
           <div className="min-w-0 flex-1">
-            <div className="font-heading text-base font-medium leading-snug">
+            <DialogTitle className="leading-snug">
               {t("syncMode.blockingTitle")}
-            </div>
-            <div className="text-muted-foreground mt-1 text-xs">
+            </DialogTitle>
+            <DialogDescription className="mt-1 text-xs">
               {t("syncMode.blockingSubtitle", {
                 count,
                 noun: t("syncMode.blockingNoun", { count }),
               })}
-            </div>
+            </DialogDescription>
             <div className="text-muted-foreground mt-1 text-xs">
               {t("syncMode.blockingHint")}
             </div>
@@ -480,7 +668,7 @@ function BlockingConflictsModal({
           </Button>
         </div>
         <ul
-          data-testid="strict-blocking-list"
+          data-testid="realtime-blocking-list"
           className="min-h-0 flex-1 overflow-y-auto"
         >
           {report.conflicts.map((c) => (

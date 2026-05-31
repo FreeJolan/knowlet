@@ -292,7 +292,7 @@ class LLMTestRequest(BaseModel):
 
 class SyncModeRequest(BaseModel):
     """#107b — body for ``PUT /api/sync/mode``. Validation is a
-    closed three-way enum; backend re-validates so a malformed
+    closed realtime/backup enum; backend re-validates so a malformed
     request can't poison sync_state."""
 
     mode: str
@@ -2136,8 +2136,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     def dev_fake_other_device_heartbeat() -> dict[str, Any]:
         """Plant a fake heartbeat for a synthetic second device in
         Drive appData. Next preflight reads it + the local device's
-        own heartbeat → ``alive_devices`` count = 2 → Auto mode
-        auto-promotes to Strict."""
+        own heartbeat, so settings/status can show multiple devices
+        during dogfood."""
         from knowlet.core.sync.credentials import (
             credentials_path,
             load_credentials,
@@ -2242,6 +2242,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             load_credentials,
         )
         from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.freshness import mark_freshness_synced
         from knowlet.core.sync.preflight import preflight_scan
         from knowlet.core.sync.state import SyncStateStore
 
@@ -2272,11 +2273,42 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 materialize_drive_file=_materialize_drive_file,
                 trash_local_for_drive_deleted=_trash_local_for_drive_deleted,
             )
+            if _preflight_cleared_for_freshness(report):
+                mark_freshness_synced(
+                    state_store=store,
+                    client_factory=service_factory,
+                )
         finally:
             store.close()
         state.preflight_report = report
         state.preflight_ran_at = _time.time()
         return _serialize_preflight(report, state.preflight_ran_at)
+
+    @app.get("/api/sync/freshness")
+    def freshness_endpoint() -> dict[str, Any]:
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.freshness import check_sync_freshness
+        from knowlet.core.sync.state import SyncStateStore
+
+        def client_factory() -> Any | None:
+            creds = load_credentials(credentials_path(vault.root))
+            if creds is None:
+                return None
+            return DriveClient(creds).service()
+
+        store = SyncStateStore(vault.root)
+        try:
+            report = check_sync_freshness(
+                state_store=store,
+                client_factory=client_factory,
+            )
+        finally:
+            store.close()
+        return _serialize_freshness(report)
 
     @app.get("/api/sync/conflicts")
     def conflicts_endpoint() -> dict[str, Any]:
@@ -2299,6 +2331,21 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 "trashed_for_drive_delete_ids": [],
             }
         return _serialize_preflight(report, state.preflight_ran_at)
+
+    def _preflight_cleared_for_freshness(report: Any) -> bool:
+        return not report.unauthenticated and not report.conflicts and not report.offline
+
+    def _serialize_freshness(report: Any) -> dict[str, Any]:
+        return {
+            "mode": report.mode,
+            "state": report.state,
+            "checked_at": report.checked_at,
+            "requires_sync": report.requires_sync,
+            "reason": report.reason,
+            "changed_count": report.changed_count,
+            "next_start_page_token": report.next_start_page_token,
+            "detail": report.detail,
+        }
 
     def _serialize_preflight(report: Any, ran_at: float | None) -> dict[str, Any]:
         return {
@@ -2338,7 +2385,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         """Nuke the cached preflight report — used after seeds /
         rescan-needed events. Don't use this after a single-note
         resolve; the empty-cache → empty-conflicts → modal-unmounts
-        race in Strict mode flashes the modal away mid-resolve.
+        race in realtime mode flashes the modal away mid-resolve.
         Use ``_drop_from_preflight`` for surgical removals."""
         state.preflight_report = None
         state.preflight_ran_at = None
@@ -2516,7 +2563,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     def _add_conflict_to_preflight(note_id: str, drive_file_id: str | None) -> None:
         """S4 — drainer-discovered conflict callback. When a save-
         time push gets 412, the drainer calls this so the chip /
-        Strict modal lights up within seconds of the push attempt
+        realtime modal lights up within seconds of the push attempt
         rather than waiting up to 60s for the next manual preflight.
 
         If the cache is empty (no prior scan), seed a minimal
@@ -2763,14 +2810,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         )
         return cs_path, tok_path
 
-    # ---------------- sync mode (#107b) ---------------------------
-    # User-selected behavior: auto / strict / lax. Strict mode shows
-    # the conflicts list as a blocking modal in the UI; lax disables
-    # the blocking; auto matches lax today and will auto-promote to
-    # strict once cross-device heartbeats land (#107c). The
-    # ``effective_mode`` field is the value the UI should react to —
-    # for now equal to ``mode``; the auto-promotion path will diverge
-    # the two when implemented.
+    # ---------------- sync mode (#107b → Sync v2) -----------------
+    # User-selected behavior: realtime / backup. Realtime is the
+    # default once Drive is connected and may block only after the
+    # lightweight freshness probe detects remote work. Backup keeps
+    # Knowlet local-first and only pushes local data in the background.
+    # ``effective_mode`` is retained for frontend/back-compat but is
+    # now identical to the stored mode.
 
     @app.get("/api/sync/mode")
     def get_sync_mode() -> dict[str, Any]:
@@ -2781,18 +2827,11 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             mode = store.sync_mode()
         finally:
             store.close()
-        # #111 — Auto mode auto-promotes to Strict when ≥2 alive
-        # devices are seen in the cached preflight's heartbeat
-        # scan. The promotion is transparent: the frontend reads
-        # ``effective_mode`` and reacts to that. The Settings panel
-        # shows ``device_count`` so the user knows why Auto behaves
-        # like Strict.
         rep = state.preflight_report
         device_count = len(rep.alive_devices) if rep is not None else 0
-        effective = ("strict" if device_count >= 2 else "lax") if mode == "auto" else mode
         return {
             "mode": mode,
-            "effective_mode": effective,
+            "effective_mode": mode,
             "device_count": device_count,
         }
 
@@ -2814,10 +2853,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             store.close()
         rep = state.preflight_report
         device_count = len(rep.alive_devices) if rep is not None else 0
-        effective = ("strict" if device_count >= 2 else "lax") if new_mode == "auto" else new_mode
         return {
             "mode": new_mode,
-            "effective_mode": effective,
+            "effective_mode": new_mode,
             "device_count": device_count,
         }
 
@@ -2949,7 +2987,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         )
         from knowlet.core.sync.drive_client import DriveClient
         from knowlet.core.sync.files import download_file
-        from knowlet.core.sync.push import ATTACHMENT_ENTITY_TYPE
+        from knowlet.core.sync.push import (
+            ATTACHMENT_ENTITY_TYPE,
+            synced_json_entity_from_drive_name,
+        )
         from knowlet.core.sync.state import FileState, SyncStateStore
 
         runtime = state.runtime
@@ -2960,6 +3001,42 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             return None
         service = DriveClient(creds).service()
         body = download_file(service, drive_file_id)
+        synced_json = synced_json_entity_from_drive_name(str(brief.name or ""))
+        if synced_json is not None:
+            entity_type, entity_id = synced_json
+            if Path(entity_id).name != entity_id:
+                return None
+            from knowlet.core.sync.push import (
+                DIGEST_SOURCE_ENTITY_TYPE,
+                RAW_INFO_ENTITY_TYPE,
+            )
+
+            if entity_type == DIGEST_SOURCE_ENTITY_TYPE:
+                target_dir = runtime.vault.digest_sources_dir
+            elif entity_type == RAW_INFO_ENTITY_TYPE:
+                target_dir = runtime.vault.digest_items_dir
+            else:
+                return None
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / entity_id
+            tmp = target.with_suffix(target.suffix + ".tmp")
+            tmp.write_bytes(body)
+            tmp.replace(target)
+            store = SyncStateStore(vault.root)
+            try:
+                store.upsert_file_state(
+                    FileState(
+                        entity_type=entity_type,
+                        entity_id=entity_id,
+                        drive_file_id=drive_file_id,
+                        last_known_etag=brief.head_revision_id,
+                        last_synced_at=now_iso(),
+                        dirty=False,
+                    )
+                )
+            finally:
+                store.close()
+            return entity_id
         # #121 — non-markdown files are attachments. Recognized by
         # filename extension since the appData folder is flat and
         # filenames are authoritative (notes are always ``<id>.md``;
@@ -3111,7 +3188,11 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         after creds first become available and queues them for first
         push. Returns [] when the runtime isn't ready — the drainer
         will retry on the next reconnect cycle."""
-        from knowlet.core.sync.push import ATTACHMENT_ENTITY_TYPE
+        from knowlet.core.sync.push import (
+            ATTACHMENT_ENTITY_TYPE,
+            DIGEST_SOURCE_ENTITY_TYPE,
+            RAW_INFO_ENTITY_TYPE,
+        )
         from knowlet.core.sync.state import SyncStateStore
 
         runtime = state.runtime
@@ -3142,6 +3223,19 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 if key in tracked:
                     continue
                 out.append(key)
+        for entity_type, root in (
+            (DIGEST_SOURCE_ENTITY_TYPE, runtime.vault.digest_sources_dir),
+            (RAW_INFO_ENTITY_TYPE, runtime.vault.digest_items_dir),
+        ):
+            if not root.exists():
+                continue
+            for entry in root.iterdir():
+                if not entry.is_file() or entry.suffix != ".json":
+                    continue
+                key = (entity_type, entry.name)
+                if key in tracked:
+                    continue
+                out.append(key)
         return out
 
     def _drainer_attachment_lookup(filename: str) -> Path | None:
@@ -3155,10 +3249,30 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             return None
         return candidate
 
+    def _drainer_synced_file_lookup(entity_type: str, entity_id: str) -> Path | None:
+        from knowlet.core.sync.push import (
+            DIGEST_SOURCE_ENTITY_TYPE,
+            RAW_INFO_ENTITY_TYPE,
+        )
+
+        runtime = state.runtime
+        if runtime is None:
+            return None
+        if entity_type == DIGEST_SOURCE_ENTITY_TYPE:
+            candidate = runtime.vault.digest_sources_dir / entity_id
+        elif entity_type == RAW_INFO_ENTITY_TYPE:
+            candidate = runtime.vault.digest_items_dir / entity_id
+        else:
+            return None
+        if not candidate.exists():
+            return None
+        return candidate
+
     state.push_drainer = PushDrainer(
         vault_root=vault.root,
         note_lookup=_drainer_note_lookup,
         attachment_lookup=_drainer_attachment_lookup,
+        synced_file_lookup=_drainer_synced_file_lookup,
         on_conflict=_drainer_on_conflict,
         on_synced=_drop_from_preflight,
         untracked_sweep=_drainer_untracked_sweep,
