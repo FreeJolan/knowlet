@@ -28,7 +28,7 @@ build_one() {
 
   rm -rf "$venv" "$dist" "$work" "$spec"
   uv venv "$venv" --python "$python_request"
-  uv pip install --python "$venv/bin/python" "pyinstaller==$PYINSTALLER_VERSION" "$ROOT"
+  uv pip install --python "$venv/bin/python" "pyinstaller==$PYINSTALLER_VERSION" "$ROOT[sync]"
   local python_cmd=("$venv/bin/python")
   if ((${#arch_prefix[@]})); then
     python_cmd=("${arch_prefix[@]}" "$venv/bin/python")

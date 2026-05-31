@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.11] - 2026-05-31
+
+Desktop sync dependency hotfix release.
+
+- Bundle the Google Drive sync extra into desktop backend sidecars so Drive
+  OAuth can import `google_auth_oauthlib` inside the signed app.
+- Add a packaging regression test that prevents future desktop releases from
+  omitting the sync extra.
+
 ## [0.0.10] - 2026-05-31
 
 Sync v2 CI repair release.
