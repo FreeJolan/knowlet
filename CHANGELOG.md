@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.12] - 2026-05-31
+
+Desktop window restoration release.
+
+- Remember and restore the desktop main window and vault launcher size,
+  position, maximized state, and fullscreen state across app restarts and
+  updater relaunches.
+- Restore windows before showing them to avoid visible default-position jumps.
+- Keep window visibility out of persisted state so macOS close-to-hide does not
+  make the next launch invisible.
+
 ## [0.0.11] - 2026-05-31
 
 Desktop sync dependency hotfix release.

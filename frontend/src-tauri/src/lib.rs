@@ -13,6 +13,8 @@ use recent_vaults::{load_valid_recent_vaults, record_recent_vault};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 const WINDOW_MAIN: &str = "main";
 const WINDOW_VAULT_LAUNCHER: &str = "vault-launcher";
@@ -117,6 +119,11 @@ fn desktop_open_vault(app: tauri::AppHandle, path: String) -> Result<DesktopStat
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(desktop_window_state_flags())
+                .build(),
+        )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .menu(build_initial_desktop_menu)
@@ -278,12 +285,36 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), 
     let window = app
         .get_webview_window(WINDOW_MAIN)
         .ok_or_else(|| "Knowlet main window is not available".to_string())?;
+    show_and_focus_window(&window, "Knowlet window")
+}
+
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+fn desktop_window_state_flags() -> StateFlags {
+    StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED | StateFlags::FULLSCREEN
+}
+
+fn restore_desktop_window_state<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> Result<(), String> {
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    {
+        window
+            .restore_state(desktop_window_state_flags())
+            .map_err(|err| format!("failed to restore Knowlet window state: {err}"))?;
+    }
+    Ok(())
+}
+
+fn show_and_focus_window<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    description: &str,
+) -> Result<(), String> {
     window
         .show()
-        .map_err(|err| format!("failed to show Knowlet window: {err}"))?;
+        .map_err(|err| format!("failed to show {description}: {err}"))?;
     window
         .set_focus()
-        .map_err(|err| format!("failed to focus Knowlet window: {err}"))
+        .map_err(|err| format!("failed to focus {description}: {err}"))
 }
 
 fn should_hide_instead_of_close(label: &str) -> bool {
@@ -516,9 +547,13 @@ fn show_vault_launcher<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(
     .inner_size(920.0, 640.0)
     .min_inner_size(760.0, 560.0)
     .resizable(true)
+    .visible(false)
     .build()
-    .map(|_| ())
     .map_err(|err| format!("failed to open vault launcher: {err}"))
+    .and_then(|window| {
+        restore_desktop_window_state(&window)?;
+        show_and_focus_window(&window, "vault launcher")
+    })
 }
 
 fn open_main_window(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
@@ -543,9 +578,13 @@ fn open_main_window(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
     .inner_size(1280.0, 860.0)
     .min_inner_size(980.0, 640.0)
     .resizable(true)
+    .visible(false)
     .build()
-    .map(|_| ())
     .map_err(|err| format!("failed to open Knowlet window: {err}"))
+    .and_then(|window| {
+        restore_desktop_window_state(&window)?;
+        show_and_focus_window(&window, "Knowlet window")
+    })
 }
 
 fn close_vault_launcher(app: &tauri::AppHandle) {
@@ -662,6 +701,42 @@ mod tests {
         let has_window = |label: &str| windows.iter().any(|value| value.as_str() == Some(label));
         assert!(has_window(super::WINDOW_MAIN));
         assert!(has_window(super::WINDOW_VAULT_LAUNCHER));
+    }
+
+    #[test]
+    fn desktop_capability_allows_window_state_plugin() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json"))
+                .expect("default desktop capability should be valid JSON");
+        let permissions = capability
+            .get("permissions")
+            .and_then(serde_json::Value::as_array)
+            .expect("default desktop capability should declare permissions");
+
+        assert!(permissions
+            .iter()
+            .any(|value| value.as_str() == Some("window-state:default")));
+    }
+
+    #[test]
+    fn desktop_window_state_restores_geometry_but_not_visibility() {
+        use tauri_plugin_window_state::StateFlags;
+
+        let flags = super::desktop_window_state_flags();
+
+        assert!(flags.contains(StateFlags::SIZE));
+        assert!(flags.contains(StateFlags::POSITION));
+        assert!(flags.contains(StateFlags::MAXIMIZED));
+        assert!(flags.contains(StateFlags::FULLSCREEN));
+        assert!(!flags.contains(StateFlags::VISIBLE));
+    }
+
+    #[test]
+    fn desktop_registers_window_state_plugin() {
+        let source = include_str!("lib.rs");
+
+        assert!(source.contains("tauri_plugin_window_state::Builder::new()"));
+        assert!(source.contains(".with_state_flags(desktop_window_state_flags())"));
     }
 
     #[test]

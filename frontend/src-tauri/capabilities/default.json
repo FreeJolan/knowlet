@@ -6,5 +6,10 @@
     "urls": ["http://127.0.0.1:*", "http://localhost:*"]
   },
   "windows": ["main", "vault-launcher"],
-  "permissions": ["core:default", "updater:default", "process:allow-restart"]
+  "permissions": [
+    "core:default",
+    "updater:default",
+    "process:allow-restart",
+    "window-state:default"
+  ]
 }

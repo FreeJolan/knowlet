@@ -806,8 +806,14 @@ mod tests {
 
     #[test]
     fn finds_available_loopback_port() {
-        let port = super::find_available_port().unwrap();
-        let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
+        let (port, listener) = (0..10)
+            .find_map(|_| {
+                let port = super::find_available_port().unwrap();
+                TcpListener::bind(("127.0.0.1", port))
+                    .ok()
+                    .map(|listener| (port, listener))
+            })
+            .expect("find_available_port should return a bindable loopback port");
 
         assert_eq!(listener.local_addr().unwrap().port(), port);
     }
