@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.13] - 2026-05-31
+
+Desktop sync OAuth hotfix release.
+
+- Fix the Google Drive realtime freshness gate after OAuth connect by passing
+  the `DriveClient` wrapper to the freshness layer instead of the raw Google
+  Drive service object.
+- Add regressions for the post-connect preflight bootstrap and the existing
+  Drive changes freshness probe.
+
 ## [0.0.12] - 2026-05-31
 
 Desktop window restoration release.

@@ -1716,7 +1716,7 @@ dependencies = [
 
 [[package]]
 name = "knowlet-desktop"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "log",
  "rfd",

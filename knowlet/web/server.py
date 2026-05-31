@@ -2256,11 +2256,17 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             note_meta = runtime.index.get_note_meta
             note_path = _resolve_note_local_path
 
-        def service_factory() -> Any | None:
+        def drive_client_factory() -> Any | None:
             creds = load_credentials(credentials_path(vault.root))
             if creds is None:
                 return None
-            return DriveClient(creds).service()
+            return DriveClient(creds)
+
+        def service_factory() -> Any | None:
+            client = drive_client_factory()
+            if client is None:
+                return None
+            return client.service()
 
         store = SyncStateStore(vault.root)
         try:
@@ -2276,7 +2282,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             if _preflight_cleared_for_freshness(report):
                 mark_freshness_synced(
                     state_store=store,
-                    client_factory=service_factory,
+                    client_factory=drive_client_factory,
                 )
         finally:
             store.close()
@@ -2298,7 +2304,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             creds = load_credentials(credentials_path(vault.root))
             if creds is None:
                 return None
-            return DriveClient(creds).service()
+            return DriveClient(creds)
 
         store = SyncStateStore(vault.root)
         try:
