@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
 
 from knowlet.chat.note_chat import propose_note_edit
@@ -25,14 +24,12 @@ def _read_current_note(ctx: ToolContext) -> tuple[Note | None, dict[str, Any] | 
             "error": f"current note not found: {note_id}",
             "suggestion": "reopen the note or run `knowlet reindex`",
         }
-    path = Path(meta["path"])
-    if not path.is_absolute():
-        path = ctx.vault.notes_dir / path.name
     try:
+        path = ctx.vault.resolve_note_path_from_index(meta["path"])
         note = ctx.vault.read_note(path)
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError) as exc:
         return None, {
-            "error": f"note file missing on disk: {path}",
+            "error": f"note file missing on disk: {exc}",
             "suggestion": "run `knowlet reindex` to sync the index",
         }
     return note, None

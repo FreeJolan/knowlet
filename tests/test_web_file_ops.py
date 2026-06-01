@@ -215,6 +215,25 @@ def test_trash_list_restore_purge(tmp_path: Path) -> None:
     assert listed["entries"] == []
 
 
+def test_delete_note_preserves_nested_relative_index_path(tmp_path: Path) -> None:
+    client, v = _client(tmp_path)
+    n = _seed_note(v, title="nested delete", folder="archive")
+    client.post("/api/system/reindex")
+    nested_path = v.notes_dir / "archive" / n.filename
+    # Older/migrated/sync-fed index rows may store paths relative to notes/.
+    # Deleting must still target the actual nested file, not notes/<basename>.
+    app = client.app
+    runtime = app.state.web_state.runtime_or_init()
+    runtime.index.update_note_path(n.id, f"archive/{n.filename}")
+
+    r = client.delete(f"/api/notes/{n.id}")
+
+    assert r.status_code == 200, r.text
+    assert not nested_path.exists()
+    assert (v.trash_dir / n.filename).exists()
+    assert client.get(f"/api/notes/{n.id}").status_code == 404
+
+
 def test_trash_purge_unknown_404(tmp_path: Path) -> None:
     client, _ = _client(tmp_path)
     r = client.delete("/api/trash/ghost.md")

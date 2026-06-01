@@ -12,7 +12,6 @@ the web layer (M7.4.1) reuses `core/quiz.py` directly.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -29,6 +28,7 @@ from knowlet.cli._common import (
 )
 from knowlet.core.index import Index
 from knowlet.core.llm import LLMClient
+from knowlet.core.vault import Vault
 
 app = typer.Typer(
     help="Active-recall quizzes over your notes (ADR-0014).",
@@ -36,7 +36,7 @@ app = typer.Typer(
 )
 
 
-def _resolve_note_id(idx: Index, note_id_or_prefix: str) -> tuple[str, str, str]:
+def _resolve_note_id(vault: Vault, idx: Index, note_id_or_prefix: str) -> tuple[str, str, str]:
     """Resolve an 8-char-prefix or full ULID to (id, title, body). Raises
     typer.Exit on miss. Body is read from disk via `Note.from_file` so
     frontmatter is stripped and we always quiz against the latest text."""
@@ -56,7 +56,7 @@ def _resolve_note_id(idx: Index, note_id_or_prefix: str) -> tuple[str, str, str]
             )
             raise typer.Exit(code=2)
         meta = matches[0]
-    path = Path(meta["path"])
+    path = vault.resolve_note_path_from_index(meta["path"])
     if not path.exists():
         err_console.print(f"[red]note file missing on disk:[/red] {path}")
         raise typer.Exit(code=2)
@@ -103,7 +103,7 @@ def quiz_run(
     notes_for_llm: list[tuple[str, str, str]] = []
     note_titles: list[str] = []
     for nid in note_ids:
-        rid, title, body = _resolve_note_id(idx, nid)
+        rid, title, body = _resolve_note_id(vault, idx, nid)
         notes_for_llm.append((rid, title, body))
         note_titles.append(title)
     if not notes_for_llm:

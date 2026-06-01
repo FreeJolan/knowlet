@@ -1244,13 +1244,11 @@ def _build_tree(vault: Vault, index: Index) -> TreeFolder:
         path_str = row.get("path") or ""
         if not path_str:
             continue
-        path = Path(path_str)
         rel_path: Path
         try:
-            rel_path = path.relative_to(vault.notes_dir)
+            rel_path = vault.resolve_note_path_from_index(path_str).relative_to(vault.notes_dir)
         except ValueError:
-            # Path stored relative — re-anchor under notes_dir.
-            rel_path = Path(path.name)
+            rel_path = Path(Path(path_str).name)
         folder_rel = "/".join(rel_path.parts[:-1]) if len(rel_path.parts) > 1 else ""
         node = _ensure_folder(root, folder_rel)
         node.notes.append(
@@ -1570,9 +1568,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         meta = runtime.index.get_note_meta(note_id)
         if meta is None:
             return None
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = runtime.vault.notes_dir / path.name
+        try:
+            path = runtime.vault.resolve_note_path_from_index(meta["path"])
+        except ValueError:
+            return None
         return path if path.exists() else None
 
     def _auto_pull_stale(
@@ -3141,9 +3140,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         meta = runtime.index.get_note_meta(note_id)
         if meta is None:
             return
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = runtime.vault.notes_dir / path.name
+        try:
+            path = runtime.vault.resolve_note_path_from_index(meta["path"])
+        except ValueError:
+            return
         with suppress(FileNotFoundError, ValueError):
             runtime.vault.trash_note(path)
         with suppress(Exception):
@@ -3411,9 +3411,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             meta = runtime.index.get_note_meta(r.note_id)
             if meta is None:
                 continue
-            path = Path(meta["path"])
-            if not path.is_absolute():
-                path = runtime.vault.notes_dir / path.name
+            try:
+                path = runtime.vault.resolve_note_path_from_index(meta["path"])
+            except ValueError:
+                continue
             try:
                 note = runtime.vault.read_note(path)
             except Exception:  # noqa: S112 — skip unreadable notes; quote panel is best-effort
@@ -3580,9 +3581,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"note not found: {note_id}",
             )
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = runtime.vault.notes_dir / path.name
+        path = runtime.vault.resolve_note_path_from_index(meta["path"])
         try:
             note = runtime.vault.read_note(path)
         except FileNotFoundError as exc:
@@ -3680,9 +3679,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"note not found: {note_id}",
             )
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = runtime.vault.notes_dir / path.name
+        path = runtime.vault.resolve_note_path_from_index(meta["path"])
         try:
             note = runtime.vault.read_note(path)
         except FileNotFoundError as exc:
@@ -3729,9 +3726,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"note not found: {note_id}",
             )
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = runtime.vault.notes_dir / path.name
+        path = runtime.vault.resolve_note_path_from_index(meta["path"])
         try:
             note = runtime.vault.read_note(path)
         except FileNotFoundError as exc:
@@ -4412,9 +4407,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"note not found: {note_id}",
             )
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = runtime.vault.notes_dir / path.name
+        path = runtime.vault.resolve_note_path_from_index(meta["path"])
         try:
             note = runtime.vault.read_note(path)
         except FileNotFoundError as exc:
@@ -4461,9 +4454,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"note not found: {note_id}",
             )
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = runtime.vault.notes_dir / path.name
+        path = runtime.vault.resolve_note_path_from_index(meta["path"])
         # Re-read directly — bypass Vault.read_note's auto-fill
         # path because that would silently materialize before we
         # see the corruption; we want the corrupted handle so we
@@ -4530,9 +4521,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"note not found: {note_id}",
             )
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = runtime.vault.notes_dir / path.name
+        path = runtime.vault.resolve_note_path_from_index(meta["path"])
         try:
             trashed = runtime.vault.trash_note(path)
         except FileNotFoundError as exc:
@@ -4563,9 +4552,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"note not found: {note_id}",
             )
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = runtime.vault.notes_dir / path.name
+        path = runtime.vault.resolve_note_path_from_index(meta["path"])
         try:
             note = runtime.vault.read_note(path)
         except FileNotFoundError as exc:
@@ -4819,9 +4806,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"note not found: {note_id}",
             )
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = runtime.vault.notes_dir / path.name
+        path = runtime.vault.resolve_note_path_from_index(meta["path"])
         note = runtime.vault.read_note(path)
         # ADR-0029 §4.5: knowledge → reference is a downgrade. Reject
         # unless the caller explicitly opted in via confirm=true so
@@ -5052,9 +5037,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"note not found: {note_id}",
             )
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = runtime.vault.notes_dir / path.name
+        path = runtime.vault.resolve_note_path_from_index(meta["path"])
         try:
             new_path = runtime.vault.move_note(path, req.target_folder)
         except ValueError as exc:
@@ -5652,9 +5635,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"note not found: {nid}",
                 )
-            path = Path(meta["path"])
-            if not path.is_absolute():
-                path = runtime.vault.notes_dir / path.name
+            path = runtime.vault.resolve_note_path_from_index(meta["path"])
             if not path.exists():
                 raise HTTPException(
                     status_code=status.HTTP_410_GONE,

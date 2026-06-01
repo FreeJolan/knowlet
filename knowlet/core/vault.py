@@ -303,6 +303,28 @@ class Vault:
             return ""
         return "/".join(rel.parts[:-1])
 
+    def resolve_note_path_from_index(self, stored_path: str | Path) -> Path:
+        """Resolve an index `notes.path` value to a file under `notes/`.
+
+        Older rows and sync-fed rows may store a path relative to `notes/`
+        (for example `archive/01HX.md`). Preserve that folder structure
+        instead of falling back to the basename, otherwise note operations
+        target the wrong file after a move or migration.
+        """
+        raw_text = str(stored_path).strip()
+        if not raw_text:
+            raise ValueError("empty note path")
+        raw = Path(raw_text)
+        if raw.is_absolute():
+            target = raw.resolve()
+            notes_root = self.notes_dir.resolve()
+            try:
+                target.relative_to(notes_root)
+            except ValueError as exc:
+                raise ValueError(f"note path escapes notes_dir: {raw_text!r}") from exc
+            return target
+        return self._resolve_subpath(raw.as_posix())
+
     def read_note(self, path: Path) -> Note:
         """Load a Note from disk. If the file has no frontmatter at
         all (an external markdown import — task #108 case A), this

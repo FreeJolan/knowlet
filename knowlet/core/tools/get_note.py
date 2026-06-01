@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from knowlet.core.tools._registry import ToolContext, ToolDef
@@ -21,14 +20,12 @@ def _handler(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
             "error": f"note not found: {note_id}",
             "suggestion": "call search_notes first to find a valid note_id",
         }
-    path = Path(meta["path"])
-    if not path.is_absolute():
-        path = ctx.vault.notes_dir / path.name
     try:
+        path = ctx.vault.resolve_note_path_from_index(meta["path"])
         note = ctx.vault.read_note(path)
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError) as exc:
         return {
-            "error": f"note file missing on disk: {path}",
+            "error": f"note file missing on disk: {exc}",
             "suggestion": "run `knowlet reindex` to sync the index",
         }
     return {

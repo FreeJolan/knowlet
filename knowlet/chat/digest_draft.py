@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -115,12 +114,12 @@ def build_library_context(vault: Vault, index: Index) -> LibraryContext:
     recent_notes: list[dict[str, Any]] = []
     for row in index.list_notes(limit=12):
         path_raw = str(row.get("path") or "")
-        path = Path(path_raw)
         recent_folder = ""
         if path_raw:
-            if not path.is_absolute():
-                path = vault.notes_dir / path.name
-            recent_folder = vault.folder_of(path)
+            try:
+                recent_folder = vault.folder_of(vault.resolve_note_path_from_index(path_raw))
+            except ValueError:
+                recent_folder = ""
         recent_notes.append(
             {
                 "title": row.get("title") or "",

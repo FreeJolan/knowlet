@@ -8,7 +8,6 @@ that the React UI mirrors over `/api/folders`, `/api/trash`, and
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -65,9 +64,7 @@ def notes_delete(
                 console.print("[dim]cancelled[/dim]")
                 return
 
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = vault.notes_dir / path.name
+        path = vault.resolve_note_path_from_index(meta["path"])
         trashed = vault.trash_note(path)
         idx.delete_note(meta["id"])
         console.print(f"[yellow]trashed[/yellow] → {trashed}")
@@ -199,9 +196,7 @@ def notes_mv(
         if meta is None:
             err_console.print(f"[red]note not found:[/red] {note_id}")
             raise typer.Exit(code=1)
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = vault.notes_dir / path.name
+        path = vault.resolve_note_path_from_index(meta["path"])
         clean_folder = "" if target_folder in (".", "/") else target_folder
         try:
             new_path = vault.move_note(path, clean_folder)

@@ -354,9 +354,7 @@ def discuss(
                 err_console.print(f"[red]no note matching {note!r}[/red]")
                 raise typer.Exit(code=1)
             meta = hits[0]
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = runtime.vault.notes_dir / path.name
+        path = runtime.vault.resolve_note_path_from_index(meta["path"])
         note_obj = runtime.vault.read_note(path)
         console.print(f"[dim]discussing: {note_obj.title}[/dim]")
 
@@ -456,9 +454,7 @@ def check_note_cmd(
                 err_console.print(f"[red]no note matching {note!r}[/red]")
                 raise typer.Exit(code=1)
             meta = hits[0]
-        path = Path(meta["path"])
-        if not path.is_absolute():
-            path = runtime.vault.notes_dir / path.name
+        path = runtime.vault.resolve_note_path_from_index(meta["path"])
         note_obj = runtime.vault.read_note(path)
 
         standard = standard_answer
