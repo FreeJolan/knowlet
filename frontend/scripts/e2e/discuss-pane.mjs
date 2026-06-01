@@ -548,7 +548,39 @@ try {
       .locator('[data-testid="tool-trace-propose_current_note_edit"]')
       .first()
       .waitFor({ state: "attached", timeout: 3000 });
-    await page.locator('[data-testid="diff-reject"]').click();
+    await page.unroute("**/api/chat/note/*/stream");
+    let sawPendingEdit = false;
+    await page.route("**/api/chat/note/*/stream", async (route) => {
+      const body = JSON.parse(route.request().postData() || "{}");
+      sawPendingEdit =
+        body?.pending_edit?.old_body ===
+          "RAG retrieves relevant chunks, then generates an answer." &&
+        body?.pending_edit?.new_body ===
+          "RAG retrieves relevant chunks, reranks them, then generates an answer.";
+      const noteId = new URL(route.request().url()).pathname.match(
+        /\/api\/chat\/note\/([^/]+)\/stream$/,
+      )?.[1];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body:
+          'data: {"type":"tool_call","id":"apply_1","name":"apply_current_note_edit","arguments":{"explicit_user_request":"请应用当前改动"}}\n\n' +
+          `data: {"type":"tool_result","id":"apply_1","name":"apply_current_note_edit","payload":{"kind":"note_edit_applied","note_id":"${noteId}","title":"RAG Notes","changed":true,"summary":"已应用当前修改。"}}\n\n` +
+          'data: {"type":"reply_chunk","text":"已应用当前修改。"}\n\n' +
+          'data: {"type":"turn_done","final_text":"已应用当前修改。"}\n\n',
+      });
+    });
+    await page.locator('[data-testid="discuss-input"]').fill("请应用当前改动");
+    await page.locator('[data-testid="discuss-send"]').click();
+    await page
+      .locator('[data-testid="tool-trace-apply_current_note_edit"]')
+      .first()
+      .waitFor({ state: "attached", timeout: 3000 });
+    assert(sawPendingEdit, "apply request should include the visible pending diff");
+    await page
+      .locator('[data-testid="discuss-propose-msg"]')
+      .filter({ hasText: "已应用当前修改" })
+      .waitFor({ state: "visible", timeout: 3000 });
     await page
       .locator('[data-testid="markdown-editor"]')
       .waitFor({ state: "visible", timeout: 3000 });

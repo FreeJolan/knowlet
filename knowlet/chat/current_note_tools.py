@@ -94,6 +94,100 @@ def _propose_current_note_edit(args: dict[str, Any], ctx: ToolContext) -> dict[s
     }
 
 
+_EXPLICIT_APPLY_MARKERS = (
+    "应用",
+    "接受",
+    "确认",
+    "同意",
+    "落盘",
+    "写入",
+    "保存",
+    "应用当前",
+    "接受当前",
+    "apply",
+    "accept",
+    "confirm",
+    "commit",
+    "save",
+)
+
+
+def _reject_apply(error: str, suggestion: str) -> dict[str, Any]:
+    return {
+        "kind": "note_edit_apply_rejected",
+        "changed": False,
+        "error": error,
+        "suggestion": suggestion,
+    }
+
+
+def _proposed_bodies_match(current_body: str, old_body: str) -> bool:
+    return current_body.strip() == old_body.strip()
+
+
+def _apply_current_note_edit(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+    """Apply the pending human-reviewed diff carried by the web session.
+
+    The guard is intentionally duplicated here even though the prompt says
+    "only call after explicit user request": tool-call safety lives in code,
+    not only in model instructions.
+    """
+    explicit_request = str(args.get("explicit_user_request") or "").strip()
+    lowered_request = explicit_request.lower()
+    if not explicit_request or not any(m in lowered_request for m in _EXPLICIT_APPLY_MARKERS):
+        return _reject_apply(
+            "explicit apply request required",
+            "Only call this tool after the user clearly says to apply, accept, confirm, save, or commit the current diff.",
+        )
+    pending = ctx.pending_note_edit or {}
+    old_body = pending.get("old_body") if isinstance(pending, dict) else None
+    new_body = pending.get("new_body") if isinstance(pending, dict) else None
+    if not isinstance(old_body, str) or not isinstance(new_body, str):
+        return _reject_apply(
+            "no pending note edit",
+            "Ask the user to generate a diff proposal first, then apply it after they explicitly confirm.",
+        )
+    note, error = _read_current_note(ctx)
+    if error is not None:
+        return {
+            "kind": "note_edit_apply_rejected",
+            "changed": False,
+            **error,
+        }
+    if note is None:
+        return _reject_apply("current note unavailable", "reopen the note and retry")
+    if not _proposed_bodies_match(note.body, old_body):
+        return _reject_apply(
+            "pending edit is stale",
+            "The note body changed after this diff was generated. Generate a fresh diff before applying.",
+        )
+    if note.body.strip() == new_body.strip():
+        return {
+            "kind": "note_edit_applied",
+            "note_id": note.id,
+            "title": note.title,
+            "changed": False,
+            "summary": "当前修改已经应用。无需再次写入。",
+        }
+
+    note.body = new_body
+    ctx.vault.write_note(note)
+    ctx.index.upsert_note(
+        note,
+        chunk_size=ctx.config.retrieval.chunk_size,
+        chunk_overlap=ctx.config.retrieval.chunk_overlap,
+    )
+    if ctx.mark_note_dirty is not None:
+        ctx.mark_note_dirty(note.id)
+    return {
+        "kind": "note_edit_applied",
+        "note_id": note.id,
+        "title": note.title,
+        "changed": True,
+        "summary": "已应用当前修改。",
+    }
+
+
 CHECK_CURRENT_NOTE_TOOL = ToolDef(
     name="check_current_note",
     description=(
@@ -124,6 +218,34 @@ CHECK_CURRENT_NOTE_TOOL = ToolDef(
         "additionalProperties": False,
     },
     handler=_check_current_note,
+)
+
+
+APPLY_CURRENT_NOTE_EDIT_TOOL = ToolDef(
+    name="apply_current_note_edit",
+    description=(
+        "Apply the current pending diff for the Note currently open in the "
+        "note discussion. ONLY call this when the user explicitly asks to "
+        "apply, accept, confirm, save, or commit the current pending "
+        "change/diff. Do not call it for checking, suggesting, editing, "
+        "rewriting, previewing, or ambiguous requests. This writes to the "
+        "vault, updates the index, and queues sync when sync is configured."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "explicit_user_request": {
+                "type": "string",
+                "description": (
+                    "The exact user message that explicitly asked to apply, "
+                    "accept, confirm, save, or commit the current diff."
+                ),
+            },
+        },
+        "required": ["explicit_user_request"],
+        "additionalProperties": False,
+    },
+    handler=_apply_current_note_edit,
 )
 
 

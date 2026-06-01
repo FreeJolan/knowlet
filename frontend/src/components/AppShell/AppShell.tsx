@@ -740,6 +740,18 @@ export function AppShell() {
     [proposedEdit, qc],
   );
 
+  const noteEditAppliedByAi = useCallback(() => {
+    if (!selectedNoteId) return;
+    const noteId = selectedNoteId;
+    setProposedEdit((current) =>
+      current?.noteId === noteId ? null : current,
+    );
+    void qc.invalidateQueries({ queryKey: QK.note(noteId) });
+    void qc.invalidateQueries({ queryKey: QK.tree });
+    void qc.invalidateQueries({ queryKey: QK.syncOverview });
+    void qc.invalidateQueries({ queryKey: QK.syncUnpushed });
+  }, [qc, selectedNoteId]);
+
   const reviewing =
     proposedEdit !== null && proposedEdit.noteId === selectedNoteId;
   const noteOrDiff =
@@ -1035,6 +1047,14 @@ export function AppShell() {
                         <DiscussPane
                           noteId={selectedNoteId}
                           noteTitle={selectedNoteTitle}
+                          pendingEdit={
+                            proposedEdit && selectedNoteId === proposedEdit.noteId
+                              ? {
+                                  oldBody: proposedEdit.oldBody,
+                                  newBody: proposedEdit.newBody,
+                                }
+                              : null
+                          }
                           onClose={() => {
                             setDiscussOpen(false);
                             setProposedEdit(null);
@@ -1043,6 +1063,7 @@ export function AppShell() {
                             if (selectedNoteId)
                               setProposedEdit({ noteId: selectedNoteId, ...p });
                           }}
+                          onApplyEdit={noteEditAppliedByAi}
                         />
                       </ResizablePanel>
                     </ResizablePanelGroup>

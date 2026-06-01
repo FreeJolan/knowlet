@@ -85,6 +85,33 @@ _REVIEWABLE_PROPOSAL_MARKERS = (
     "apply",
 )
 
+_APPLY_INTENT_MARKERS = (
+    "应用当前",
+    "接受当前",
+    "确认当前",
+    "应用这次",
+    "接受这次",
+    "应用修改",
+    "接受修改",
+    "确认修改",
+    "保存修改",
+    "应用改动",
+    "接受改动",
+    "确认改动",
+    "保存改动",
+    "保存当前",
+    "落盘当前",
+    "应用 diff",
+    "接受 diff",
+    "apply current",
+    "accept current",
+    "confirm current",
+    "apply this",
+    "accept this",
+    "apply the diff",
+    "accept the diff",
+)
+
 
 def wants_current_note_edit_proposal(user_text: str) -> bool:
     """True when a note-anchored user turn is clearly asking for an
@@ -102,6 +129,32 @@ def wants_current_note_edit_proposal(user_text: str) -> bool:
     if any(marker in text for marker in _EDIT_INTENT_MARKERS):
         return True
     return "diff" in text and any(marker in text for marker in _REVIEWABLE_PROPOSAL_MARKERS)
+
+
+def wants_current_note_edit_apply(user_text: str) -> bool:
+    """True only for explicit requests to apply an already-visible diff.
+
+    The proposal router is broad ("帮我改写"). This one is intentionally
+    narrower: applying writes to the vault, so ambiguous edit language must
+    stay in proposal/review mode.
+    """
+    text = user_text.strip().lower()
+    if not text:
+        return False
+    if any(marker in text for marker in _APPLY_INTENT_MARKERS):
+        return True
+    return "diff" in text and any(
+        marker in text
+        for marker in (
+            "应用",
+            "接受",
+            "确认",
+            "同意",
+            "apply",
+            "accept",
+            "confirm",
+        )
+    )
 
 
 def build_note_chat_session(
@@ -146,6 +199,9 @@ def build_grounded_turn(note: Note, user_text: str) -> str:
         "你应该调用 propose_current_note_edit 工具生成"
         "可审阅的 diff 提案。这个工具只生成 old_body/new_body 供我确认,不会写盘;"
         "不要在聊天里直接贴整篇改写正文来替代 diff。\n\n"
+        "如果界面中已经存在一个待审阅 diff,并且我明确说要应用、接受、确认、保存"
+        "或落盘当前改动,你才可以调用 apply_current_note_edit 工具。不要因为我只是"
+        "要求修改、优化、检查、讨论或生成提案就调用它。\n\n"
         f"我的话:{user_text}"
     )
 

@@ -93,6 +93,24 @@ await page.route("**/api/sync/unpushed-status", async (route) => {
   });
 });
 
+await page.route("**/api/sync/overview", async (route) => {
+  await route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      authenticated: true,
+      state: "synced",
+      pending_count: 0,
+      dirty_count: 0,
+      deletion_pending_count: 0,
+      unpushed_count: 0,
+      failure_count: 0,
+      last_synced_at: null,
+      detail: null,
+    }),
+  });
+});
+
 await page.route("**/api/sync/push-errors", async (route) => {
   await route.fulfill({
     status: 200,

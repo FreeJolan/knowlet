@@ -57,22 +57,29 @@ export function DiscussPane({
   noteTitle,
   onClose,
   onProposeEdit,
+  pendingEdit,
+  onApplyEdit,
 }: {
   noteId: string | null;
   noteTitle?: string;
   onClose: () => void;
   /** P3: AI proposed a minimal revision — hand it up for the diff UI. */
   onProposeEdit?: (proposal: { oldBody: string; newBody: string }) => void;
+  pendingEdit?: { oldBody: string; newBody: string } | null;
+  /** Called after the backend confirms that the pending diff was applied. */
+  onApplyEdit?: () => void;
 }) {
   const {
     messages,
     status,
     error,
     proposal,
+    applied,
     send,
     stop,
     reset,
     clearProposal,
+    clearApplied,
   } = useNoteChat(noteId);
   const [input, setInput] = useState("");
   const [proposing, setProposing] = useState(false);
@@ -107,6 +114,13 @@ export function DiscussPane({
     clearProposal(noteId);
   }, [clearProposal, noteId, onProposeEdit, proposal]);
 
+  useEffect(() => {
+    if (!noteId || !applied || applied.noteId !== noteId) return;
+    onApplyEdit?.();
+    setProposeMsg(applied.summary || "已应用当前修改。");
+    clearApplied(noteId);
+  }, [applied, clearApplied, noteId, onApplyEdit]);
+
   const handleMessageScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -126,7 +140,7 @@ export function DiscussPane({
   const submit = () => {
     if (input.trim() && status !== "streaming") {
       setFollowTail(true);
-      send(input);
+      send(input, { pendingEdit });
       setInput("");
     }
   };
@@ -136,7 +150,7 @@ export function DiscussPane({
     setFollowTail(true);
     setCheckReport(null);
     setProposeMsg(null);
-    send(prompt);
+    send(prompt, { pendingEdit });
     focusComposerIfCurrent(noteId);
   };
 

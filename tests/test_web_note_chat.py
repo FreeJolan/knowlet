@@ -21,7 +21,11 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from knowlet.chat.note_chat import build_grounded_turn, wants_current_note_edit_proposal
+from knowlet.chat.note_chat import (
+    build_grounded_turn,
+    wants_current_note_edit_apply,
+    wants_current_note_edit_proposal,
+)
 from knowlet.config import KnowletConfig, save_config
 from knowlet.core.drafts import Draft, DraftStore
 from knowlet.core.events import ReplyChunkEvent, ReplyDoneEvent, ToolCallEvent
@@ -378,6 +382,104 @@ def test_note_chat_routes_explicit_diff_prompt_to_proposal_tool(tmp_path: Path):
     assert after["body"] == "RAG puts everything into the prompt."
 
 
+def test_note_chat_can_apply_pending_edit_when_explicitly_requested(tmp_path: Path):
+    """The AI may apply the currently visible diff only after the user
+    explicitly asks for that action. The pending diff comes from the UI;
+    the tool writes through the same vault/index path as normal edits."""
+
+    class UnusedLLM:
+        def chat_stream(self, *args: Any, **kwargs: Any) -> Iterator[Any]:
+            raise AssertionError("explicit apply intent should route directly")
+            yield  # pragma: no cover
+
+    client, note = _client_with_note(
+        tmp_path,
+        body="RAG puts everything into the prompt.",
+        stub=UnusedLLM(),
+    )
+
+    r = client.post(
+        f"/api/chat/note/{note.id}/stream",
+        json={
+            "text": "请应用当前改动",
+            "pending_edit": {
+                "old_body": "RAG puts everything into the prompt.",
+                "new_body": "RAG retrieves relevant chunks, then generates.",
+            },
+        },
+    )
+
+    assert r.status_code == 200
+    events = _parse_sse(r.text)
+    assert [e["type"] for e in events] == [
+        "tool_call",
+        "tool_result",
+        "reply_chunk",
+        "turn_done",
+    ]
+    assert events[0]["name"] == "apply_current_note_edit"
+    assert events[0]["arguments"]["explicit_user_request"] == "请应用当前改动"
+    payload = events[1]["payload"]
+    assert payload["kind"] == "note_edit_applied"
+    assert payload["note_id"] == note.id
+    assert payload["changed"] is True
+    assert payload["summary"] == "已应用当前修改。"
+
+    after = client.get(f"/api/notes/{note.id}").json()
+    assert after["body"] == "RAG retrieves relevant chunks, then generates."
+
+
+def test_note_chat_apply_pending_edit_requires_pending_diff(tmp_path: Path):
+    class UnusedLLM:
+        def chat_stream(self, *args: Any, **kwargs: Any) -> Iterator[Any]:
+            raise AssertionError("explicit apply intent should route directly")
+            yield  # pragma: no cover
+
+    client, note = _client_with_note(tmp_path, body="original", stub=UnusedLLM())
+
+    r = client.post(
+        f"/api/chat/note/{note.id}/stream",
+        json={"text": "请应用当前改动"},
+    )
+
+    assert r.status_code == 200
+    events = _parse_sse(r.text)
+    assert events[0]["name"] == "apply_current_note_edit"
+    payload = events[1]["payload"]
+    assert payload["kind"] == "note_edit_apply_rejected"
+    assert payload["error"] == "no pending note edit"
+    after = client.get(f"/api/notes/{note.id}").json()
+    assert after["body"] == "original"
+
+
+def test_note_chat_apply_pending_edit_rejects_stale_base(tmp_path: Path):
+    class UnusedLLM:
+        def chat_stream(self, *args: Any, **kwargs: Any) -> Iterator[Any]:
+            raise AssertionError("explicit apply intent should route directly")
+            yield  # pragma: no cover
+
+    client, note = _client_with_note(tmp_path, body="newer local body", stub=UnusedLLM())
+
+    r = client.post(
+        f"/api/chat/note/{note.id}/stream",
+        json={
+            "text": "接受当前修改",
+            "pending_edit": {
+                "old_body": "stale body",
+                "new_body": "replacement",
+            },
+        },
+    )
+
+    assert r.status_code == 200
+    events = _parse_sse(r.text)
+    payload = events[1]["payload"]
+    assert payload["kind"] == "note_edit_apply_rejected"
+    assert payload["error"] == "pending edit is stale"
+    after = client.get(f"/api/notes/{note.id}").json()
+    assert after["body"] == "newer local body"
+
+
 def test_draft_chat_streams_grounded_reply(tmp_path: Path):
     """C3: digest drafts can be discussed before the user decides to
     skip/save/internalize. The draft body must reach the same grounded
@@ -436,6 +538,9 @@ def test_edit_intent_router_is_limited_to_applyable_note_changes() -> None:
     assert wants_current_note_edit_proposal("请为这篇笔记生成一个可在 diff 中审阅的最小改写提案")
     assert wants_current_note_edit_proposal("帮我把这篇笔记改写得更清楚")
     assert not wants_current_note_edit_proposal("帮我检查这篇笔记有没有错漏")
+    assert wants_current_note_edit_apply("请应用当前改动")
+    assert wants_current_note_edit_apply("接受这个 diff")
+    assert not wants_current_note_edit_apply("帮我改写这篇笔记")
 
 
 # ------------------------------------- A6: multi-turn (conversation memory)

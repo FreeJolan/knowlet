@@ -77,6 +77,26 @@ def test_unpushed_status_unauthenticated(tmp_path: Path) -> None:
     assert body["count"] == 0
 
 
+def test_sync_overview_unauthenticated(tmp_path: Path) -> None:
+    """Header-level sync status should be safe before Drive auth:
+    no scary pending badge and no attempt to inspect Drive-backed rows."""
+    from tests.test_web import StubLLM, _client_with_stub
+
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    _plant_notes(client, 2)
+
+    r = client.get("/api/sync/overview")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["authenticated"] is False
+    assert body["state"] == "disabled"
+    assert body["pending_count"] == 0
+    assert body["dirty_count"] == 0
+    assert body["deletion_pending_count"] == 0
+    assert body["unpushed_count"] == 0
+
+
 def test_unpushed_status_counts_unsynced_notes(tmp_path: Path) -> None:
     """3 notes on disk, 1 already in sync_state with a drive_file_id
     → 2 unpushed."""
@@ -106,6 +126,65 @@ def test_unpushed_status_counts_unsynced_notes(tmp_path: Path) -> None:
     body = r.json()
     assert body["authenticated"] is True
     assert body["count"] == 2
+
+
+def test_sync_overview_summarizes_pending_local_work(tmp_path: Path) -> None:
+    """The app header needs one compact answer: do I have local work
+    that has not reached Drive yet? Count first-push, dirty tracked
+    rows, and deletion tombstones together."""
+    from tests.test_web import StubLLM, _client_with_stub
+
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    ids = _plant_notes(client, 4)
+    _seed_creds(tmp_path)
+
+    store = SyncStateStore(tmp_path)
+    try:
+        store.upsert_file_state(
+            FileState(
+                entity_type="note",
+                entity_id=ids[0],
+                drive_file_id="DRIVE-FID-SYNCED",
+                last_known_etag="rev-1",
+                last_synced_at="2026-01-01T00:00:00Z",
+                dirty=False,
+            )
+        )
+        store.upsert_file_state(
+            FileState(
+                entity_type="note",
+                entity_id=ids[1],
+                drive_file_id="DRIVE-FID-DIRTY",
+                last_known_etag="rev-2",
+                last_synced_at="2026-01-02T00:00:00Z",
+                dirty=True,
+            )
+        )
+        store.upsert_file_state(
+            FileState(
+                entity_type="note",
+                entity_id=ids[2],
+                drive_file_id="DRIVE-FID-TRASH",
+                last_known_etag="rev-3",
+                last_synced_at="2026-01-03T00:00:00Z",
+                dirty=False,
+                delete_intent="soft",
+            )
+        )
+    finally:
+        store.close()
+
+    r = client.get("/api/sync/overview")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["authenticated"] is True
+    assert body["state"] == "pending"
+    assert body["dirty_count"] == 1
+    assert body["deletion_pending_count"] == 1
+    assert body["unpushed_count"] == 1
+    assert body["pending_count"] == 3
+    assert body["last_synced_at"] == "2026-01-03T00:00:00Z"
 
 
 def test_push_all_unpushed_queues_them(tmp_path: Path) -> None:

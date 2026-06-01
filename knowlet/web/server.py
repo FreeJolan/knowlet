@@ -328,6 +328,18 @@ class NoteChatMessage(BaseModel):
     content: str
 
 
+class NotePendingEdit(BaseModel):
+    """Pending diff currently visible in the Discuss diff review UI.
+
+    The backend applies it only through apply_current_note_edit after an
+    explicit user request; carrying it in the request avoids hidden server
+    state and keeps the human-reviewed diff as the source of truth.
+    """
+
+    old_body: str
+    new_body: str
+
+
 class NoteChatRequest(BaseModel):
     """Body for POST /api/chat/note/{note_id}/stream (Phase 3 Stage 4 P1).
 
@@ -339,6 +351,7 @@ class NoteChatRequest(BaseModel):
 
     text: str = Field(..., description="user message")
     history: list[NoteChatMessage] = Field(default_factory=list)
+    pending_edit: NotePendingEdit | None = None
 
 
 class RawInfoDraftRequest(BaseModel):
@@ -2906,6 +2919,88 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         count = sum(1 for n in all_notes if n["id"] not in synced_ids)
         return {"count": count, "authenticated": True}
 
+    @app.get("/api/sync/overview")
+    def sync_overview() -> dict[str, Any]:
+        """Compact header status: is there local work not yet on Drive?
+
+        This intentionally summarizes the same queues the drainer consumes:
+        tracked dirty rows, deletion tombstones, and never-pushed indexed
+        notes. It is a status surface, not a Drive network check.
+        """
+        from knowlet.core.sync.credentials import (
+            credentials_path,
+            load_credentials,
+        )
+        from knowlet.core.sync.state import SyncStateStore
+
+        creds = load_credentials(credentials_path(vault.root))
+        empty = {
+            "pending_count": 0,
+            "dirty_count": 0,
+            "deletion_pending_count": 0,
+            "unpushed_count": 0,
+            "failure_count": 0,
+            "last_synced_at": None,
+            "detail": None,
+        }
+        if creds is None:
+            return {"authenticated": False, "state": "disabled", **empty}
+
+        runtime = state.runtime
+        store = SyncStateStore(vault.root)
+        try:
+            rows = store.list_all_files()
+            dirty_count = sum(
+                1
+                for fs in rows
+                if fs.entity_type == "note"
+                and fs.dirty
+                and fs.drive_file_id
+                and fs.delete_intent is None
+            )
+            deletion_pending_count = sum(
+                1 for fs in rows if fs.entity_type == "note" and fs.delete_intent is not None
+            )
+            synced_ids = {
+                fs.entity_id for fs in rows if fs.entity_type == "note" and fs.drive_file_id
+            }
+            last_synced_values = [
+                fs.last_synced_at for fs in rows if fs.entity_type == "note" and fs.last_synced_at
+            ]
+        finally:
+            store.close()
+
+        unpushed_count = 0
+        if runtime is not None:
+            unpushed_count = sum(1 for n in runtime.index.list_notes() if n["id"] not in synced_ids)
+        failure_count = len(state.push_drainer.failures) if state.push_drainer is not None else 0
+        pending_count = dirty_count + deletion_pending_count + unpushed_count
+        overview_state = (
+            "error" if failure_count > 0 else ("pending" if pending_count > 0 else "synced")
+        )
+        first_failure = None
+        if state.push_drainer is not None:
+            for info in state.push_drainer.failures.values():
+                first_failure = info.get("last_error")
+                if first_failure:
+                    break
+        detail = (
+            str(first_failure)
+            if first_failure
+            else (f"{pending_count} pending local change(s)" if pending_count else None)
+        )
+        return {
+            "authenticated": True,
+            "state": overview_state,
+            "pending_count": pending_count,
+            "dirty_count": dirty_count,
+            "deletion_pending_count": deletion_pending_count,
+            "unpushed_count": unpushed_count,
+            "failure_count": failure_count,
+            "last_synced_at": max(last_synced_values) if last_synced_values else None,
+            "detail": detail,
+        }
+
     @app.post("/api/sync/push-all-unpushed")
     def push_all_unpushed() -> dict[str, Any]:
         from knowlet.core.sync.credentials import (
@@ -3580,6 +3675,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         from knowlet.chat.note_chat import (
             build_grounded_turn,
             build_note_chat_session,
+            wants_current_note_edit_apply,
             wants_current_note_edit_proposal,
         )
 
@@ -3598,10 +3694,23 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail=f"note file missing on disk: {path}",
             ) from exc
 
+        pending_note_edit = (
+            {
+                "old_body": req.pending_edit.old_body,
+                "new_body": req.pending_edit.new_body,
+            }
+            if req.pending_edit is not None
+            else None
+        )
+        session_ctx = replace(
+            runtime.session.ctx,
+            pending_note_edit=pending_note_edit,
+            mark_note_dirty=_mark_note_dirty_for_push,
+        )
         session = build_note_chat_session(
             llm=runtime.session.llm,
             registry=runtime.session.registry,
-            ctx=runtime.session.ctx,
+            ctx=session_ctx,
             current_note_id=note.id,
         )
         # A6: seed prior clean turns so the model has conversation memory.
@@ -3614,6 +3723,33 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
         def event_source() -> Iterator[str]:
             try:
+                if wants_current_note_edit_apply(req.text):
+                    call_id = "direct_apply_current_note_edit"
+                    arguments = {"explicit_user_request": req.text}
+                    call = ToolCallEvent(
+                        id=call_id,
+                        name="apply_current_note_edit",
+                        arguments=arguments,
+                    )
+                    yield f"data: {json.dumps(event_to_dict(call), ensure_ascii=False)}\n\n"
+                    payload = session.registry.dispatch(
+                        call.name,
+                        arguments,
+                        session.ctx,
+                    )
+                    result = ToolResultEvent(
+                        id=call_id,
+                        name=call.name,
+                        payload=payload,
+                    )
+                    yield (f"data: {json.dumps(event_to_dict(result), ensure_ascii=False)}\n\n")
+                    if isinstance(payload.get("error"), str):
+                        text = f"应用失败: {payload['error']}"
+                    else:
+                        text = str(payload.get("summary") or "已应用当前修改。")
+                    yield f"data: {json.dumps(event_to_dict(ReplyChunkEvent(text=text)), ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps(event_to_dict(TurnDoneEvent(final_text=text)), ensure_ascii=False)}\n\n"
+                    return
                 if wants_current_note_edit_proposal(req.text):
                     call_id = "direct_propose_current_note_edit"
                     instruction = req.text

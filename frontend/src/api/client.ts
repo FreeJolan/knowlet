@@ -175,6 +175,26 @@ export const getUnpushedStatus = (): Promise<UnpushedStatus> =>
 export const pushAllUnpushed = (): Promise<{ queued: number }> =>
   request("POST", "/api/sync/push-all-unpushed");
 
+export type SyncOverviewState = "disabled" | "synced" | "pending" | "error";
+
+export interface SyncOverview {
+  authenticated: boolean;
+  state: SyncOverviewState;
+  pending_count: number;
+  dirty_count: number;
+  deletion_pending_count: number;
+  unpushed_count: number;
+  failure_count: number;
+  last_synced_at: string | null;
+  detail: string | null;
+}
+
+export const getSyncOverview = (): Promise<SyncOverview> =>
+  request("GET", "/api/sync/overview");
+
+export const runDrainNow = (): Promise<{ ran: boolean; reason?: string }> =>
+  request("POST", "/api/sync/drain-now");
+
 // ---------- Drive auth (#116) ----------
 
 export interface SyncAuthStatus {

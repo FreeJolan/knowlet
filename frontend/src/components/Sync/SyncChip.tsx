@@ -21,6 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowUpFromLine,
+  CheckCircle2,
   CloudOff,
   Loader2,
   RefreshCw,
@@ -34,15 +35,18 @@ import {
   getAuthStatus,
   getSyncFreshness,
   getSyncMode,
+  getSyncOverview,
   getUnpushedStatus,
   type PreflightConflict,
   type PreflightReport,
   type PushError,
   pushAllUnpushed,
+  runDrainNow,
   runPreflight,
   type SyncAuthStatus,
   type SyncFreshnessResponse,
   type SyncModeResponse,
+  type SyncOverview,
   type UnpushedStatus,
 } from "@/api/client";
 import { Button } from "@/components/ui/button";
@@ -94,31 +98,59 @@ export function SyncChip({
     refetchInterval: POLL_MS,
     refetchOnWindowFocus: false,
   });
+  const overview = useQuery<SyncOverview>({
+    queryKey: QK.syncOverview,
+    queryFn: getSyncOverview,
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: false,
+  });
 
   const refresh = useMutation({
     mutationFn: runPreflight,
     onSuccess: (report) => {
       qc.setQueryData(QK.syncConflicts, report);
+      void qc.invalidateQueries({ queryKey: QK.syncOverview });
       void qc.invalidateQueries({ queryKey: QK.syncUnpushed });
       void qc.invalidateQueries({ queryKey: QK.syncFreshness });
+    },
+  });
+  const syncNow = useMutation({
+    mutationFn: async () => {
+      if ((overview.data?.unpushed_count ?? unpushed.data?.count ?? 0) > 0) {
+        await pushAllUnpushed();
+      }
+      return runDrainNow();
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QK.syncOverview });
+      void qc.invalidateQueries({ queryKey: QK.syncUnpushed });
+      void qc.invalidateQueries({ queryKey: QK.syncPushErrors });
+      void qc.invalidateQueries({ queryKey: QK.syncConflicts });
+      void qc.invalidateQueries({ queryKey: QK.syncFreshness });
+      void qc.invalidateQueries({ queryKey: ["note-sync-status"] });
+      void qc.invalidateQueries({ queryKey: QK.tree });
     },
   });
   const freshnessGate = <SyncFreshnessGate />;
 
   if (!conflicts.data) return freshnessGate;
-  if (conflicts.data.unauthenticated) return freshnessGate;
+  if (conflicts.data.unauthenticated && overview.data?.authenticated !== true) {
+    return freshnessGate;
+  }
 
   const conflictCount = conflicts.data.conflicts.length;
   const offlineCount = conflicts.data.offline.length;
-  const unpushedCount = unpushed.data?.count ?? 0;
+  const unpushedCount = overview.data?.unpushed_count ?? unpushed.data?.count ?? 0;
   const pushFailingCount = pushErrors.data?.errors.length ?? 0;
+  const pendingCount = overview.data?.pending_count ?? unpushedCount;
   const effectiveMode = mode.data?.effective_mode ?? "realtime";
 
   if (
     conflictCount === 0 &&
     offlineCount === 0 &&
-    unpushedCount === 0 &&
-    pushFailingCount === 0
+    pendingCount === 0 &&
+    pushFailingCount === 0 &&
+    overview.data?.authenticated !== true
   ) {
     return freshnessGate;
   }
@@ -145,33 +177,37 @@ export function SyncChip({
   // then offline-only (muted, informational).
   const hasFailing = pushFailingCount > 0;
   const hasConflict = conflictCount > 0;
-  const hasUnpushed = unpushedCount > 0;
+  const hasPending = pendingCount > 0;
   const Icon = hasFailing
     ? AlertTriangle
     : hasConflict
       ? AlertTriangle
-      : hasUnpushed
+      : hasPending
         ? ArrowUpFromLine
-        : CloudOff;
+        : overview.data?.state === "synced"
+          ? CheckCircle2
+          : CloudOff;
   const tone = hasFailing
     ? "bg-red-100 text-red-900 ring-red-300 dark:bg-red-950/40 dark:text-red-100"
     : hasConflict
       ? "bg-amber-100 text-amber-900 ring-amber-300 dark:bg-amber-950/40 dark:text-amber-100"
-      : hasUnpushed
+      : hasPending
         ? "bg-blue-100 text-blue-900 ring-blue-300 dark:bg-blue-950/40 dark:text-blue-100"
-        : "bg-muted text-muted-foreground ring-foreground/10";
+        : "bg-emerald-50 text-emerald-900 ring-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-100";
   const label = hasFailing
     ? t("syncInbox.chipPushFailing", { count: pushFailingCount })
-    : hasConflict && hasUnpushed
+    : hasConflict && pendingCount > 0
       ? t("syncInbox.chipBoth", {
           conflicts: conflictCount,
-          unpushed: unpushedCount,
+          unpushed: pendingCount,
         })
       : hasConflict
         ? t("syncInbox.chipConflicts", { count: conflictCount })
-        : hasUnpushed
-          ? t("syncInbox.chipUnpushed", { count: unpushedCount })
-          : t("syncInbox.offline", { count: offlineCount });
+        : hasPending
+          ? t("syncInbox.chipPending", { count: pendingCount })
+          : offlineCount > 0
+            ? t("syncInbox.offline", { count: offlineCount })
+            : t("syncInbox.chipSynced");
 
   return (
     <>
@@ -183,6 +219,7 @@ export function SyncChip({
             data-testid="sync-chip"
             data-conflicts={conflictCount}
             data-unpushed={unpushedCount}
+            data-pending={pendingCount}
             className={[
               "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1",
               "hover:opacity-90 focus-visible:outline-none focus-visible:ring-2",
@@ -200,6 +237,7 @@ export function SyncChip({
         >
           <InboxPanel
             report={conflicts.data}
+            overview={overview.data ?? null}
             unpushedCount={unpushedCount}
             pushErrors={pushErrors.data?.errors ?? []}
             onOpenNote={(id) => {
@@ -208,6 +246,8 @@ export function SyncChip({
             }}
             onRefresh={() => refresh.mutate()}
             refreshing={refresh.isPending}
+            onSyncNow={() => syncNow.mutate()}
+            syncingNow={syncNow.isPending}
           />
         </PopoverContent>
       </Popover>
@@ -400,18 +440,24 @@ function SyncFreshnessGate(): React.ReactNode {
 
 function InboxPanel({
   report,
+  overview,
   unpushedCount,
   pushErrors,
   onOpenNote,
   onRefresh,
   refreshing,
+  onSyncNow,
+  syncingNow,
 }: {
   report: PreflightReport;
+  overview: SyncOverview | null;
   unpushedCount: number;
   pushErrors: PushError[];
   onOpenNote: (noteId: string) => void;
   onRefresh: () => void;
   refreshing: boolean;
+  onSyncNow: () => void;
+  syncingNow: boolean;
 }): React.ReactNode {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -422,6 +468,7 @@ function InboxPanel({
       // (push happens on the drainer's 5s tick) — invalidate so the
       // panel re-fetches and starts trending toward zero.
       void qc.invalidateQueries({ queryKey: QK.syncUnpushed });
+      void qc.invalidateQueries({ queryKey: QK.syncOverview });
     },
   });
 
@@ -429,11 +476,14 @@ function InboxPanel({
   const hasOffline = report.offline.length > 0;
   const hasUnpushed = unpushedCount > 0;
   const hasFailures = pushErrors.length > 0;
+  const pendingCount = overview?.pending_count ?? unpushedCount;
+  const hasPending = pendingCount > 0;
   const isEmpty =
     !hasConflicts &&
     !hasOffline &&
     !hasUnpushed &&
     !hasFailures &&
+    !hasPending &&
     !refreshing;
 
   return (
@@ -446,19 +496,49 @@ function InboxPanel({
           <div className="text-muted-foreground mt-1 text-xs">
             {t("syncInbox.subtitle")}
           </div>
+          <div
+            data-testid="sync-inbox-overview"
+            className="text-muted-foreground mt-1 text-xs"
+          >
+            {hasPending
+              ? t("syncInbox.overviewPending", {
+                  count: pendingCount,
+                  dirty: overview?.dirty_count ?? 0,
+                  deleted: overview?.deletion_pending_count ?? 0,
+                  unpushed: overview?.unpushed_count ?? unpushedCount,
+                })
+              : t("syncInbox.overviewSynced")}
+          </div>
         </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={onRefresh}
-          disabled={refreshing}
-          data-testid="sync-inbox-refresh"
-          aria-label={t("syncInbox.refresh")}
-        >
-          <RefreshCw
-            className={`size-4 ${refreshing ? "animate-spin" : ""}`}
-          />
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={onSyncNow}
+            disabled={syncingNow || !hasPending}
+            data-testid="sync-inbox-sync-now"
+            title={hasPending ? t("syncInbox.syncNow") : t("syncInbox.overviewSynced")}
+          >
+            {syncingNow ? (
+              <Loader2 className="mr-1 size-3.5 animate-spin" />
+            ) : (
+              <ArrowUpFromLine className="mr-1 size-3.5" />
+            )}
+            {syncingNow ? t("syncInbox.syncingNow") : t("syncInbox.syncNow")}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onRefresh}
+            disabled={refreshing}
+            data-testid="sync-inbox-refresh"
+            aria-label={t("syncInbox.refresh")}
+          >
+            <RefreshCw
+              className={`size-4 ${refreshing ? "animate-spin" : ""}`}
+            />
+          </Button>
+        </div>
       </div>
 
       {refreshing && !hasConflicts && !hasUnpushed && (

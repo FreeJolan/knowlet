@@ -13,6 +13,7 @@ from typing import Any
 
 from knowlet.chat.conversation_store import Conversation, ConversationStore
 from knowlet.chat.current_note_tools import (
+    APPLY_CURRENT_NOTE_EDIT_TOOL,
     CHECK_CURRENT_NOTE_TOOL,
     PROPOSE_CURRENT_NOTE_EDIT_TOOL,
 )
@@ -180,6 +181,7 @@ def bootstrap_chat(
     registry = default_registry()
     registry.register(CHECK_CURRENT_NOTE_TOOL)
     registry.register(PROPOSE_CURRENT_NOTE_EDIT_TOOL)
+    registry.register(APPLY_CURRENT_NOTE_EDIT_TOOL)
     registry.register(CREATE_NOTE_DRAFT_FROM_INFO_TOOL)
     registry.register(PROPOSE_CURRENT_DRAFT_EDIT_TOOL)
     registry.register(ACCEPT_ALL_DRAFT_DIFF_TOOL)

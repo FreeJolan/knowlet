@@ -50,8 +50,14 @@ def test_bootstrap_returns_usable_runtime(tmp_path: Path):
         rows = runtime.index.list_notes(limit=10)
         assert len(rows) == 1
         assert rows[0]["title"] == "Bootstrap test"
-        # Tools registry has our three atomic capabilities.
+        # Tools registry has the core atomic capabilities plus the
+        # current-note tools used by the Discuss pane.
         assert {"search_notes", "get_note", "list_recent_notes"}.issubset(runtime.registry.tools)
+        assert {
+            "check_current_note",
+            "propose_current_note_edit",
+            "apply_current_note_edit",
+        }.issubset(runtime.registry.tools)
         assert report.reindex_changed == 1
     finally:
         runtime.close()

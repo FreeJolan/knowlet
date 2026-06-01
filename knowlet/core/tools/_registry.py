@@ -44,6 +44,10 @@ class ToolContext:
     # operate on "the note I'm currently discussing" without exposing a
     # separate UI button.
     current_note_id: str | None = None
+    # Note-anchored web sessions may carry the currently visible, human-
+    # reviewed diff. Mutating tools can apply it only after an explicit user
+    # request; normal chat/CLI sessions leave this unset.
+    pending_note_edit: dict[str, str] | None = None
     # Raw-Info review sessions set this so the model can settle "this item"
     # into a note draft without the user copying an internal id into chat.
     current_raw_info_id: str | None = None

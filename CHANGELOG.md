@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.17] - 2026-06-02
+
+AI diff application and sync visibility release.
+
+- Add an `apply_current_note_edit` AI tool that can write the currently
+  visible note diff only after the user explicitly asks to apply, accept,
+  confirm, save, or commit the change.
+- Pass the Discuss pane's pending diff into note chat requests so AI-driven
+  application follows the same reviewed-diff contract as the manual button.
+- Add a header sync overview showing whether local changes are still pending
+  upload to Google Drive, with a "sync now" action that queues first-push notes
+  and kicks the drainer immediately.
+- Add backend and E2E regressions for explicit AI diff application and sync
+  overview behavior.
+
 ## [0.0.16] - 2026-06-02
 
 Note deletion hotfix release.

@@ -35,6 +35,7 @@ export const QK = {
   syncConflicts: ["sync-conflicts"] as const,
   syncMode: ["sync-mode"] as const,
   syncUnpushed: ["sync-unpushed"] as const,
+  syncOverview: ["sync-overview"] as const,
   syncAuth: ["sync-auth"] as const,
   syncPushErrors: ["sync-push-errors"] as const,
   favorites: ["favorites"] as const,

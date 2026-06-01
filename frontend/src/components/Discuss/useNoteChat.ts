@@ -35,6 +35,17 @@ export interface NoteEditProposal {
   reason?: string;
   summary?: string;
 }
+export interface NoteEditApplied {
+  id: string;
+  noteId: string;
+  title?: string;
+  changed: boolean;
+  summary?: string;
+}
+export interface PendingNoteEdit {
+  oldBody: string;
+  newBody: string;
+}
 
 export interface ChatSSEEvent {
   type: string;
@@ -53,6 +64,7 @@ interface NoteChatSession {
   error: string | null;
   abort: AbortController | null;
   proposal: NoteEditProposal | null;
+  applied: NoteEditApplied | null;
   listeners: Set<() => void>;
 }
 
@@ -119,6 +131,7 @@ function getSession(noteId: string): NoteChatSession {
     error: null,
     abort: null,
     proposal: null,
+    applied: null,
     listeners: new Set(),
   };
   sessions.set(noteId, created);
@@ -259,6 +272,24 @@ function proposalFromToolResult(ev: ChatSSEEvent): NoteEditProposal | null {
   return proposal;
 }
 
+function appliedFromToolResult(ev: ChatSSEEvent): NoteEditApplied | null {
+  if (ev.name !== "apply_current_note_edit") return null;
+  const payload = ev.payload;
+  if (!payload || typeof payload !== "object") return null;
+  const obj = payload as Record<string, unknown>;
+  if (obj.kind !== "note_edit_applied") return null;
+  const noteId = typeof obj.note_id === "string" ? obj.note_id : "";
+  if (!noteId) return null;
+  const applied: NoteEditApplied = {
+    id: ev.id || `applied-${Date.now()}`,
+    noteId,
+    changed: obj.changed === true,
+  };
+  if (typeof obj.title === "string") applied.title = obj.title;
+  if (typeof obj.summary === "string") applied.summary = obj.summary;
+  return applied;
+}
+
 export function useNoteChat(noteId: string | null) {
   const [, forceRender] = useState(0);
   const activeNoteRef = useRef<string | null>(noteId);
@@ -283,6 +314,7 @@ export function useNoteChat(noteId: string | null) {
   const status = activeSession?.status ?? "idle";
   const error = activeSession?.error ?? null;
   const proposal = activeSession?.proposal ?? null;
+  const applied = activeSession?.applied ?? null;
 
   const appendUserMessage = useCallback(
     (content: string, targetNoteId?: string) => {
@@ -311,7 +343,10 @@ export function useNoteChat(noteId: string | null) {
     [],
   );
 
-  const send = useCallback(async (text: string) => {
+  const send = useCallback(async (
+    text: string,
+    options?: { pendingEdit?: PendingNoteEdit | null },
+  ) => {
     const id = activeNoteRef.current;
     const trimmed = text.trim();
     if (!trimmed || !id) return;
@@ -329,11 +364,17 @@ export function useNoteChat(noteId: string | null) {
         { role: "assistant", content: "" },
       ];
     });
+    const pending_edit = options?.pendingEdit
+      ? {
+          old_body: options.pendingEdit.oldBody,
+          new_body: options.pendingEdit.newBody,
+        }
+      : undefined;
     try {
       const r = await fetch(`/api/chat/note/${encodeURIComponent(id)}/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: trimmed, history }),
+        body: JSON.stringify({ text: trimmed, history, pending_edit }),
         signal: ctrl.signal,
       });
       if (!r.ok || !r.body) {
@@ -390,9 +431,11 @@ export function useNoteChat(noteId: string | null) {
             });
           } else if (ev.type === "tool_result") {
             const proposalResult = proposalFromToolResult(ev);
+            const appliedResult = appliedFromToolResult(ev);
             updateSession(id, (s) => {
               s.messages = applyToolResult(s.messages, ev);
               if (proposalResult) s.proposal = proposalResult;
+              if (appliedResult) s.applied = appliedResult;
             });
           } else if (ev.type === "error") {
             streamError = formatErrorDetail(ev.message || "stream error");
@@ -446,6 +489,7 @@ export function useNoteChat(noteId: string | null) {
       session.error = null;
       session.messages = [];
       session.proposal = null;
+      session.applied = null;
     });
   }, []);
 
@@ -457,15 +501,25 @@ export function useNoteChat(noteId: string | null) {
     });
   }, []);
 
+  const clearApplied = useCallback((targetNoteId?: string) => {
+    const id = targetNoteId ?? activeNoteRef.current;
+    if (!id) return;
+    updateSession(id, (session) => {
+      session.applied = null;
+    });
+  }, []);
+
   return {
     messages,
     status,
     error,
     proposal,
+    applied,
     send,
     stop,
     reset,
     clearProposal,
+    clearApplied,
     appendUserMessage,
     appendAssistantMessage,
   };

@@ -25,6 +25,16 @@ export function summarizeToolPayload(name: string, payload: unknown): string {
       ? obj.summary
       : "已生成可审阅的修改提案";
   }
+  if (obj.kind === "note_edit_applied") {
+    return typeof obj.summary === "string" && obj.summary
+      ? obj.summary
+      : "已应用当前修改";
+  }
+  if (obj.kind === "note_edit_apply_rejected") {
+    return typeof obj.error === "string" && obj.error
+      ? obj.error
+      : "无法应用当前修改";
+  }
   if (obj.kind === "draft_edit_proposal") {
     if (obj.changed === false) {
       return typeof obj.reason === "string" && obj.reason
