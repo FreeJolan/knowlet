@@ -1,6 +1,6 @@
 [project]
 name = "knowlet"
-version = "0.0.15"
+version = "0.0.16"
 description = "A personal knowledge base that organizes itself."
 readme = "README.md"
 license = { text = "MIT" }

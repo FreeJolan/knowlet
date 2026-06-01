@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.16] - 2026-06-02
+
+Note deletion hotfix release.
+
+- Make note deletion tolerate legacy `notes/...` index paths, stale index
+  paths, and already-missing files so the UI can always clear the row and
+  propagate the delete intent to sync.
+- Add regressions for dirty index-path deletion and stale-row cleanup.
+
 ## [0.0.15] - 2026-06-02
 
 Creation and template UX release.
