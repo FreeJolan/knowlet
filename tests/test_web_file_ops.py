@@ -234,6 +234,58 @@ def test_delete_note_preserves_nested_relative_index_path(tmp_path: Path) -> Non
     assert client.get(f"/api/notes/{n.id}").status_code == 404
 
 
+def test_delete_note_accepts_notes_prefixed_index_path(tmp_path: Path) -> None:
+    client, v = _client(tmp_path)
+    n = _seed_note(v, title="notes-prefixed delete", folder="daily")
+    client.post("/api/system/reindex")
+    nested_path = v.notes_dir / "daily" / n.filename
+    runtime = client.app.state.web_state.runtime_or_init()
+    runtime.index.update_note_path(n.id, f"notes/daily/{n.filename}")
+
+    r = client.delete(f"/api/notes/{n.id}")
+
+    assert r.status_code == 200, r.text
+    assert not nested_path.exists()
+    assert (v.trash_dir / n.filename).exists()
+    assert runtime.index.get_note_meta(n.id) is None
+
+
+def test_delete_note_falls_back_to_frontmatter_id_when_index_path_is_stale(
+    tmp_path: Path,
+) -> None:
+    client, v = _client(tmp_path)
+    n = _seed_note(v, title="stale-index delete", folder="daily")
+    client.post("/api/system/reindex")
+    nested_path = v.notes_dir / "daily" / n.filename
+    runtime = client.app.state.web_state.runtime_or_init()
+    runtime.index.update_note_path(n.id, f"missing/{n.filename}")
+
+    r = client.delete(f"/api/notes/{n.id}")
+
+    assert r.status_code == 200, r.text
+    assert not nested_path.exists()
+    assert (v.trash_dir / n.filename).exists()
+    assert runtime.index.get_note_meta(n.id) is None
+
+
+def test_delete_note_clears_stale_index_when_file_is_already_missing(
+    tmp_path: Path,
+) -> None:
+    client, v = _client(tmp_path)
+    n = _seed_note(v, title="already-missing delete", folder="daily")
+    client.post("/api/system/reindex")
+    nested_path = v.notes_dir / "daily" / n.filename
+    nested_path.unlink()
+    runtime = client.app.state.web_state.runtime_or_init()
+
+    r = client.delete(f"/api/notes/{n.id}")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["already_missing"] is True
+    assert not (v.trash_dir / n.filename).exists()
+    assert runtime.index.get_note_meta(n.id) is None
+
+
 def test_trash_purge_unknown_404(tmp_path: Path) -> None:
     client, _ = _client(tmp_path)
     r = client.delete("/api/trash/ghost.md")

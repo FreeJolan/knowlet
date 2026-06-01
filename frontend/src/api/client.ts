@@ -215,7 +215,9 @@ export const moveNote = (id: string, targetFolder: string): Promise<NoteFull> =>
     target_folder: targetFolder,
   });
 
-export const deleteNote = (id: string): Promise<{ trashed_to: string }> =>
+export const deleteNote = (
+  id: string,
+): Promise<{ trashed_to: string; already_missing?: boolean }> =>
   request("DELETE", `/api/notes/${encodeURIComponent(id)}`);
 
 export const updateNote = (

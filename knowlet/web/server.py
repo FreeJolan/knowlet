@@ -4530,14 +4530,20 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"note not found: {note_id}",
             )
-        path = runtime.vault.resolve_note_path_from_index(meta["path"])
+        path: Path | None
         try:
-            trashed = runtime.vault.trash_note(path)
-        except FileNotFoundError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_410_GONE,
-                detail=f"note file missing on disk: {path}",
-            ) from exc
+            path = runtime.vault.resolve_note_path_from_index(meta["path"])
+        except ValueError:
+            path = None
+        if path is None or not path.exists():
+            path = runtime.vault.find_note_path_by_id(note_id)
+
+        trashed: Path | None = None
+        if path is not None:
+            try:
+                trashed = runtime.vault.trash_note(path)
+            except FileNotFoundError:
+                trashed = None
         runtime.index.delete_note(note_id)
         # #118 — propagate the trash to Drive on the next drainer
         # tick. soft = Drive's own 30-day trash (recoverable from
@@ -4546,7 +4552,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         return {
             "ok": True,
             "id": note_id,
-            "trashed_to": str(trashed),
+            "trashed_to": "" if trashed is None else str(trashed),
+            "already_missing": trashed is None,
         }
 
     @app.put("/api/notes/{note_id}", response_model=NoteFull)

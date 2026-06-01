@@ -239,6 +239,28 @@ class Vault:
 
         return (p for p in self.notes_dir.rglob("*.md") if _ok(p))
 
+    def find_note_path_by_id(self, note_id: str) -> Path | None:
+        """Find a live note file by its canonical id inside this vault.
+
+        Used as a repair path when the search index points at an old or
+        malformed location. The scan is deliberately bounded to live note
+        files under `notes/`; it never follows an index path outside the
+        vault and it skips `.trash/`.
+        """
+        needle = note_id.strip()
+        if not needle:
+            return None
+        for path in self.iter_note_paths():
+            if path.stem == needle:
+                return path
+            try:
+                note = Note.from_file(path)
+            except Exception:  # noqa: S110
+                continue
+            if note.id == needle:
+                return path
+        return None
+
     # ---------- templates (Phase 1 B slice 8) ----------
     #
     # `_templates/` is the on-disk storage convention for templates,
@@ -323,6 +345,8 @@ class Vault:
             except ValueError as exc:
                 raise ValueError(f"note path escapes notes_dir: {raw_text!r}") from exc
             return target
+        if raw.parts and raw.parts[0] == NOTES_DIR:
+            raw = Path(*raw.parts[1:])
         return self._resolve_subpath(raw.as_posix())
 
     def read_note(self, path: Path) -> Note:
