@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.15] - 2026-06-02
+
+Creation and template UX release.
+
+- Add a dedicated template creation flow with template-specific title, body,
+  and default kind controls instead of reusing the normal new-note dialog.
+- Let Quick Actions inherit note kind from their selected template, defaulting
+  to knowledge when no template is selected.
+- Make the built-in today-note Quick Action use a reference-kind daily
+  template, so today's default note is classified as reference material.
+- Add centered empty-state creation affordances for fresh note vaults and
+  empty template libraries.
+- Fix deletion for nested index-path notes so notes can reliably be moved to
+  trash from the UI.
+
 ## [0.0.14] - 2026-05-31
 
 Desktop vault deletion and sync namespace release.

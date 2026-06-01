@@ -1,6 +1,6 @@
 [package]
 name = "knowlet-desktop"
-version = "0.0.14"
+version = "0.0.15"
 description = "Knowlet desktop client"
 authors = ["Jolan"]
 license = "MIT"
