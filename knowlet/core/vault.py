@@ -255,7 +255,14 @@ class Vault:
                 return path
             try:
                 note = Note.from_file(path)
-            except Exception:  # noqa: S110
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).debug(
+                    "could not parse note while searching by id: %s",
+                    path,
+                    exc_info=True,
+                )
                 continue
             if note.id == needle:
                 return path
