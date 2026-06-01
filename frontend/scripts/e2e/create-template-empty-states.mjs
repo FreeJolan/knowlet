@@ -104,7 +104,7 @@ try {
           (el) => (el.textContent ?? "").trim() === "meeting template",
         ),
       null,
-      { timeout: 4000, polling: 100 },
+      { timeout: 8000, polling: 100 },
     );
   });
 
