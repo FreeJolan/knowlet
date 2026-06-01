@@ -415,10 +415,20 @@ export const searchVault = (
 
 // ---------- templates (Phase 1 B slice 8) ----------
 
-export type TemplateSummary = { id: string; title: string };
+export type TemplateSummary = {
+  id: string;
+  title: string;
+  kind: "knowledge" | "reference";
+};
 
 export const listTemplates = (): Promise<TemplateSummary[]> =>
   request("GET", "/api/templates");
+
+export const createTemplate = (payload: {
+  title: string;
+  body: string;
+  kind: "knowledge" | "reference";
+}): Promise<NoteFull> => request("POST", "/api/templates", payload);
 
 // ---------- trash ----------
 

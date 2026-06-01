@@ -20,7 +20,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Pencil, Plus, Trash2, Zap } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -34,6 +34,8 @@ import {
 import type { TemplateSummary } from "@/api/client";
 import type { NoteFull, QuickAction, QuickActionPayload } from "@/api/types";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { KindChip } from "@/components/KindChip";
+import { TemplateCreateDialog } from "@/components/Templates/TemplateCreateDialog";
 import { imeSafeKeyHandler } from "@/lib/imeSafe";
 import { QK } from "@/lib/queryClient";
 
@@ -66,6 +68,16 @@ export function QuickActionsManager({ open, onClose, onRan }: ManagerProps) {
     enabled: open,
     staleTime: 0,
   });
+  const templatesQuery = useQuery<TemplateSummary[]>({
+    queryKey: QK.templates,
+    queryFn: listTemplates,
+    enabled: open,
+    staleTime: 30_000,
+  });
+  const templateById = useMemo(
+    () => new Map((templatesQuery.data ?? []).map((tpl) => [tpl.id, tpl])),
+    [templatesQuery.data],
+  );
 
   const runMut = useMutation({
     mutationFn: (id: string) => runQuickAction(id),
@@ -208,14 +220,7 @@ export function QuickActionsManager({ open, onClose, onRan }: ManagerProps) {
                         </span>
                       )}
                     </div>
-                    <span
-                      className="truncate font-mono"
-                      style={{ fontSize: 11, color: "var(--ink-mute)" }}
-                    >
-                      {a.params.kind === "create_note"
-                        ? `${a.params.folder || "(root)"} / ${a.params.title_template}`
-                        : a.params.kind}
-                    </span>
+                    <ActionParamsLine action={a} templateById={templateById} />
                     {a.description && (
                       <span
                         className="mt-0.5 truncate italic"
@@ -293,6 +298,32 @@ export function QuickActionsManager({ open, onClose, onRan }: ManagerProps) {
   );
 }
 
+function ActionParamsLine({
+  action,
+  templateById,
+}: {
+  action: QuickAction;
+  templateById: Map<string, TemplateSummary>;
+}) {
+  const { t } = useTranslation();
+  if (action.params.kind !== "create_note") {
+    return (
+      <span className="truncate font-mono" style={{ fontSize: 11, color: "var(--ink-mute)" }}>
+        {action.params.kind}
+      </span>
+    );
+  }
+  const templateId = action.params.content_template_id ?? "";
+  const template = templateById.get(templateId);
+  const kind = template?.kind ?? "knowledge";
+  const templateText = template ? ` · ${template.title}` : "";
+  return (
+    <span className="truncate font-mono" style={{ fontSize: 11, color: "var(--ink-mute)" }}>
+      {`${action.params.folder || "(root)"} / ${action.params.title_template}${templateText} · ${t(`noteKind.${kind}.label`)}`}
+    </span>
+  );
+}
+
 interface EditorProps {
   mode: "create" | "edit";
   initial: QuickAction | null;
@@ -320,6 +351,7 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
   const [description, setDescription] = useState(initial?.description ?? "");
 
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const [templateCreateOpen, setTemplateCreateOpen] = useState(false);
   const templates = useQuery<TemplateSummary[]>({
     queryKey: QK.templates,
     queryFn: listTemplates,
@@ -342,6 +374,8 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
     },
   });
   const isPending = createMut.isPending || updateMut.isPending;
+  const selectedTemplate = (templates.data ?? []).find((tpl) => tpl.id === contentTemplateId);
+  const inheritedKind = selectedTemplate?.kind ?? "knowledge";
 
   const submit = () => {
     if (isPending) return;
@@ -481,6 +515,10 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
                   setContentTemplateId(id ?? "");
                   setTemplateMenuOpen(false);
                 }}
+                onCreateTemplate={() => {
+                  setTemplateMenuOpen(false);
+                  setTemplateCreateOpen(true);
+                }}
                 placeholder={t("newDoc.templateNone")}
               />
             </Field>
@@ -522,6 +560,10 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
               }}
             />
           </Field>
+          <div className="flex items-center gap-2 text-xs" style={{ color: "var(--ink-mute)" }}>
+            <span>{t("quickActions.inheritedKind")}</span>
+            <KindChip kind={inheritedKind} variant="chip-quiet" />
+          </div>
         </div>
 
         <div
@@ -570,6 +612,13 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
           </button>
         </div>
       </DialogContent>
+      <TemplateCreateDialog
+        open={templateCreateOpen}
+        onClose={() => setTemplateCreateOpen(false)}
+        onCreated={(template) => {
+          setContentTemplateId(template.id);
+        }}
+      />
     </Dialog>
   );
 }
@@ -584,6 +633,7 @@ function TemplatePicker({
   open,
   onToggle,
   onSelect,
+  onCreateTemplate,
   placeholder,
 }: {
   templates: TemplateSummary[];
@@ -591,8 +641,10 @@ function TemplatePicker({
   open: boolean;
   onToggle: () => void;
   onSelect: (id: string | null) => void;
+  onCreateTemplate: () => void;
   placeholder: string;
 }) {
+  const { t } = useTranslation();
   const current = templates.find((t) => t.id === value);
   return (
     <div className="relative">
@@ -651,6 +703,23 @@ function TemplatePicker({
               {placeholder}
             </button>
           </li>
+          <li>
+            <button
+              type="button"
+              onClick={onCreateTemplate}
+              data-testid="editor-template-create"
+              className="flex w-full items-center px-3 py-1.5 hover:bg-accent/30"
+              style={{
+                fontSize: 12,
+                color: "var(--accent-2)",
+                textAlign: "left",
+                borderTop: "1px solid var(--line-soft)",
+              }}
+            >
+              <Plus size={12} className="mr-1.5" />
+              {t("templates.newAction")}
+            </button>
+          </li>
           {templates.map((tpl) => (
             <li key={tpl.id}>
               <button
@@ -667,7 +736,8 @@ function TemplatePicker({
                   textAlign: "left",
                 }}
               >
-                {tpl.title}
+                <span className="min-w-0 flex-1 truncate">{tpl.title}</span>
+                <KindChip kind={tpl.kind} variant="tag" />
               </button>
             </li>
           ))}

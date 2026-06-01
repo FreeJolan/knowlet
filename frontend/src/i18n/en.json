@@ -375,7 +375,8 @@
     "editorTitleNew": "New quick action",
     "editorTitleEdit": "Edit quick action",
     "editorSaveNew": "Create",
-    "editorSaveEdit": "Save"
+    "editorSaveEdit": "Save",
+    "inheritedKind": "Creates"
   },
   "newDoc": {
     "title": "New document",
@@ -443,6 +444,14 @@
     "empty": "No templates yet. Use the button below to create your first one.",
     "fetchError": "Couldn't load templates. Restart the backend or check the network.",
     "newAction": "New template",
+    "createTitle": "New template",
+    "titleLabel": "Template name",
+    "titlePlaceholder": "Daily journal / Reading notes / Meeting notes",
+    "kindLabel": "Default kind",
+    "bodyLabel": "Template body",
+    "bodyHint": "supports {{title}} {{date}}",
+    "create": "Create template",
+    "creating": "Creating…",
     "editAction": "Edit",
     "deleteAction": "Delete",
     "deleteConfirm": "Delete template \"{{name}}\"?",

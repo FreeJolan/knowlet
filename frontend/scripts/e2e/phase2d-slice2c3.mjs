@@ -165,6 +165,11 @@ try {
     );
     const daily = tree.folders.find((f) => f.name === "daily");
     assert(daily && (daily.notes ?? []).length >= 1, "daily/ note created");
+    const created = daily.notes[0];
+    const full = await (
+      await page.request.get(`${baseURL}/api/notes/${encodeURIComponent(created.id)}`)
+    ).json();
+    assert(full.kind === "reference", `today quick action creates reference — got ${full.kind}`);
   });
 
   await teardown();

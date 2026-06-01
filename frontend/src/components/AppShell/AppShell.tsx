@@ -56,6 +56,7 @@ import { NewDocDialog } from "@/components/NewDoc/NewDocDialog";
 import { QuickActionsManager } from "@/components/QuickActions/QuickActionsManager";
 import { SyncChip } from "@/components/Sync/SyncChip";
 import { TabStrip } from "@/components/TabStrip/TabStrip";
+import { TemplateCreateDialog } from "@/components/Templates/TemplateCreateDialog";
 import { MERGE_OPEN_EVENT, queueMergeOpen } from "@/lib/pendingMergeOpen";
 import { TagBrowser } from "@/components/TagBrowser/TagBrowser";
 import { TrashPanel } from "@/components/Trash/TrashPanel";
@@ -262,6 +263,7 @@ export function AppShell() {
   // folder right-clicked from the tree's context menu).
   const [newDocOpen, setNewDocOpen] = useState(false);
   const [newDocSeedFolder, setNewDocSeedFolder] = useState<string>("");
+  const [templateCreateOpen, setTemplateCreateOpen] = useState(false);
   // Phase 2 D Slice 2c.2-B' — quick actions manager (⚡).
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [windowWidth, setWindowWidth] = useState(() =>
@@ -977,6 +979,7 @@ export function AppShell() {
                       }}
                       onMutating={setTreeBusy}
                       rootFolderPath="_templates"
+                      onCreateTemplate={() => setTemplateCreateOpen(true)}
                     />
                   ) : (
                     <TagBrowser
@@ -1171,6 +1174,17 @@ export function AppShell() {
         seedFolder={newDocSeedFolder}
         onCreated={(note) => {
           setSelectedNoteId(note.id);
+          setPendingHash(null);
+          setPendingLine(null);
+          setPendingPreserveMode(false);
+        }}
+      />
+      <TemplateCreateDialog
+        open={templateCreateOpen}
+        onClose={() => setTemplateCreateOpen(false)}
+        onCreated={(template) => {
+          setLeftTab("templates");
+          setSelectedNoteId(template.id);
           setPendingHash(null);
           setPendingLine(null);
           setPendingPreserveMode(false);

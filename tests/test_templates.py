@@ -39,9 +39,15 @@ def _client(tmp_path: Path) -> tuple[TestClient, Vault]:
     return client, v
 
 
-def _seed_template(v: Vault, *, title: str, body: str) -> Note:
+def _seed_template(
+    v: Vault,
+    *,
+    title: str,
+    body: str,
+    kind: str = "knowledge",
+) -> Note:
     """Write a note into the system templates folder."""
-    note = Note(id=new_id(), title=title, body=body)
+    note = Note(id=new_id(), title=title, body=body, kind=kind)  # type: ignore[arg-type]
     v.write_note(note, folder=Vault.TEMPLATE_DIR)
     return note
 
@@ -108,13 +114,38 @@ def test_apply_template_supports_whitespace_inside_braces() -> None:
 
 def test_list_templates_returns_titles(tmp_path: Path) -> None:
     client, v = _client(tmp_path)
-    daily = _seed_template(v, title="daily", body="d")
+    daily = _seed_template(v, title="daily", body="d", kind="reference")
     meeting = _seed_template(v, title="meeting", body="m")
     r = client.get("/api/templates")
     assert r.status_code == 200
     rows = r.json()
     by_id = {row["id"]: row["title"] for row in rows}
     assert by_id == {daily.id: "daily", meeting.id: "meeting"}
+    kind_by_id = {row["id"]: row["kind"] for row in rows}
+    assert kind_by_id == {daily.id: "reference", meeting.id: "knowledge"}
+
+
+def test_create_template_endpoint_writes_template_note(tmp_path: Path) -> None:
+    client, v = _client(tmp_path)
+    r = client.post(
+        "/api/templates",
+        json={
+            "title": "reference clipping",
+            "kind": "reference",
+            "body": "# {{title}}\n\nSource: ",
+        },
+    )
+    assert r.status_code == 200, r.text
+    created = r.json()
+    assert created["title"] == "reference clipping"
+    assert created["kind"] == "reference"
+    assert created["folder"] == "_templates"
+    path = v.notes_dir / Vault.TEMPLATE_DIR / f"{created['id']}.md"
+    assert path.exists()
+    assert "kind: reference" in path.read_text(encoding="utf-8")
+
+    rows = client.get("/api/templates").json()
+    assert any(row["id"] == created["id"] and row["kind"] == "reference" for row in rows)
 
 
 def test_list_templates_empty_when_no_dir(tmp_path: Path) -> None:
@@ -144,6 +175,25 @@ def test_new_note_with_template_applies_body_and_substitutes(
     body = r.json()["body"]
     assert "# thursday" in body
     assert date.today().isoformat() in body
+
+
+def test_new_note_with_template_inherits_template_kind(tmp_path: Path) -> None:
+    client, v = _client(tmp_path)
+    tpl = _seed_template(
+        v,
+        title="reference template",
+        body="# {{title}}",
+        kind="reference",
+    )
+    r = client.post(
+        "/api/notes/new",
+        json={"title": "clipped article", "template_id": tpl.id},
+    )
+    assert r.status_code == 200, r.text
+    note = r.json()
+    assert note["kind"] == "reference"
+    path = v.notes_dir / f"{note['id']}.md"
+    assert "kind: reference" in path.read_text(encoding="utf-8")
 
 
 def test_new_note_with_unknown_template_404(tmp_path: Path) -> None:

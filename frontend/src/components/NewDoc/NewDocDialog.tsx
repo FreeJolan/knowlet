@@ -35,6 +35,8 @@ import {
 } from "@/api/client";
 import type { TemplateSummary } from "@/api/client";
 import type { NoteFull, TreeFolder } from "@/api/types";
+import { KindChip } from "@/components/KindChip";
+import { TemplateCreateDialog } from "@/components/Templates/TemplateCreateDialog";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { imeSafeKeyHandler } from "@/lib/imeSafe";
 import { renderPlaceholders } from "@/lib/placeholders";
@@ -85,6 +87,7 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
   const [actionShortcut, setActionShortcut] = useState<string>("");
   const [actionDescription, setActionDescription] = useState<string>("");
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const [templateCreateOpen, setTemplateCreateOpen] = useState(false);
 
   // Reset the form ONLY on a closed→open transition. If we keyed off
   // `seedFolder` changes too, the bubble-up effect (window event →
@@ -103,6 +106,8 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
       setActionName("");
       setActionShortcut("");
       setActionDescription("");
+      setTemplateMenuOpen(false);
+      setTemplateCreateOpen(false);
     }
     prevOpenRef.current = open;
   }, [open, seedFolder]);
@@ -367,6 +372,10 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
                   setTemplateId(id);
                   setTemplateMenuOpen(false);
                 }}
+                onCreateTemplate={() => {
+                  setTemplateMenuOpen(false);
+                  setTemplateCreateOpen(true);
+                }}
                 placeholder={t("newDoc.templateNone")}
               />
             </Field>
@@ -608,6 +617,13 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
           </button>
         </div>
       </DialogContent>
+      <TemplateCreateDialog
+        open={templateCreateOpen}
+        onClose={() => setTemplateCreateOpen(false)}
+        onCreated={(template) => {
+          setTemplateId(template.id);
+        }}
+      />
     </Dialog>
   );
 }
@@ -775,6 +791,7 @@ function TemplateSelectButton({
   open,
   onToggle,
   onSelect,
+  onCreateTemplate,
   placeholder,
 }: {
   templateId: string | null;
@@ -782,8 +799,10 @@ function TemplateSelectButton({
   open: boolean;
   onToggle: () => void;
   onSelect: (id: string | null) => void;
+  onCreateTemplate: () => void;
   placeholder: string;
 }) {
+  const { t } = useTranslation();
   const current = templates.find((t) => t.id === templateId);
   return (
     <div className="relative">
@@ -814,6 +833,7 @@ function TemplateSelectButton({
               ▤
             </span>
             <span style={{ color: "var(--ink)" }}>{current.title}</span>
+            <KindChip kind={current.kind} variant="tag" />
           </>
         ) : (
           <span className="italic" style={{ color: "var(--ink-mute)" }}>
@@ -854,6 +874,23 @@ function TemplateSelectButton({
               {placeholder}
             </button>
           </li>
+          <li>
+            <button
+              type="button"
+              onClick={onCreateTemplate}
+              data-testid="new-doc-template-create"
+              className="flex w-full items-center gap-2 px-3 py-1.5 hover:bg-accent/30"
+              style={{
+                fontSize: 12,
+                color: "var(--accent-2)",
+                borderTop: "1px solid var(--line-soft)",
+                textAlign: "left",
+              }}
+            >
+              <Plus size={12} />
+              {t("templates.newAction")}
+            </button>
+          </li>
           {templates.map((tpl) => (
             <li key={tpl.id}>
               <button
@@ -870,7 +907,8 @@ function TemplateSelectButton({
                   textAlign: "left",
                 }}
               >
-                {tpl.title}
+                <span className="min-w-0 flex-1 truncate">{tpl.title}</span>
+                <KindChip kind={tpl.kind} variant="tag" />
               </button>
             </li>
           ))}

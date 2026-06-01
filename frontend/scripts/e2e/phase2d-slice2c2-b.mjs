@@ -6,6 +6,7 @@
  *   - Cmd+Shift+A toggles manager
  *   - Empty state shows hint
  *   - "+ 新建" creates a standalone action (NOT tied to creating a doc)
+ *   - The editor can create/select a template, and runs inherit template kind
  *   - Edit pre-fills + saves
  *   - Delete confirms + removes
  *   - Run from manager opens the resulting note + closes manager
@@ -19,6 +20,15 @@ const env = await setupTestEnv({
   language: "en",
 });
 const { page, baseURL, teardown } = env;
+
+function countRegularNotes(folder) {
+  let count = folder.notes?.length ?? 0;
+  for (const sub of folder.folders ?? []) {
+    if (sub.name === "_templates") continue;
+    count += countRegularNotes(sub);
+  }
+  return count;
+}
 
 try {
   // Auto-accept any window.confirm() — used by delete buttons.
@@ -61,10 +71,7 @@ try {
     const before = await page.evaluate(async () =>
       (await fetch("/api/tree")).json(),
     );
-    const beforeCount = (before.notes ?? []).length + (before.folders ?? []).reduce(
-      (n, f) => n + (f.notes?.length ?? 0),
-      0,
-    );
+    const beforeCount = countRegularNotes(before);
 
     await page.locator('[data-testid="header-quick-actions-button"]').click();
     await page
@@ -80,6 +87,16 @@ try {
     await page
       .locator('[data-testid="editor-title-template"]')
       .fill("{{date}} reading");
+    await page.locator('[data-testid="editor-template-picker"]').click();
+    await page.locator('[data-testid="editor-template-create"]').click();
+    await page
+      .locator('[data-testid="template-create-dialog"]')
+      .waitFor({ state: "visible", timeout: 2000 });
+    await page.locator('[data-testid="template-title"]').fill("Reference clipping");
+    await page.locator('[data-testid="template-kind-reference"]').click();
+    await page.locator('[data-testid="template-body"]').fill("# {{title}}\n\nsource:");
+    await page.locator('[data-testid="template-create-submit"]').click();
+    await page.waitForTimeout(500);
     await page.locator('[data-testid="editor-shortcut"]').fill("Cmd+Shift+R");
     await page.locator('[data-testid="editor-description"]').fill("After finishing a piece");
     await page.locator('[data-testid="editor-save"]').click();
@@ -90,19 +107,19 @@ try {
       (await fetch("/api/quick-actions")).json(),
     );
     assert(
-      actions.length === 1 && actions[0].name === "Read article",
+      actions.length === 1 &&
+        actions[0].name === "Read article" &&
+        actions[0].params.content_template_id,
       `expected 1 'Read article' action, got ${JSON.stringify(actions)}`,
     );
 
-    // No document was created (note count unchanged) — that's the
-    // standalone-creation contract this slice fixes.
+    // No regular document was created (template creation lives under
+    // _templates/ and is intentionally excluded here) — that's the
+    // standalone-action contract this slice fixes.
     const after = await page.evaluate(async () =>
       (await fetch("/api/tree")).json(),
     );
-    const afterCount = (after.notes ?? []).length + (after.folders ?? []).reduce(
-      (n, f) => n + (f.notes?.length ?? 0),
-      0,
-    );
+    const afterCount = countRegularNotes(after);
     assert(
       afterCount === beforeCount,
       `note count must NOT grow on standalone create — before ${beforeCount} after ${afterCount}`,
@@ -120,8 +137,10 @@ try {
     assert(
       /Read article/.test(rowText ?? "") &&
         /reading/.test(rowText ?? "") &&
-        /\{\{date\}\}/.test(rowText ?? ""),
-      `row should show name + folder + template — got "${rowText}"`,
+        /\{\{date\}\}/.test(rowText ?? "") &&
+        /Reference clipping/.test(rowText ?? "") &&
+        /Reference/.test(rowText ?? ""),
+      `row should show name + folder + template + inherited kind — got "${rowText}"`,
     );
   });
 
@@ -164,6 +183,11 @@ try {
       reading && reading.notes && reading.notes.length >= 1,
       `reading/ should contain ≥1 note — got ${JSON.stringify(reading?.notes ?? [])}`,
     );
+    const created = reading.notes.find((n) => /reading/.test(n.title));
+    const full = await (
+      await page.request.get(`${baseURL}/api/notes/${encodeURIComponent(created.id)}`)
+    ).json();
+    assert(full.kind === "reference", `created note inherits template kind — got ${full.kind}`);
     // h1 reflects the created note title.
     const h1 = (await page.locator('[data-testid="note-title"]').first().textContent()) ?? "";
     assert(/reading/.test(h1), `h1 should show '... reading' — got "${h1}"`);

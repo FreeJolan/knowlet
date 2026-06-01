@@ -142,6 +142,9 @@ export interface FileTreeProps {
    *  (since the user explicitly opted into that subtree). Used for
    *  the Templates left-rail tab where rootFolderPath="_templates". */
   rootFolderPath?: string;
+  /** Template tab creation uses a dedicated template authoring dialog
+   *  instead of the normal New Document dialog. */
+  onCreateTemplate?: () => void;
 }
 
 export function FileTree({
@@ -150,6 +153,7 @@ export function FileTree({
   onMutating,
   ghostFolder,
   rootFolderPath,
+  onCreateTemplate,
 }: FileTreeProps) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -521,6 +525,7 @@ export function FileTree({
   const onNewRootFolder = () => startCreate("folder", rootFolderPath ?? "");
   const onNewRootNote = () => startCreate("note", rootFolderPath ?? "");
   const cancelPending = () => setPendingCreate(null);
+  const isTemplateRoot = rootFolderPath === "_templates";
 
   const [duplicateError, setDuplicateError] = useState<string | null>(null);
 
@@ -748,10 +753,13 @@ export function FileTree({
         <div className="flex shrink-0 items-center gap-0.5">
           <button
             type="button"
-            aria-label={t("tree.newNote")}
-            title={t("tree.newNoteHint")}
+            aria-label={isTemplateRoot ? t("templates.newAction") : t("tree.newNote")}
+            title={isTemplateRoot ? t("templates.newAction") : t("tree.newNoteHint")}
+            data-testid={isTemplateRoot ? "template-tree-new-template" : undefined}
             onClick={(e) => {
-              if (e.shiftKey) onNewRootNote();
+              if (isTemplateRoot) {
+                onCreateTemplate?.();
+              } else if (e.shiftKey) onNewRootNote();
               else
                 window.dispatchEvent(
                   new CustomEvent("knowlet:open-new-doc", {
@@ -798,8 +806,65 @@ export function FileTree({
         style={{ scrollbarGutter: "stable" }}
       >
         {data.length === 0 ? (
-          <div className="px-3 py-6 text-sm text-muted-foreground">
-            {t("tree.empty")}
+          <div
+            className="flex min-h-[220px] flex-col items-center justify-center gap-3 px-5 py-8 text-center"
+            data-testid={isTemplateRoot ? "templates-empty-state" : "file-tree-empty-state"}
+          >
+            <div className="max-w-64 text-sm text-muted-foreground">
+              {isTemplateRoot ? t("templates.empty") : t("tree.empty")}
+            </div>
+            <div className="flex flex-wrap justify-center gap-2">
+              {isTemplateRoot ? (
+                <button
+                  type="button"
+                  onClick={onCreateTemplate}
+                  data-testid="template-empty-new-template"
+                  className="rounded-md px-3 py-1.5 text-xs font-medium"
+                  style={{
+                    background: "var(--accent)",
+                    border: "1px solid var(--accent)",
+                    color: "#faf7f0",
+                  }}
+                >
+                  {t("templates.newAction")}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      window.dispatchEvent(
+                        new CustomEvent("knowlet:open-new-doc", {
+                          detail: { seedFolder: rootFolderPath ?? "" },
+                        }),
+                      )
+                    }
+                    data-testid="file-tree-empty-new-note"
+                    className="rounded-md px-3 py-1.5 text-xs font-medium"
+                    style={{
+                      background: "var(--accent)",
+                      border: "1px solid var(--accent)",
+                      color: "#faf7f0",
+                    }}
+                  >
+                    {t("tree.newNote")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onNewRootFolder}
+                    data-testid="file-tree-empty-new-folder"
+                    className="rounded-md px-3 py-1.5 text-xs font-medium"
+                    style={{
+                      background: "transparent",
+                      border: "1px solid var(--line)",
+                      color: "var(--ink-soft)",
+                    }}
+                  >
+                    {t("tree.newFolder")}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         ) : (
           <Tree<TreeNodeData>

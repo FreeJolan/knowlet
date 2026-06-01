@@ -359,7 +359,8 @@
     "editorTitleNew": "新建快捷操作",
     "editorTitleEdit": "编辑快捷操作",
     "editorSaveNew": "创建",
-    "editorSaveEdit": "保存"
+    "editorSaveEdit": "保存",
+    "inheritedKind": "创建类型"
   },
   "newDoc": {
     "title": "新建文档",
@@ -443,6 +444,14 @@
     "empty": "还没有模板。点下方按钮新建第一个。",
     "fetchError": "模板列表加载失败。请重启后端或检查网络。",
     "newAction": "新建模板",
+    "createTitle": "新建模板",
+    "titleLabel": "模板名称",
+    "titlePlaceholder": "日记 / 读书摘录 / 会议记录",
+    "kindLabel": "默认类型",
+    "bodyLabel": "模板正文",
+    "bodyHint": "支持 {{title}} {{date}}",
+    "create": "创建模板",
+    "creating": "创建中…",
     "editAction": "编辑",
     "deleteAction": "删除",
     "deleteConfirm": "删除模板「{{name}}」?",

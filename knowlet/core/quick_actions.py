@@ -37,9 +37,12 @@ from pydantic import BaseModel, Field, field_validator
 from ulid import ULID
 
 from knowlet.config import VAULT_MARKER_DIR
+from knowlet.core.note import Note
+from knowlet.core.vault import Vault
 
 SCHEMA_VERSION = 1
 QUICK_ACTIONS_FILENAME = "quick-actions.toml"
+DEFAULT_TODAY_TEMPLATE_ID = "knowlet-today-note-template"
 
 
 class CreateNoteParams(BaseModel):
@@ -242,6 +245,26 @@ class QuickActionStore:
         return defaults
 
 
+def ensure_default_today_template(vault: Vault) -> str:
+    """Create the built-in daily template if it is missing.
+
+    The default quick action deliberately points at a real template so the
+    note kind has one source of truth: selected template kind, or knowledge
+    when no template is selected.
+    """
+    target = vault.notes_dir / Vault.TEMPLATE_DIR / f"{DEFAULT_TODAY_TEMPLATE_ID}.md"
+    if target.exists():
+        return DEFAULT_TODAY_TEMPLATE_ID
+    note = Note(
+        id=DEFAULT_TODAY_TEMPLATE_ID,
+        title="今日笔记",
+        body="",
+        kind="reference",
+    )
+    vault.write_note(note, folder=Vault.TEMPLATE_DIR)
+    return DEFAULT_TODAY_TEMPLATE_ID
+
+
 def _build_default_actions() -> list[QuickAction]:
     """One ship'd preset — "今日笔记" mapped to ⌘⇧D. Replaces the
     standalone CalendarDays header icon (Slice 2c.2-C', 2026-05-10):
@@ -256,6 +279,7 @@ def _build_default_actions() -> list[QuickAction]:
             params=CreateNoteParams(
                 folder="daily",
                 title_template="{{date}}",
+                content_template_id=DEFAULT_TODAY_TEMPLATE_ID,
             ),
         ),
     ]

@@ -133,6 +133,8 @@ def test_unknown_placeholder_left_as_is():
 # ---------- endpoint integration ----------
 
 
+from knowlet.core.note import Note, new_id  # noqa: E402
+from knowlet.core.vault import Vault  # noqa: E402
 from tests.test_web import StubLLM, _client_with_stub  # noqa: E402
 
 
@@ -193,6 +195,14 @@ def test_endpoint_seeds_today_note_on_first_get(tmp_path: Path):
     assert today["shortcut"] == "Cmd+Shift+D"
     assert today["params"]["folder"] == "daily"
     assert today["params"]["title_template"] == "{{date}}"
+    template_id = today["params"].get("content_template_id")
+    assert template_id
+    templates = client.get("/api/templates").json()
+    today_template = next((t for t in templates if t["id"] == template_id), None)
+    assert today_template is not None
+    assert today_template["kind"] == "reference"
+    created = client.post(f"/api/quick-actions/{today['id']}/run").json()
+    assert created["kind"] == "reference"
     # Delete it.
     client.delete(f"/api/quick-actions/{today['id']}")
     # Re-GET must NOT re-seed (user explicitly removed it).
@@ -242,9 +252,46 @@ def test_endpoint_run_creates_note_with_rendered_title(tmp_path: Path):
 
     assert re.match(r"^\d{4}-\d{2}-\d{2}$", note["title"]), note["title"]
     assert note["folder"] == "daily"
+    assert note["kind"] == "knowledge"
     # Note exists on disk.
     on_disk = list((v.notes_dir / "daily").glob("*.md"))
     assert any(p.read_text(encoding="utf-8").find(note["title"]) > -1 for p in on_disk)
+
+
+def test_endpoint_run_inherits_selected_template_kind(tmp_path: Path):
+    client, v, _ = _client_with_stub(tmp_path, StubLLM([]))
+    tpl = Note(
+        id=new_id(),
+        title="reference clipping",
+        body="# {{title}}\n\nsource notes",
+        kind="reference",
+    )
+    v.write_note(tpl, folder=Vault.TEMPLATE_DIR)
+    r = client.post(
+        "/api/quick-actions",
+        json={
+            "name": "clip",
+            "description": None,
+            "shortcut": None,
+            "params": {
+                "kind": "create_note",
+                "folder": "reading",
+                "title_template": "Article",
+                "content_template_id": tpl.id,
+            },
+        },
+    )
+    assert r.status_code == 200, r.text
+    action_id = r.json()["id"]
+
+    r = client.post(f"/api/quick-actions/{action_id}/run")
+
+    assert r.status_code == 200, r.text
+    note = r.json()
+    assert note["kind"] == "reference"
+    assert "# Article" in note["body"]
+    path = v.notes_dir / "reading" / f"{note['id']}.md"
+    assert "kind: reference" in path.read_text(encoding="utf-8")
 
 
 def test_endpoint_run_is_idempotent_same_day(tmp_path: Path):

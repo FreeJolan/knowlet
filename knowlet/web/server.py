@@ -67,6 +67,7 @@ from knowlet.core.quick_actions import (
     CreateNoteParams,
     QuickAction,
     QuickActionStore,
+    ensure_default_today_template,
     new_action_id,
     render_title_placeholders,
 )
@@ -570,11 +571,18 @@ class NewNoteRequest(BaseModel):
     template_id: str | None = None
 
 
+class TemplateCreateRequest(BaseModel):
+    title: str
+    body: str = ""
+    kind: Literal["knowledge", "reference"] = "knowledge"
+
+
 class TemplateSummary(BaseModel):
     """Minimal shape the template-picker UI consumes."""
 
     id: str
     title: str
+    kind: Literal["knowledge", "reference"] = "knowledge"
 
 
 class QuickActionPayload(BaseModel):
@@ -4498,6 +4506,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             created_at=canonical.created_at,
             updated_at=canonical.updated_at,
             body=canonical.body,
+            kind=canonical.kind,
             frontmatter_status=canonical.frontmatter_status,
             frontmatter_corruption=canonical.frontmatter_corruption,
         )
@@ -4595,6 +4604,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             created_at=note.created_at,
             updated_at=note.updated_at,
             body=note.body,
+            kind=note.kind,
         )
 
     @app.get("/api/notes/{note_id}/backlinks", response_model=list[BacklinkRow])
@@ -4727,8 +4737,47 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 tpl = runtime.vault.read_note(p)
             except FileNotFoundError:
                 continue
-            out.append(TemplateSummary(id=tpl.id, title=tpl.title))
+            out.append(TemplateSummary(id=tpl.id, title=tpl.title, kind=tpl.kind))
         return out
+
+    @app.post("/api/templates", response_model=NoteFull)
+    def create_template(
+        req: TemplateCreateRequest,
+        runtime: ChatRuntime = Depends(runtime_dep),
+    ) -> NoteFull:
+        """Create a template note under `notes/_templates/`.
+
+        This endpoint is intentionally separate from `/api/notes/new` so the
+        UI can offer a template-authoring flow without "use template to create"
+        controls.
+        """
+        from knowlet.core.note import Note as _Note
+        from knowlet.core.note import new_id
+
+        title = req.title.strip()
+        if not title:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="title is empty")
+        note = _Note(id=new_id(), title=title, body=req.body, kind=req.kind)
+        path = runtime.vault.write_note(note, folder=Vault.TEMPLATE_DIR)
+        _mark_note_dirty_for_push(note.id)
+        runtime.index.upsert_note(
+            note,
+            chunk_size=runtime.config.retrieval.chunk_size,
+            chunk_overlap=runtime.config.retrieval.chunk_overlap,
+        )
+        return NoteFull(
+            id=note.id,
+            title=note.title,
+            path=str(path),
+            folder=runtime.vault.folder_of(path),
+            tags=note.tags,
+            aliases=list(note.aliases),
+            source=note.source,
+            created_at=note.created_at,
+            updated_at=note.updated_at,
+            body=note.body,
+            kind=note.kind,
+        )
 
     @app.post("/api/notes/new", response_model=NoteFull)
     def create_blank_note(
@@ -4747,6 +4796,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         if not title:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="title is empty")
         body = ""
+        note_kind: Literal["knowledge", "reference"] = "knowledge"
         if req.template_id:
             tpl_path: Path | None = None
             for p in runtime.vault.iter_templates():
@@ -4757,6 +4807,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 if tpl.id == req.template_id:
                     tpl_path = p
                     body = runtime.vault.apply_template_placeholders(tpl.body, title=title)
+                    note_kind = tpl.kind
                     break
             if tpl_path is None:
                 raise HTTPException(
@@ -4765,7 +4816,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 )
         # Phase 1 C polish — pick up `#tag` from a template body too.
         merged_tags = merge_with_inline_tags(list(req.tags), body)
-        note = _Note(id=new_id(), title=title, body=body, tags=merged_tags)
+        note = _Note(id=new_id(), title=title, body=body, tags=merged_tags, kind=note_kind)
         try:
             path = runtime.vault.write_note(note, folder=req.folder or None)
         except ValueError as exc:
@@ -4879,7 +4930,21 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # First call seeds the default `today-note` action; subsequent
         # calls just load whatever the user has now (including [] if
         # they deleted everything). See QuickActionStore.load_with_defaults.
-        return _quick_action_store(runtime).load_with_defaults()
+        store = _quick_action_store(runtime)
+        if not store.path.exists():
+            template_id = ensure_default_today_template(runtime.vault)
+            _mark_note_dirty_for_push(template_id)
+            template_path = runtime.vault.notes_dir / Vault.TEMPLATE_DIR / f"{template_id}.md"
+            try:
+                template = runtime.vault.read_note(template_path)
+                runtime.index.upsert_note(
+                    template,
+                    chunk_size=runtime.config.retrieval.chunk_size,
+                    chunk_overlap=runtime.config.retrieval.chunk_overlap,
+                )
+            except FileNotFoundError:
+                pass
+        return store.load_with_defaults()
 
     @app.post("/api/quick-actions", response_model=QuickAction)
     def create_quick_action(
@@ -4972,6 +5037,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                         created_at=existing.created_at,
                         updated_at=existing.updated_at,
                         body=existing.body,
+                        kind=existing.kind,
                     )
         # Mkdir if needed.
         if target_folder:
@@ -4985,6 +5051,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     detail=str(exc),
                 ) from exc
         body = ""
+        note_kind: Literal["knowledge", "reference"] = "knowledge"
         if params.content_template_id:
             tpl_path: Path | None = None
             for p in runtime.vault.iter_templates():
@@ -4995,6 +5062,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 if tpl.id == params.content_template_id:
                     tpl_path = p
                     body = runtime.vault.apply_template_placeholders(tpl.body, title=title)
+                    note_kind = tpl.kind
                     break
             if tpl_path is None:
                 raise HTTPException(
@@ -5002,7 +5070,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     detail=f"template not found: {params.content_template_id}",
                 )
         merged_tags = merge_with_inline_tags([], body)
-        note = _Note(id=new_id(), title=title, body=body, tags=merged_tags)
+        note = _Note(id=new_id(), title=title, body=body, tags=merged_tags, kind=note_kind)
         path = runtime.vault.write_note(note, folder=target_folder or None)
         _mark_note_dirty_for_push(note.id)
         runtime.index.upsert_note(
@@ -5021,6 +5089,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             created_at=note.created_at,
             updated_at=note.updated_at,
             body=note.body,
+            kind=note.kind,
         )
 
     @app.post("/api/notes/{note_id}/move", response_model=NoteFull)
@@ -5059,6 +5128,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             created_at=note.created_at,
             updated_at=note.updated_at,
             body=note.body,
+            kind=note.kind,
         )
 
     @app.get("/api/trash", response_model=TrashListResponse)
@@ -5135,6 +5205,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             created_at=note.created_at,
             updated_at=note.updated_at,
             body=note.body,
+            kind=note.kind,
         )
 
     @app.post("/api/trash/restore-all", response_model=RestoreAllResponse)

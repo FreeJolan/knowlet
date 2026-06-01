@@ -11,7 +11,7 @@
  *   - Templates tab exists in left rail (next to Files / Tags)
  *   - Templates folder is HIDDEN from the regular Files tab
  *   - Tab shows _templates/ contents as the visible tree root
- *   - "+ Note" button creates a template inline under _templates/
+ *   - "+ Template" button opens the dedicated template creation dialog
  *   - inline `/` slash command in editor inserts template body at the
  *     cursor with placeholders substituted (unchanged)
  */
@@ -113,17 +113,21 @@ try {
     assert(/daily/.test(h1), `NoteView should show daily template — got "${h1}"`);
   });
 
-  await runTest("'+ Note' in Templates tab creates a template under _templates/", async () => {
+  await runTest("'+ Template' opens dedicated template creation", async () => {
     await page.locator('[data-testid="activity-bar-templates"]').click();
     await page.waitForTimeout(200);
-    // Use Shift+click to enter inline create (per Slice 2 — plain
-    // click opens NewDocDialog, which doesn't apply for templates
-    // creation flow).
-    await page.click('button[aria-label="New note"]', { modifiers: ["Shift"] });
-    const input = page.locator('input[data-rename-input="true"]');
-    await input.waitFor({ state: "visible", timeout: 3000 });
-    await input.fill("weekly");
-    await input.press("Enter");
+    await page.click('[data-testid="template-tree-new-template"]');
+    await page
+      .locator('[data-testid="template-create-dialog"]')
+      .waitFor({ state: "visible", timeout: 3000 });
+    const newDocVisible = await page
+      .locator('[data-testid="new-document-dialog"]')
+      .isVisible()
+      .catch(() => false);
+    assert(!newDocVisible, "template creation must not open the New Document dialog");
+    await page.locator('[data-testid="template-title"]').fill("weekly");
+    await page.locator('[data-testid="template-body"]').fill("# {{title}}\n\n- ");
+    await page.locator('[data-testid="template-create-submit"]').click();
     await page.waitForTimeout(800);
     // The new template lands under _templates/.
     const r = await page.request.get(`${baseURL}/api/templates`);
