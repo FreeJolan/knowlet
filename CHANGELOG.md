@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.19] - 2026-06-02
+
+Desktop right-click delete confirmation release.
+
+- Replace the file-tree delete path's native browser confirmation with an
+  app-owned confirmation dialog so the macOS desktop WebView can reliably
+  complete right-click deletes.
+- Prevent context-menu delete clicks from activating the note row underneath.
+- Add E2E regressions for cancel, confirm, no native `window.confirm`, and
+  no accidental note activation before deletion.
+
 ## [0.0.18] - 2026-06-02
 
 Right-click delete hotfix release.

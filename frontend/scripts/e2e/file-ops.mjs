@@ -96,8 +96,10 @@ try {
   await runTest("delete via right-click → trash → restore", async () => {
     const row = await expectRow(page, "beta");
     await row.click({ button: "right" });
-    page.once("dialog", (d) => d.accept());
     await page.locator('[role="menuitem"]', { hasText: "Delete" }).click();
+    const dialog = page.locator('[data-testid="file-tree-delete-confirm"]');
+    await dialog.waitFor({ state: "visible" });
+    await dialog.getByRole("button", { name: "Move to trash" }).click();
     await page.waitForTimeout(500);
     assert(!(await hasRow(page, "beta")), "beta gone from tree");
 

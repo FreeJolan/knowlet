@@ -1,4 +1,4 @@
-// E2E: Chinese right-click delete must confirm after the context menu closes.
+// E2E: Chinese right-click delete uses an app-owned confirmation dialog.
 
 import {
   assert,
@@ -23,43 +23,53 @@ try {
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await page.waitForTimeout(500);
 
-  await runTest("right-click delete triggers confirmation after menu closes", async () => {
+  await runTest("right-click delete confirms in-app without opening the note", async () => {
     await page.evaluate(() => {
-      window.__knowletConfirmCalls = [];
-      window.confirm = (message) => {
-        window.__knowletConfirmCalls.push({
-          message,
-          menuOpen: Boolean(
-            document.querySelector('[data-slot="context-menu-content"]'),
-          ),
-        });
-        return true;
+      window.__knowletConfirmCalls = 0;
+      window.confirm = () => {
+        window.__knowletConfirmCalls += 1;
+        throw new Error("File tree delete must not use window.confirm");
       };
     });
 
     const row = await expectRow(page, "中文删除目标");
+
+    await row.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "删除", exact: true }).click();
+
+    const dialog = page.locator('[data-testid="file-tree-delete-confirm"]');
+    await dialog.waitFor({ state: "visible" });
+    assert(
+      await dialog.getByText("中文删除目标").isVisible(),
+      "delete dialog should name the target note",
+    );
+    assert(
+      (await page.getByRole("tab", { name: /中文删除目标/ }).count()) === 0,
+      "opening the delete menu item must not activate the note row underneath",
+    );
+    assert(
+      (await page.evaluate(() => window.__knowletConfirmCalls)) === 0,
+      "delete path should not call native window.confirm",
+    );
+
+    await dialog.getByRole("button", { name: "取消" }).click();
+    await dialog.waitFor({ state: "hidden" });
+    assert(await hasRow(page, "中文删除目标"), "cancel keeps the note in the tree");
+
+    await row.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "删除", exact: true }).click();
+    await dialog.waitFor({ state: "visible" });
+
     const deleteResponse = page.waitForResponse(
       (response) =>
         response.request().method() === "DELETE" &&
         response.url().includes("/api/notes/") &&
         response.status() < 400,
     );
-
-    await row.click({ button: "right" });
-    await page.getByRole("menuitem", { name: "删除", exact: true }).click();
+    await dialog.getByRole("button", { name: "移到垃圾桶" }).click();
     await deleteResponse;
     await page.waitForTimeout(300);
 
-    const calls = await page.evaluate(() => window.__knowletConfirmCalls);
-    assert(calls.length === 1, `expected one confirmation, got ${calls.length}`);
-    assert(
-      calls[0].message.includes("中文删除目标"),
-      `confirmation should name the note, got ${JSON.stringify(calls[0].message)}`,
-    );
-    assert(
-      calls[0].menuOpen === false,
-      "delete confirmation should run after the context menu has closed",
-    );
     assert(!(await hasRow(page, "中文删除目标")), "deleted note leaves the tree");
   });
 

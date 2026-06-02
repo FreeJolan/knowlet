@@ -50,6 +50,14 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { InlineEditInput } from "@/components/InlineEdit/InlineEditInput";
 import {
   folderNameClashesIn,
@@ -126,6 +134,14 @@ type PendingCreate = {
   templateId?: string | null;
 };
 
+type PendingDeleteItem =
+  | { kind: "note"; id: string; name: string }
+  | { kind: "folder"; path: string; name: string };
+
+type PendingDelete =
+  | PendingDeleteItem
+  | { kind: "bulk"; items: PendingDeleteItem[] };
+
 export interface FileTreeProps {
   selectedNoteId: string | null;
   onSelectNote: (id: string) => void;
@@ -172,6 +188,7 @@ export function FileTree({
   // mode under the named parent. Submit POSTs the real entity and clears
   // this; Esc / outside-click clears without creating. VS Code-style.
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
 
   // Most recently clicked tree row, used as the F2 rename target. We
   // track this ourselves rather than read arborist's focusedNode because
@@ -394,15 +411,32 @@ export function FileTree({
     onSettled: settled,
   });
   const deleteNoteM = useMutation({
-    mutationFn: (id: string) => deleteNote(id),
+    mutationFn: deleteNote,
     onMutate: startBusy,
     onSettled: settled,
   });
   const deleteFolderM = useMutation({
-    mutationFn: (path: string) => deleteFolder(path),
+    mutationFn: deleteFolder,
     onMutate: startBusy,
     onSettled: settled,
   });
+
+  const confirmPendingDelete = () => {
+    const pending = pendingDelete;
+    if (!pending) return;
+    setPendingDelete(null);
+
+    const deleteOne = (item: PendingDeleteItem) => {
+      if (item.kind === "note") deleteNoteM.mutate(item.id);
+      else deleteFolderM.mutate(item.path);
+    };
+
+    if (pending.kind === "bulk") {
+      for (const item of pending.items) deleteOne(item);
+      return;
+    }
+    deleteOne(pending);
+  };
 
   const onRename = ({ name, node }: { id: string; name: string; node: NodeApi<TreeNodeData> }) => {
     const root = qc.getQueryData<TreeFolder>(QK.tree);
@@ -488,20 +522,13 @@ export function FileTree({
   };
 
   const onDelete = ({ nodes }: { nodes: NodeApi<TreeNodeData>[] }) => {
-    if (
-      !window.confirm(
-        t("menu.bulkDeleteConfirm", { count: nodes.length }),
-      )
-    ) {
-      return;
-    }
-    for (const node of nodes) {
-      if (node.data.kind === "note") {
-        deleteNoteM.mutate(node.data.noteId);
-      } else {
-        deleteFolderM.mutate(node.data.folderPath);
-      }
-    }
+    const items: PendingDeleteItem[] = nodes.map((node) =>
+      node.data.kind === "note"
+        ? { kind: "note", id: node.data.noteId, name: node.data.name }
+        : { kind: "folder", path: node.data.folderPath, name: node.data.name },
+    );
+    if (items.length === 1 && items[0]) setPendingDelete(items[0]);
+    else if (items.length > 1) setPendingDelete({ kind: "bulk", items });
   };
 
   // VS Code-style inline create: stage a pending row in the tree instead
@@ -908,14 +935,10 @@ export function FileTree({
                 onCommitPending={commitPending}
                 onCancelPending={cancelPending}
                 onDeleteFolder={(folderPath, name) => {
-                  if (window.confirm(t("menu.deleteFolderConfirm", { name }))) {
-                    deleteFolderM.mutate(folderPath);
-                  }
+                  setPendingDelete({ kind: "folder", path: folderPath, name });
                 }}
                 onDeleteNote={(noteId, name) => {
-                  if (window.confirm(t("menu.deleteNoteConfirm", { name }))) {
-                    deleteNoteM.mutate(noteId);
-                  }
+                  setPendingDelete({ kind: "note", id: noteId, name });
                 }}
                 starredIds={starredIds}
                 onToggleStar={toggleStar}
@@ -924,6 +947,54 @@ export function FileTree({
           </Tree>
         )}
       </div>
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+      >
+        <DialogContent
+          className="sm:max-w-md"
+          data-testid="file-tree-delete-confirm"
+        >
+          <DialogHeader>
+            <DialogTitle>
+              {pendingDelete?.kind === "folder"
+                ? t("menu.deleteFolderConfirmTitle")
+                : pendingDelete?.kind === "bulk"
+                  ? t("menu.deleteBulkConfirmTitle")
+                  : t("menu.deleteNoteConfirmTitle")}
+            </DialogTitle>
+            <DialogDescription>
+              {pendingDelete?.kind === "folder"
+                ? t("menu.deleteFolderConfirm", { name: pendingDelete.name })
+                : pendingDelete?.kind === "bulk"
+                  ? t("menu.bulkDeleteConfirm", {
+                      count: pendingDelete.items.length,
+                    })
+                  : pendingDelete
+                    ? t("menu.deleteNoteConfirm", { name: pendingDelete.name })
+                    : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPendingDelete(null)}
+            >
+              {t("menu.deleteCancel")}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={confirmPendingDelete}
+            >
+              {t("menu.deleteConfirmAction")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1222,6 +1293,9 @@ function Row({
       <ContextMenuTrigger asChild>{rowBody}</ContextMenuTrigger>
       <ContextMenuContent
         className="w-52"
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+        onPointerUp={(e) => e.stopPropagation()}
         // Radix's default close behavior auto-returns focus to the trigger
         // (the row's outer div). When the user picks "Rename", the menu
         // closes ~80 ms later and steals focus from the inline-edit input
@@ -1286,15 +1360,17 @@ function Row({
           variant="destructive"
           onSelect={() => {
             const name = node.data.name;
-            // Native confirmation can be swallowed by macOS WebView if it is
-            // opened while Radix is still closing the context-menu portal.
             if (isFolder) {
               const folderPath = node.data.folderPath;
-              setTimeout(() => onDeleteFolder(folderPath, name), 0);
+              setTimeout(() => {
+                onDeleteFolder(folderPath, name);
+              }, 0);
               return;
             }
             const noteId = node.data.noteId;
-            setTimeout(() => onDeleteNote(noteId, name), 0);
+            setTimeout(() => {
+              onDeleteNote(noteId, name);
+            }, 0);
           }}
         >
           {t("menu.delete")}
