@@ -11,6 +11,8 @@
 
 import {
   ClipboardCheck,
+  GripHorizontal,
+  Maximize2,
   Pencil,
   RotateCcw,
   Send,
@@ -18,6 +20,7 @@ import {
   Square,
   X,
 } from "lucide-react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -27,6 +30,7 @@ import {
 } from "@/api/client";
 import type { ApiError } from "@/api/types";
 import { Button } from "@/components/ui/button";
+import { imeSafeKeyHandler } from "@/lib/imeSafe";
 
 import { ChatTranscript } from "./ChatTranscript";
 import { useNoteChat } from "./useNoteChat";
@@ -51,6 +55,62 @@ const DISCUSS_SUGGESTIONS: Array<{
       "请为这篇笔记生成一个可在 diff 中审阅的最小改写提案：在尽量保留原意的前提下，让结构更清楚、表达更准确，并删掉口语化或含混的表达。不要直接把整篇改写正文贴在聊天里，修改必须等我确认后才能应用。",
   },
 ];
+
+const COMPOSER_MIN_HEIGHT = 112;
+const COMPOSER_DEFAULT_HEIGHT = 156;
+const COMPOSER_MAX_HEIGHT = 300;
+
+function clampComposerHeight(value: number): number {
+  return Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, value));
+}
+
+function markdownContinuation(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+): { value: string; caret: number } | null {
+  if (selectionStart !== selectionEnd) return null;
+  const lineStart = value.lastIndexOf("\n", selectionStart - 1) + 1;
+  const line = value.slice(lineStart, selectionStart);
+
+  const ordered = line.match(/^(\s*)(\d+)([.)])\s+(.*)$/);
+  if (ordered) {
+    const [, indent = "", numberText = "0", delimiter = ".", rest = ""] = ordered;
+    const replacement =
+      rest.trim().length === 0
+        ? "\n"
+        : `\n${indent}${Number(numberText) + 1}${delimiter} `;
+    return insertAtSelection(value, selectionStart, selectionEnd, replacement);
+  }
+
+  const task = line.match(/^(\s*)([-*+])\s+\[[ xX]\]\s+(.*)$/);
+  if (task) {
+    const [, indent = "", bullet = "-", rest = ""] = task;
+    const replacement = rest.trim().length === 0 ? "\n" : `\n${indent}${bullet} [ ] `;
+    return insertAtSelection(value, selectionStart, selectionEnd, replacement);
+  }
+
+  const unordered = line.match(/^(\s*)([-*+])\s+(.*)$/);
+  if (unordered) {
+    const [, indent = "", bullet = "-", rest = ""] = unordered;
+    const replacement = rest.trim().length === 0 ? "\n" : `\n${indent}${bullet} `;
+    return insertAtSelection(value, selectionStart, selectionEnd, replacement);
+  }
+
+  return null;
+}
+
+function insertAtSelection(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  insertion: string,
+): { value: string; caret: number } {
+  return {
+    value: `${value.slice(0, selectionStart)}${insertion}${value.slice(selectionEnd)}`,
+    caret: selectionStart + insertion.length,
+  };
+}
 
 export function DiscussPane({
   noteId,
@@ -82,10 +142,13 @@ export function DiscussPane({
     clearApplied,
   } = useNoteChat(noteId);
   const [input, setInput] = useState("");
+  const [composerHeight, setComposerHeight] = useState(COMPOSER_DEFAULT_HEIGHT);
+  const [longFormOpen, setLongFormOpen] = useState(false);
   const [proposing, setProposing] = useState(false);
   const [checkReport, setCheckReport] = useState<CheckNoteReport | null>(null);
   const [proposeMsg, setProposeMsg] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const longFormRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const latestNoteIdRef = useRef<string | null>(noteId);
   const [followTail, setFollowTail] = useState(true);
@@ -97,6 +160,16 @@ export function DiscussPane({
     setCheckReport(null);
     setProposeMsg(null);
   }, [noteId]);
+
+  useEffect(() => {
+    if (!longFormOpen) return;
+    const handle = window.setTimeout(() => {
+      longFormRef.current?.focus();
+      const end = longFormRef.current?.value.length ?? 0;
+      longFormRef.current?.setSelectionRange(end, end);
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, [longFormOpen]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -143,6 +216,36 @@ export function DiscussPane({
       send(input, { pendingEdit });
       setInput("");
     }
+  };
+
+  const applyTextareaValue = (
+    next: { value: string; caret: number },
+    target: HTMLTextAreaElement,
+  ) => {
+    setInput(next.value);
+    window.requestAnimationFrame(() => {
+      target.setSelectionRange(next.caret, next.caret);
+    });
+  };
+
+  const closeLongForm = () => {
+    setLongFormOpen(false);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const handleComposerResizeStart = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = composerHeight;
+    const onMove = (event: PointerEvent) => {
+      setComposerHeight(clampComposerHeight(startHeight + startY - event.clientY));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
   };
 
   const runSuggestion = (prompt: string) => {
@@ -298,7 +401,24 @@ export function DiscussPane({
         )}
       </div>
 
-      <div className="shrink-0 border-t p-2" style={{ borderColor: "var(--line)" }}>
+      <div
+        data-testid="discuss-composer-shell"
+        className="relative flex shrink-0 flex-col border-t p-2"
+        style={{
+          borderColor: "var(--line)",
+          height: composerHeight,
+        }}
+      >
+        <button
+          type="button"
+          aria-label="调整输入框高度"
+          data-testid="discuss-composer-resize-handle"
+          onPointerDown={handleComposerResizeStart}
+          className="absolute left-2 right-2 top-0 flex h-3 -translate-y-1/2 cursor-ns-resize items-center justify-center rounded-sm text-muted-foreground hover:bg-accent/20"
+          title="拖拽调整输入框高度"
+        >
+          <GripHorizontal className="size-4" />
+        </button>
         {proposeMsg && (
           <div
             data-testid="discuss-propose-msg"
@@ -313,17 +433,37 @@ export function DiscussPane({
           data-testid="discuss-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+          onKeyDown={imeSafeKeyHandler<HTMLTextAreaElement>((e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
+              const next = markdownContinuation(
+                input,
+                e.currentTarget.selectionStart,
+                e.currentTarget.selectionEnd,
+              );
+              if (next) {
+                applyTextareaValue(next, e.currentTarget);
+                return;
+              }
               submit();
             }
-          }}
+          })}
           placeholder="聊聊这篇…（Enter 发送，Shift+Enter 换行）"
-          rows={2}
-          className="w-full resize-none rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none"
+          className="min-h-0 w-full flex-1 resize-none rounded-md border bg-transparent py-1.5 pl-2 pr-9 text-sm outline-none"
           style={{ borderColor: "var(--line)", color: "var(--ink)" }}
         />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="打开长文本输入"
+          data-testid="discuss-longform-open"
+          title="打开长文本输入"
+          className="absolute bottom-11 right-3 size-7"
+          onClick={() => setLongFormOpen(true)}
+        >
+          <Maximize2 className="size-3.5" />
+        </Button>
         <div className="mt-1 flex items-center justify-end gap-2">
           {status === "streaming" ? (
             <Button
@@ -349,6 +489,78 @@ export function DiscussPane({
           )}
         </div>
       </div>
+      {longFormOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 px-4 py-6"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeLongForm();
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            data-testid="discuss-longform-dialog"
+            className="flex w-[min(760px,calc(100vw-32px))] max-w-full flex-col rounded-lg border shadow-2xl"
+            style={{
+              height: "min(68vh, 620px)",
+              background: "var(--panel)",
+              borderColor: "var(--line)",
+            }}
+          >
+            <div
+              className="flex shrink-0 items-center justify-between border-b px-3 py-2"
+              style={{ borderColor: "var(--line)" }}
+            >
+              <div
+                className="font-mono text-[10px] uppercase tracking-widest"
+                style={{ color: "var(--ink-mute)" }}
+              >
+                长文本
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="关闭长文本输入"
+                onClick={closeLongForm}
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+            <textarea
+              ref={longFormRef}
+              data-testid="discuss-longform-input"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={imeSafeKeyHandler<HTMLTextAreaElement>((e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  closeLongForm();
+                  return;
+                }
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  const next =
+                    markdownContinuation(
+                      input,
+                      e.currentTarget.selectionStart,
+                      e.currentTarget.selectionEnd,
+                    ) ??
+                    insertAtSelection(
+                      input,
+                      e.currentTarget.selectionStart,
+                      e.currentTarget.selectionEnd,
+                      "\n",
+                    );
+                  applyTextareaValue(next, e.currentTarget);
+                }
+              })}
+              className="min-h-0 flex-1 resize-none bg-transparent p-4 text-sm leading-6 outline-none"
+              style={{ color: "var(--ink)" }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
