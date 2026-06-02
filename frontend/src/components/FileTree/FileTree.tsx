@@ -1284,11 +1284,18 @@ function Row({
         <ContextMenuSeparator />
         <ContextMenuItem
           variant="destructive"
-          onSelect={() =>
-            isFolder
-              ? onDeleteFolder(node.data.folderPath, node.data.name)
-              : onDeleteNote(node.data.noteId, node.data.name)
-          }
+          onSelect={() => {
+            const name = node.data.name;
+            // Native confirmation can be swallowed by macOS WebView if it is
+            // opened while Radix is still closing the context-menu portal.
+            if (isFolder) {
+              const folderPath = node.data.folderPath;
+              setTimeout(() => onDeleteFolder(folderPath, name), 0);
+              return;
+            }
+            const noteId = node.data.noteId;
+            setTimeout(() => onDeleteNote(noteId, name), 0);
+          }}
         >
           {t("menu.delete")}
         </ContextMenuItem>

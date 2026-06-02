@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.18] - 2026-06-02
+
+Right-click delete hotfix release.
+
+- Defer note and folder delete confirmation until after the file-tree context
+  menu closes, avoiding the macOS desktop WebView no-response path.
+- Add a Chinese UI E2E regression that verifies right-click delete sends the
+  delete request only after confirmation runs outside the active context menu.
+
 ## [0.0.17] - 2026-06-02
 
 AI diff application and sync visibility release.
