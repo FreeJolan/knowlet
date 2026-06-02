@@ -21,7 +21,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, FolderOpen, Plus, X } from "lucide-react";
+import { ChevronDown, FolderOpen, Loader2, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -230,7 +230,7 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
     <Dialog
       open={open}
       onOpenChange={(v) => {
-        if (!v) onClose();
+        if (!v && !createMutation.isPending) onClose();
       }}
     >
       <DialogContent
@@ -283,8 +283,9 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
             <button
               type="button"
               onClick={onClose}
+              disabled={createMutation.isPending}
               aria-label={t("newDoc.close")}
-              className="text-[color:var(--ink-mute)] hover:text-[color:var(--ink)]"
+              className="text-[color:var(--ink-mute)] hover:text-[color:var(--ink)] disabled:opacity-50"
             >
               <X size={14} />
             </button>
@@ -315,11 +316,12 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
                 key={preset.id}
                 type="button"
                 data-testid={`inspiration-${preset.id}`}
+                disabled={createMutation.isPending}
                 onClick={() => {
                   setFolder(preset.folder);
                   setTitleTemplate(preset.titleTemplate);
                 }}
-                className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 transition-colors"
+                className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 transition-colors disabled:opacity-50"
                 style={{
                   fontSize: 11.5,
                   background: active ? "var(--accent-soft)" : "transparent",
@@ -344,6 +346,7 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
               folder={folder}
               folders={folders}
               open={folderMenuOpen}
+              disabled={createMutation.isPending}
               onToggle={() => {
                 setFolderMenuOpen((v) => !v);
                 setTemplateMenuOpen(false);
@@ -364,6 +367,7 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
                 templateId={templateId}
                 templates={templates.data ?? []}
                 open={templateMenuOpen}
+                disabled={createMutation.isPending}
                 onToggle={() => {
                   setTemplateMenuOpen((v) => !v);
                   setFolderMenuOpen(false);
@@ -388,6 +392,7 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
                 type="text"
                 value={titleTemplate}
                 placeholder={t("newDoc.titlePlaceholder")}
+                disabled={createMutation.isPending}
                 onChange={(e) => setTitleTemplate(e.target.value)}
                 onKeyDown={imeSafeKeyHandler<HTMLInputElement>((e) => {
                   if (e.key === "Enter") {
@@ -395,7 +400,7 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
                     submit();
                   } else if (e.key === "Escape") {
                     e.preventDefault();
-                    onClose();
+                    if (!createMutation.isPending) onClose();
                   }
                 })}
                 data-testid="new-document-title"
@@ -450,9 +455,10 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
           <button
             type="button"
             data-testid="save-as-quick-action"
+            disabled={createMutation.isPending}
             onClick={() => setSaveAsAction((v) => !v)}
             aria-pressed={saveAsAction}
-            className="flex items-start gap-2.5 rounded-md px-3 py-2.5 text-left transition-colors hover:bg-accent/15"
+            className="flex items-start gap-2.5 rounded-md px-3 py-2.5 text-left transition-colors hover:bg-accent/15 disabled:opacity-50"
             style={{
               border: "1px solid var(--line)",
               background: saveAsAction
@@ -504,6 +510,7 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
                     type="text"
                     value={actionName}
                     placeholder={t("newDoc.actionNamePlaceholder")}
+                    disabled={createMutation.isPending}
                     onChange={(e) => setActionName(e.target.value)}
                     onKeyDown={imeSafeKeyHandler<HTMLInputElement>((e) => {
                       if (e.key === "Enter") {
@@ -529,6 +536,7 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
                     type="text"
                     value={actionShortcut}
                     placeholder={t("newDoc.actionShortcutPlaceholder")}
+                    disabled={createMutation.isPending}
                     onChange={(e) => setActionShortcut(e.target.value)}
                     data-testid="action-shortcut"
                     className="font-mono outline-none"
@@ -548,6 +556,7 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
                 <input
                   type="text"
                   value={actionDescription}
+                  disabled={createMutation.isPending}
                   onChange={(e) => setActionDescription(e.target.value)}
                   data-testid="action-description"
                   className="outline-none"
@@ -583,8 +592,9 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
           <button
             type="button"
             onClick={onClose}
+            disabled={createMutation.isPending}
             data-testid="new-document-cancel"
-            className="rounded-md transition-colors"
+            className="rounded-md transition-colors disabled:opacity-50"
             style={{
               height: 28,
               padding: "0 14px",
@@ -600,6 +610,8 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
             type="button"
             onClick={submit}
             disabled={createMutation.isPending}
+            aria-busy={createMutation.isPending}
+            data-busy={createMutation.isPending ? "true" : undefined}
             data-testid="new-document-submit"
             className="inline-flex items-center gap-1.5 rounded-md transition-colors disabled:opacity-50"
             style={{
@@ -612,7 +624,16 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
               border: "1px solid var(--accent)",
             }}
           >
-            <Plus size={11} strokeWidth={2.4} />
+            {createMutation.isPending ? (
+              <Loader2
+                size={11}
+                strokeWidth={2.4}
+                className="animate-spin"
+                data-testid="new-document-submit-spinner"
+              />
+            ) : (
+              <Plus size={11} strokeWidth={2.4} />
+            )}
             {createMutation.isPending ? t("newDoc.creating") : t("newDoc.create")}
           </button>
         </div>
@@ -695,12 +716,14 @@ function FolderPickerButton({
   folder,
   folders,
   open,
+  disabled = false,
   onToggle,
   onSelect,
 }: {
   folder: string;
   folders: string[];
   open: boolean;
+  disabled?: boolean;
   onToggle: () => void;
   onSelect: (f: string) => void;
 }) {
@@ -709,9 +732,10 @@ function FolderPickerButton({
     <div className="relative">
       <button
         type="button"
+        disabled={disabled}
         onClick={onToggle}
         data-testid="dialog-folder-picker"
-        className="flex w-full items-center gap-1.5 font-mono"
+        className="flex w-full items-center gap-1.5 font-mono disabled:opacity-50"
         style={{
           height: 30,
           border: "1px solid var(--line)",
@@ -789,6 +813,7 @@ function TemplateSelectButton({
   templateId,
   templates,
   open,
+  disabled = false,
   onToggle,
   onSelect,
   onCreateTemplate,
@@ -797,6 +822,7 @@ function TemplateSelectButton({
   templateId: string | null;
   templates: TemplateSummary[];
   open: boolean;
+  disabled?: boolean;
   onToggle: () => void;
   onSelect: (id: string | null) => void;
   onCreateTemplate: () => void;
@@ -808,9 +834,10 @@ function TemplateSelectButton({
     <div className="relative">
       <button
         type="button"
+        disabled={disabled}
         onClick={onToggle}
         data-testid="dialog-template-picker"
-        className="flex w-full items-center gap-2"
+        className="flex w-full items-center gap-2 disabled:opacity-50"
         style={{
           height: 30,
           border: "1px solid var(--line)",

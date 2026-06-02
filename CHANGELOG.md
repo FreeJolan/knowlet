@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.21] - 2026-06-03
+
+Creation loading states release.
+
+- Show explicit spinner and busy text while creating notes, templates, and
+  Quick Actions so slow requests do not look stuck.
+- Disable create dialogs, Quick Action rows, and command-palette action
+  selection while the underlying create request is in flight.
+- Add file-tree pending-row spinner feedback for newly submitted notes.
+- Add E2E coverage for note creation, template creation, Quick Action save,
+  Quick Action manager run, and command-palette Quick Action run loading states.
+
 ## [0.0.20] - 2026-06-03
 
 Vault management and desktop data isolation release.

@@ -360,6 +360,9 @@
     "editorTitleEdit": "编辑快捷操作",
     "editorSaveNew": "创建",
     "editorSaveEdit": "保存",
+    "creating": "创建中…",
+    "saving": "保存中…",
+    "running": "运行中…",
     "inheritedKind": "创建类型"
   },
   "newDoc": {

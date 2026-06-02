@@ -19,7 +19,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Pencil, Plus, Trash2, Zap } from "lucide-react";
+import { ChevronDown, Loader2, Pencil, Plus, Trash2, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -96,12 +96,13 @@ export function QuickActionsManager({ open, onClose, onRan }: ManagerProps) {
 
   const list = actionsQuery.data ?? [];
   const editorOpen = creating || editing !== null;
+  const runningActionId = runMut.isPending ? runMut.variables : null;
 
   return (
     <Dialog
       open={open}
       onOpenChange={(v) => {
-        if (!v) onClose();
+        if (!v && !runMut.isPending) onClose();
       }}
     >
       <DialogContent
@@ -137,11 +138,12 @@ export function QuickActionsManager({ open, onClose, onRan }: ManagerProps) {
           <button
             type="button"
             data-testid="quick-actions-new"
+            disabled={runMut.isPending}
             onClick={() => {
               setEditing(null);
               setCreating(true);
             }}
-            className="inline-flex items-center gap-1.5 rounded-md font-medium"
+            className="inline-flex items-center gap-1.5 rounded-md font-medium disabled:opacity-50"
             style={{
               height: 28,
               padding: "0 12px",
@@ -181,105 +183,121 @@ export function QuickActionsManager({ open, onClose, onRan }: ManagerProps) {
             </div>
           ) : (
             <ul className="flex flex-col">
-              {list.map((a) => (
-                <li
-                  key={a.id}
-                  data-testid="quick-actions-row"
-                  data-action-id={a.id}
-                  className="flex items-center gap-2 px-4 py-2 transition-colors hover:bg-accent/15"
-                  style={{ borderBottom: "1px solid var(--line-soft)" }}
-                >
-                  <Zap
-                    size={14}
-                    style={{ color: "var(--accent)", flexShrink: 0 }}
-                  />
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <div className="flex items-baseline gap-2">
-                      <span
-                        className="truncate"
-                        style={{
-                          fontSize: 13,
-                          color: "var(--ink)",
-                          fontWeight: 500,
-                        }}
-                      >
-                        {a.name}
-                      </span>
-                      {a.shortcut && (
+              {list.map((a) => {
+                const isRunning = runningActionId === a.id;
+                return (
+                  <li
+                    key={a.id}
+                    data-testid="quick-actions-row"
+                    data-action-id={a.id}
+                    className="flex items-center gap-2 px-4 py-2 transition-colors hover:bg-accent/15"
+                    style={{ borderBottom: "1px solid var(--line-soft)" }}
+                  >
+                    <Zap
+                      size={14}
+                      style={{ color: "var(--accent)", flexShrink: 0 }}
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <div className="flex items-baseline gap-2">
                         <span
-                          className="font-mono"
+                          className="truncate"
                           style={{
-                            fontSize: 10.5,
-                            color: "var(--ink-mute)",
-                            padding: "1px 5px",
-                            background: "var(--bg-1)",
-                            borderRadius: 3,
+                            fontSize: 13,
+                            color: "var(--ink)",
+                            fontWeight: 500,
                           }}
                         >
-                          {a.shortcut}
+                          {a.name}
+                        </span>
+                        {a.shortcut && (
+                          <span
+                            className="font-mono"
+                            style={{
+                              fontSize: 10.5,
+                              color: "var(--ink-mute)",
+                              padding: "1px 5px",
+                              background: "var(--bg-1)",
+                              borderRadius: 3,
+                            }}
+                          >
+                            {a.shortcut}
+                          </span>
+                        )}
+                      </div>
+                      <ActionParamsLine action={a} templateById={templateById} />
+                      {a.description && (
+                        <span
+                          className="mt-0.5 truncate italic"
+                          style={{ fontSize: 11, color: "var(--ink-soft)" }}
+                        >
+                          {a.description}
                         </span>
                       )}
                     </div>
-                    <ActionParamsLine action={a} templateById={templateById} />
-                    {a.description && (
-                      <span
-                        className="mt-0.5 truncate italic"
-                        style={{ fontSize: 11, color: "var(--ink-soft)" }}
-                      >
-                        {a.description}
-                      </span>
-                    )}
-                  </div>
-                  {/* Action buttons */}
-                  <button
-                    type="button"
-                    onClick={() => runMut.mutate(a.id)}
-                    aria-label={t("quickActions.run")}
-                    title={t("quickActions.run")}
-                    data-testid="quick-actions-run"
-                    data-action-id={a.id}
-                    className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-accent/30"
-                    style={{ color: "var(--accent-2)" }}
-                  >
-                    <Zap size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCreating(false);
-                      setEditing(a);
-                    }}
-                    aria-label={t("quickActions.edit")}
-                    title={t("quickActions.edit")}
-                    data-testid="quick-actions-edit"
-                    data-action-id={a.id}
-                    className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-accent/30"
-                    style={{ color: "var(--ink-mute)" }}
-                  >
-                    <Pencil size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          t("quickActions.deleteConfirm", { name: a.name }),
-                        )
-                      ) {
-                        deleteMut.mutate(a.id);
-                      }
-                    }}
-                    aria-label={t("quickActions.delete")}
-                    title={t("quickActions.delete")}
-                    data-testid="quick-actions-delete"
-                    data-action-id={a.id}
-                    className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-destructive/20"
-                    style={{ color: "var(--ink-mute)" }}
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </li>
-              ))}
+                    {/* Action buttons */}
+                    <button
+                      type="button"
+                      onClick={() => runMut.mutate(a.id)}
+                      aria-label={t("quickActions.run")}
+                      title={t("quickActions.run")}
+                      disabled={runMut.isPending}
+                      aria-busy={isRunning}
+                      data-busy={isRunning ? "true" : undefined}
+                      data-testid="quick-actions-run"
+                      data-action-id={a.id}
+                      className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-accent/30 disabled:opacity-50"
+                      style={{ color: "var(--accent-2)" }}
+                    >
+                      {isRunning ? (
+                        <Loader2
+                          size={13}
+                          className="animate-spin"
+                          data-testid="quick-actions-run-spinner"
+                        />
+                      ) : (
+                        <Zap size={13} />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreating(false);
+                        setEditing(a);
+                      }}
+                      aria-label={t("quickActions.edit")}
+                      title={t("quickActions.edit")}
+                      disabled={runMut.isPending}
+                      data-testid="quick-actions-edit"
+                      data-action-id={a.id}
+                      className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-accent/30 disabled:opacity-50"
+                      style={{ color: "var(--ink-mute)" }}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            t("quickActions.deleteConfirm", { name: a.name }),
+                          )
+                        ) {
+                          deleteMut.mutate(a.id);
+                        }
+                      }}
+                      aria-label={t("quickActions.delete")}
+                      title={t("quickActions.delete")}
+                      disabled={runMut.isPending}
+                      data-testid="quick-actions-delete"
+                      data-action-id={a.id}
+                      className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-destructive/20 disabled:opacity-50"
+                      style={{ color: "var(--ink-mute)" }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -399,7 +417,10 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
   };
 
   return (
-    <Dialog open={true} onOpenChange={(v) => (v ? null : onClose())}>
+    <Dialog
+      open={true}
+      onOpenChange={(v) => (v || isPending ? null : onClose())}
+    >
       <DialogContent
         data-testid="quick-actions-editor"
         showCloseButton={false}
@@ -440,6 +461,7 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
               value={name}
               autoFocus
               placeholder={t("newDoc.actionNamePlaceholder")}
+              disabled={isPending}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={imeSafeKeyHandler<HTMLInputElement>((e) => {
                 if (e.key === "Enter") {
@@ -465,6 +487,7 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
               type="text"
               value={folder}
               placeholder="weekly"
+              disabled={isPending}
               onChange={(e) => setFolder(e.target.value)}
               data-testid="editor-folder"
               className="font-mono outline-none"
@@ -487,6 +510,7 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
               type="text"
               value={titleTemplate}
               placeholder="周报 {{week}}"
+              disabled={isPending}
               onChange={(e) => setTitleTemplate(e.target.value)}
               data-testid="editor-title-template"
               className="font-mono outline-none"
@@ -510,6 +534,7 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
                 templates={templates.data ?? []}
                 value={contentTemplateId || null}
                 open={templateMenuOpen}
+                disabled={isPending}
                 onToggle={() => setTemplateMenuOpen((v) => !v)}
                 onSelect={(id) => {
                   setContentTemplateId(id ?? "");
@@ -527,6 +552,7 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
                 type="text"
                 value={shortcut}
                 placeholder={t("newDoc.actionShortcutPlaceholder")}
+                disabled={isPending}
                 onChange={(e) => setShortcut(e.target.value)}
                 data-testid="editor-shortcut"
                 className="font-mono outline-none"
@@ -546,6 +572,7 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
             <input
               type="text"
               value={description}
+              disabled={isPending}
               onChange={(e) => setDescription(e.target.value)}
               data-testid="editor-description"
               className="outline-none"
@@ -577,8 +604,9 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
           <button
             type="button"
             onClick={onClose}
+            disabled={isPending}
             data-testid="editor-cancel"
-            className="rounded-md"
+            className="rounded-md disabled:opacity-50"
             style={{
               height: 28,
               padding: "0 14px",
@@ -594,6 +622,8 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
             type="button"
             onClick={submit}
             disabled={isPending || !name.trim()}
+            aria-busy={isPending}
+            data-busy={isPending ? "true" : undefined}
             data-testid="editor-save"
             className="inline-flex items-center gap-1.5 rounded-md disabled:opacity-50"
             style={{
@@ -606,9 +636,21 @@ function QuickActionEditor({ mode, initial, onClose }: EditorProps) {
               border: "1px solid var(--accent)",
             }}
           >
-            {mode === "create"
-              ? t("quickActions.editorSaveNew")
-              : t("quickActions.editorSaveEdit")}
+            {isPending ? (
+              <Loader2
+                size={11}
+                strokeWidth={2.4}
+                className="animate-spin"
+                data-testid="editor-save-spinner"
+              />
+            ) : null}
+            {isPending
+              ? mode === "create"
+                ? t("quickActions.creating")
+                : t("quickActions.saving")
+              : mode === "create"
+                ? t("quickActions.editorSaveNew")
+                : t("quickActions.editorSaveEdit")}
           </button>
         </div>
       </DialogContent>
@@ -631,6 +673,7 @@ function TemplatePicker({
   templates,
   value,
   open,
+  disabled = false,
   onToggle,
   onSelect,
   onCreateTemplate,
@@ -639,6 +682,7 @@ function TemplatePicker({
   templates: TemplateSummary[];
   value: string | null;
   open: boolean;
+  disabled?: boolean;
   onToggle: () => void;
   onSelect: (id: string | null) => void;
   onCreateTemplate: () => void;
@@ -650,9 +694,10 @@ function TemplatePicker({
     <div className="relative">
       <button
         type="button"
+        disabled={disabled}
         onClick={onToggle}
         data-testid="editor-template-picker"
-        className="flex w-full items-center gap-2"
+        className="flex w-full items-center gap-2 disabled:opacity-50"
         style={{
           height: 30,
           border: "1px solid var(--line)",

@@ -13,7 +13,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, FileText, Star, Zap } from "lucide-react";
+import { ChevronRight, FileText, Loader2, Star, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -212,12 +212,13 @@ export function CommandPalette({
       })) ?? [];
     return [...actionRows, ...builtinCommands];
   }, [mode, actions.data, builtinCommands, runMutation]);
+  const runningActionId = runMutation.isPending ? runMutation.variables : null;
 
   return (
     <Dialog
       open={open}
       onOpenChange={(o) => {
-        if (!o) onClose();
+        if (!o && !runMutation.isPending) onClose();
       }}
     >
       <DialogContent
@@ -312,14 +313,17 @@ export function CommandPalette({
               >
                 {commandRows.map((c) => {
                   const isAction = c.id.startsWith("action.");
+                  const actionId = isAction ? c.id.slice("action.".length) : null;
+                  const isRunning = actionId !== null && runningActionId === actionId;
                   return (
                     <CommandItem
                       key={c.id}
-                      className="!py-1.5"
+                      className={`!py-1.5 ${runMutation.isPending ? "opacity-60" : ""}`}
                       value={`${c.name} ${c.description ?? ""} ${
                         c.shortcut ?? ""
                       } ${(c.keywords ?? []).join(" ")}`}
                       onSelect={() => {
+                        if (runMutation.isPending) return;
                         void c.run();
                         // Default: close after run. Async commands
                         // (quick actions) opt out via closeAfterRun:
@@ -331,8 +335,16 @@ export function CommandPalette({
                         isAction ? "palette-action-item" : "palette-command-item"
                       }
                       data-command-id={c.id}
+                      aria-busy={isRunning}
+                      data-busy={isRunning ? "true" : undefined}
                     >
-                      {isAction ? (
+                      {isRunning ? (
+                        <Loader2
+                          className="size-3.5 shrink-0 animate-spin"
+                          style={{ color: "var(--accent)" }}
+                          data-testid="palette-action-spinner"
+                        />
+                      ) : isAction ? (
                         <Zap
                           className="size-3.5 shrink-0"
                           style={{ color: "var(--accent)" }}
@@ -341,11 +353,15 @@ export function CommandPalette({
                         <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
                       )}
                       <span className="truncate">{c.name}</span>
-                      {c.description && (
+                      {isRunning ? (
+                        <span className="ml-2 truncate text-[11px] text-muted-foreground">
+                          {t("quickActions.running")}
+                        </span>
+                      ) : c.description ? (
                         <span className="ml-2 truncate text-[11px] text-muted-foreground">
                           {c.description}
                         </span>
-                      )}
+                      ) : null}
                       {c.shortcut && (
                         <span className="ml-auto shrink-0 pl-3 font-mono text-[11px] text-muted-foreground">
                           {c.shortcut}

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -58,7 +58,10 @@ export function TemplateCreateDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(v) => (!v ? onClose() : null)}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => (!v && !createMut.isPending ? onClose() : null)}
+    >
       <DialogContent
         data-testid="template-create-dialog"
         showCloseButton={false}
@@ -88,8 +91,9 @@ export function TemplateCreateDialog({
           <button
             type="button"
             onClick={onClose}
+            disabled={createMut.isPending}
             aria-label={t("newDoc.close")}
-            className="text-[color:var(--ink-mute)] hover:text-[color:var(--ink)]"
+            className="text-[color:var(--ink-mute)] hover:text-[color:var(--ink)] disabled:opacity-50"
           >
             <X size={14} />
           </button>
@@ -102,6 +106,7 @@ export function TemplateCreateDialog({
               type="text"
               value={title}
               placeholder={t("templates.titlePlaceholder")}
+              disabled={createMut.isPending}
               onChange={(e) => setTitle(e.target.value)}
               onKeyDown={imeSafeKeyHandler<HTMLInputElement>((e) => {
                 if (e.key === "Enter") {
@@ -129,9 +134,10 @@ export function TemplateCreateDialog({
                 <button
                   key={candidate}
                   type="button"
+                  disabled={createMut.isPending}
                   onClick={() => setKind(candidate)}
                   data-testid={`template-kind-${candidate}`}
-                  className="inline-flex items-center rounded-md px-2 py-1"
+                  className="inline-flex items-center rounded-md px-2 py-1 disabled:opacity-50"
                   style={{
                     border:
                       kind === candidate
@@ -153,6 +159,7 @@ export function TemplateCreateDialog({
           >
             <textarea
               value={body}
+              disabled={createMut.isPending}
               onChange={(e) => setBody(e.target.value)}
               data-testid="template-body"
               className="font-mono outline-none"
@@ -182,8 +189,9 @@ export function TemplateCreateDialog({
           <button
             type="button"
             onClick={onClose}
+            disabled={createMut.isPending}
             data-testid="template-create-cancel"
-            className="rounded-md"
+            className="rounded-md disabled:opacity-50"
             style={{
               height: 28,
               padding: "0 14px",
@@ -199,8 +207,10 @@ export function TemplateCreateDialog({
             type="button"
             onClick={submit}
             disabled={!title.trim() || createMut.isPending}
+            aria-busy={createMut.isPending}
+            data-busy={createMut.isPending ? "true" : undefined}
             data-testid="template-create-submit"
-            className="rounded-md disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md disabled:opacity-50"
             style={{
               height: 28,
               padding: "0 14px",
@@ -211,6 +221,14 @@ export function TemplateCreateDialog({
               border: "1px solid var(--accent)",
             }}
           >
+            {createMut.isPending ? (
+              <Loader2
+                size={11}
+                strokeWidth={2.4}
+                className="animate-spin"
+                data-testid="template-create-submit-spinner"
+              />
+            ) : null}
             {createMut.isPending ? t("templates.creating") : t("templates.create")}
           </button>
         </div>

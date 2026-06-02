@@ -376,6 +376,9 @@
     "editorTitleEdit": "Edit quick action",
     "editorSaveNew": "Create",
     "editorSaveEdit": "Save",
+    "creating": "Creating…",
+    "saving": "Saving…",
+    "running": "Running…",
     "inheritedKind": "Creates"
   },
   "newDoc": {

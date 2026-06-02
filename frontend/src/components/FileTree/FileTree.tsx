@@ -15,6 +15,7 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  Loader2,
   Star,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1249,9 +1250,15 @@ function Row({
           <FileText className="size-4 shrink-0 text-muted-foreground" />
         )}
         {isPending && node.data.submitting ? (
-          <span className="flex-1 truncate rounded-sm border border-transparent px-1 text-muted-foreground">
-            {node.data.name || t("tree.untitled")}
-          </span>
+          <>
+            <Loader2
+              className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+              data-testid="file-tree-pending-spinner"
+            />
+            <span className="flex-1 truncate rounded-sm border border-transparent px-1 text-muted-foreground">
+              {node.data.name || t("tree.untitled")}
+            </span>
+          </>
         ) : node.isEditing || isPending ? (
           <InlineEditInput
             initial={node.data.name}
