@@ -188,6 +188,10 @@ try {
       await page.request.get(`${baseURL}/api/notes/${encodeURIComponent(created.id)}`)
     ).json();
     assert(full.kind === "reference", `created note inherits template kind — got ${full.kind}`);
+    assert(
+      full.body.includes("source:"),
+      `created note applies selected template body — got ${JSON.stringify(full.body)}`,
+    );
     // h1 reflects the created note title.
     const h1 = (await page.locator('[data-testid="note-title"]').first().textContent()) ?? "";
     assert(/reading/.test(h1), `h1 should show '... reading' — got "${h1}"`);

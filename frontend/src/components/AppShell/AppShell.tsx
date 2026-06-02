@@ -11,6 +11,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   FileText,
   LayoutTemplate,
+  Loader2,
   MessageSquare,
   NotebookPen,
   Network,
@@ -84,6 +85,11 @@ const DEFAULT_RAIL_PX = 340;
 const MIN_RAIL_PX = 240;
 const MAX_RAIL_PERCENT = 35;
 const RAIL_COLLAPSE_KEY = "knowlet.rail.collapsed.v1";
+
+type VaultSwitchPayload = {
+  vault?: string;
+  vault_name?: string;
+};
 
 function isDesktopRuntime(): boolean {
   try {
@@ -181,6 +187,9 @@ export function AppShell() {
   const [draftsOpen, setDraftsOpen] = useState(false);
   // Stage C2 — digest intake focus mode.
   const [digestOpen, setDigestOpen] = useState(false);
+  const [vaultSwitching, setVaultSwitching] = useState<VaultSwitchPayload | null>(
+    null,
+  );
   const digestStatus = useQuery({
     queryKey: ["digest-status"],
     queryFn: getDigestStatus,
@@ -214,6 +223,8 @@ export function AppShell() {
     let disposed = false;
     let unlistenOpen: UnlistenFn | undefined;
     let unlistenPull: UnlistenFn | undefined;
+    let unlistenVaultSwitchStart: UnlistenFn | undefined;
+    let unlistenVaultSwitchEnd: UnlistenFn | undefined;
 
     void listen("knowlet-open-digest", () => {
       setDigestOpen(true);
@@ -236,10 +247,32 @@ export function AppShell() {
       }
     });
 
+    void listen<VaultSwitchPayload>("knowlet-vault-switch-start", (event) => {
+      setVaultSwitching(event.payload ?? {});
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenVaultSwitchStart = unlisten;
+      }
+    });
+
+    void listen("knowlet-vault-switch-end", () => {
+      setVaultSwitching(null);
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenVaultSwitchEnd = unlisten;
+      }
+    });
+
     return () => {
       disposed = true;
       unlistenOpen?.();
       unlistenPull?.();
+      unlistenVaultSwitchStart?.();
+      unlistenVaultSwitchEnd?.();
     };
   }, [pullDigestNow]);
   // Phase 3 Stage 3 §3.4 — CaptureBox modal (⌘⇧V).
@@ -1221,7 +1254,46 @@ export function AppShell() {
           setPendingPreserveMode(false);
         }}
       />
+      {vaultSwitching && (
+        <VaultSwitchBlockingOverlay
+          vaultName={vaultSwitching.vault_name ?? "Vault"}
+        />
+      )}
     </>
+  );
+}
+
+function VaultSwitchBlockingOverlay({ vaultName }: { vaultName: string }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/20 px-4 backdrop-blur-[2px]"
+      data-testid="app-vault-switch-overlay"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div
+        className="flex w-full max-w-sm flex-col items-center gap-3 rounded-lg border px-5 py-6 text-center shadow-xl"
+        style={{
+          borderColor: "var(--line)",
+          background: "var(--panel)",
+          color: "var(--ink)",
+        }}
+      >
+        <div
+          className="grid size-12 place-items-center rounded-full"
+          style={{ background: "var(--accent-tint-2)" }}
+        >
+          <Loader2 className="size-6 animate-spin text-[var(--accent-2)]" />
+        </div>
+        <div>
+          <div className="text-base font-semibold">Opening {vaultName}</div>
+          <div className="mt-1 text-sm text-[var(--ink-soft)]">
+            Starting a fresh local backend before Knowlet switches windows.
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

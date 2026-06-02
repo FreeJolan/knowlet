@@ -19,6 +19,7 @@ use tauri_plugin_window_state::{StateFlags, WindowExt};
 const WINDOW_MAIN: &str = "main";
 const WINDOW_VAULT_LAUNCHER: &str = "vault-launcher";
 const VAULT_LAUNCHER_URL: &str = "index.html?desktop-launcher=1";
+const MENU_MANAGE_VAULTS: &str = "manage-vaults";
 const MENU_NEW_VAULT: &str = "new-vault";
 const MENU_OPEN_VAULT: &str = "open-vault";
 const MENU_OPEN_RECENT_VAULT: &str = "open-recent-vault";
@@ -29,6 +30,11 @@ const MENU_PULL_DIGEST: &str = "pull-digest";
 const MENU_DIGEST_STATUS: &str = "digest-status";
 const EVENT_OPEN_DIGEST: &str = "knowlet-open-digest";
 const EVENT_PULL_DIGEST: &str = "knowlet-pull-digest";
+const EVENT_VAULT_SWITCH_START: &str = "knowlet-vault-switch-start";
+const EVENT_VAULT_SWITCH_END: &str = "knowlet-vault-switch-end";
+const DESKTOP_DATA_SCOPE_ENV: &str = "KNOWLET_DESKTOP_DATA_SCOPE";
+const RECENT_VAULTS_FILENAME: &str = "recent-vaults.json";
+const WINDOW_STATE_FILENAME: &str = ".window-state.json";
 
 struct DesktopState {
     backend: Mutex<Option<BackendProcess>>,
@@ -52,6 +58,18 @@ struct DeleteVaultResult {
     path: String,
     removed_record: bool,
     deleted_local_files: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DesktopDataScope {
+    Production,
+    Test,
+}
+
+#[derive(Clone, Serialize)]
+struct VaultSwitchEvent {
+    vault_name: String,
+    vault: String,
 }
 
 #[tauri::command]
@@ -177,13 +195,18 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::new()
                 .with_state_flags(desktop_window_state_flags())
+                .with_filename(desktop_window_state_filename())
                 .build(),
         )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .menu(build_initial_desktop_menu)
         .on_menu_event(|app, event| {
-            if event.id() == MENU_NEW_VAULT {
+            if event.id() == MENU_MANAGE_VAULTS {
+                if let Err(err) = show_vault_launcher(app) {
+                    show_desktop_error("Knowlet could not open the vault launcher", &err);
+                }
+            } else if event.id() == MENU_NEW_VAULT {
                 if let Err(err) = show_vault_launcher(app) {
                     show_desktop_error("Knowlet could not open the vault launcher", &err);
                 }
@@ -224,7 +247,7 @@ pub fn run() {
                 .path()
                 .app_config_dir()
                 .map_err(|err| format!("failed to resolve desktop config directory: {err}"))?
-                .join("recent-vaults.json");
+                .join(recent_vaults_filename());
 
             if let Some(vault) =
                 resolve_startup_vault(std::env::var_os(VAULT_ENV), &recent_vaults_path).map_err(
@@ -349,6 +372,44 @@ fn desktop_window_state_flags() -> StateFlags {
     StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED | StateFlags::FULLSCREEN
 }
 
+fn desktop_data_scope() -> DesktopDataScope {
+    match std::env::var(DESKTOP_DATA_SCOPE_ENV) {
+        Ok(value) if value.eq_ignore_ascii_case("prod") => DesktopDataScope::Production,
+        Ok(value) if value.eq_ignore_ascii_case("production") => DesktopDataScope::Production,
+        Ok(value) if value.eq_ignore_ascii_case("test") => DesktopDataScope::Test,
+        Ok(value) if value.eq_ignore_ascii_case("dev") => DesktopDataScope::Test,
+        Ok(value) if value.eq_ignore_ascii_case("development") => DesktopDataScope::Test,
+        _ if cfg!(debug_assertions) => DesktopDataScope::Test,
+        _ => DesktopDataScope::Production,
+    }
+}
+
+fn recent_vaults_filename() -> String {
+    scoped_desktop_state_filename(RECENT_VAULTS_FILENAME, desktop_data_scope())
+}
+
+fn desktop_window_state_filename() -> String {
+    desktop_window_state_filename_for_scope(desktop_data_scope())
+}
+
+fn desktop_window_state_filename_for_scope(scope: DesktopDataScope) -> String {
+    scoped_desktop_state_filename(WINDOW_STATE_FILENAME, scope)
+}
+
+fn scoped_desktop_state_filename(filename: &str, scope: DesktopDataScope) -> String {
+    if scope == DesktopDataScope::Production {
+        return filename.to_string();
+    }
+    let path = Path::new(filename);
+    let stem = path.file_stem().and_then(|value| value.to_str());
+    let extension = path.extension().and_then(|value| value.to_str());
+    match (stem, extension) {
+        (Some(stem), Some(extension)) => format!("{stem}.test.{extension}"),
+        (Some(stem), None) => format!("{stem}.test"),
+        _ => format!("{filename}.test"),
+    }
+}
+
 fn restore_desktop_window_state<R: tauri::Runtime>(
     window: &tauri::WebviewWindow<R>,
 ) -> Result<(), String> {
@@ -403,6 +464,13 @@ fn build_vault_menu<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     recent_vaults: &[PathBuf],
 ) -> tauri::Result<Submenu<R>> {
+    let manage_vaults = MenuItem::with_id(
+        handle,
+        MENU_MANAGE_VAULTS,
+        "Manage Vaults...",
+        true,
+        None::<&str>,
+    )?;
     let new_vault = MenuItem::with_id(
         handle,
         MENU_NEW_VAULT,
@@ -423,7 +491,7 @@ fn build_vault_menu<R: tauri::Runtime>(
         "vault",
         "Vault",
         true,
-        &[&new_vault, &open_vault, &recent_vault],
+        &[&manage_vaults, &new_vault, &open_vault, &recent_vault],
     )
 }
 
@@ -498,7 +566,7 @@ fn refresh_desktop_menu(app: &tauri::AppHandle) -> Result<(), String> {
 fn recent_vaults_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
-        .map(|dir| dir.join("recent-vaults.json"))
+        .map(|dir| dir.join(recent_vaults_filename()))
         .map_err(|err| format!("failed to resolve desktop config directory: {err}"))
 }
 
@@ -551,9 +619,19 @@ fn switch_to_vault(app: &tauri::AppHandle, vault: PathBuf) -> Result<DesktopStat
         .map_err(|err| format!("failed to resolve current executable: {err}"))?;
     let dev_frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
     let frontend_dist = resolve_frontend_dist(&current_exe, &dev_frontend_dist)?;
-    let backend = BackendProcess::start(vault.clone(), frontend_dist)?;
+    emit_vault_switch_start(app, &vault);
+    let backend = match BackendProcess::start(vault.clone(), frontend_dist) {
+        Ok(backend) => backend,
+        Err(err) => {
+            emit_vault_switch_end(app);
+            return Err(err);
+        }
+    };
     let url = backend.url.clone();
-    open_main_window(app, &url)?;
+    if let Err(err) = open_main_window(app, &url) {
+        emit_vault_switch_end(app);
+        return Err(err);
+    }
 
     *app.state::<DesktopState>()
         .backend
@@ -669,6 +747,29 @@ fn recent_vault_summary(path: &Path) -> RecentVaultSummary {
             .to_string(),
         path: path.display().to_string(),
     }
+}
+
+fn vault_switch_event(path: &Path) -> VaultSwitchEvent {
+    VaultSwitchEvent {
+        vault_name: path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Vault")
+            .to_string(),
+        vault: path.display().to_string(),
+    }
+}
+
+fn emit_vault_switch_start(app: &tauri::AppHandle, vault: &Path) {
+    let _ = app.emit_to(
+        WINDOW_MAIN,
+        EVENT_VAULT_SWITCH_START,
+        vault_switch_event(vault),
+    );
+}
+
+fn emit_vault_switch_end(app: &tauri::AppHandle) {
+    let _ = app.emit_to(WINDOW_MAIN, EVENT_VAULT_SWITCH_END, ());
 }
 
 fn open_recent_vault_menu_id(index: usize) -> String {
@@ -793,6 +894,7 @@ mod tests {
 
         assert!(source.contains("tauri_plugin_window_state::Builder::new()"));
         assert!(source.contains(".with_state_flags(desktop_window_state_flags())"));
+        assert!(source.contains(".with_filename(desktop_window_state_filename())"));
     }
 
     #[test]
@@ -803,6 +905,41 @@ mod tests {
 
         assert!(source.contains(&initial_builder_call));
         assert!(!source.contains(&legacy_builder_call));
+    }
+
+    #[test]
+    fn vault_menu_exposes_manage_vaults_entry() {
+        let source = include_str!("lib.rs");
+
+        assert!(source.contains("MENU_MANAGE_VAULTS"));
+        assert!(source.contains("\"Manage Vaults...\""));
+        assert!(source.contains("event.id() == MENU_MANAGE_VAULTS"));
+    }
+
+    #[test]
+    fn desktop_app_data_filenames_are_channel_scoped() {
+        assert_eq!(
+            super::scoped_desktop_state_filename(
+                "recent-vaults.json",
+                super::DesktopDataScope::Production
+            ),
+            "recent-vaults.json"
+        );
+        assert_eq!(
+            super::scoped_desktop_state_filename(
+                "recent-vaults.json",
+                super::DesktopDataScope::Test
+            ),
+            "recent-vaults.test.json"
+        );
+        assert_eq!(
+            super::desktop_window_state_filename_for_scope(super::DesktopDataScope::Production),
+            ".window-state.json"
+        );
+        assert_eq!(
+            super::desktop_window_state_filename_for_scope(super::DesktopDataScope::Test),
+            ".window-state.test.json"
+        );
     }
 
     #[test]

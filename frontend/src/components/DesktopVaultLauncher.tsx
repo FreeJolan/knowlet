@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   FolderOpen,
   HardDrive,
+  Loader2,
   Plus,
   RefreshCw,
   Trash2,
@@ -56,6 +57,15 @@ export function DesktopVaultLauncher(): React.ReactNode {
   const tauriAvailable = isTauri();
 
   const canAskPreview = parent.trim().length > 0 && name.trim().length > 0;
+  const switchingVaultName = useMemo(() => {
+    if (busy === "create") return name.trim() || "New Vault";
+    if (busy === "open") return "selected Vault";
+    if (busy?.startsWith("recent:")) {
+      const path = busy.slice("recent:".length);
+      return recent.find((vault) => vault.path === path)?.name ?? "Vault";
+    }
+    return null;
+  }, [busy, name, recent]);
   const createLabel = useMemo(() => {
     if (preview?.status === "existing_empty") return "Use Empty Folder";
     return "Create Vault";
@@ -465,6 +475,44 @@ export function DesktopVaultLauncher(): React.ReactNode {
           </div>
         </div>
       )}
+
+      {switchingVaultName && (
+        <VaultSwitchOverlay title={`Opening ${switchingVaultName}`} />
+      )}
     </main>
+  );
+}
+
+function VaultSwitchOverlay({ title }: { title: string }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/20 px-4 backdrop-blur-[2px]"
+      data-testid="desktop-vault-switch-overlay"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div
+        className="flex w-full max-w-sm flex-col items-center gap-3 rounded-lg border px-5 py-6 text-center shadow-xl"
+        style={{
+          borderColor: "var(--line)",
+          background: "var(--panel)",
+          color: "var(--ink)",
+        }}
+      >
+        <div
+          className="grid size-12 place-items-center rounded-full"
+          style={{ background: "var(--accent-tint-2)" }}
+        >
+          <Loader2 className="size-6 animate-spin text-[var(--accent-2)]" />
+        </div>
+        <div>
+          <div className="text-base font-semibold">{title}</div>
+          <div className="mt-1 text-sm text-[var(--ink-soft)]">
+            Starting the local backend and checking the vault before switching.
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.0.20] - 2026-06-03
+
+Vault management and desktop data isolation release.
+
+- Add a blocking Vault-switch progress overlay for desktop launcher and native
+  menu switch paths so users can see that Knowlet is starting and checking the
+  selected vault.
+- Add a native `Manage Vaults...` menu entry that opens the desktop Vault
+  manager for recent-vault management, creation, and opening flows.
+- Keep production and developer/test desktop app state separate for recent
+  vaults and restored window geometry.
+- Add E2E coverage that Quick Actions created from a selected template apply
+  the template body when run.
+
 ## [0.0.19] - 2026-06-02
 
 Desktop right-click delete confirmation release.

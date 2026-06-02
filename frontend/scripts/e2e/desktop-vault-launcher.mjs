@@ -34,6 +34,13 @@ try {
       invoke: async (cmd, args = {}) => {
         calls.push({ cmd, args });
         if (cmd === "desktop_recent_vaults") return [...recent];
+        if (cmd === "desktop_open_vault") {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          return {
+            backend_url: "http://127.0.0.1:9999",
+            vault: args.path,
+          };
+        }
         if (cmd === "desktop_delete_vault") {
           const idx = recent.findIndex((v) => v.path === args.path);
           if (idx >= 0) recent.splice(idx, 1);
@@ -65,6 +72,39 @@ try {
   }, initialRecent);
 
   await page.goto(`${baseURL}/?desktop-launcher=1`, { waitUntil: "networkidle" });
+
+  await runTest("opening a recent vault shows a blocking switch overlay", async () => {
+    await page.getByText("Research Vault").waitFor({ state: "visible", timeout: 3000 });
+    await page.getByText("Research Vault").click();
+
+    const overlay = page.locator('[data-testid="desktop-vault-switch-overlay"]');
+    await overlay.waitFor({ state: "visible", timeout: 1000 });
+    const text = await overlay.textContent();
+    assert(
+      text?.includes("Opening Research Vault"),
+      `switch overlay names the vault being opened — got ${JSON.stringify(text)}`,
+    );
+
+    const box = await overlay.boundingBox();
+    assert(Boolean(box), "switch overlay has a layout box");
+    const hit = await page.evaluate(
+      ({ x, y }) =>
+        document
+          .elementFromPoint(x, y)
+          ?.closest('[data-testid="desktop-vault-switch-overlay"]')
+          ?.getAttribute("data-testid"),
+      {
+        x: box.x + box.width / 2,
+        y: box.y + box.height / 2,
+      },
+    );
+    assert(hit === "desktop-vault-switch-overlay", `overlay blocks input — got ${hit}`);
+    await overlay.waitFor({ state: "hidden", timeout: 3000 });
+
+    const calls = await page.evaluate(() => window.__KNOWLET_TAURI_CALLS__);
+    const lastOpen = calls.filter((c) => c.cmd === "desktop_open_vault").at(-1);
+    assert(lastOpen?.args?.path === initialRecent[0].path, "open command receives vault path");
+  });
 
   await runTest("recent vault delete opens a clear default-safe dialog", async () => {
     await page.getByText("Research Vault").waitFor({ state: "visible", timeout: 3000 });

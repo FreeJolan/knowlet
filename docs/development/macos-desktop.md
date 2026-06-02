@@ -20,7 +20,20 @@ PyInstaller backend sidecars for both Apple Silicon and Intel Macs.
     folder picker.
   - The native folder picker validates that the selected folder contains
     `.knowlet/`.
+- App data isolation:
+  - Production builds use the production app config files:
+    `recent-vaults.json` and `.window-state.json`.
+  - Debug / developer test builds use separate files by default:
+    `recent-vaults.test.json` and `.window-state.test.json`.
+  - The scope can be forced with `KNOWLET_DESKTOP_DATA_SCOPE=production` or
+    `KNOWLET_DESKTOP_DATA_SCOPE=test` when launching from a shell.
+  - There is no fallback between scopes. A test build must not read production
+    recent-vault or window-state data, and the production app must not read
+    test-state files.
 - Runtime vault switching:
+  - The native Vault menu exposes `Manage Vaults...`, which opens the desktop
+    Vault manager / launcher with recent-vault deletion, new-vault creation, and
+    existing-vault open flows.
   - The native Vault menu exposes `Open Vault...` with `CmdOrCtrl+O`.
   - The native Vault menu also exposes `Open Recent`, populated from the same
     valid recent-vault list used by startup auto-reopen. Stale paths are pruned
@@ -29,6 +42,10 @@ PyInstaller backend sidecars for both Apple Silicon and Intel Macs.
   - Choosing another valid vault starts a fresh backend on a new loopback port,
     navigates the main window to it, stops the previous backend, and records the
     vault as most recent.
+  - Vault switches are blocking from the user's point of view. The launcher
+    shows a full-window progress overlay for recent/open/create flows; the main
+    window shows the same blocking state when a switch starts from the native
+    menu.
 - macOS window/Dock behavior:
   - Closing the main window hides it instead of tearing down the app, preserving
     the active backend and window state for normal macOS app behavior.
@@ -125,8 +142,8 @@ KNOWLET_VAULT=/path/to/vault frontend/src-tauri/target/universal-apple-darwin/re
 
 Then launch the same binary without `KNOWLET_VAULT`. If the previous vault is
 still valid, the app should reopen it without showing the picker. To verify the
-first-run picker again, remove the app config `recent-vaults.json` file or point
-it at stale paths.
+first-run picker again, remove the app config `recent-vaults.json` file (or
+`recent-vaults.test.json` for developer test builds) or point it at stale paths.
 
 For a self-contained launch probe, remove `uv` from `PATH` and confirm the
 child backend process comes from `Knowlet.app/Contents/Resources/knowlet-sidecars/`:
