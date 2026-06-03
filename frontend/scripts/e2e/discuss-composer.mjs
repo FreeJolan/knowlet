@@ -28,6 +28,13 @@ async function openDiscussPane() {
     .waitFor({ state: "visible", timeout: 3000 });
 }
 
+async function moveCaretToEnd(locator) {
+  await locator.evaluate((el) => {
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  });
+}
+
 try {
   await openDiscussPane();
 
@@ -71,11 +78,13 @@ try {
     const dialog = page.locator('[data-testid="discuss-longform-dialog"]');
     await dialog.waitFor({ state: "visible", timeout: 3000 });
     const longInput = page.locator('[data-testid="discuss-longform-input"]');
-    await longInput.click();
+    await moveCaretToEnd(longInput);
     await page.keyboard.press("Enter");
     let value = await longInput.inputValue();
     assert(value === "1. one\n2. ", `long-form Enter should continue the list, got ${JSON.stringify(value)}`);
+    await moveCaretToEnd(longInput);
     await page.keyboard.type("two");
+    await moveCaretToEnd(longInput);
     await page.keyboard.press("Enter");
     value = await longInput.inputValue();
     assert(

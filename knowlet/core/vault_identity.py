@@ -36,6 +36,23 @@ def ensure_vault_id(vault_root: Path) -> str:
     return vault_id
 
 
+def write_vault_id(vault_root: Path, vault_id: str) -> None:
+    """Bind a local vault folder to an existing remote vault identity.
+
+    Normal vault creation should use ``ensure_vault_id`` so each new
+    vault gets a fresh identity. Restore-from-cloud is the exception:
+    the Drive-side ``vault_id`` is the canonical sync identity, so the
+    local folder must adopt it before any scoped appData names are
+    materialized.
+    """
+    value = vault_id.strip()
+    if not value:
+        raise ValueError("vault_id must not be empty")
+    if any(ch in value for ch in ("/", "\\", "\0")):
+        raise ValueError("vault_id contains invalid path characters")
+    _write_vault_id(vault_identity_path(vault_root), value)
+
+
 def _read_vault_id(path: Path) -> str | None:
     if not path.exists():
         return None

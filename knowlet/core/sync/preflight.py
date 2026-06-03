@@ -403,6 +403,20 @@ def _maybe_heartbeat_pass(
 
         logging.getLogger(__name__).warning("preflight: heartbeat write failed", exc_info=True)
     try:
+        from knowlet.core.sync.vault_registry import publish_vault_to_registry
+
+        publish_vault_to_registry(
+            service,
+            vault_root=state_store.vault_root,
+            device_label=state_store.device_label(),
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "preflight: vault registry publish failed", exc_info=True
+        )
+    try:
         devices = list_alive_devices(service, vault_root=state_store.vault_root)
         for d in devices:
             alive_devices_out.append({"device_id": d.device_id, "last_seen_at": d.last_seen_at})

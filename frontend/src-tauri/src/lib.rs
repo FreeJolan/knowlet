@@ -6,11 +6,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use backend::{
-    create_vault_dir, delete_vault_local_files, preview_new_vault, resolve_frontend_dist,
-    validate_vault_dir, BackendProcess, NewVaultPreview, VAULT_ENV,
+    create_vault_dir, delete_vault_local_files, initialize_vault_layout, preview_new_vault,
+    repo_root_from_manifest, resolve_backend_program, resolve_frontend_dist, validate_vault_dir,
+    BackendProcess, NewVaultPreview, BACKEND_BIN_ENV, VAULT_ENV,
 };
 use recent_vaults::{forget_recent_vault, load_valid_recent_vaults, record_recent_vault};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -35,6 +36,7 @@ const EVENT_VAULT_SWITCH_END: &str = "knowlet-vault-switch-end";
 const DESKTOP_DATA_SCOPE_ENV: &str = "KNOWLET_DESKTOP_DATA_SCOPE";
 const RECENT_VAULTS_FILENAME: &str = "recent-vaults.json";
 const WINDOW_STATE_FILENAME: &str = ".window-state.json";
+const DRIVE_ACCOUNT_VAULT_DIR: &str = "drive-account-vault";
 
 struct DesktopState {
     backend: Mutex<Option<BackendProcess>>,
@@ -58,6 +60,29 @@ struct DeleteVaultResult {
     path: String,
     removed_record: bool,
     deleted_local_files: bool,
+}
+
+#[derive(Serialize)]
+struct DriveAccountStatus {
+    connected: bool,
+    user_email: Option<String>,
+    user_display_name: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RemoteVaultSummary {
+    vault_id: String,
+    name: String,
+    updated_at: Option<String>,
+    last_device_label: Option<String>,
+    item_count: usize,
+    source: String,
+}
+
+#[derive(Deserialize)]
+struct SyncCredentialsFile {
+    user_email: Option<String>,
+    user_display_name: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,6 +214,70 @@ fn desktop_delete_vault(
     })
 }
 
+#[tauri::command]
+fn desktop_drive_account_status(app: tauri::AppHandle) -> Result<DriveAccountStatus, String> {
+    drive_account_status(&app)
+}
+
+#[tauri::command]
+fn desktop_drive_connect(app: tauri::AppHandle) -> Result<DriveAccountStatus, String> {
+    let account_vault = ensure_drive_account_vault(&app)?;
+    run_backend_cli(
+        &account_vault,
+        &["sync".to_string(), "connect".to_string()],
+    )?;
+    drive_account_status(&app)
+}
+
+#[tauri::command]
+fn desktop_remote_vaults(app: tauri::AppHandle) -> Result<Vec<RemoteVaultSummary>, String> {
+    let account_vault = ensure_drive_account_vault(&app)?;
+    let out = run_backend_cli(
+        &account_vault,
+        &[
+            "sync".to_string(),
+            "vaults".to_string(),
+            "--json".to_string(),
+        ],
+    )?;
+    serde_json::from_str(out.trim())
+        .map_err(|err| format!("failed to parse remote vault list: {err}"))
+}
+
+#[tauri::command]
+fn desktop_restore_remote_vault(
+    app: tauri::AppHandle,
+    parent: String,
+    name: String,
+    vault_id: String,
+    allow_existing_empty: bool,
+) -> Result<DesktopStatus, String> {
+    let preview = preview_new_vault(Path::new(&parent), &name);
+    if !preview.can_create {
+        return Err(preview.message);
+    }
+    if preview.requires_empty_dir_confirmation && !allow_existing_empty {
+        return Err(format!(
+            "target folder already exists and is empty: {}",
+            preview.target
+        ));
+    }
+    let account_vault = ensure_drive_account_vault(&app)?;
+    run_backend_cli(
+        &account_vault,
+        &[
+            "sync".to_string(),
+            "restore-vault".to_string(),
+            "--remote-vault-id".to_string(),
+            vault_id,
+            "--to".to_string(),
+            preview.target.clone(),
+            "--json".to_string(),
+        ],
+    )?;
+    switch_to_vault(&app, PathBuf::from(preview.target))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -240,7 +329,11 @@ pub fn run() {
             desktop_preview_new_vault,
             desktop_create_vault,
             desktop_open_vault,
-            desktop_delete_vault
+            desktop_delete_vault,
+            desktop_drive_account_status,
+            desktop_drive_connect,
+            desktop_remote_vaults,
+            desktop_restore_remote_vault
         ])
         .setup(|app| {
             let recent_vaults_path = app
@@ -568,6 +661,85 @@ fn recent_vaults_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<Pa
         .app_config_dir()
         .map(|dir| dir.join(recent_vaults_filename()))
         .map_err(|err| format!("failed to resolve desktop config directory: {err}"))
+}
+
+fn drive_account_vault_path<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|dir| dir.join(scoped_desktop_state_filename(
+            DRIVE_ACCOUNT_VAULT_DIR,
+            desktop_data_scope(),
+        )))
+        .map_err(|err| format!("failed to resolve desktop config directory: {err}"))
+}
+
+fn ensure_drive_account_vault<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<PathBuf, String> {
+    let vault = drive_account_vault_path(app)?;
+    if !vault.join(".knowlet").is_dir() {
+        initialize_vault_layout(&vault)?;
+    }
+    Ok(vault)
+}
+
+fn drive_account_status<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<DriveAccountStatus, String> {
+    let vault = drive_account_vault_path(app)?;
+    let creds_path = vault.join(".knowlet").join("sync_credentials.json");
+    if !creds_path.is_file() {
+        return Ok(DriveAccountStatus {
+            connected: false,
+            user_email: None,
+            user_display_name: None,
+        });
+    }
+    let raw = std::fs::read_to_string(&creds_path)
+        .map_err(|err| format!("failed to read Drive credentials status: {err}"))?;
+    let creds: SyncCredentialsFile = serde_json::from_str(&raw)
+        .map_err(|err| format!("failed to parse Drive credentials status: {err}"))?;
+    Ok(DriveAccountStatus {
+        connected: true,
+        user_email: creds.user_email,
+        user_display_name: creds.user_display_name,
+    })
+}
+
+fn run_backend_cli(vault: &Path, args: &[String]) -> Result<String, String> {
+    let repo_root = repo_root_from_manifest()?;
+    let current_exe = std::env::current_exe()
+        .map_err(|err| format!("failed to resolve current executable: {err}"))?;
+    let backend_program =
+        resolve_backend_program(std::env::var_os(BACKEND_BIN_ENV), &current_exe, &repo_root)?;
+    let output = std::process::Command::new(&backend_program.executable)
+        .args(&backend_program.prefix_args)
+        .args(args)
+        .env(VAULT_ENV, vault)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|err| format!("failed to run knowlet backend command: {err}"))?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "knowlet backend command failed with status {}{}\n{}",
+        output.status,
+        if stdout.trim().is_empty() {
+            String::new()
+        } else {
+            format!("\nstdout:\n{}", stdout.trim())
+        },
+        if stderr.trim().is_empty() {
+            "stderr: <empty>".to_string()
+        } else {
+            format!("stderr:\n{}", stderr.trim())
+        }
+    ))
 }
 
 fn open_vault_from_menu(app: &tauri::AppHandle) -> Result<(), String> {

@@ -289,6 +289,7 @@ CLI 平价 `knowlet/cli/sync.py`:`status` / `connect` / `pull` / `push` / `resol
 | OAuth cancel/timeout | `run_local_server(timeout_seconds=300)` + session counter + cancel endpoint |
 | Connect 后立刻刷新 | DriveAuthPanel 监听 connecting→connected 主动 invalidate sync queries |
 | Untracked sweep | 首次连接 / 进程重启时,drainer 自动把磁盘上但 sync_state 里没行的 note + attachment 排进 dirty 队列 |
+| Remote Vault restore | 桌面端 Manage Vaults 可连接同一 Drive 账号、发现远端 Vault registry/legacy scoped names、选择本地空目录并写入远端 `vault_id` 后阻塞拉取 |
 
 **仍未完全闭环(留作后续 dogfood-driven 增量)**:
 

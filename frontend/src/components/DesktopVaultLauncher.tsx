@@ -2,6 +2,8 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   AlertTriangle,
   CheckCircle2,
+  Cloud,
+  Download,
   FolderOpen,
   HardDrive,
   Loader2,
@@ -39,7 +41,30 @@ type NewVaultPreview = {
   suggested_name: string | null;
 };
 
-type BusyAction = "create" | "open" | `recent:${string}` | `delete:${string}` | null;
+type DriveAccountStatus = {
+  connected: boolean;
+  user_email: string | null;
+  user_display_name: string | null;
+};
+
+type RemoteVaultSummary = {
+  vault_id: string;
+  name: string;
+  updated_at: string | null;
+  last_device_label: string | null;
+  item_count: number;
+  source: "registry" | "legacy" | string;
+};
+
+type BusyAction =
+  | "create"
+  | "open"
+  | "drive-connect"
+  | "remote-refresh"
+  | "restore"
+  | `recent:${string}`
+  | `delete:${string}`
+  | null;
 
 export function isDesktopVaultLauncherPage(): boolean {
   return new URLSearchParams(window.location.search).has("desktop-launcher");
@@ -54,18 +79,27 @@ export function DesktopVaultLauncher(): React.ReactNode {
   const [error, setError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<RecentVaultSummary | null>(null);
   const [deleteLocalFiles, setDeleteLocalFiles] = useState(false);
+  const [driveAccount, setDriveAccount] = useState<DriveAccountStatus | null>(null);
+  const [remoteVaults, setRemoteVaults] = useState<RemoteVaultSummary[]>([]);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [restoreTarget, setRestoreTarget] = useState<RemoteVaultSummary | null>(null);
+  const [restoreName, setRestoreName] = useState("");
+  const [restoreParent, setRestoreParent] = useState("");
+  const [restorePreview, setRestorePreview] = useState<NewVaultPreview | null>(null);
   const tauriAvailable = isTauri();
 
   const canAskPreview = parent.trim().length > 0 && name.trim().length > 0;
-  const switchingVaultName = useMemo(() => {
-    if (busy === "create") return name.trim() || "New Vault";
-    if (busy === "open") return "selected Vault";
+  const canAskRestorePreview = restoreParent.trim().length > 0 && restoreName.trim().length > 0;
+  const switchingOverlayTitle = useMemo(() => {
+    if (busy === "create") return `Opening ${name.trim() || "New Vault"}`;
+    if (busy === "open") return "Opening selected Vault";
+    if (busy === "restore") return `Restoring ${restoreTarget?.name ?? restoreName}`;
     if (busy?.startsWith("recent:")) {
       const path = busy.slice("recent:".length);
-      return recent.find((vault) => vault.path === path)?.name ?? "Vault";
+      return `Opening ${recent.find((vault) => vault.path === path)?.name ?? "Vault"}`;
     }
     return null;
-  }, [busy, name, recent]);
+  }, [busy, name, recent, restoreName, restoreTarget]);
   const createLabel = useMemo(() => {
     if (preview?.status === "existing_empty") return "Use Empty Folder";
     return "Create Vault";
@@ -85,6 +119,38 @@ export function DesktopVaultLauncher(): React.ReactNode {
     if (!tauriAvailable) return;
     void refreshRecent();
   }, [refreshRecent, tauriAvailable]);
+
+  const refreshRemoteVaults = useCallback(async () => {
+    if (!tauriAvailable) return;
+    setRemoteLoading(true);
+    setError("");
+    try {
+      setRemoteVaults(await invoke<RemoteVaultSummary[]>("desktop_remote_vaults"));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setRemoteLoading(false);
+    }
+  }, [tauriAvailable]);
+
+  const refreshDriveAccount = useCallback(async () => {
+    if (!tauriAvailable) return;
+    setError("");
+    try {
+      const status = await invoke<DriveAccountStatus>("desktop_drive_account_status");
+      setDriveAccount(status);
+      if (status.connected) {
+        await refreshRemoteVaults();
+      }
+    } catch (err) {
+      setError(String(err));
+    }
+  }, [refreshRemoteVaults, tauriAvailable]);
+
+  useEffect(() => {
+    if (!tauriAvailable) return;
+    void refreshDriveAccount();
+  }, [refreshDriveAccount, tauriAvailable]);
 
   useEffect(() => {
     if (!tauriAvailable) {
@@ -110,6 +176,34 @@ export function DesktopVaultLauncher(): React.ReactNode {
       window.clearTimeout(timer);
     };
   }, [canAskPreview, name, parent, tauriAvailable]);
+
+  useEffect(() => {
+    if (!tauriAvailable) {
+      setRestorePreview(null);
+      return;
+    }
+    if (!canAskRestorePreview) {
+      setRestorePreview(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void invoke<NewVaultPreview>("desktop_preview_new_vault", {
+        parent: restoreParent,
+        name: restoreName,
+      })
+        .then((next) => {
+          if (!cancelled) setRestorePreview(next);
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setError(String(err));
+        });
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [canAskRestorePreview, restoreName, restoreParent, tauriAvailable]);
 
   async function chooseParent() {
     setError("");
@@ -182,6 +276,72 @@ export function DesktopVaultLauncher(): React.ReactNode {
     }
   }
 
+  async function connectDriveAccount() {
+    setBusy("drive-connect");
+    setError("");
+    if (!tauriAvailable) {
+      setError("Drive restore is available in the Knowlet desktop app.");
+      setBusy(null);
+      return;
+    }
+    try {
+      const status = await invoke<DriveAccountStatus>("desktop_drive_connect");
+      setDriveAccount(status);
+      if (status.connected) {
+        await refreshRemoteVaults();
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function openRestoreDialog(remote: RemoteVaultSummary) {
+    setError("");
+    setRestoreTarget(remote);
+    setRestoreName(remote.name);
+    setRestoreParent(parent.trim());
+  }
+
+  async function chooseRestoreParent() {
+    setError("");
+    if (!tauriAvailable) {
+      setError("Drive restore is available in the Knowlet desktop app.");
+      return;
+    }
+    try {
+      const selected = await invoke<string | null>("desktop_choose_vault_parent");
+      if (selected) setRestoreParent(selected);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function restoreRemoteVault() {
+    if (!restoreTarget || !restorePreview?.can_create) return;
+    setBusy("restore");
+    setError("");
+    if (!tauriAvailable) {
+      setError("Drive restore is available in the Knowlet desktop app.");
+      setBusy(null);
+      return;
+    }
+    try {
+      await invoke("desktop_restore_remote_vault", {
+        parent: restoreParent,
+        name: restoreName,
+        vaultId: restoreTarget.vault_id,
+        allowExistingEmpty: restorePreview.requires_empty_dir_confirmation,
+      });
+      setRestoreTarget(null);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function askDeleteVault(vault: RecentVaultSummary) {
     setError("");
     setDeleteTarget(vault);
@@ -214,6 +374,7 @@ export function DesktopVaultLauncher(): React.ReactNode {
   }
 
   const createDisabled = !preview?.can_create || busy !== null;
+  const restoreDisabled = !restorePreview?.can_create || busy !== null;
 
   return (
     <main className="min-h-screen bg-[var(--bg)] text-[var(--ink)]">
@@ -380,6 +541,97 @@ export function DesktopVaultLauncher(): React.ReactNode {
             </Button>
           </div>
 
+          <div
+            className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-4"
+            data-testid="desktop-remote-vaults-panel"
+          >
+            <div className="mb-3 flex items-center gap-2">
+              <Cloud className="size-4 text-[var(--accent-2)]" />
+              <h2 className="text-base font-semibold">Restore from Drive</h2>
+            </div>
+            {!driveAccount?.connected ? (
+              <>
+                <p className="mb-4 text-sm text-[var(--ink-soft)]">
+                  Connect the same Google Drive account to find Vaults already synced by another
+                  device.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => void connectDriveAccount()}
+                  disabled={busy !== null}
+                >
+                  {busy === "drive-connect" ? "Connecting..." : "Connect Drive"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <div className="mb-3 flex items-center justify-between gap-3 text-xs text-[var(--ink-soft)]">
+                  <span>Connected as {driveAccount.user_email}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => void refreshRemoteVaults()}
+                    disabled={busy !== null || remoteLoading}
+                    title="Refresh remote Vaults"
+                  >
+                    {remoteLoading || busy === "remote-refresh" ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="size-4" />
+                    )}
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  {remoteLoading && remoteVaults.length === 0 ? (
+                    <div className="rounded-md border border-[var(--line)] bg-[var(--card-paper)] px-3 py-4 text-sm text-[var(--ink-soft)]">
+                      Looking for remote Vaults...
+                    </div>
+                  ) : remoteVaults.length === 0 ? (
+                    <div className="rounded-md border border-[var(--line)] bg-[var(--card-paper)] px-3 py-4 text-sm text-[var(--ink-soft)]">
+                      No remote Vaults found for this Drive account.
+                    </div>
+                  ) : (
+                    remoteVaults.map((remote) => (
+                      <div
+                        key={remote.vault_id}
+                        className="rounded-md border border-[var(--line)] bg-[var(--card-paper)] p-3"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium">{remote.name}</div>
+                            <div className="mt-1 text-xs text-[var(--ink-soft)]">
+                              {remote.item_count} synced items
+                              {remote.updated_at ? ` · ${remote.updated_at}` : ""}
+                            </div>
+                            {remote.source === "legacy" && (
+                              <div className="mt-1 text-xs text-[var(--ink-soft)]">
+                                Found from older sync files.
+                              </div>
+                            )}
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openRestoreDialog(remote)}
+                            disabled={busy !== null}
+                            aria-label={`Restore ${remote.name}`}
+                          >
+                            <Download className="size-3.5" />
+                            Restore
+                          </Button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
           {error && (
             <div className="rounded-lg border border-[var(--danger)]/40 bg-[var(--panel)] px-3 py-2 text-sm text-[var(--ink)]">
               {error}
@@ -476,8 +728,108 @@ export function DesktopVaultLauncher(): React.ReactNode {
         </div>
       )}
 
-      {switchingVaultName && (
-        <VaultSwitchOverlay title={`Opening ${switchingVaultName}`} />
+      {restoreTarget && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 px-4">
+          <div
+            className="w-full max-w-lg rounded-lg border border-[var(--line)] bg-[var(--panel)] p-4 shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="restore-vault-title"
+            data-testid="desktop-restore-vault-dialog"
+          >
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Cloud className="size-4 text-[var(--accent-2)]" />
+                <h2 id="restore-vault-title" className="text-base font-semibold">
+                  Restore {restoreTarget.name}
+                </h2>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setRestoreTarget(null)}
+                disabled={busy !== null}
+                aria-label="Cancel"
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+
+            <p className="text-sm text-[var(--ink-soft)]">
+              Knowlet will bind this local folder to the selected remote Vault identity before
+              pulling its Drive data.
+            </p>
+
+            <label className="mt-4 block">
+              <span className="mb-1.5 block text-xs font-medium text-[var(--ink-soft)]">
+                Local folder name
+              </span>
+              <Input
+                value={restoreName}
+                onChange={(event) => setRestoreName(event.target.value)}
+                disabled={busy !== null}
+              />
+            </label>
+
+            <label className="mt-3 block">
+              <span className="mb-1.5 block text-xs font-medium text-[var(--ink-soft)]">
+                Location
+              </span>
+              <div className="flex gap-2">
+                <Input
+                  value={restoreParent}
+                  onChange={(event) => setRestoreParent(event.target.value)}
+                  placeholder="/Users/you/Documents"
+                  disabled={busy !== null}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void chooseRestoreParent()}
+                  disabled={busy !== null}
+                >
+                  Choose Location
+                </Button>
+              </div>
+            </label>
+
+            {restorePreview && (
+              <div
+                className={[
+                  "mt-4 rounded-md border px-3 py-2 text-xs leading-relaxed",
+                  restorePreview.can_create
+                    ? "border-[var(--line)] bg-[var(--accent-tint)] text-[var(--ink)]"
+                    : "border-[var(--warn)]/40 bg-[var(--panel)] text-[var(--ink)]",
+                ].join(" ")}
+              >
+                {restorePreview.message}
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setRestoreTarget(null)}
+                disabled={busy !== null}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void restoreRemoteVault()}
+                disabled={restoreDisabled}
+              >
+                {busy === "restore" ? "Restoring..." : "Restore and Open"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {switchingOverlayTitle && (
+        <VaultSwitchOverlay title={switchingOverlayTitle} />
       )}
     </main>
   );

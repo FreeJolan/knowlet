@@ -30,6 +30,26 @@ That's it. The first connect triggers a one-time bootstrap:
 You can watch progress via the sync chip in the header (it surfaces a
 running count of "N to push" until everything is up).
 
+## New device: restore an existing remote Vault
+
+Vault identity is the stable `.knowlet/vault.json` id, not the folder
+name. Creating a local Vault with the same display name creates a new
+sync identity; it does **not** bind to the old remote data.
+
+On the desktop app's **Manage Vaults** screen, use **Restore from
+Drive** instead:
+
+1. Connect the same Google Drive account.
+2. Choose one of the remote Vaults listed from Drive appData.
+3. Pick an empty local folder location and confirm **Restore and Open**.
+4. Knowlet writes the selected remote `vault_id` locally, copies the
+   Drive credentials into that Vault, pulls the scoped appData files,
+   then opens the restored Vault.
+
+New builds publish a small account-level appData registry so another
+device can list remote Vaults. Older synced Vaults are still discoverable
+by scanning existing scoped names such as `vault-<id>__note__...`.
+
 ## Sync modes
 
 After Drive is connected, knowlet defaults to **Realtime multi-device**.
@@ -55,6 +75,10 @@ knowlet sync push              # one-shot manual push (the background
                                # drainer normally does this for you)
 knowlet sync pull              # one-shot manual pull
 knowlet sync resolve           # interactive conflict resolver
+knowlet sync vaults --json     # list remote Vaults in this Drive account
+knowlet sync restore-vault \
+  --remote-vault-id <id> \
+  --to ~/Documents/MyVault     # bind + restore a remote Vault locally
 ```
 
 ## Advanced: bring your own OAuth client

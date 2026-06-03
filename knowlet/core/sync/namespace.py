@@ -38,6 +38,17 @@ def name_belongs_to_vault(name: str | None, vault_root: Path) -> bool:
     return name.startswith(vault_appdata_prefix(vault_root))
 
 
+def parse_vault_id_from_scoped_name(name: str | None) -> str | None:
+    if not name or not name.startswith(VAULT_NAME_PREFIX):
+        return None
+    tail = name[len(VAULT_NAME_PREFIX) :]
+    separator = tail.find(VAULT_NAME_SEPARATOR)
+    if separator <= 0:
+        return None
+    vault_id = tail[:separator].strip()
+    return vault_id or None
+
+
 def strip_current_vault_prefix(name: str, vault_root: Path) -> str | None:
     prefix = vault_appdata_prefix(vault_root)
     if not name.startswith(prefix):

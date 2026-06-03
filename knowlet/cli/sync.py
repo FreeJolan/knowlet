@@ -18,6 +18,8 @@ optional ``[sync]`` extra isn't installed.
 
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
@@ -198,6 +200,127 @@ def sync_connect(
     except OAuthFlowError as exc:
         err_console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
+
+
+@app.command("vaults")
+def sync_vaults(
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print machine-readable JSON."),
+    ] = False,
+) -> None:
+    """List remote Knowlet Vaults discoverable in Drive appData."""
+    vault = resolve_vault_or_die()
+    cfg = load_config_or_default(vault)
+    _, tok_path = _resolve_paths(vault.root, cfg.sync)
+    try:
+        creds = _load_and_verify_creds(tok_path)
+    except _scope_err() as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=4) from exc
+    if creds is None:
+        err_console.print("[red]Not connected.[/red] Run [bold]knowlet sync connect[/bold] first.")
+        raise typer.Exit(code=2)
+
+    try:
+        from knowlet.core.sync import SyncDependenciesMissingError, require_google_libs
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.vault_registry import list_remote_vaults
+
+        require_google_libs()
+        remote_vaults = list_remote_vaults(DriveClient(creds).service())
+    except SyncDependenciesMissingError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=3) from exc
+
+    if json_output:
+        console.print(json.dumps([asdict(vault) for vault in remote_vaults], ensure_ascii=False))
+        return
+    if not remote_vaults:
+        console.print("[dim]No remote Knowlet Vaults found in Drive appData.[/dim]")
+        return
+    for remote in remote_vaults:
+        console.print(
+            f"[green]{remote.name}[/green]  {remote.vault_id}  "
+            f"{remote.updated_at or '(unknown time)'}  {remote.item_count} item(s)"
+        )
+
+
+@app.command("restore-vault")
+def sync_restore_vault(
+    remote_vault_id: Annotated[str, typer.Option("--remote-vault-id")],
+    dest: Annotated[Path, typer.Option("--to", help="Local folder to restore into.")],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Restore a remote Drive Vault into a local folder and bind its vault_id."""
+    account_vault = resolve_vault_or_die()
+    cfg = load_config_or_default(account_vault)
+    _, tok_path = _resolve_paths(account_vault.root, cfg.sync)
+    try:
+        creds = _load_and_verify_creds(tok_path)
+    except _scope_err() as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=4) from exc
+    if creds is None:
+        err_console.print("[red]Not connected.[/red] Run [bold]knowlet sync connect[/bold] first.")
+        raise typer.Exit(code=2)
+
+    target = dest.expanduser().resolve()
+    if target.exists():
+        if not target.is_dir():
+            err_console.print(f"[red]Restore target is not a directory:[/red] {target}")
+            raise typer.Exit(code=2)
+        if not _is_restore_target_empty(target):
+            err_console.print(f"[red]Restore target must be empty:[/red] {target}")
+            raise typer.Exit(code=2)
+    else:
+        target.mkdir(parents=True)
+
+    try:
+        from knowlet.config import KnowletConfig, config_path, save_config
+        from knowlet.core.sync import SyncDependenciesMissingError, require_google_libs
+        from knowlet.core.sync.credentials import credentials_path, save_credentials
+        from knowlet.core.sync.drive_client import DriveClient
+        from knowlet.core.sync.restore import restore_vault_from_drive
+        from knowlet.core.sync.vault_registry import publish_vault_to_registry
+        from knowlet.core.vault import Vault
+        from knowlet.core.vault_identity import write_vault_id
+
+        require_google_libs()
+        restored_vault = Vault(target)
+        restored_vault.init_layout()
+        write_vault_id(restored_vault.root, remote_vault_id)
+        if not config_path(restored_vault.root).exists():
+            save_config(restored_vault.root, KnowletConfig())
+        save_credentials(credentials_path(restored_vault.root), creds)
+        service = DriveClient(creds).service()
+        report = restore_vault_from_drive(service, vault_root=restored_vault.root)
+        publish_vault_to_registry(service, vault_root=restored_vault.root)
+    except SyncDependenciesMissingError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=3) from exc
+
+    payload = {
+        "path": str(target),
+        "vault_id": remote_vault_id,
+        "materialized_count": report.materialized_count,
+        "skipped_count": report.skipped_count,
+    }
+    if json_output:
+        console.print(json.dumps(payload, ensure_ascii=False))
+        return
+    console.print(
+        f"[green]Restored[/green] {target} "
+        f"({report.materialized_count} item(s), {report.skipped_count} skipped)"
+    )
+
+
+def _is_restore_target_empty(path: Path) -> bool:
+    ignored = {".DS_Store", ".localized", "Icon\r"}
+    return all(child.name in ignored for child in path.iterdir())
 
 
 @app.command("pull")
