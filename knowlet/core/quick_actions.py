@@ -205,6 +205,7 @@ class QuickActionStore:
 
                 logging.getLogger(__name__).warning("quick-actions backup failed", exc_info=True)
         _atomic_write(self.path, _serialize(actions))
+        self._queue_sync()
 
     def upsert(self, action: QuickAction) -> QuickAction:
         actions = self.load()
@@ -230,6 +231,11 @@ class QuickActionStore:
             if a.id == action_id:
                 return a
         return None
+
+    def _queue_sync(self) -> None:
+        from knowlet.core.sync.tracked_files import queue_syncable_vault_file_if_authenticated
+
+        queue_syncable_vault_file_if_authenticated(vault_root=self.vault_root, path=self.path)
 
     def load_with_defaults(self) -> list[QuickAction]:
         """Like ``load()`` but seeds a default `today-note` action on

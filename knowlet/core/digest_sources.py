@@ -178,8 +178,8 @@ class DigestSourceStore:
     def _queue_sync(self, source: DigestSource) -> None:
         if source.path is None:
             return
-        from knowlet.core.sync.push import DIGEST_SOURCE_ENTITY_TYPE
         from knowlet.core.sync.tracked_files import (
+            DIGEST_SOURCE_ENTITY_TYPE,
             infer_vault_root_from_digest_dir,
             queue_synced_json_if_authenticated,
         )
@@ -194,8 +194,8 @@ class DigestSourceStore:
         )
 
     def _queue_delete_sync(self, filename: str) -> None:
-        from knowlet.core.sync.push import DIGEST_SOURCE_ENTITY_TYPE
         from knowlet.core.sync.tracked_files import (
+            DIGEST_SOURCE_ENTITY_TYPE,
             infer_vault_root_from_digest_dir,
             queue_synced_json_delete_if_authenticated,
         )

@@ -24,7 +24,9 @@ That's it. The first connect triggers a one-time bootstrap:
 
 - Any pre-existing notes on disk get queued for first-push.
 - Any pre-existing attachments (`_attachments/*`) get queued too.
-- Digest Source configs and Raw Info inbox JSON files are queued too.
+- Other durable Vault data is queued too: profile, cards, drafts,
+  mining tasks, Digest sources/items, quick actions, favorites, quizzes,
+  wiki schema, and the scrubbed config snapshot.
 - The background drainer drains them over the next few minutes.
 
 You can watch progress via the sync chip in the header (it surfaces a
@@ -71,8 +73,8 @@ knowlet sync status            # check current state
 knowlet sync disconnect        # remove local tokens (Drive grant
                                # stays active until revoked at
                                # https://myaccount.google.com/permissions)
-knowlet sync push              # one-shot manual push (the background
-                               # drainer normally does this for you)
+knowlet sync push              # one-shot manual push of notes,
+                               # attachments, and syncable Vault data
 knowlet sync pull              # one-shot manual pull
 knowlet sync resolve           # interactive conflict resolver
 knowlet sync vaults --json     # list remote Vaults in this Drive account
@@ -166,9 +168,33 @@ equally authoritative copies" — exactly the failure mode
 |---|---|---|---|---|
 | Notes (`*.md`) | ✅ on save / on first connect | ✅ via revisionId OCC | ✅ trash → Drive trash; purge → Drive hard delete | ✅ inline merge editor |
 | Attachments (`_attachments/*`) | ✅ on paste / on first connect | N/A (immutable) | ✅ missing local file → Drive hard delete |  N/A (immutable) |
+| User profile (`users/me.md`) | ✅ on save / first connect | ✅ appData revision sync | ✅ remote delete removes local file | ⚠️ no merge UI; latest clean remote revision auto-pulls |
+| Cards (`cards/*.json`) | ✅ on save / first connect | ✅ appData revision sync | ✅ delete → Drive hard delete | ⚠️ no merge UI; latest clean remote revision auto-pulls |
+| Drafts (`drafts/**/*.md`, including `.archive/`) | ✅ on save/archive / first connect | ✅ appData revision sync | ✅ delete/archive old path → Drive hard delete | ⚠️ no merge UI; latest clean remote revision auto-pulls |
+| Mining tasks (`tasks/*.md`) | ✅ on save / first connect | ✅ appData revision sync | ✅ delete → Drive hard delete | ⚠️ no merge UI; latest clean remote revision auto-pulls |
 | Digest Source configs (`.knowlet/digest/sources/*.json`) | ✅ on create / first connect | ✅ appData JSON revision sync | ✅ delete → Drive hard delete | ⚠️ no merge UI; latest clean remote revision auto-pulls |
 | Raw Info inbox (`.knowlet/digest/items/*.json`) | ✅ on pull / first connect | ✅ appData JSON revision sync | N/A (items are status-marked, not unlinked) | ⚠️ no merge UI; latest clean remote revision auto-pulls |
+| Quick actions (`.knowlet/quick-actions.toml`) | ✅ on save / first connect | ✅ appData revision sync | N/A (empty list is a file update) | ⚠️ no merge UI; latest clean remote revision auto-pulls |
+| Favorites (`.knowlet/favorites.json`) | ✅ on update / first connect | ✅ appData revision sync | N/A (empty list is a file update) | ⚠️ no merge UI; latest clean remote revision auto-pulls |
+| Quiz sessions (`.knowlet/quizzes/**/*.json`) | ✅ on save/archive / first connect | ✅ appData revision sync | ✅ delete → Drive hard delete | ⚠️ no merge UI; latest clean remote revision auto-pulls |
+| Wiki schema (`.knowlet/wiki_schema.md`) | ✅ first connect / external file present | ✅ appData revision sync | ✅ remote delete removes local file | ⚠️ no merge UI; latest clean remote revision auto-pulls |
+| Scrubbed config snapshot (`.knowlet/sync/config-public.toml`) | ✅ when `config.toml` is saved / first connect | ✅ appData revision sync; restore merges non-secret fields into local `config.toml` | ✅ remote delete removes snapshot only | ⚠️ local secrets are preserved |
 | Heartbeat (`.knowlet/heartbeat-*.json`) | ✅ periodic | ✅ periodic | — | — |
+
+### What does not get synced
+
+knowlet does **not** upload device-local or security-sensitive data:
+
+- Raw `.knowlet/config.toml` is not uploaded. A separate
+  `.knowlet/sync/config-public.toml` snapshot syncs non-secret settings
+  only; it strips LLM keys, web-search keys, and OAuth client/token paths.
+- Google Drive credentials (`sync_credentials.json`) are local only.
+- Index/search state (`index.sqlite`), sync state (`sync_state.sqlite`),
+  backups, snapshots, dev conflict fixtures, and logs are local or
+  rebuildable.
+- `events.sqlite` is still local. It needs a separate event-log mirror
+  design before it is safe to sync; uploading a live SQLite file as a blob
+  would be fragile across devices.
 
 ### Digest auto-pull in multi-device mode
 
@@ -185,15 +211,15 @@ pull at exactly the same time before seeing each other's appData writes may
 still race; that is the remaining edge case to revisit if dogfood shows real
 duplicates.
 
-## Known gaps (2026-05-31)
+## Known gaps (2026-06-04)
 
 These are tracked in [ADR-0027 § Status (2026-05-11)](./decisions/0027-sync-via-drive-api.md):
 
 - **Digest global lease**:source/item sync lowers duplicate pulls, but there is
   no Drive-side atomic lease yet.
-- **Non-note JSON conflict UI**:Digest Source / Raw Info files auto-pull clean
-  remote revisions; if both devices edit the same JSON before syncing, we do
-  not yet have a user-facing merge UI for those files.
+- **Non-note conflict UI**:syncable non-note Vault files auto-pull clean
+  remote revisions; if two devices edit the same file before syncing, we do
+  not yet have a user-facing merge UI for that file type.
 - **Conflict UI polish**:merge editor lands the basics; some edge cases
   (e.g. "merged but not auto-pushed") still need cleanup.
 

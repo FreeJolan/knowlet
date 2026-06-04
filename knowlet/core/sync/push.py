@@ -37,6 +37,14 @@ from knowlet.core.sync.files import (
 )
 from knowlet.core.sync.namespace import parse_scoped_appdata_name, scoped_appdata_name
 from knowlet.core.sync.state import FileState, SyncStateStore
+from knowlet.core.sync.tracked_files import (
+    DIGEST_SOURCE_ENTITY_TYPE,
+    RAW_INFO_ENTITY_TYPE,
+    SYNCABLE_VAULT_FILE_ENTITY_TYPES,
+    SYNCABLE_VAULT_FILE_PREFIXES,
+    iter_syncable_vault_files,
+    mime_type_for_entity_type,
+)
 
 
 @dataclass
@@ -87,8 +95,6 @@ class SyncedFileMissingError(FileNotFoundError):
 # update / conflict path). Two devices can't collide on a filename
 # because ULIDs are time + random.
 ATTACHMENT_ENTITY_TYPE = "attachment"
-DIGEST_SOURCE_ENTITY_TYPE = "digest_source"
-RAW_INFO_ENTITY_TYPE = "raw_info"
 NOTE_ENTITY_TYPE = "note"
 SYNCED_JSON_ENTITY_TYPES = {
     DIGEST_SOURCE_ENTITY_TYPE,
@@ -97,8 +103,7 @@ SYNCED_JSON_ENTITY_TYPES = {
 _APPDATA_NAME_PREFIX = {
     NOTE_ENTITY_TYPE: "note__",
     ATTACHMENT_ENTITY_TYPE: "attachment__",
-    DIGEST_SOURCE_ENTITY_TYPE: "digest-source__",
-    RAW_INFO_ENTITY_TYPE: "raw-info__",
+    **SYNCABLE_VAULT_FILE_PREFIXES,
 }
 
 
@@ -115,7 +120,10 @@ def push_note(
     ConflictReport (412 — user must resolve)."""
     if note.path is None or not note.path.exists():
         raise NoteFileMissingError(f"Note {note.id} has no on-disk path; cannot push.")
-    content = note.path.read_bytes()
+    # Serialize the in-memory Note rather than raw on-disk bytes. The drainer
+    # injects path-derived fields such as ``folder`` immediately before push,
+    # and Drive appData is flat, so those hints must travel in frontmatter.
+    content = note.to_markdown().encode("utf-8")
     record = state.get_file_state(NOTE_ENTITY_TYPE, note.id)
     name = drive_appdata_name(NOTE_ENTITY_TYPE, note.path.name, vault_root=state.vault_root)
     if record is None or not record.drive_file_id:
@@ -287,12 +295,7 @@ def drive_appdata_name(
     *,
     vault_root: Path | None = None,
 ) -> str:
-    """Drive appData is flat; prefix file names by logical type.
-
-    ``entity_id`` is the local filename. The prefix lets first-connect
-    materialization route JSON files back to the right vault directory
-    instead of mistaking them for immutable attachments.
-    """
+    """Drive appData is flat; prefix file names by logical type."""
     prefix = _APPDATA_NAME_PREFIX.get(entity_type)
     if prefix is None:
         raise ValueError(f"unsupported synced file entity_type: {entity_type!r}")
@@ -341,20 +344,16 @@ def push_vault_file(
     entity_id: str,
     path: Path,
 ) -> PushResult:
-    """Push a synced JSON data file to Drive appData.
-
-    Used for digest source configs and Raw Info inbox items. These are
-    vault data, not binary attachments, so they get stable typed Drive
-    names and can be materialized on another device during preflight.
-    """
+    """Push a syncable non-note vault data file to Drive appData."""
     from knowlet.core.sync.oauth import APPDATA_FOLDER
 
-    if entity_type not in SYNCED_JSON_ENTITY_TYPES:
+    if entity_type not in SYNCABLE_VAULT_FILE_ENTITY_TYPES:
         raise ValueError(f"unsupported synced file entity_type: {entity_type!r}")
     if not path.exists():
         raise SyncedFileMissingError(f"{entity_type} {entity_id} missing at {path}")
 
     content = path.read_bytes()
+    mime_type = mime_type_for_entity_type(entity_type)
     name = drive_appdata_name(entity_type, entity_id, vault_root=state.vault_root)
     record = state.get_file_state(entity_type, entity_id)
     if record is None or not record.drive_file_id:
@@ -362,7 +361,7 @@ def push_vault_file(
             service,
             name=name,
             content=content,
-            mime_type="application/json",
+            mime_type=mime_type,
             parent_folder_id=APPDATA_FOLDER,
         )
         state.upsert_file_state(
@@ -396,7 +395,7 @@ def push_vault_file(
         file_id=record.drive_file_id,
         content=content,
         expected_revision=expected,
-        mime_type="application/json",
+        mime_type=mime_type,
         name=name,
     )
     state.upsert_file_state(
@@ -415,6 +414,28 @@ def push_vault_file(
         drive_file=df,
         created=False,
     )
+
+
+def push_syncable_vault_files(
+    *,
+    service: Any,
+    state: SyncStateStore,
+    vault_root: Path | None = None,
+) -> list[PushResult]:
+    """Push every currently existing syncable non-note vault data file."""
+    root = vault_root or state.vault_root
+    results: list[PushResult] = []
+    for item in iter_syncable_vault_files(root):
+        results.append(
+            push_vault_file(
+                service=service,
+                state=state,
+                entity_type=item.entity_type,
+                entity_id=item.entity_id,
+                path=item.path,
+            )
+        )
+    return results
 
 
 # ----------------------------------------------------- conflict resolution

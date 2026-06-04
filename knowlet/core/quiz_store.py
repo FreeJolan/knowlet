@@ -53,6 +53,7 @@ class QuizStore:
             encoding="utf-8",
         )
         tmp.replace(target)
+        self._queue_sync(target)
         return target
 
     def load(self, quiz_id: str) -> QuizSession | None:
@@ -81,6 +82,7 @@ class QuizStore:
         if not target.exists():
             return False
         target.unlink()
+        self._queue_delete_sync(target)
         return True
 
     # ---------------------------------------------------- aging (M7.4.3)
@@ -114,9 +116,35 @@ class QuizStore:
             if any(q.get("card_id_after_reflux") for q in qs):
                 continue
             self.archive_dir.mkdir(parents=True, exist_ok=True)
-            p.rename(self.archive_dir / p.name)
+            target = self.archive_dir / p.name
+            p.rename(target)
+            self._queue_delete_sync(p)
+            self._queue_sync(target)
             moved += 1
         return moved
+
+    def _vault_root(self) -> Path | None:
+        if self.state_dir.name != ".knowlet":
+            return None
+        return self.state_dir.parent
+
+    def _queue_sync(self, path: Path) -> None:
+        vault_root = self._vault_root()
+        if vault_root is None:
+            return
+        from knowlet.core.sync.tracked_files import queue_syncable_vault_file_if_authenticated
+
+        queue_syncable_vault_file_if_authenticated(vault_root=vault_root, path=path)
+
+    def _queue_delete_sync(self, path: Path) -> None:
+        vault_root = self._vault_root()
+        if vault_root is None:
+            return
+        from knowlet.core.sync.tracked_files import (
+            queue_syncable_vault_file_delete_if_authenticated,
+        )
+
+        queue_syncable_vault_file_delete_if_authenticated(vault_root=vault_root, path=path)
 
 
 def _session_from_json(payload: dict[str, Any]) -> QuizSession:

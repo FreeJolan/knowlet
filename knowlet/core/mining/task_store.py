@@ -48,15 +48,42 @@ class TaskStore:
             if p.stem.startswith(task.id) and p.name != target.name:
                 with contextlib.suppress(OSError):
                     os.unlink(p)
+                self._queue_delete_sync(p)
         task.path = target
         tmp = target.with_suffix(target.suffix + ".tmp")
         tmp.write_text(task.to_markdown(), encoding="utf-8")
         tmp.replace(target)
+        self._queue_sync(target)
         return target
 
     def delete(self, task_id: str) -> bool:
         t = self.get(task_id)
         if t is None or t.path is None:
             return False
+        deleted_path = t.path
         os.unlink(t.path)
+        self._queue_delete_sync(deleted_path)
         return True
+
+    def _vault_root(self) -> Path | None:
+        if self.root.name != "tasks":
+            return None
+        return self.root.parent
+
+    def _queue_sync(self, path: Path) -> None:
+        vault_root = self._vault_root()
+        if vault_root is None:
+            return
+        from knowlet.core.sync.tracked_files import queue_syncable_vault_file_if_authenticated
+
+        queue_syncable_vault_file_if_authenticated(vault_root=vault_root, path=path)
+
+    def _queue_delete_sync(self, path: Path) -> None:
+        vault_root = self._vault_root()
+        if vault_root is None:
+            return
+        from knowlet.core.sync.tracked_files import (
+            queue_syncable_vault_file_delete_if_authenticated,
+        )
+
+        queue_syncable_vault_file_delete_if_authenticated(vault_root=vault_root, path=path)

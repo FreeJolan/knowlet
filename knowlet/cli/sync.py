@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -418,20 +418,21 @@ def sync_pull(
 def sync_push(
     note_id: Annotated[
         str | None,
-        typer.Argument(help="Note ULID to push. Omit to push every note."),
+        typer.Argument(
+            help=(
+                "Note ULID to push. Omit to push notes, attachments, and all syncable Vault data."
+            )
+        ),
     ] = None,
 ) -> None:
-    """Phase 2 E Slice 5.C — push local note(s) to Drive.
+    """Push local Vault data to Drive.
 
-    First push of a Note creates a Drive file + records the
-    drive_file_id. Subsequent pushes are conditional on the last-
-    known head revision id; on a mismatch we surface the conflict
-    + tell the user to run [bold]knowlet sync resolve[/bold].
+    Passing a note id keeps the old single-note behavior. Omitting it
+    pushes notes, attachments, and syncable non-note Vault files.
     """
     vault = resolve_vault_or_die()
     cfg = load_config_or_default(vault)
     _, tok_path = _resolve_paths(vault.root, cfg.sync)
-    from knowlet.core.note import Note
 
     try:
         creds = _load_and_verify_creds(tok_path)
@@ -451,7 +452,9 @@ def sync_push(
         from knowlet.core.sync.push import (
             ConflictReport,
             NoteFileMissingError,
+            push_attachment,
             push_note,
+            push_syncable_vault_files,
         )
         from knowlet.core.sync.state import SyncStateStore
 
@@ -469,9 +472,9 @@ def sync_push(
                         f"[red]No note with id {note_id!r} found in {vault.notes_dir}.[/red]"
                     )
                     raise typer.Exit(code=2)
-                targets = [Note.from_file(target)]
+                targets = [_note_for_push(vault, target)]
             else:
-                targets = [Note.from_file(p) for p in vault.iter_note_paths()]
+                targets = [_note_for_push(vault, p) for p in vault.iter_note_paths()]
 
             pushed = 0
             conflicts: list[ConflictReport] = []
@@ -494,7 +497,42 @@ def sync_push(
                     )
                     pushed += 1
 
-            console.print(f"\n[bold]{pushed} pushed, {len(conflicts)} conflict(s).[/bold]")
+            attachment_pushed = 0
+            vault_file_pushed = 0
+            if note_id is None:
+                if vault.attachments_dir.exists():
+                    for attachment in vault.attachments_dir.iterdir():
+                        if not attachment.is_file() or attachment.name.startswith("."):
+                            continue
+                        result = push_attachment(
+                            service=service,
+                            state=state,
+                            filename=attachment.name,
+                            path=attachment,
+                        )
+                        verb = "Created" if result.created else "Already synced"
+                        console.print(
+                            f"[green]{verb}[/green] attachment "
+                            f"{attachment.name} → drive:{result.drive_file.id}"
+                        )
+                        attachment_pushed += 1
+                for result in push_syncable_vault_files(
+                    service=service,
+                    state=state,
+                    vault_root=vault.root,
+                ):
+                    verb = "Created" if result.created else "Updated"
+                    console.print(
+                        f"[green]{verb}[/green] {result.entity_type}/"
+                        f"{result.entity_id} → drive:{result.drive_file.id}"
+                    )
+                    vault_file_pushed += 1
+
+            console.print(
+                f"\n[bold]{pushed} note(s), {attachment_pushed} attachment(s), "
+                f"{vault_file_pushed} vault file(s) pushed, "
+                f"{len(conflicts)} conflict(s).[/bold]"
+            )
             if conflicts:
                 console.print(
                     "Run [bold]knowlet sync resolve <note-id>[/bold] for each "
@@ -505,6 +543,14 @@ def sync_push(
     except SyncDependenciesMissingError as exc:
         err_console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=3) from exc
+
+
+def _note_for_push(vault: Any, path: Path) -> Any:
+    from knowlet.core.note import Note
+
+    note = Note.from_file(path)
+    note.folder = vault.folder_of(path) or None
+    return note
 
 
 @app.command("resolve")

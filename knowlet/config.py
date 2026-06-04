@@ -17,6 +17,8 @@ from pydantic import BaseModel, Field
 
 CONFIG_FILENAME = "config.toml"
 VAULT_MARKER_DIR = ".knowlet"
+SYNC_CONFIG_DIR = "sync"
+SYNC_CONFIG_SNAPSHOT_FILENAME = "config-public.toml"
 DEFAULT_LLM_BASE_URL = "http://127.0.0.1:8317/v1"
 DEFAULT_LLM_MODEL = "gpt-5.5"
 
@@ -139,13 +141,76 @@ def config_path(vault: Path) -> Path:
     return vault / VAULT_MARKER_DIR / CONFIG_FILENAME
 
 
+def synced_config_snapshot_path(vault: Path) -> Path:
+    return vault / VAULT_MARKER_DIR / SYNC_CONFIG_DIR / SYNC_CONFIG_SNAPSHOT_FILENAME
+
+
 def load_config(vault: Path) -> KnowletConfig:
     p = config_path(vault)
     if not p.exists():
+        snapshot = synced_config_snapshot_path(vault)
+        if snapshot.exists():
+            return _load_config_file(snapshot)
         return KnowletConfig()
-    with p.open("rb") as f:
+    return _load_config_file(p)
+
+
+def _load_config_file(path: Path) -> KnowletConfig:
+    with path.open("rb") as f:
         data = tomllib.load(f)
     return KnowletConfig.model_validate(data)
+
+
+def _scrub_config_for_sync(cfg: KnowletConfig) -> dict[str, Any]:
+    """Return config fields safe to sync across devices.
+
+    Secrets and device-local paths stay out:
+    - LLM/Web-search API keys.
+    - sync OAuth client/token paths.
+    """
+    data = cfg.model_dump()
+    data.get("llm", {}).pop("api_key", None)
+    web_search = data.get("web_search", {})
+    web_search.pop("brave_api_key", None)
+    web_search.pop("tavily_api_key", None)
+    web_search.pop("searx_url", None)
+    data.pop("sync", None)
+    return data
+
+
+def _toml_from_payload(payload: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for section, values in payload.items():
+        if not isinstance(values, dict):
+            continue
+        lines.append(f"[{section}]")
+        for k, v in values.items():
+            if v is None:
+                continue  # TOML has no null; absence is the canonical encoding
+            lines.append(f"{k} = {_toml_value(v)}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_synced_config_snapshot(vault: Path, cfg: KnowletConfig) -> Path:
+    p = synced_config_snapshot_path(vault)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    text = _toml_from_payload(_scrub_config_for_sync(cfg))
+    fd, tmp_name = tempfile.mkstemp(prefix=f"{p.name}.", suffix=".tmp", dir=p.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(tmp, 0o600)
+        tmp.replace(p)
+    except Exception:
+        with suppress(OSError):
+            tmp.unlink()
+        raise
+    from knowlet.core.sync.tracked_files import queue_syncable_vault_file_if_authenticated
+
+    queue_syncable_vault_file_if_authenticated(vault_root=vault, path=p)
+    return p
 
 
 def _toml_value(v: Any) -> str:
@@ -166,18 +231,15 @@ def _toml_value(v: Any) -> str:
     raise TypeError(f"unsupported config value type: {type(v).__name__}")
 
 
-def save_config(vault: Path, cfg: KnowletConfig) -> None:
+def save_config(
+    vault: Path,
+    cfg: KnowletConfig,
+    *,
+    sync_snapshot: bool = True,
+) -> None:
     p = config_path(vault)
     p.parent.mkdir(parents=True, exist_ok=True)
-    lines: list[str] = []
-    for section, payload in cfg.model_dump().items():
-        lines.append(f"[{section}]")
-        for k, v in payload.items():
-            if v is None:
-                continue  # TOML has no null; absence is the canonical encoding
-            lines.append(f"{k} = {_toml_value(v)}")
-        lines.append("")
-    text = "\n".join(lines).rstrip() + "\n"
+    text = _toml_from_payload(cfg.model_dump())
     fd, tmp_name = tempfile.mkstemp(prefix=f"{p.name}.", suffix=".tmp", dir=p.parent)
     tmp = Path(tmp_name)
     try:
@@ -189,3 +251,21 @@ def save_config(vault: Path, cfg: KnowletConfig) -> None:
         with suppress(OSError):
             tmp.unlink()
         raise
+    if sync_snapshot:
+        write_synced_config_snapshot(vault, cfg)
+
+
+def apply_synced_config_snapshot(vault: Path) -> KnowletConfig | None:
+    snapshot = synced_config_snapshot_path(vault)
+    if not snapshot.exists():
+        return None
+    incoming = _load_config_file(snapshot)
+    raw = config_path(vault)
+    local = _load_config_file(raw) if raw.exists() else KnowletConfig()
+    incoming.llm.api_key = local.llm.api_key
+    incoming.web_search.brave_api_key = local.web_search.brave_api_key
+    incoming.web_search.tavily_api_key = local.web_search.tavily_api_key
+    incoming.web_search.searx_url = local.web_search.searx_url
+    incoming.sync = local.sync
+    save_config(vault, incoming, sync_snapshot=False)
+    return incoming

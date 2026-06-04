@@ -370,6 +370,54 @@ def test_save_endpoint_auto_tracks_new_note(tmp_path: Path) -> None:
     assert rec.dirty is True
 
 
+def test_move_note_endpoint_marks_dirty_and_persists_folder_hint(tmp_path: Path) -> None:
+    """Moving a synced note changes cross-device state, not just local IA.
+
+    The endpoint must queue the note for push and persist the new folder hint
+    so a fresh restore can rebuild the same tree from flat Drive appData.
+    """
+    from tests.test_web import StubLLM, _client_with_stub
+
+    client, _, _ = _client_with_stub(tmp_path, StubLLM([]))
+    runtime = client.app.state.web_state.runtime  # type: ignore[attr-defined]
+    assert runtime is not None
+    _seed_creds(tmp_path)
+    note = Note(id=new_id(), title="movable", body="initial")
+    runtime.vault.write_note(note)
+    runtime.index.upsert_note(
+        note,
+        chunk_size=runtime.config.retrieval.chunk_size,
+        chunk_overlap=runtime.config.retrieval.chunk_overlap,
+    )
+    store = SyncStateStore(tmp_path)
+    try:
+        store.upsert_file_state(
+            FileState(
+                entity_type="note",
+                entity_id=note.id,
+                drive_file_id="DRIVE-FID-1",
+                last_known_etag="rev-1",
+                last_synced_at="2026-06-01T00:00:00Z",
+                dirty=False,
+            )
+        )
+    finally:
+        store.close()
+
+    r = client.post(f"/api/notes/{note.id}/move", json={"target_folder": "archive"})
+
+    assert r.status_code == 200, r.text
+    moved_path = runtime.vault.notes_dir / "archive" / note.filename
+    assert Note.from_file(moved_path).folder == "archive"
+    state = SyncStateStore(tmp_path)
+    try:
+        rec = state.get_file_state("note", note.id)
+    finally:
+        state.close()
+    assert rec is not None
+    assert rec.dirty is True
+
+
 # ----------------------------------------------------- #121 attachments
 
 

@@ -48,7 +48,6 @@ from knowlet.core.sync.credentials import (
 from knowlet.core.sync.drive_client import DriveClient
 from knowlet.core.sync.push import (
     ATTACHMENT_ENTITY_TYPE,
-    SYNCED_JSON_ENTITY_TYPES,
     AttachmentFileMissingError,
     ConflictReport,
     NoteFileMissingError,
@@ -59,6 +58,7 @@ from knowlet.core.sync.push import (
 )
 from knowlet.core.sync.state import SyncStateStore
 from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
+from knowlet.core.sync.tracked_files import SYNCABLE_VAULT_FILE_ENTITY_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +220,7 @@ class PushDrainer:
                         service = DriveClient(creds).service()
                     self._push_attachment_row(store, service, row)
                     continue
-                if row.entity_type in SYNCED_JSON_ENTITY_TYPES:
+                if row.entity_type in SYNCABLE_VAULT_FILE_ENTITY_TYPES:
                     if service is None:
                         service = DriveClient(creds).service()
                     self._push_synced_file_row(store, service, row)
@@ -360,7 +360,7 @@ class PushDrainer:
         self._clear_failure(row.entity_id)
 
     def _push_synced_file_row(self, store: SyncStateStore, service: Any, row: Any) -> None:
-        """Push a JSON data file such as a digest source or Raw Info item."""
+        """Push a non-note vault data file such as profile, cards, or digest items."""
         path = self.synced_file_lookup(row.entity_type, row.entity_id)
         if path is None or not path.exists():
             logger.warning(
@@ -454,7 +454,7 @@ class PushDrainer:
             if row.entity_type not in (
                 "note",
                 ATTACHMENT_ENTITY_TYPE,
-                *SYNCED_JSON_ENTITY_TYPES,
+                *SYNCABLE_VAULT_FILE_ENTITY_TYPES,
             ):
                 # Unknown type — leave alone so a future slice can
                 # handle it. The intent row stays, which is safe:

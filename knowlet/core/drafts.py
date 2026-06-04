@@ -254,13 +254,17 @@ class DraftStore:
         if previous_path is not None and previous_path != target and previous_path.exists():
             with suppress(OSError):
                 os.unlink(previous_path)
+            self._queue_delete_sync(previous_path)
+        self._queue_sync(target)
         return target
 
     def delete(self, draft_id: str) -> bool:
         d = self.get(draft_id)
         if d is None or d.path is None:
             return False
+        deleted_path = d.path
         os.unlink(d.path)
+        self._queue_delete_sync(deleted_path)
         return True
 
     # ---------------------------------------------------- archive (M6.5)
@@ -294,8 +298,34 @@ class DraftStore:
         # If a same-named file exists in archive, suffix with timestamp.
         if target.exists():
             target = base / f"{draft.path.stem}-{now_iso().replace(':', '-')}.md"
+        source_path = draft.path
         draft.path.rename(target)
+        self._queue_delete_sync(source_path)
+        self._queue_sync(target)
         return target
+
+    def _vault_root(self) -> Path | None:
+        if self.root.name != DRAFTS_DIR:
+            return None
+        return self.root.parent
+
+    def _queue_sync(self, path: Path) -> None:
+        vault_root = self._vault_root()
+        if vault_root is None:
+            return
+        from knowlet.core.sync.tracked_files import queue_syncable_vault_file_if_authenticated
+
+        queue_syncable_vault_file_if_authenticated(vault_root=vault_root, path=path)
+
+    def _queue_delete_sync(self, path: Path) -> None:
+        vault_root = self._vault_root()
+        if vault_root is None:
+            return
+        from knowlet.core.sync.tracked_files import (
+            queue_syncable_vault_file_delete_if_authenticated,
+        )
+
+        queue_syncable_vault_file_delete_if_authenticated(vault_root=vault_root, path=path)
 
     def list_for_task(self, task_id: str) -> list[Draft]:
         return [d for d in self.all_drafts() if d.task_id == task_id]

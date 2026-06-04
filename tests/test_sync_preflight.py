@@ -25,6 +25,7 @@ from knowlet.core.sync.oauth import SCOPES
 from knowlet.core.sync.preflight import preflight_scan
 from knowlet.core.sync.push import RAW_INFO_ENTITY_TYPE, drive_appdata_name
 from knowlet.core.sync.state import FileState, SyncStateStore
+from knowlet.core.sync.tracked_files import CARD_ENTITY_TYPE
 
 
 def _seed_creds(tmp_path: Path) -> None:
@@ -118,6 +119,44 @@ def test_preflight_auto_pulls_stale_tracked_raw_info_file(tmp_path: Path) -> Non
 
     assert materialized == [("DRIVE-RAW", brief)]
     assert report.auto_pulled_ids == ["01RAW-item.json"]
+
+
+def test_preflight_reports_drive_deleted_syncable_vault_file(tmp_path: Path) -> None:
+    state = SyncStateStore(tmp_path)
+    deleted: list[tuple[str, str]] = []
+    try:
+        state.upsert_file_state(
+            FileState(
+                entity_type=CARD_ENTITY_TYPE,
+                entity_id="01CARD.json",
+                drive_file_id="DRIVE-CARD",
+                last_known_etag="rev-1",
+                last_synced_at="2026-06-04T00:00:00Z",
+                dirty=False,
+            )
+        )
+        with (
+            patch(
+                "knowlet.core.sync.preflight._maybe_heartbeat_pass",
+                return_value=object(),
+            ),
+            patch("knowlet.core.sync.files.list_appdata_revisions", return_value={}),
+        ):
+            report = preflight_scan(
+                vault_root=tmp_path,
+                state_store=state,
+                note_meta_lookup=lambda _id: None,
+                note_path_lookup=lambda _id: None,
+                auto_pull_service_factory=lambda: object(),
+                delete_local_vault_file_for_drive_deleted=lambda entity_type, entity_id: (
+                    deleted.append((entity_type, entity_id))
+                ),
+            )
+    finally:
+        state.close()
+
+    assert deleted == [(CARD_ENTITY_TYPE, "01CARD.json")]
+    assert report.deleted_for_drive_delete_ids == [f"{CARD_ENTITY_TYPE}:01CARD.json"]
 
 
 def test_preflight_materializes_only_current_vault_remote_additions(

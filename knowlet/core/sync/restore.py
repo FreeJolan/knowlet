@@ -10,12 +10,15 @@ from knowlet.core.note import Note, now_iso
 from knowlet.core.sync.files import download_file, list_appdata_revisions
 from knowlet.core.sync.push import (
     ATTACHMENT_ENTITY_TYPE,
-    DIGEST_SOURCE_ENTITY_TYPE,
     NOTE_ENTITY_TYPE,
-    RAW_INFO_ENTITY_TYPE,
     appdata_entity_from_drive_name,
 )
 from knowlet.core.sync.state import FileState, SyncStateStore
+from knowlet.core.sync.tracked_files import (
+    CONFIG_SNAPSHOT_ENTITY_TYPE,
+    SYNCABLE_VAULT_FILE_ENTITY_TYPES,
+    resolve_syncable_vault_file_path,
+)
 from knowlet.core.vault import Vault
 
 
@@ -47,9 +50,6 @@ def restore_vault_from_drive(service: Any, *, vault_root: Path) -> RestoreVaultR
                 skipped += 1
                 continue
             entity_type, entity_id = parsed
-            if Path(entity_id).name != entity_id:
-                skipped += 1
-                continue
             try:
                 body = download_file(service, drive_file_id)
             except Exception:
@@ -68,12 +68,25 @@ def restore_vault_from_drive(service: Any, *, vault_root: Path) -> RestoreVaultR
                 else:
                     skipped += 1
                 continue
-            if entity_type in {
-                DIGEST_SOURCE_ENTITY_TYPE,
-                RAW_INFO_ENTITY_TYPE,
-                ATTACHMENT_ENTITY_TYPE,
-            }:
+            if entity_type == ATTACHMENT_ENTITY_TYPE:
+                if Path(entity_id).name != entity_id:
+                    skipped += 1
+                    continue
                 if _restore_file(
+                    vault=vault,
+                    state=state,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    drive_file_id=drive_file_id,
+                    revision=brief.head_revision_id,
+                    body=body,
+                ):
+                    materialized.append(entity_id)
+                else:
+                    skipped += 1
+                continue
+            if entity_type in SYNCABLE_VAULT_FILE_ENTITY_TYPES:
+                if _restore_syncable_vault_file(
                     vault=vault,
                     state=state,
                     entity_type=entity_type,
@@ -140,19 +153,62 @@ def _restore_file(
     revision: str | None,
     body: bytes,
 ) -> bool:
-    if entity_type == DIGEST_SOURCE_ENTITY_TYPE:
-        target_dir = vault.digest_sources_dir
-    elif entity_type == RAW_INFO_ENTITY_TYPE:
-        target_dir = vault.digest_items_dir
-    elif entity_type == ATTACHMENT_ENTITY_TYPE:
-        target_dir = vault.attachments_dir
-    else:
+    if entity_type != ATTACHMENT_ENTITY_TYPE:
         return False
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / entity_id
+    target = vault.attachments_dir / entity_id
+    return _write_materialized_file(
+        state=state,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        target=target,
+        drive_file_id=drive_file_id,
+        revision=revision,
+        body=body,
+    )
+
+
+def _restore_syncable_vault_file(
+    *,
+    vault: Vault,
+    state: SyncStateStore,
+    entity_type: str,
+    entity_id: str,
+    drive_file_id: str,
+    revision: str | None,
+    body: bytes,
+) -> bool:
+    target = resolve_syncable_vault_file_path(vault.root, entity_type, entity_id)
+    if target is None:
+        return False
+    return _write_materialized_file(
+        state=state,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        target=target,
+        drive_file_id=drive_file_id,
+        revision=revision,
+        body=body,
+    )
+
+
+def _write_materialized_file(
+    *,
+    state: SyncStateStore,
+    entity_type: str,
+    entity_id: str,
+    target: Path,
+    drive_file_id: str,
+    revision: str | None,
+    body: bytes,
+) -> bool:
+    target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(target.suffix + ".tmp")
     tmp.write_bytes(body)
     tmp.replace(target)
+    if entity_type == CONFIG_SNAPSHOT_ENTITY_TYPE:
+        from knowlet.config import apply_synced_config_snapshot
+
+        apply_synced_config_snapshot(state.vault_root)
     state.upsert_file_state(
         FileState(
             entity_type=entity_type,

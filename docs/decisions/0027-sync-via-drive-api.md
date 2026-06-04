@@ -12,6 +12,8 @@
 > - **纯数据备份(backup)**:面向单设备用户。Knowlet 仍保持 local-first,只把本地变更后台上传到 Drive,不因远端 freshness 检查阻塞读写。
 >
 > 资讯(Stage C Raw Info)也被纳入同步边界:Digest Source 配置和 Raw Info inbox item 作为 typed JSON 文件写入 Drive appData。实时模式下,另一台设备拉取过的资讯会先同步到本机,本机的每日 auto-pull 再根据 synced Raw Info item_key / source 状态去重,降低多设备重复拉取概率。当前不承诺跨设备全局原子 lease;两台设备在完全同时、且都尚未看到对方 appData 更新时,仍可能产生竞态,后续再评估是否需要 Drive 侧 lease。
+>
+> **2026-06-04 data-boundary amendment**:同步范围不再只是 notes / attachments / Digest JSON。原则改为:除设备强相关或安全敏感数据、以及可由同步数据重建的缓存外,适合跨设备共享的 Vault 数据都进入 Drive appData。当前包括 profile、cards、drafts、mining tasks、Digest Source / Raw Info、quick actions、favorites、quiz sessions、wiki schema,以及去密钥的 config snapshot。原始 `config.toml`、OAuth token、索引/缓存/备份/log 仍不上传;`events.sqlite` 暂不作为 SQLite blob 同步,后续如需要应设计事件镜像格式。
 
 ## Context
 
@@ -233,17 +235,17 @@ backup 模式不代表不上传。写入仍会被 drainer 标记为 dirty 并尽
 - `credentials.py` — token 存取
 - `state.py` — `sync_state.sqlite` schema + `FileState` 行 + `delete_intent` tombstone(#118)
 - `drive_client.py`、`files.py` — Drive Files API wrapper (5.C / 5.C.1 切到 drive.appdata)
-- `push.py` — `push_note` 主体 + 5.C 的 OCC + 5.5 的合并解析 + `push_attachment`(#121,immutable)+ Digest Source / Raw Info typed JSON push
+- `push.py` — `push_note` 主体 + 5.C 的 OCC + 5.5 的合并解析 + `push_attachment`(#121,immutable)+ syncable Vault file push
 - `pull.py` — 拉取路径 + 单笔记 force-pull
 - `changes.py` — Slice 5.B + 5.D 的 Drive Changes API poller
 - `heartbeat.py` — #107c 多设备心跳 + `alive_devices` 派生
 - `freshness.py` — Sync v2 轻量 Drive Changes freshness probe;只判断是否需要阻塞同步,不推进 cursor
-- `preflight.py` — vault-wide scan(#107a / S2 / #119 双向克隆 + Drive-delete trash-local + Digest JSON auto-pull)
-- `drainer.py` — S4 后台 push 队列(#117 auto-track / #118 deletions / #122 失败可见 / #121 attachment dispatch + Digest JSON dispatch + untracked sweep)
+- `preflight.py` — vault-wide scan(#107a / S2 / #119 双向克隆 + Drive-delete trash-local + syncable Vault file auto-pull/delete)
+- `drainer.py` — S4 后台 push 队列(#117 auto-track / #118 deletions / #122 失败可见 / #121 attachment dispatch + syncable Vault file dispatch + untracked sweep)
 - `status.py` — 单 note 状态计算
-- `tracked_files.py` — 非 note vault 数据(Digest Source / Raw Info)的 sync_state queue helpers
+- `tracked_files.py` — 非 note Vault 数据清单、Drive 文件名映射和 sync_state queue helpers
 
-CLI 平价 `knowlet/cli/sync.py`:`status` / `connect` / `pull` / `push` / `resolve` / `disconnect`。
+CLI 平价 `knowlet/cli/sync.py`:`status` / `connect` / `pull` / `push` / `resolve` / `disconnect` / `vaults` / `restore-vault`。`sync push` 未指定 note id 时会推 notes、attachments 和 syncable Vault files。
 
 前端 sync UI:
 - `frontend/src/components/Sync/SyncChip.tsx` — 统一 chip(#114),覆盖 conflicts / unpushed / offline / push-failing / realtime blocking modal / freshness gate

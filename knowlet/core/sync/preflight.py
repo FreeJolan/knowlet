@@ -57,6 +57,7 @@ ServiceFactory = Callable[[], Any | None]
 # disappeared since last preflight; impl moves local to trash.
 MaterializeCallback = Callable[[str, Any], str | None]
 TrashLocalCallback = Callable[[str], None]
+DeleteLocalVaultFileCallback = Callable[[str, str], None]
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,7 @@ class PreflightReport:
     alive_devices: list[dict[str, str]]  # [{device_id, last_seen_at}]
     cloned_from_drive_ids: list[str] = field(default_factory=list)
     trashed_for_drive_delete_ids: list[str] = field(default_factory=list)
+    deleted_for_drive_delete_ids: list[str] = field(default_factory=list)
 
 
 def preflight_scan(
@@ -124,6 +126,7 @@ def preflight_scan(
     auto_pull_service_factory: ServiceFactory,
     materialize_drive_file: MaterializeCallback | None = None,
     trash_local_for_drive_deleted: TrashLocalCallback | None = None,
+    delete_local_vault_file_for_drive_deleted: DeleteLocalVaultFileCallback | None = None,
 ) -> PreflightReport:
     """Run one pass over every tracked file.
 
@@ -157,6 +160,7 @@ def preflight_scan(
     alive_devices: list[dict[str, str]] = []
     cloned_from_drive: list[str] = []
     trashed_for_drive_delete: list[str] = []
+    deleted_for_drive_delete: list[str] = []
 
     # #111 — heartbeat write + scan happens BEFORE the per-note
     # loop so the alive_devices count is populated even if every
@@ -262,15 +266,15 @@ def preflight_scan(
     # service (auth + reachable). The per-note loop above already
     # set ``unauthenticated`` if creds are missing.
     if not unauthenticated and drive_service is not None:
-        # Sync v2: non-note JSON files (digest sources / Raw Info)
-        # are vault data too. They do not need merge UI today; clean
-        # local rows auto-pull when Drive's revision moved. Dirty rows
-        # stay dirty and the drainer will attempt a conditional push.
+        # Sync v2+: non-note vault files are vault data too. They do not
+        # need merge UI today; clean local rows auto-pull when Drive's
+        # revision moved. Dirty rows stay dirty and the drainer will
+        # attempt a conditional push.
         if materialize_drive_file is not None:
-            from knowlet.core.sync.push import SYNCED_JSON_ENTITY_TYPES
+            from knowlet.core.sync.tracked_files import SYNCABLE_VAULT_FILE_ENTITY_TYPES
 
             for row in rows:
-                if row.entity_type not in SYNCED_JSON_ENTITY_TYPES:
+                if row.entity_type not in SYNCABLE_VAULT_FILE_ENTITY_TYPES:
                     continue
                 if row.dirty:
                     dirty += 1
@@ -302,12 +306,15 @@ def preflight_scan(
         # gets its local file moved to trash. Skip dev-seeded rows
         # (no real Drive backing) and rows with pending delete
         # intent (those are OUR deletes, drainer handles them).
-        if trash_local_for_drive_deleted is not None:
+        if (
+            trash_local_for_drive_deleted is not None
+            or delete_local_vault_file_for_drive_deleted is not None
+        ):
+            from knowlet.core.sync.push import ATTACHMENT_ENTITY_TYPE
             from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
+            from knowlet.core.sync.tracked_files import SYNCABLE_VAULT_FILE_ENTITY_TYPES
 
             for row in rows:
-                if row.entity_type != "note":
-                    continue
                 if not row.drive_file_id:
                     continue
                 if row.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
@@ -315,6 +322,35 @@ def preflight_scan(
                 if row.delete_intent is not None:
                     continue
                 if row.drive_file_id in drive_files:
+                    continue
+                if row.entity_type != "note":
+                    if (
+                        delete_local_vault_file_for_drive_deleted is None
+                        or row.dirty
+                        or row.entity_type
+                        not in {
+                            ATTACHMENT_ENTITY_TYPE,
+                            *SYNCABLE_VAULT_FILE_ENTITY_TYPES,
+                        }
+                    ):
+                        continue
+                    try:
+                        delete_local_vault_file_for_drive_deleted(
+                            row.entity_type,
+                            row.entity_id,
+                        )
+                        deleted_for_drive_delete.append(f"{row.entity_type}:{row.entity_id}")
+                    except Exception:
+                        import logging
+
+                        logging.getLogger(__name__).warning(
+                            "preflight: delete-local failed for %s/%s",
+                            row.entity_type,
+                            row.entity_id,
+                            exc_info=True,
+                        )
+                    continue
+                if trash_local_for_drive_deleted is None:
                     continue
                 try:
                     trash_local_for_drive_deleted(row.entity_id)
@@ -367,6 +403,7 @@ def preflight_scan(
         alive_devices=alive_devices,
         cloned_from_drive_ids=cloned_from_drive,
         trashed_for_drive_delete_ids=trashed_for_drive_delete,
+        deleted_for_drive_delete_ids=deleted_for_drive_delete,
     )
 
 

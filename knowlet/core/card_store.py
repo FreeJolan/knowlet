@@ -80,6 +80,7 @@ class CardStore:
             encoding="utf-8",
         )
         tmp.replace(target)
+        self._queue_sync(target)
         return target
 
     def delete(self, card_id: str) -> bool:
@@ -87,4 +88,28 @@ class CardStore:
         if not path.exists():
             return False
         os.unlink(path)
+        self._queue_delete_sync(path)
         return True
+
+    def _vault_root(self) -> Path | None:
+        if self.root.name != CARDS_DIR:
+            return None
+        return self.root.parent
+
+    def _queue_sync(self, path: Path) -> None:
+        vault_root = self._vault_root()
+        if vault_root is None:
+            return
+        from knowlet.core.sync.tracked_files import queue_syncable_vault_file_if_authenticated
+
+        queue_syncable_vault_file_if_authenticated(vault_root=vault_root, path=path)
+
+    def _queue_delete_sync(self, path: Path) -> None:
+        vault_root = self._vault_root()
+        if vault_root is None:
+            return
+        from knowlet.core.sync.tracked_files import (
+            queue_syncable_vault_file_delete_if_authenticated,
+        )
+
+        queue_syncable_vault_file_delete_if_authenticated(vault_root=vault_root, path=path)

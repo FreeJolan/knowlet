@@ -5,7 +5,7 @@
 - **取代**: [`phase-3-stages.md`](./phase-3-stages.md) 的 7-Stage 计划 + [`phase-3-slicing.md`](./phase-3-slicing.md) 的 slice 切分。那套（envelope 7 层 / linter 全库扫 / reorg planner / tidy advisor / vault health dashboard / 知识·资料二分 / anti-drift 队列）大部分被判为**伪需求或早产**——它们建立在发明的 persona（小红/小张/新用户）上,而非用户的真实需求。
 - **命名警告**:`AGENTS.md` 里的 Phase A/B/C/D/E 是 agent 工作流;本文件的 阶段 A/B/C/D/E 是产品 roadmap。问"下一阶段/Phase B"时,以本文件为准。
 - **当前默认 LLM(2026-05-27)**:本机 `cliproxyapi` + Codex/GPT 5.5(`http://127.0.0.1:8317/v1`, `gpt-5.5`)。历史文档里 Claude/Claude Code 相关内容只作当时参考,不再作为默认接入或 dogfood 路径。
-- **当前执行顺序(2026-05-31 更新)**:阶段 B 已由用户 dogfood 通过;**F0 — AI 底层能力重构** 已完成当前门槛;**Stage C v2 — 资讯审阅与入库** 已完成 C4-C15;**Phase 3.5 桌面端客户端** 已完成第一刀并已发布。当前插队重点是 **Sync v2 — Google Drive 多设备实时同步/备份模式重构**:默认 realtime、多设备打开/恢复前台 freshness gate、backup 单设备模式、Digest Source/Raw Info 跨设备同步。Sync v2 稳定后,再回到桌面端后续系统级体验。阶段 E/Quiz 暂缓到桌面端之后再评估。
+- **当前执行顺序(2026-06-04 更新)**:阶段 B 已由用户 dogfood 通过;**F0 — AI 底层能力重构** 已完成当前门槛;**Stage C v2 — 资讯审阅与入库** 已完成 C4-C15;**Phase 3.5 桌面端客户端** 已完成第一刀并已发布。当前插队重点是 **Sync v2 — Google Drive 多设备实时同步/备份模式重构**:默认 realtime、多设备打开/恢复前台 freshness gate、backup 单设备模式、完整 Vault 数据同步边界(profile/cards/drafts/tasks/Digest/quick actions/favorites/quizzes/wiki schema/scrubbed config)。Sync v2 真实 Drive 多设备 dogfood 稳定后,再回到桌面端后续系统级体验。阶段 E/Quiz 暂缓到桌面端之后再评估。
 - 根原则锚仍是 [ADR-0029](../decisions/0029-cognitive-contract.md):**用户是最后一个字节**（现由 diff-accept 兑现）、AI 是脚手架、输出可追溯。ADR-0029 衍生的**维护类机制**（anti-drift 队列 / dashboard / 知识资料二分）**推迟到有真实大 vault 信号再说**。
 
 ## 为什么重定向（2026-05-24 讨论）
@@ -135,7 +135,7 @@ _死掉不做:网站订阅 / 通用爬站 / RSS-Bridge / anti-drift 队列 / 自
 - [x] Desktop 3 系统级入口:菜单栏 / Dock / 快捷键 / 打开最近 vault。2026-05-30:桌面端会在 app config 中维护最近 vault 列表,启动时自动重开最近仍有效的 vault;已提供 Vault → Open Vault... 与 Cmd/Ctrl+O 显式切库入口;Vault → Open Recent 会展示仍有效的最近 vault,切换后刷新菜单并把目标 vault 移到最前;macOS 上关闭主窗口会隐藏而非退出,点击 Dock 图标会重新显示并聚焦主窗口。
 - [x] Desktop 4 Stage C 自动拉取承载:用户首次在线、跨日在线、后台状态提示。2026-05-30:桌面后端启动后沿用 WebState 的 Stage C auto-pull loop,首次在线立即检查,随后周期检查以覆盖跨日在线;主界面 Digest 图标轮询 `/api/digest/status` 并在拉取中显示动画;原生 Digest 菜单提供状态行、Open Digest 和 Pull Digest Now,并通过 Tauri event bridge 驱动 React 工作台。
 - [x] Desktop 5 打包与本机 dogfood:Developer ID 签名、公证、真实 vault 验证。2026-05-30:Developer ID universal DMG 已签名、公证、staple、Gatekeeper accepted;包内自带 React frontend、universal backend launcher、arm64/x86_64 PyInstaller sidecars。用 `PATH=/usr/bin:/bin` dogfood 确认不依赖本机 repo 或 `uv`。升级路径/auto-update 另列为后续桌面分发切片。详见 `docs/development/macos-desktop.md`。
-- [ ] Desktop 6 Sync v2 dogfood:多设备实时同步作为默认;backup 单设备模式;恢复前台 freshness probe 只在远端有更新时阻塞;Digest Source/Raw Info 作为 vault 数据同步,避免多设备资讯重复拉取。2026-05-31:后端/前端基础实现推进中,最终仍需真实 Drive 多设备 dogfood。
+- [ ] Desktop 6 Sync v2 dogfood:多设备实时同步作为默认;backup 单设备模式;恢复前台 freshness probe 只在远端有更新时阻塞;完整 Vault 数据边界同步。2026-06-04:同步对象已扩展到 profile/cards/drafts/tasks/Digest Source/Raw Info/quick actions/favorites/quizzes/wiki schema/scrubbed config snapshot;raw config/token/index/cache/backups/log 不上传;`events.sqlite` 暂不作为 SQLite blob 同步。下一步仍需真实 Drive 多设备 dogfood 和冲突/限流观察。
 
 ## 阶段 E — 出题考我 quiz（need 4 下半,最低频,桌面端后再评估）
 
@@ -154,7 +154,7 @@ _死掉不做:网站订阅 / 通用爬站 / RSS-Bridge / anti-drift 队列 / 自
 
 ## 工期 & 排程
 
-**近期粗估** ≈ **1.5–3 周**（Sync v2 多设备 dogfood + 桌面端后续系统级体验 ≈ 1.5–2.5 周 · 收尾/dogfood ≈ 1.5d）。A/B/D、F0、Stage C v2 当前门槛和桌面 self-contained package 已完成;阶段 E/Quiz 不计入最近一轮,桌面端后再评估。
+**近期粗估** ≈ **1–2.5 周**（Sync v2 真实多设备 dogfood + 桌面端后续系统级体验 ≈ 1–2 周 · 收尾/dogfood ≈ 1.5d）。A/B/D、F0、Stage C v2 当前门槛、桌面 self-contained package 和 Sync v2 后端数据边界扩展已完成;阶段 E/Quiz 不计入最近一轮,桌面端后再评估。
 
 **建议顺序**:A/B/D 已完成 → F0 AI 底层能力重构当前门槛完成 → **C v2(资讯审阅与入库) 当前门槛完成(C15)** → **桌面端第一刀已完成并发布** → **Sync v2 多设备同步/备份语义重构 + 真实 Drive dogfood** → 桌面端后续系统级体验 → 桌面端 dogfood 后再决定是否回到 **E/Quiz**。不要再根据旧 `phase-3-*` 文档、本文件 2026-05-28/2026-05-30 早些时候的旧结论或 ADR-0021 旧 Phase 3 envelope 计划推进。
 

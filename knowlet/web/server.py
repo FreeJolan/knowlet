@@ -1308,16 +1308,34 @@ def _sort_tree(node: TreeFolder) -> None:
         _sort_tree(child)
 
 
-def _resync_paths_under(runtime: ChatRuntime, folder_path: Path) -> None:
+def _resync_paths_under(
+    runtime: ChatRuntime,
+    folder_path: Path,
+    *,
+    mark_note_dirty: Callable[[str], None] | None = None,
+) -> None:
     """After a folder rename/move, every note inside has a new on-disk
     path. Walk the new location and update the index `path` column for
-    each by ULID (parsed from the filename — `<id>.md`)."""
+    each note id. Also persist the new folder hint into frontmatter so
+    Drive's flat appData restore can rebuild the same tree."""
     if not folder_path.is_dir():
         return
     for md in folder_path.rglob("*.md"):
         if md.is_file() and not any(p.startswith(".") for p in md.relative_to(folder_path).parts):
-            note_id = md.stem
-            runtime.index.update_note_path(note_id, str(md))
+            try:
+                note = runtime.vault.read_note(md)
+            except Exception:
+                note_id = md.stem
+                runtime.index.update_note_path(note_id, str(md))
+                if mark_note_dirty is not None:
+                    mark_note_dirty(note_id)
+                continue
+            folder = runtime.vault.folder_of(md) or None
+            note.folder = folder
+            written = runtime.vault.write_note(note, folder=folder)
+            runtime.index.update_note_path(note.id, str(written))
+            if mark_note_dirty is not None:
+                mark_note_dirty(note.id)
 
 
 # ----------------------------------------------------------------- factory
@@ -2298,6 +2316,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 auto_pull_service_factory=service_factory,
                 materialize_drive_file=_materialize_drive_file,
                 trash_local_for_drive_deleted=_trash_local_for_drive_deleted,
+                delete_local_vault_file_for_drive_deleted=(
+                    _delete_local_vault_file_for_drive_deleted
+                ),
             )
             if _preflight_cleared_for_freshness(report):
                 mark_freshness_synced(
@@ -2355,6 +2376,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 "alive_devices": [],
                 "cloned_from_drive_ids": [],
                 "trashed_for_drive_delete_ids": [],
+                "deleted_for_drive_delete_ids": [],
             }
         return _serialize_preflight(report, state.preflight_ran_at)
 
@@ -2405,6 +2427,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "alive_devices": list(report.alive_devices),
             "cloned_from_drive_ids": list(report.cloned_from_drive_ids),
             "trashed_for_drive_delete_ids": list(report.trashed_for_drive_delete_ids),
+            "deleted_for_drive_delete_ids": list(report.deleted_for_drive_delete_ids),
         }
 
     def _invalidate_preflight_cache() -> None:
@@ -3097,12 +3120,15 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         from knowlet.core.sync.files import download_file
         from knowlet.core.sync.push import (
             ATTACHMENT_ENTITY_TYPE,
-            DIGEST_SOURCE_ENTITY_TYPE,
             NOTE_ENTITY_TYPE,
-            RAW_INFO_ENTITY_TYPE,
             appdata_entity_from_drive_name,
         )
         from knowlet.core.sync.state import FileState, SyncStateStore
+        from knowlet.core.sync.tracked_files import (
+            CONFIG_SNAPSHOT_ENTITY_TYPE,
+            SYNCABLE_VAULT_FILE_ENTITY_TYPES,
+            resolve_syncable_vault_file_path,
+        )
 
         runtime = state.runtime
         if runtime is None:
@@ -3120,21 +3146,28 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         if parsed is None:
             return None
         entity_type, entity_id = parsed
-        if entity_type in {DIGEST_SOURCE_ENTITY_TYPE, RAW_INFO_ENTITY_TYPE}:
-            if Path(entity_id).name != entity_id:
+        if entity_type in SYNCABLE_VAULT_FILE_ENTITY_TYPES:
+            target = resolve_syncable_vault_file_path(vault.root, entity_type, entity_id)
+            if target is None:
                 return None
-
-            if entity_type == DIGEST_SOURCE_ENTITY_TYPE:
-                target_dir = runtime.vault.digest_sources_dir
-            elif entity_type == RAW_INFO_ENTITY_TYPE:
-                target_dir = runtime.vault.digest_items_dir
-            else:
-                return None
-            target_dir.mkdir(parents=True, exist_ok=True)
-            target = target_dir / entity_id
+            target.parent.mkdir(parents=True, exist_ok=True)
             tmp = target.with_suffix(target.suffix + ".tmp")
             tmp.write_bytes(body)
             tmp.replace(target)
+            if entity_type == CONFIG_SNAPSHOT_ENTITY_TYPE:
+                from knowlet.config import apply_synced_config_snapshot
+
+                fresh = apply_synced_config_snapshot(vault.root)
+                if fresh is not None:
+                    config.general = fresh.general
+                    config.llm = fresh.llm
+                    config.embedding = fresh.embedding
+                    config.retrieval = fresh.retrieval
+                    config.web_search = fresh.web_search
+                    config.sync = fresh.sync
+            if target == runtime.vault.profile_path:
+                with suppress(Exception):
+                    runtime.user_profile = read_profile(runtime.vault.profile_path)
             store = SyncStateStore(vault.root)
             try:
                 store.upsert_file_state(
@@ -3257,6 +3290,31 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         finally:
             store.close()
 
+    def _delete_local_vault_file_for_drive_deleted(entity_type: str, entity_id: str) -> None:
+        from knowlet.core.sync.push import ATTACHMENT_ENTITY_TYPE
+        from knowlet.core.sync.state import SyncStateStore
+        from knowlet.core.sync.tracked_files import resolve_syncable_vault_file_path
+
+        runtime = state.runtime
+        if runtime is None:
+            return
+        if entity_type == ATTACHMENT_ENTITY_TYPE:
+            if Path(entity_id).name != entity_id:
+                return
+            target = runtime.vault.attachments_dir / entity_id
+        else:
+            candidate = resolve_syncable_vault_file_path(runtime.vault.root, entity_type, entity_id)
+            if candidate is None:
+                return
+            target = candidate
+        with suppress(FileNotFoundError):
+            target.unlink()
+        store = SyncStateStore(vault.root)
+        try:
+            store.remove_file_state(entity_type, entity_id)
+        finally:
+            store.close()
+
     @app.get("/api/sync/push-errors")
     def push_errors_endpoint() -> dict[str, Any]:
         """#122 — list notes whose recent push attempts have failed.
@@ -3310,10 +3368,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         will retry on the next reconnect cycle."""
         from knowlet.core.sync.push import (
             ATTACHMENT_ENTITY_TYPE,
-            DIGEST_SOURCE_ENTITY_TYPE,
-            RAW_INFO_ENTITY_TYPE,
         )
         from knowlet.core.sync.state import SyncStateStore
+        from knowlet.core.sync.tracked_files import iter_syncable_vault_files
 
         runtime = state.runtime
         if runtime is None:
@@ -3343,19 +3400,11 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 if key in tracked:
                     continue
                 out.append(key)
-        for entity_type, root in (
-            (DIGEST_SOURCE_ENTITY_TYPE, runtime.vault.digest_sources_dir),
-            (RAW_INFO_ENTITY_TYPE, runtime.vault.digest_items_dir),
-        ):
-            if not root.exists():
+        for item in iter_syncable_vault_files(runtime.vault.root):
+            key = (item.entity_type, item.entity_id)
+            if key in tracked:
                 continue
-            for entry in root.iterdir():
-                if not entry.is_file() or entry.suffix != ".json":
-                    continue
-                key = (entity_type, entry.name)
-                if key in tracked:
-                    continue
-                out.append(key)
+            out.append(key)
         return out
 
     def _drainer_attachment_lookup(filename: str) -> Path | None:
@@ -3370,19 +3419,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         return candidate
 
     def _drainer_synced_file_lookup(entity_type: str, entity_id: str) -> Path | None:
-        from knowlet.core.sync.push import (
-            DIGEST_SOURCE_ENTITY_TYPE,
-            RAW_INFO_ENTITY_TYPE,
-        )
+        from knowlet.core.sync.tracked_files import resolve_syncable_vault_file_path
 
         runtime = state.runtime
         if runtime is None:
             return None
-        if entity_type == DIGEST_SOURCE_ENTITY_TYPE:
-            candidate = runtime.vault.digest_sources_dir / entity_id
-        elif entity_type == RAW_INFO_ENTITY_TYPE:
-            candidate = runtime.vault.digest_items_dir / entity_id
-        else:
+        candidate = resolve_syncable_vault_file_path(runtime.vault.root, entity_type, entity_id)
+        if candidate is None:
             return None
         if not candidate.exists():
             return None
@@ -4829,7 +4872,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except FileExistsError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-        _resync_paths_under(runtime, new_path)
+        _resync_paths_under(runtime, new_path, mark_note_dirty=_mark_note_dirty_for_push)
         return FolderResponse(path=_rel_folder(runtime.vault, new_path))
 
     @app.post("/api/folders/move", response_model=FolderResponse)
@@ -4845,7 +4888,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except FileExistsError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-        _resync_paths_under(runtime, new_path)
+        _resync_paths_under(runtime, new_path, mark_note_dirty=_mark_note_dirty_for_push)
         return FolderResponse(path=_rel_folder(runtime.vault, new_path))
 
     @app.delete("/api/folders")
@@ -4865,6 +4908,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         for trashed_path in trashed:
             note_id = trashed_path.stem
             runtime.index.delete_note(note_id)
+            _mark_note_delete_intent(note_id, "soft")
         return {"ok": True, "trashed_count": len(trashed)}
 
     @app.get("/api/templates", response_model=list[TemplateSummary])
@@ -5258,8 +5302,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_410_GONE, detail=str(exc)) from exc
         except FileExistsError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-        runtime.index.update_note_path(note_id, str(new_path))
         note = runtime.vault.read_note(new_path)
+        folder = runtime.vault.folder_of(new_path) or None
+        note.folder = folder
+        new_path = runtime.vault.write_note(note, folder=folder)
+        runtime.index.update_note_path(note_id, str(new_path))
+        _mark_note_dirty_for_push(note.id)
         return NoteFull(
             id=note.id,
             title=note.title,

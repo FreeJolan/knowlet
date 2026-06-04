@@ -1,13 +1,14 @@
 """Phase 2 D B1 — starred / favorited notes.
 
-Local-only, single-user list of note ids the user wants always one
-click away. Stored in ``<vault>/.knowlet/favorites.json``. By design:
+Single-user list of note ids the user wants always one click away.
+Stored in ``<vault>/.knowlet/favorites.json``. By design:
 
 - **By id, not path** — survives renames + folder moves.
 - **Append-order = display-order** — V1 has no drag-drop reorder; if
   the user wants to change the order, they remove and re-add.
-- **Local, not synced** — favorites are per-device UI preference, same
-  category as tab pinning state (localStorage) and the sync_state DB.
+- **Synced vault data** — favorites express how the user organizes this
+  vault, so Drive sync carries them across devices. Ephemeral tab/window
+  state remains localStorage-only.
 - **Self-pruning on read** — entries pointing at notes the caller
   reports as "no longer exists" get silently removed and written back.
   That keeps the file from accumulating dangling rows after deletes /
@@ -71,6 +72,7 @@ class FavoritesStore:
             encoding="utf-8",
         )
         tmp.replace(self.path)
+        self._queue_sync()
 
     # --------------------------------------------------- public API
 
@@ -114,3 +116,8 @@ class FavoritesStore:
 
     def contains(self, note_id: str) -> bool:
         return note_id in self._read_raw()
+
+    def _queue_sync(self) -> None:
+        from knowlet.core.sync.tracked_files import queue_syncable_vault_file_if_authenticated
+
+        queue_syncable_vault_file_if_authenticated(vault_root=self.vault_root, path=self.path)

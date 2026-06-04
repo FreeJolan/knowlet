@@ -198,8 +198,8 @@ class RawInfoStore:
     def _queue_sync(self, item: RawInfo) -> None:
         if item.path is None:
             return
-        from knowlet.core.sync.push import RAW_INFO_ENTITY_TYPE
         from knowlet.core.sync.tracked_files import (
+            RAW_INFO_ENTITY_TYPE,
             infer_vault_root_from_digest_dir,
             queue_synced_json_if_authenticated,
         )

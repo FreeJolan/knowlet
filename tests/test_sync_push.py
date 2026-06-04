@@ -21,12 +21,14 @@ from knowlet.core.sync.push import (
     drive_appdata_name,
     push_attachment,
     push_note,
+    push_syncable_vault_files,
     push_vault_file,
     resolve_keep_both,
     resolve_use_mine,
     resolve_use_remote,
 )
 from knowlet.core.sync.state import FileState, SyncStateStore
+from knowlet.core.sync.tracked_files import CARD_ENTITY_TYPE, USER_PROFILE_ENTITY_TYPE
 from knowlet.core.vault import Vault
 
 
@@ -83,6 +85,36 @@ def test_push_first_time_uploads_and_records(tmp_path: Path) -> None:
             note.path.name,
             vault_root=vault.root,
         )
+    finally:
+        state.close()
+
+
+def test_push_note_serializes_runtime_folder_hint(tmp_path: Path) -> None:
+    """Drive appData is flat, so folder layout must ride inside the note body.
+
+    The drainer sets ``note.folder`` from the current filesystem path just
+    before push. ``push_note`` must serialize that in-memory note instead of
+    uploading stale on-disk bytes that may not yet contain a folder field.
+    """
+    root = tmp_path / "v"
+    root.mkdir()
+    vault = Vault(root)
+    vault.init_layout()
+    note = Note(id=new_id(), title="nested", body="local-v1")
+    path = vault.write_note(note, folder="projects/ai")
+    assert "folder:" not in path.read_text(encoding="utf-8")
+
+    pushed_note = Note.from_file(path)
+    pushed_note.folder = vault.folder_of(path)
+    state = SyncStateStore(vault.root)
+    try:
+        with patch(
+            "knowlet.core.sync.push.upload_new_file",
+            return_value=_drive_file(),
+        ) as up:
+            push_note(service=object(), state=state, note=pushed_note)
+        content = up.call_args.kwargs["content"].decode("utf-8")
+        assert "folder: projects/ai" in content
     finally:
         state.close()
 
@@ -448,6 +480,37 @@ def test_drive_appdata_name_rejects_unknown_json_entity() -> None:
         assert "unsupported" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_push_syncable_vault_files_pushes_current_inventory(tmp_path: Path) -> None:
+    vault = Vault(tmp_path)
+    vault.init_layout()
+    (vault.users_dir / "me.md").write_text("# Me\n", encoding="utf-8")
+    (vault.cards_dir / "01CARD.json").write_text('{"front":"q"}\n', encoding="utf-8")
+    state = SyncStateStore(vault.root)
+    try:
+        with patch("knowlet.core.sync.push.upload_new_file") as upload:
+            upload.side_effect = lambda *args, **kwargs: DriveFile(
+                id=f"FID-{len(upload.call_args_list)}",
+                name=kwargs["name"],
+                mime_type=kwargs.get("mime_type") or "",
+                modified_time="2026-06-04T00:00:00Z",
+                head_revision_id=f"rev-{len(upload.call_args_list)}",
+            )
+
+            results = push_syncable_vault_files(
+                service=object(),
+                state=state,
+                vault_root=vault.root,
+            )
+
+        pushed = {(result.entity_type, result.entity_id) for result in results}
+        assert (USER_PROFILE_ENTITY_TYPE, "me.md") in pushed
+        assert (CARD_ENTITY_TYPE, "01CARD.json") in pushed
+        assert state.get_file_state(USER_PROFILE_ENTITY_TYPE, "me.md") is not None
+        assert state.get_file_state(CARD_ENTITY_TYPE, "01CARD.json") is not None
+    finally:
+        state.close()
 
 
 def test_resolve_keep_both_writes_sibling_and_keeps_local_dirty(

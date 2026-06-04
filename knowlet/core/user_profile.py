@@ -141,7 +141,17 @@ def write_profile(profile_path: Path, profile: UserProfile) -> Path:
     tmp.write_text(profile.to_markdown(), encoding="utf-8")
     os.chmod(tmp, 0o600)
     tmp.replace(profile_path)
+    _queue_profile_sync(profile_path)
     return profile_path
+
+
+def _queue_profile_sync(profile_path: Path) -> None:
+    if profile_path.name != PROFILE_FILENAME or profile_path.parent.name != "users":
+        return
+    vault_root = profile_path.parent.parent
+    from knowlet.core.sync.tracked_files import queue_syncable_vault_file_if_authenticated
+
+    queue_syncable_vault_file_if_authenticated(vault_root=vault_root, path=profile_path)
 
 
 def ensure_profile(profile_path: Path, lang: str = "en") -> UserProfile:
