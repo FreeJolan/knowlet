@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.0.23] - 2026-06-04
+
+Drive sync data boundary release.
+
+- Expand Google Drive sync beyond notes and attachments to user profile, cards,
+  drafts, mining tasks, digest sources/items, Quick Actions, favorites, quizzes,
+  wiki schema, and a scrubbed public config snapshot.
+- Keep device-specific and sensitive state local, including API keys, OAuth
+  tokens, raw config secrets, indexes, caches, logs, backups, and local sync
+  event databases.
+- Restore synced vault files through the same Drive appData namespace so a
+  recovered vault preserves non-note user data as well as the original note
+  folder organization.
+- Make `knowlet sync push` without a note id push the full syncable vault set,
+  while preserving single-note push behavior when a note id is provided.
+- Add regression coverage for syncable vault-file inventory, store dirty/delete
+  hooks, config snapshot scrubbing, generic Drive restore, and Drive-side
+  deletion materialization.
+
 ## [0.0.22] - 2026-06-04
 
 Remote Drive Vault restore release.
