@@ -17,6 +17,7 @@ from knowlet.core.sync.files import (
     download_file,
     force_overwrite,
     get_file_metadata,
+    list_appdata_revisions,
     update_file_conditional,
     upload_new_file,
 )
@@ -155,3 +156,23 @@ def test_download_file_paginates_until_done() -> None:
     ):
         out = download_file(service, "FID-1")
     assert out == b"part1-part2"
+
+
+def test_list_appdata_revisions_filters_trashed_files() -> None:
+    service = MagicMock()
+    service.files.return_value.list.return_value.execute.return_value = {
+        "files": [
+            {
+                "id": "FID-1",
+                "name": "alpha.md",
+                "headRevisionId": "rev-1",
+            }
+        ]
+    }
+
+    revisions = list_appdata_revisions(service)
+
+    list_kwargs = service.files.return_value.list.call_args.kwargs
+    assert list_kwargs["spaces"] == "appDataFolder"
+    assert list_kwargs["q"] == "trashed=false"
+    assert revisions["FID-1"].name == "alpha.md"

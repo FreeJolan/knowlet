@@ -142,6 +142,7 @@ def _list_appdata_files(service: Any) -> list[_AppDataFile]:
             "spaces": "appDataFolder",
             "fields": "nextPageToken, files(id,name,modifiedTime,headRevisionId)",
             "pageSize": 1000,
+            "q": "trashed=false",
         }
         if page_token:
             kwargs["pageToken"] = page_token

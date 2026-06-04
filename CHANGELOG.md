@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.24] - 2026-06-05
+
+Drive trash restore hotfix release.
+
+- Filter Drive appData file listings with `trashed=false` so notes that were
+  deleted and synced to Drive trash are not materialized again by restore or
+  preflight.
+- Apply the same trash filter to remote Vault discovery and heartbeat lookups,
+  preventing stale registry or heartbeat entries from influencing new-device
+  recovery and multi-device presence.
+- Add regressions for appData revision listing, remote Vault registry listing,
+  and heartbeat lookup query shapes.
+
 ## [0.0.23] - 2026-06-04
 
 Drive sync data boundary release.

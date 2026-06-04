@@ -241,7 +241,7 @@ class AuditEventStore:
         sql = "SELECT id, ts, kind, entity_type, entity_id, actor, payload FROM events"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY ts ASC, id ASC"
+        sql += " ORDER BY ts ASC, rowid ASC"
         if limit is not None:
             sql += " LIMIT ?"
             args.append(int(limit))
@@ -255,7 +255,7 @@ class AuditEventStore:
         with self._lock:
             rows = conn.execute(
                 "SELECT id, ts, kind, entity_type, entity_id, actor, payload "
-                "FROM events ORDER BY ts DESC, id DESC LIMIT ?",
+                "FROM events ORDER BY rowid DESC LIMIT ?",
                 (int(n),),
             ).fetchall()
         # Reverse so the caller renders in chronological order.
@@ -267,7 +267,7 @@ class AuditEventStore:
         with self._lock:
             cur = conn.execute(
                 "SELECT id, ts, kind, entity_type, entity_id, actor, payload "
-                "FROM events ORDER BY ts ASC, id ASC"
+                "FROM events ORDER BY rowid ASC"
             )
             for row in cur:
                 yield _row_to_event(row)

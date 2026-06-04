@@ -234,6 +234,7 @@ def list_appdata_revisions(service: Any) -> dict[str, DriveFileBrief]:
             "spaces": "appDataFolder",
             "fields": "nextPageToken, files(id,name,headRevisionId)",
             "pageSize": 1000,
+            "q": "trashed=false",
         }
         if page_token:
             kwargs["pageToken"] = page_token

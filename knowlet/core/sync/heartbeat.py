@@ -117,7 +117,7 @@ def list_alive_devices(
             "spaces": "appDataFolder",
             "fields": "nextPageToken, files(id,name,modifiedTime)",
             "pageSize": 100,
-            "q": "name contains '.heartbeat.json'",
+            "q": "name contains '.heartbeat.json' and trashed=false",
         }
         if page_token:
             kwargs["pageToken"] = page_token
@@ -173,7 +173,7 @@ def _find_heartbeat_file_id(service: Any, fname: str) -> str | None:
         .list(
             spaces="appDataFolder",
             fields="files(id,name)",
-            q=f"name = '{fname}'",
+            q=f"name = '{fname}' and trashed=false",
             pageSize=10,
         )
         .execute()

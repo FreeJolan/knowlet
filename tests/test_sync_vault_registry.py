@@ -61,6 +61,9 @@ def test_list_remote_vaults_merges_registry_and_legacy_scoped_names(monkeypatch)
 
     vaults = list_remote_vaults(service)
 
+    list_kwargs = service.files.return_value.list.call_args.kwargs
+    assert list_kwargs["spaces"] == "appDataFolder"
+    assert list_kwargs["q"] == "trashed=false"
     by_id = {vault.vault_id: vault for vault in vaults}
     assert by_id["01REMOTEVAULTID000000000000"].name == "Research Vault"
     assert by_id["01REMOTEVAULTID000000000000"].source == "registry"
