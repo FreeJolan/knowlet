@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.0.22] - 2026-06-04
+
+Remote Drive Vault restore release.
+
+- Add a desktop Restore from Drive flow so a new device can connect the same
+  Google Drive account, discover existing remote Vaults, choose a local folder,
+  bind the remote vault identity, and restore scoped appData before opening.
+- Add a Drive appData Vault registry with legacy scoped-name discovery so
+  existing synced Vaults can be found without copying `.knowlet/vault.json`.
+- Add CLI parity with `knowlet sync vaults --json` and
+  `knowlet sync restore-vault --remote-vault-id ... --to ...`.
+- Improve the Discuss composer with a larger default input, drag resizing,
+  long-form Markdown writing mode, and more stable long-form caret E2E
+  coverage.
+- Document that Vault identity is the stable sync id, not the folder name;
+  creating a same-named Vault does not bind old remote data.
+
 ## [0.0.21] - 2026-06-03
 
 Creation loading states release.
