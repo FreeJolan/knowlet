@@ -6,6 +6,7 @@ TAURI="$ROOT/frontend/src-tauri"
 BIN_DIR="$TAURI/binaries"
 BUILD_ROOT="${KNOWLET_SIDECAR_BUILD_ROOT:-$TAURI/target/sidecars}"
 PYINSTALLER_VERSION="6.20.0"
+CRYPTOGRAPHY_VERSION="48.0.0"
 
 export LANG="en_US.UTF-8"
 export LC_ALL="en_US.UTF-8"
@@ -28,7 +29,14 @@ build_one() {
 
   rm -rf "$venv" "$dist" "$work" "$spec"
   uv venv "$venv" --python "$python_request"
-  uv pip install --python "$venv/bin/python" "pyinstaller==$PYINSTALLER_VERSION" "$ROOT[sync]"
+  # Keep the Intel build on a version that ships a macOS universal2 wheel.
+  # Newer source-only resolutions require a cross-compiled OpenSSL toolchain
+  # when this script runs on an Apple Silicon release runner.
+  uv pip install \
+    --python "$venv/bin/python" \
+    "pyinstaller==$PYINSTALLER_VERSION" \
+    "cryptography==$CRYPTOGRAPHY_VERSION" \
+    "$ROOT[sync]"
   local python_cmd=("$venv/bin/python")
   if ((${#arch_prefix[@]})); then
     python_cmd=("${arch_prefix[@]}" "$venv/bin/python")
