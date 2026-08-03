@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.25] - 2026-08-03
+
+Markdown editing fixes release.
+
+- Restore ordered and unordered list markers in rendered Markdown while
+  keeping task-list checkboxes free of duplicate bullets.
+- Preserve rich clipboard formatting when pasting into the Markdown editor,
+  including headings, emphasis, links, lists, tables, task lists, code, and
+  images.
+- Keep plain-text and image-file paste behavior unchanged, with regression
+  coverage for rich text and the existing image upload flow.
+
 ## [0.0.24] - 2026-06-05
 
 Drive trash restore hotfix release.
