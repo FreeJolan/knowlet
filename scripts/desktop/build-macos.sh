@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FRONTEND="$ROOT/frontend"
 TAURI="$FRONTEND/src-tauri"
+SIDECAR_BUILD_ROOT="${KNOWLET_SIDECAR_BUILD_ROOT:-$TAURI/target/sidecars}"
 
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
 export LANG="en_US.UTF-8"
@@ -57,6 +58,21 @@ codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
 "$APP/Contents/MacOS/knowlet-backend" --version
 arch -x86_64 "$APP/Contents/MacOS/knowlet-backend" --version
+
+# The universal app already contains the sidecars and merged Rust binary.
+# Reclaim their large intermediate trees before hdiutil needs a second copy of
+# the app while creating the DMG on space-constrained hosted runners.
+case "$SIDECAR_BUILD_ROOT" in
+  ""|/|"$ROOT"|"$FRONTEND"|"$TAURI"|"$TAURI/target")
+    echo "Refusing to remove unsafe sidecar build root: $SIDECAR_BUILD_ROOT" >&2
+    exit 1
+    ;;
+esac
+rm -rf \
+  "$SIDECAR_BUILD_ROOT" \
+  "$TAURI/target/aarch64-apple-darwin" \
+  "$TAURI/target/x86_64-apple-darwin"
+
 rm -f "$DMG"
 mkdir -p "$(dirname "$DMG")"
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/knowlet-dmg.XXXXXX")"
