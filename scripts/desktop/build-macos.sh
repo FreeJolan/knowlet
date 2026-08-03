@@ -79,9 +79,19 @@ STAGE="$(mktemp -d "${TMPDIR:-/tmp}/knowlet-dmg.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 cp -R "$APP" "$STAGE/Knowlet.app"
 ln -s /Applications "$STAGE/Applications"
+
+# hdiutil can underestimate the filesystem size required for large signed
+# universal binaries. Give the image 25% headroom plus 64 MiB for filesystem
+# metadata instead of relying on its automatic source-folder sizing.
+STAGE_SIZE_KIB="$(du -sk "$STAGE" | awk '{print $1}')"
+DMG_SIZE_KIB=$((STAGE_SIZE_KIB + STAGE_SIZE_KIB / 4 + 65536))
+echo "Creating DMG with ${DMG_SIZE_KIB} KiB capacity for ${STAGE_SIZE_KIB} KiB of staged files"
 hdiutil create \
+  -size "${DMG_SIZE_KIB}k" \
+  -fs "HFS+" \
   -volname "Knowlet" \
   -srcfolder "$STAGE" \
+  -nospotlight \
   -ov \
   -format UDZO \
   "$DMG"
