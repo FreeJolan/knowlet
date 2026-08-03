@@ -29,6 +29,7 @@ import type { TemplateSummary } from "@/api/client";
 import type { TreeFolder } from "@/api/types";
 
 import { imageUploadExtension } from "./imageUpload";
+import { richTextPasteExtension } from "./richTextPaste";
 import { templateSlashSource } from "./templateSlash";
 import {
   wikilinkReopenOnDelete,
@@ -204,6 +205,7 @@ export function MarkdownEditor({
       markdownKeymap,
       markdown({ base: markdownLanguage, codeLanguages: languages }),
       imageUploadExtension(),
+      richTextPasteExtension(),
       ...(sources.length > 0
         ? [
             autocompletion({

@@ -439,7 +439,13 @@
 .kn-md a.kn-inline-tag:hover {
   background: var(--accent-soft);
 }
-.kn-md ul, .kn-md ol { padding-left: 1.5em; margin: 0.6em 0; }
+.kn-md ul, .kn-md ol {
+  padding-left: 1.5em;
+  margin: 0.6em 0;
+}
+.kn-md ul { list-style-type: disc; }
+.kn-md ol { list-style-type: decimal; }
+.kn-md ul.contains-task-list { list-style-type: none; }
 .kn-md li { margin: 0.2em 0; }
 .kn-md blockquote {
   border-left: 3px solid var(--accent-soft);
