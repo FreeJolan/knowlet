@@ -289,6 +289,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_opener::init())
         .menu(build_initial_desktop_menu)
         .on_menu_event(|app, event| {
             if event.id() == MENU_MANAGE_VAULTS {
@@ -995,6 +996,73 @@ fn digest_status_menu_label(status: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn desktop_external_links_register_opener_plugin() {
+        let source = include_str!("lib.rs");
+        // Split the expected source token so this assertion cannot satisfy
+        // itself before the production builder registers the plugin.
+        let opener_init = ["tauri_plugin_", "opener::init()"].concat();
+
+        assert!(source.contains(&opener_init));
+    }
+
+    #[test]
+    fn desktop_external_links_limit_opener_capability_to_http_and_https() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json"))
+                .expect("default desktop capability should be valid JSON");
+        let permissions = capability
+            .get("permissions")
+            .and_then(serde_json::Value::as_array)
+            .expect("default desktop capability should declare permissions");
+        let opener_permissions = permissions
+            .iter()
+            .filter(|permission| {
+                permission
+                    .as_str()
+                    .map(|identifier| identifier.starts_with("opener:"))
+                    .or_else(|| {
+                        permission
+                            .get("identifier")
+                            .and_then(serde_json::Value::as_str)
+                            .map(|identifier| identifier.starts_with("opener:"))
+                    })
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            opener_permissions.len(),
+            1,
+            "desktop should grant one narrowly-scoped opener permission"
+        );
+        let opener = opener_permissions[0];
+        assert_eq!(
+            opener.get("identifier").and_then(serde_json::Value::as_str),
+            Some("opener:allow-open-url")
+        );
+        assert!(
+            opener.get("deny").is_none(),
+            "the allow-list should not be weakened by a separate deny shape"
+        );
+
+        let mut allowed_urls = opener
+            .get("allow")
+            .and_then(serde_json::Value::as_array)
+            .expect("opener URL permission should declare an allow-list")
+            .iter()
+            .map(|scope| {
+                scope
+                    .get("url")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("each opener scope should contain a URL pattern")
+            })
+            .collect::<Vec<_>>();
+        allowed_urls.sort_unstable();
+
+        assert_eq!(allowed_urls, vec!["http://*", "https://*"]);
+    }
+
     #[test]
     fn desktop_capability_allows_updater_from_loopback_backend() {
         let capability: serde_json::Value =

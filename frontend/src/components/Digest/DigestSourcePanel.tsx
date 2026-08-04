@@ -51,7 +51,12 @@ export function DigestSourcePanel(): React.ReactNode {
   const updateMut = useMutation({
     mutationFn: (args: { id: string; payload: DigestSourcePayload }) =>
       updateDigestSource(args.id, args.payload),
-    onSuccess: invalidate,
+    onSuccess: (updated) => {
+      qc.setQueryData<DigestSourceSummary[]>(["digest-sources"], (current) =>
+        current?.map((source) => (source.id === updated.id ? updated : source)),
+      );
+      invalidate();
+    },
     onError: (err) => setError(apiErrorMessage(err, t("settings.digest.saveFailed"))),
   });
 

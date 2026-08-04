@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   proposeNoteEdit,
@@ -149,6 +149,10 @@ export function DiscussPane({
   const [proposeMsg, setProposeMsg] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const longFormRef = useRef<HTMLTextAreaElement>(null);
+  const pendingCaretRef = useRef<{
+    target: HTMLTextAreaElement;
+    caret: number;
+  } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const latestNoteIdRef = useRef<string | null>(noteId);
   const [followTail, setFollowTail] = useState(true);
@@ -160,6 +164,13 @@ export function DiscussPane({
     setCheckReport(null);
     setProposeMsg(null);
   }, [noteId]);
+
+  useLayoutEffect(() => {
+    const pendingCaret = pendingCaretRef.current;
+    if (!pendingCaret) return;
+    pendingCaret.target.setSelectionRange(pendingCaret.caret, pendingCaret.caret);
+    pendingCaretRef.current = null;
+  }, [input]);
 
   useEffect(() => {
     if (!longFormOpen) return;
@@ -222,10 +233,8 @@ export function DiscussPane({
     next: { value: string; caret: number },
     target: HTMLTextAreaElement,
   ) => {
+    pendingCaretRef.current = { target, caret: next.caret };
     setInput(next.value);
-    window.requestAnimationFrame(() => {
-      target.setSelectionRange(next.caret, next.caret);
-    });
   };
 
   const closeLongForm = () => {

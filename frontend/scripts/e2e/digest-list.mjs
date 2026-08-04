@@ -16,11 +16,44 @@ import {
 
 let builtOnce = false;
 
-async function setupDigestEnv(seed) {
+const AGENT_TRACE_URL =
+  "https://example.com/agent-trace?view=full&lang=en#tool-trace";
+const DRAFT_BODY_URL =
+  "https://docs.example.com/tool-traces?from=digest-draft#separation";
+
+function openerCalls(calls) {
+  return calls.filter((call) => call.cmd === "plugin:opener|open_url");
+}
+
+async function setupDigestEnv(seed, { mockTauri = false } = {}) {
   if (builtOnce) process.env.SKIP_BUILD = "1";
   const env = await setupTestEnv({ notes: [], language: "en" });
   builtOnce = true;
   process.env.SKIP_BUILD = "1";
+  if (mockTauri) {
+    await env.page.addInitScript(() => {
+      const calls = [];
+      globalThis.isTauri = true;
+      window.__KNOWLET_TAURI_CALLS__ = calls;
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (cmd, args = {}) => {
+          calls.push({ cmd, args });
+          if (cmd === "plugin:event|listen") return calls.length;
+          return null;
+        },
+        transformCallback: () => 0,
+        unregisterCallback: () => {},
+        runCallback: () => {},
+        callbacks: new Map(),
+        convertFileSrc: (filePath) => filePath,
+      };
+    });
+    // Existing target=_blank links create popups. Keep the red test local
+    // and deterministic while the desktop opener handoff is still absent.
+    env.page.on("popup", (popup) => {
+      void popup.close().catch(() => {});
+    });
+  }
   seed?.(env.vaultDir);
   await env.page.goto(env.baseURL, { waitUntil: "networkidle" });
   return env;
@@ -147,7 +180,7 @@ function seedThreeItems(vaultDir) {
     rawInfo({
       id: "01C6TODAYRAWINFO000001",
       title: "Agent trace design",
-      url: "https://example.com/agent-trace",
+      url: AGENT_TRACE_URL,
       fetched_at: isoDaysAgo(0),
       summary: "A note about making tool traces visible without mixing them into final answers.",
       key_points: ["tool trace is separate", "answer remains readable"],
@@ -269,9 +302,9 @@ function seedOverflow(vaultDir) {
   );
 }
 
-let env = await setupDigestEnv(seedThreeItems);
+let env = await setupDigestEnv(seedThreeItems, { mockTauri: true });
 try {
-  const { page } = env;
+  const { page, baseURL } = env;
 
   await runTest("digest opens Raw Info inbox without today/week tabs", async () => {
     await page.locator('[data-testid="header-digest-button"]').click();
@@ -374,6 +407,194 @@ try {
       hitCard === "digest-card-01C6TODAYRAWINFO000001",
       "card center resolves to the card",
     );
+  });
+
+  await runTest("Digest card source opens once without changing selection", async () => {
+    const selectedCard = page.locator(
+      '[data-testid="digest-card-01C6YDAYRAWINFO0000002"]',
+    );
+    await selectedCard.click();
+    assert(
+      (await selectedCard.getAttribute("data-selected")) === "true",
+      "second card is selected before opening another card's source",
+    );
+    const source = page
+      .locator('[data-testid="digest-card-01C6TODAYRAWINFO000001"] a')
+      .filter({ hasText: AGENT_TRACE_URL })
+      .first();
+    await source.waitFor({ state: "visible", timeout: 3000 });
+    const urlBefore = page.url();
+    await page.evaluate(() => {
+      window.__KNOWLET_TAURI_CALLS__.length = 0;
+    });
+
+    await source.click();
+    await page.waitForTimeout(100);
+
+    assert(page.url() === urlBefore, "card source keeps the Knowlet URL unchanged");
+    assert(
+      (await selectedCard.getAttribute("data-selected")) === "true",
+      "card source click does not bubble into card selection",
+    );
+    const calls = openerCalls(
+      await page.evaluate(() => window.__KNOWLET_TAURI_CALLS__),
+    );
+    assert(calls.length === 1, `card source invokes opener once, got ${calls.length}`);
+    assert(
+      calls[0]?.args?.url === AGENT_TRACE_URL,
+      `card source preserves query and fragment, got ${JSON.stringify(calls[0]?.args)}`,
+    );
+  });
+
+  await runTest("Digest card source opens from keyboard without changing selection", async () => {
+    await page.waitForTimeout(320);
+    const selectedCard = page.locator(
+      '[data-testid="digest-card-01C6YDAYRAWINFO0000002"]',
+    );
+    await selectedCard.click();
+    const source = page
+      .locator('[data-testid="digest-card-01C6TODAYRAWINFO000001"] a')
+      .filter({ hasText: AGENT_TRACE_URL })
+      .first();
+    await source.waitFor({ state: "visible", timeout: 3000 });
+    const urlBefore = page.url();
+    await page.evaluate(() => {
+      window.__KNOWLET_TAURI_CALLS__.length = 0;
+    });
+
+    await source.focus();
+    assert(
+      (await page.evaluate(() => document.activeElement?.tagName)) === "A",
+      "card source receives keyboard focus",
+    );
+    await source.press("Enter");
+    await page.waitForTimeout(100);
+
+    assert(page.url() === urlBefore, "keyboard source keeps the Knowlet URL unchanged");
+    assert(
+      (await selectedCard.getAttribute("data-selected")) === "true",
+      "keyboard source activation does not bubble into card selection",
+    );
+    const calls = openerCalls(
+      await page.evaluate(() => window.__KNOWLET_TAURI_CALLS__),
+    );
+    assert(
+      calls.length === 1,
+      `keyboard source activation invokes opener once, got ${calls.length}`,
+    );
+    assert(
+      calls[0]?.args?.url === AGENT_TRACE_URL,
+      `keyboard source preserves query and fragment, got ${JSON.stringify(calls[0]?.args)}`,
+    );
+  });
+
+  await runTest("Digest detail source suppresses a rapid duplicate", async () => {
+    await page.waitForTimeout(320);
+    const selectedCard = page.locator(
+      '[data-testid="digest-card-01C6TODAYRAWINFO000001"]',
+    );
+    await selectedCard.click();
+    const source = page
+      .locator('[data-testid="digest-detail"] a')
+      .filter({ hasText: AGENT_TRACE_URL })
+      .first();
+    await source.waitFor({ state: "visible", timeout: 3000 });
+    const urlBefore = page.url();
+    await page.evaluate(() => {
+      window.__KNOWLET_TAURI_CALLS__.length = 0;
+    });
+
+    await source.dblclick({ delay: 20 });
+    await page.waitForTimeout(150);
+
+    assert(page.url() === urlBefore, "detail source keeps the Knowlet URL unchanged");
+    assert(
+      (await selectedCard.getAttribute("data-selected")) === "true",
+      "detail source keeps the Raw Info selection",
+    );
+    const calls = openerCalls(
+      await page.evaluate(() => window.__KNOWLET_TAURI_CALLS__),
+    );
+    assert(
+      calls.length === 1,
+      `rapid detail source activation invokes opener once, got ${calls.length}`,
+    );
+    assert(
+      calls[0]?.args?.url === AGENT_TRACE_URL,
+      `detail source preserves query and fragment, got ${JSON.stringify(calls[0]?.args)}`,
+    );
+  });
+
+  await runTest("Digest review source opens once without advancing review", async () => {
+    await page.waitForTimeout(320);
+    await page
+      .locator('[data-testid="digest-card-01C6TODAYRAWINFO000001"]')
+      .click();
+    const beforeItems = await (
+      await page.request.get(`${baseURL}/api/digest/items`)
+    ).json();
+    const beforeStatus = beforeItems.find(
+      (item) => item.id === "01C6TODAYRAWINFO000001",
+    )?.status;
+    await page.locator('[data-testid="digest-start-review"]').click();
+    const workspace = page.locator('[data-testid="digest-review-workspace"]');
+    await workspace.waitFor({ state: "visible", timeout: 3000 });
+    try {
+      const titleBefore = await page
+        .locator('[data-testid="digest-review-current-title"]')
+        .textContent();
+      const source = page
+        .locator('[data-testid="digest-review-raw-panel"] a')
+        .filter({ hasText: AGENT_TRACE_URL })
+        .first();
+      await source.waitFor({ state: "visible", timeout: 3000 });
+      const urlBefore = page.url();
+      await page.evaluate(() => {
+        window.__KNOWLET_TAURI_CALLS__.length = 0;
+      });
+
+      await source.dblclick({ delay: 20 });
+      await page.waitForTimeout(150);
+
+      const afterItems = await (
+        await page.request.get(`${baseURL}/api/digest/items`)
+      ).json();
+      const afterStatus = afterItems.find(
+        (item) => item.id === "01C6TODAYRAWINFO000001",
+      )?.status;
+      assert(page.url() === urlBefore, "review source keeps the Knowlet URL unchanged");
+      assert(
+        (await page.locator('[data-testid="digest-review-current-title"]').textContent()) ===
+          titleBefore,
+        "review source keeps the current Raw Info item",
+      );
+      assert(
+        (await page
+          .locator('[data-testid="digest-review-stage-tab-raw"]')
+          .getAttribute("aria-selected")) === "true",
+        "review source keeps the Raw Info stage selected",
+      );
+      assert(
+        afterStatus === beforeStatus,
+        `review source keeps backend status ${beforeStatus}, got ${afterStatus}`,
+      );
+      const calls = openerCalls(
+        await page.evaluate(() => window.__KNOWLET_TAURI_CALLS__),
+      );
+      assert(
+        calls.length === 1,
+        `rapid review source activation invokes opener once, got ${calls.length}`,
+      );
+      assert(
+        calls[0]?.args?.url === AGENT_TRACE_URL,
+        `review source preserves query and fragment, got ${JSON.stringify(calls[0]?.args)}`,
+      );
+    } finally {
+      if (await workspace.isVisible()) {
+        await page.locator('[data-testid="digest-review-close"]').click();
+        await workspace.waitFor({ state: "detached", timeout: 3000 });
+      }
+    }
   });
 
   await runTest("digest can group Raw Info by source", async () => {
@@ -828,8 +1049,8 @@ try {
           draft: {
             id: "01C8DRAFTFROMRAWINFO",
             title: "Tool Trace Separation",
-            body: "## Core\n\nTool traces should be visible but separate from the final answer.",
-            source: "https://example.com/agent-trace",
+            body: `## Core\n\nTool traces should be visible but separate from the final answer.\n\n[Draft reference](${DRAFT_BODY_URL})`,
+            source: AGENT_TRACE_URL,
             tags: ["agents", "tooling"],
             kind: "knowledge",
             folder: "ai/research",
@@ -891,6 +1112,67 @@ try {
       (await page.locator('[data-testid="tag-chip"][data-tag="tooling"]').count()) === 1,
       "draft tags render as chips",
     );
+
+    const draftTitleBeforeLinks = await page
+      .locator('[data-testid="digest-draft-title"]')
+      .textContent();
+    const draftUrlBeforeLinks = page.url();
+    await page
+      .locator('[data-testid="digest-draft-view-mode-toggle"] button[data-mode="preview"]')
+      .click();
+    const bodyLink = page
+      .locator(`[data-testid="digest-draft-preview"] a[href="${DRAFT_BODY_URL}"]`)
+      .first();
+    await bodyLink.waitFor({ state: "visible", timeout: 3000 });
+    await page.evaluate(() => {
+      window.__KNOWLET_TAURI_CALLS__.length = 0;
+    });
+    await bodyLink.click();
+    await page.waitForTimeout(100);
+    let calls = openerCalls(
+      await page.evaluate(() => window.__KNOWLET_TAURI_CALLS__),
+    );
+    assert(calls.length === 1, `draft body link invokes opener once, got ${calls.length}`);
+    assert(
+      calls[0]?.args?.url === DRAFT_BODY_URL,
+      `draft body link preserves query and fragment, got ${JSON.stringify(calls[0]?.args)}`,
+    );
+    assert(page.url() === draftUrlBeforeLinks, "draft body link keeps the Knowlet URL unchanged");
+    assert(
+      (await page.locator('[data-testid="digest-draft-title"]').textContent()) ===
+        draftTitleBeforeLinks,
+      "draft body link keeps the current draft selected",
+    );
+    assert(draftSaveBodies.length === 0, "draft body link does not trigger an autosave");
+
+    await page
+      .locator('[data-testid="digest-draft-view-mode-toggle"] button[data-mode="edit"]')
+      .click();
+    await page.locator('[data-testid="digest-draft-properties-toggle"]').click();
+    const draftSource = page.locator('[data-testid="digest-draft-source"]');
+    await draftSource.waitFor({ state: "visible", timeout: 3000 });
+    await page.evaluate(() => {
+      window.__KNOWLET_TAURI_CALLS__.length = 0;
+    });
+    await draftSource.click();
+    await page.waitForTimeout(100);
+    calls = openerCalls(
+      await page.evaluate(() => window.__KNOWLET_TAURI_CALLS__),
+    );
+    assert(calls.length === 1, `draft source invokes opener once, got ${calls.length}`);
+    assert(
+      calls[0]?.args?.url === AGENT_TRACE_URL,
+      `draft source preserves query and fragment, got ${JSON.stringify(calls[0]?.args)}`,
+    );
+    assert(page.url() === draftUrlBeforeLinks, "draft source keeps the Knowlet URL unchanged");
+    assert(
+      (await page.locator('[data-testid="digest-review-stage-tab-draft"]').getAttribute("aria-selected")) ===
+        "true",
+      "draft source keeps the Draft stage selected",
+    );
+    assert(draftSaveBodies.length === 0, "draft source does not trigger an autosave");
+    await page.locator('[data-testid="digest-draft-properties-toggle"]').click();
+
     await page.locator('[data-testid="digest-review-stage-tab-raw"]').click();
     await page.locator('[data-testid="digest-existing-draft-notice"]').waitFor({
       state: "visible",

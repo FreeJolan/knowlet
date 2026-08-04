@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.0.26] - 2026-08-04
+
+Desktop external link release.
+
+- Open HTTP and HTTPS links from notes, Digest drafts, source fields, and AI
+  conversations in the system default browser without replacing Knowlet.
+- Keep internal links, tags, and downloads on their existing paths, reject
+  unsafe URLs, suppress rapid duplicate opens, and show a retryable failure
+  notice when the system browser handoff fails.
+- Limit the Tauri opener capability to HTTP and HTTPS URLs, with end-to-end
+  coverage for mouse, keyboard, streaming chat, source, and boundary paths.
+- Fix a Discuss composer caret race that could reorder characters immediately
+  after Markdown list continuation.
+- Keep Digest source toggle state in sync immediately after an update instead
+  of briefly exposing stale cached state.
+
 ## [0.0.25] - 2026-08-03
 
 Markdown editing fixes release.

@@ -10,7 +10,9 @@
     "daily": "Today's note",
     "newDocument": "New document",
     "quickActions": "Quick actions",
-    "digest": "Digest"
+    "digest": "Digest",
+    "externalLinkInvalid": "Only valid http:// or https:// links can be opened.",
+    "externalLinkOpenFailed": "Couldn't open this link in your browser. Try again."
   },
   "search": {
     "placeholder": "Search across all notes…",

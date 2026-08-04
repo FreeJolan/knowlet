@@ -23,7 +23,26 @@ export function ChatMarkdown({
         lineHeight: 1.65,
       }}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ children, href, ...props }) => {
+            const external = /^https?:\/\//i.test(href ?? "");
+            return (
+              <a
+                {...props}
+                href={href}
+                target={external ? "_blank" : undefined}
+                rel={external ? "noopener noreferrer" : undefined}
+              >
+                {children}
+              </a>
+            );
+          },
+        }}
+      >
+        {content}
+      </ReactMarkdown>
     </div>
   );
 }

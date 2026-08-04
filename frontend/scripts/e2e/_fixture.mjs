@@ -97,7 +97,7 @@ async function waitForBackend(baseURL, timeoutMs = 30000) {
  * with explicit folder=... so the layout matches what the test expects.
  *
  * @param {string} vaultDir   Existing empty directory (already created).
- * @param {Array<{title: string, body?: string, folder?: string}>} notes
+ * @param {Array<{title: string, body?: string, folder?: string, source?: string}>} notes
  * @param {string[]} folders  Folder paths to mkdir (forward-slash).
  * @param {"en" | "zh"} language
  */
@@ -121,11 +121,15 @@ function seedVault(vaultDir, { notes = [], folders = [], language = "en" } = {})
   for (const n of notes) {
     const folder = n.folder ? `, folder=${JSON.stringify(n.folder)}` : "";
     const body = JSON.stringify(n.body ?? "body of " + n.title);
+    const source =
+      typeof n.source === "string"
+        ? `, source=${JSON.stringify(n.source)}`
+        : "";
     const tags = Array.isArray(n.tags)
       ? `[${n.tags.map((t) => JSON.stringify(t)).join(", ")}]`
       : "[]";
     lines.push(
-      `v.write_note(Note(id=new_id(), title=${JSON.stringify(n.title)}, body=${body}, tags=${tags})${folder})`,
+      `v.write_note(Note(id=new_id(), title=${JSON.stringify(n.title)}, body=${body}, tags=${tags}${source})${folder})`,
     );
   }
   const script = lines.join("\n");
@@ -149,7 +153,7 @@ function seedVault(vaultDir, { notes = [], folders = [], language = "en" } = {})
  * vaultDir, teardown }. Caller must call teardown() in a finally block.
  *
  * @param {{
- *   notes?: Array<{title: string, body?: string, folder?: string}>,
+ *   notes?: Array<{title: string, body?: string, folder?: string, source?: string}>,
  *   folders?: string[],
  *   language?: "en" | "zh",
  *   headless?: boolean,

@@ -10,7 +10,9 @@
     "daily": "今日笔记",
     "newDocument": "新建文档",
     "quickActions": "快捷操作",
-    "digest": "Digest"
+    "digest": "Digest",
+    "externalLinkInvalid": "只能打开有效的 http:// 或 https:// 链接。",
+    "externalLinkOpenFailed": "无法在浏览器中打开这个链接，请重试。"
   },
   "search": {
     "placeholder": "搜索所有笔记…",
