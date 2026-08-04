@@ -15,22 +15,54 @@
 
 import { assert, exitAfter, runTest, setupTestEnv } from "./_fixture.mjs";
 
+const SOURCE_URL =
+  "https://example.com/papers/attention?view=full&lang=en#section-2";
+const INVALID_SOURCE = "not a valid source";
+
 const env = await setupTestEnv({
   notes: [
     {
       title: "Attention Mechanism",
       body: "Self-attention from the Transformer paper.",
+      source: SOURCE_URL,
     },
     {
       title: "Cooking pasta",
       body: "Boil water, add salt, drop pasta.",
+      source: INVALID_SOURCE,
     },
   ],
   language: "en",
 });
 const { page, baseURL, teardown } = env;
 
+function openerCalls(calls) {
+  return calls.filter((call) => call.cmd === "plugin:opener|open_url");
+}
+
 try {
+  await page.addInitScript(() => {
+    const calls = [];
+    globalThis.isTauri = true;
+    window.__KNOWLET_TAURI_CALLS__ = calls;
+    window.__TAURI_INTERNALS__ = {
+      invoke: async (cmd, args = {}) => {
+        calls.push({ cmd, args });
+        if (cmd === "plugin:event|listen") return calls.length;
+        return null;
+      },
+      transformCallback: () => 0,
+      unregisterCallback: () => {},
+      runCallback: () => {},
+      callbacks: new Map(),
+      convertFileSrc: (filePath) => filePath,
+    };
+  });
+  // Until the desktop handoff is implemented, target=_blank opens a popup.
+  // Close it immediately so the red test cannot leak a real browser page.
+  page.on("popup", (popup) => {
+    void popup.close().catch(() => {});
+  });
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await page.waitForTimeout(500);
 
@@ -59,6 +91,45 @@ try {
     assert(
       order === "toggle-above-tags",
       `toggle should sit above tags (in the crumb), got: ${order}`,
+    );
+  });
+
+  await runTest("Note source pill hands the exact URL to Tauri once", async () => {
+    const source = page.locator('[data-testid="property-source-pill"]');
+    await source.waitFor({ state: "visible", timeout: 3000 });
+    assert(
+      (await source.getAttribute("href")) === SOURCE_URL,
+      "source pill preserves the stored query string and fragment",
+    );
+    const urlBefore = page.url();
+    const titleBefore = await page.locator('[data-testid="note-title"]').textContent();
+    const propertiesBefore = await page
+      .locator('[data-testid="properties-panel"]')
+      .count();
+    await page.evaluate(() => {
+      window.__KNOWLET_TAURI_CALLS__.length = 0;
+    });
+
+    await source.click();
+    await page.waitForTimeout(100);
+
+    const calls = openerCalls(
+      await page.evaluate(() => window.__KNOWLET_TAURI_CALLS__),
+    );
+    assert(calls.length === 1, `source pill invokes opener once, got ${calls.length}`);
+    assert(
+      calls[0]?.args?.url === SOURCE_URL,
+      `source pill passes the exact URL, got ${JSON.stringify(calls[0]?.args)}`,
+    );
+    assert(page.url() === urlBefore, "source pill keeps the Knowlet URL unchanged");
+    assert(
+      (await page.locator('[data-testid="note-title"]').textContent()) === titleBefore,
+      "source pill keeps the current note selected",
+    );
+    assert(
+      (await page.locator('[data-testid="properties-panel"]').count()) ===
+        propertiesBefore,
+      "source pill keeps Properties collapsed",
     );
   });
 
@@ -91,6 +162,42 @@ try {
     await created.waitFor({ state: "visible", timeout: 1000 });
     const txt = (await created.textContent()) ?? "";
     assert(/UTC/.test(txt), `created should be UTC long form, got "${txt}"`);
+  });
+
+  await runTest("Expanded Note source hands the exact URL to Tauri once", async () => {
+    await page.waitForTimeout(320);
+    const source = page.locator('[data-testid="property-source"]');
+    await source.waitFor({ state: "visible", timeout: 3000 });
+    assert(
+      (await source.getAttribute("href")) === SOURCE_URL,
+      "expanded source preserves the stored query string and fragment",
+    );
+    const urlBefore = page.url();
+    const titleBefore = await page.locator('[data-testid="note-title"]').textContent();
+    await page.evaluate(() => {
+      window.__KNOWLET_TAURI_CALLS__.length = 0;
+    });
+
+    await source.click();
+    await page.waitForTimeout(100);
+
+    const calls = openerCalls(
+      await page.evaluate(() => window.__KNOWLET_TAURI_CALLS__),
+    );
+    assert(calls.length === 1, `expanded source invokes opener once, got ${calls.length}`);
+    assert(
+      calls[0]?.args?.url === SOURCE_URL,
+      `expanded source passes the exact URL, got ${JSON.stringify(calls[0]?.args)}`,
+    );
+    assert(page.url() === urlBefore, "expanded source keeps the Knowlet URL unchanged");
+    assert(
+      (await page.locator('[data-testid="note-title"]').textContent()) === titleBefore,
+      "expanded source keeps the current note selected",
+    );
+    assert(
+      await page.locator('[data-testid="properties-panel"]').isVisible(),
+      "expanded source keeps Properties open",
+    );
   });
 
   await runTest("Add alias 'Self-Attention' via chip strip", async () => {
@@ -252,6 +359,37 @@ try {
     // Press Esc to clean up edit mode.
     await input.press("Escape");
     await page.waitForTimeout(200);
+  });
+
+  await runTest("Invalid Note source is blocked in place with a visible failure", async () => {
+    await page
+      .locator('[role="treeitem"]', { hasText: "Cooking pasta" })
+      .first()
+      .click();
+    await page.waitForTimeout(300);
+    const source = page.locator('[data-testid="property-source-pill"]');
+    await source.waitFor({ state: "visible", timeout: 3000 });
+    const urlBefore = page.url();
+    await page.evaluate(() => {
+      window.__KNOWLET_TAURI_CALLS__.length = 0;
+    });
+
+    await source.click();
+    await page.waitForTimeout(100);
+
+    const calls = openerCalls(
+      await page.evaluate(() => window.__KNOWLET_TAURI_CALLS__),
+    );
+    assert(calls.length === 0, "invalid source never reaches the native opener");
+    assert(page.url() === urlBefore, "invalid source does not navigate the webview");
+    assert(
+      (await page.locator('[data-testid="note-title"]').textContent()) ===
+        "Cooking pasta",
+      "invalid source keeps the current note selected",
+    );
+    const failure = page.locator('[data-testid="external-link-error"]');
+    await failure.waitFor({ state: "visible", timeout: 1500 });
+    assert(Boolean((await failure.textContent())?.trim()), "failure notice explains the block");
   });
 
   await teardown();

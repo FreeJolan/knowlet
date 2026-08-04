@@ -252,6 +252,217 @@ try {
     await page.unroute("**/api/chat/note/*/stream");
   });
 
+  await runTest("external chat links open once through Tauri without interrupting a stream", async () => {
+    const externalUrl =
+      "https://docs.example.test/guide?from=discuss&mode=streaming#external-links";
+    const userPrompt = `Keep this [external reference](${externalUrl}) while you answer.`;
+    const assistantMarkdown =
+      `LINK_STREAM_DONE: the [external reference](${externalUrl}) is still available.`;
+    let releaseStream;
+    let markStreamStarted;
+    const streamStarted = new Promise((resolve) => {
+      markStreamStarted = resolve;
+    });
+    const closeUnexpectedPopup = (popup) => {
+      void popup.close().catch(() => {});
+    };
+
+    await page.route("**/api/chat/note/*/stream", async (route) => {
+      markStreamStarted();
+      await new Promise((resolve) => {
+        releaseStream = resolve;
+      });
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: [
+          { type: "reply_chunk", text: assistantMarkdown },
+          { type: "turn_done", final_text: assistantMarkdown },
+        ]
+          .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+          .join(""),
+      });
+    });
+    await page.context().route("https://docs.example.test/**", (route) =>
+      route.abort(),
+    );
+    page.on("popup", closeUnexpectedPopup);
+
+    await page.evaluate(() => {
+      globalThis.__KNOWLET_TAURI_SNAPSHOT__ = {
+        hadIsTauri: Object.prototype.hasOwnProperty.call(globalThis, "isTauri"),
+        isTauri: globalThis.isTauri,
+        internals: window.__TAURI_INTERNALS__,
+      };
+      const calls = [];
+      globalThis.isTauri = true;
+      window.__KNOWLET_TAURI_CALLS__ = calls;
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (cmd, args = {}) => {
+          calls.push({ cmd, args });
+          if (cmd === "plugin:opener|open_url") {
+            await new Promise((resolve) => {
+              window.__KNOWLET_RELEASE_OPENER__ = resolve;
+            });
+          }
+          return null;
+        },
+        transformCallback: () => 0,
+        unregisterCallback: () => {},
+        runCallback: () => {},
+        callbacks: new Map(),
+        convertFileSrc: (filePath) => filePath,
+      };
+    });
+
+    try {
+      const input = page.locator('[data-testid="discuss-input"]');
+      await input.fill(userPrompt);
+      await page.locator('[data-testid="discuss-send"]').click();
+      await Promise.race([
+        streamStarted,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("chat stream request did not start")), 3000),
+        ),
+      ]);
+
+      const generating = page.locator('[data-testid="discuss-generating"]');
+      await generating.waitFor({ state: "visible", timeout: 1000 });
+      await page
+        .locator('[data-testid="discuss-stop"]')
+        .waitFor({ state: "visible", timeout: 1000 });
+      const userLink = page
+        .locator(
+          `[data-testid="discuss-message-user"] a[href="${externalUrl}"]`,
+        )
+        .first();
+      await userLink.waitFor({ state: "visible", timeout: 1000 });
+
+      // Keep these assertions before activation: a broken implementation must
+      // fail without letting Chromium attempt an external target navigation.
+      const target = await userLink.getAttribute("target");
+      assert(
+        target === "_blank",
+        `streaming chat link gets target=_blank before activation — got ${JSON.stringify(target)}`,
+      );
+      const rel = await userLink.getAttribute("rel");
+      const relTokens = new Set((rel ?? "").split(/\s+/).filter(Boolean));
+      assert(
+        relTokens.has("noopener") && relTokens.has("noreferrer"),
+        `streaming chat link gets rel=noopener noreferrer — got ${JSON.stringify(rel)}`,
+      );
+
+      const transcript = page.locator('[data-testid="discuss-messages"]');
+      const transcriptBefore = await transcript.innerText();
+      const pageUrlBefore = page.url();
+      const noteTitleBefore = (
+        await page.locator('[data-testid="note-title"]').innerText()
+      ).trim();
+      const anchorTitleBefore = (
+        await page.locator('[data-testid="discuss-anchor-title"]').innerText()
+      ).trim();
+      assert(noteTitleBefore === "RAG Notes", `selected note starts at ${noteTitleBefore}`);
+      assert(
+        anchorTitleBefore === "RAG Notes",
+        `discussion starts anchored to RAG Notes, got ${anchorTitleBefore}`,
+      );
+
+      await userLink.click();
+      await userLink.focus();
+      await page.keyboard.press("Enter");
+      await page.keyboard.press("Enter");
+      await page.waitForTimeout(100);
+
+      const openerCalls = await page.evaluate(() =>
+        window.__KNOWLET_TAURI_CALLS__.filter(
+          (call) => call.cmd === "plugin:opener|open_url",
+        ),
+      );
+      assert(
+        openerCalls.length === 1,
+        `rapid mouse and Enter activation opens exactly once, got ${JSON.stringify(openerCalls)}`,
+      );
+      assert(
+        openerCalls[0]?.args?.url === externalUrl,
+        `Tauri opener preserves query and hash, got ${JSON.stringify(openerCalls[0])}`,
+      );
+      assert(
+        (await transcript.innerText()) === transcriptBefore,
+        "opening a link leaves the in-flight transcript unchanged",
+      );
+      assert(
+        (await generating.isVisible()) &&
+          (await page.locator('[data-testid="discuss-stop"]').isVisible()),
+        "opening a link leaves generation streaming",
+      );
+      assert(page.url() === pageUrlBefore, `Knowlet URL stays at ${pageUrlBefore}`);
+      assert(
+        (await page.locator('[data-testid="note-title"]').innerText()).trim() ===
+          noteTitleBefore &&
+          (
+            await page
+              .locator('[data-testid="discuss-anchor-title"]')
+              .innerText()
+          ).trim() === anchorTitleBefore,
+        "opening a link keeps the same selected and anchored note",
+      );
+
+      await page.evaluate(() => window.__KNOWLET_RELEASE_OPENER__?.());
+      releaseStream();
+      releaseStream = undefined;
+      const assistant = page
+        .locator('[data-testid="discuss-message-assistant"]')
+        .filter({ hasText: "LINK_STREAM_DONE" })
+        .first();
+      await assistant.waitFor({ state: "visible", timeout: 3000 });
+      const assistantLink = assistant.locator(`a[href="${externalUrl}"]`).first();
+      assert(
+        (await assistantLink.getAttribute("target")) === "_blank",
+        "completed assistant Markdown link keeps target=_blank",
+      );
+      const assistantRel = new Set(
+        ((await assistantLink.getAttribute("rel")) ?? "")
+          .split(/\s+/)
+          .filter(Boolean),
+      );
+      assert(
+        assistantRel.has("noopener") && assistantRel.has("noreferrer"),
+        "completed assistant Markdown link keeps rel=noopener noreferrer",
+      );
+      assert(
+        (await page.locator('[data-testid="discuss-generating"]').count()) === 0 &&
+          (await page.locator('[data-testid="discuss-send"]').isVisible()),
+        "released stream completes normally and returns the composer to idle",
+      );
+    } finally {
+      releaseStream?.();
+      await page.evaluate(() => window.__KNOWLET_RELEASE_OPENER__?.()).catch(() => {});
+      await page
+        .locator('[data-testid="discuss-message-assistant"]')
+        .filter({ hasText: "LINK_STREAM_DONE" })
+        .first()
+        .waitFor({ state: "visible", timeout: 3000 })
+        .catch(() => {});
+      const reset = page.locator('[data-testid="discuss-reset"]');
+      if ((await reset.count()) > 0 && (await reset.isEnabled())) {
+        await reset.click().catch(() => {});
+      }
+      await page.evaluate(() => {
+        const snapshot = globalThis.__KNOWLET_TAURI_SNAPSHOT__;
+        if (snapshot?.hadIsTauri) globalThis.isTauri = snapshot.isTauri;
+        else delete globalThis.isTauri;
+        if (snapshot?.internals === undefined) delete window.__TAURI_INTERNALS__;
+        else window.__TAURI_INTERNALS__ = snapshot.internals;
+        delete globalThis.__KNOWLET_TAURI_SNAPSHOT__;
+        delete window.__KNOWLET_TAURI_CALLS__;
+        delete window.__KNOWLET_RELEASE_OPENER__;
+      }).catch(() => {});
+      page.off("popup", closeUnexpectedPopup);
+      await page.context().unroute("https://docs.example.test/**");
+      await page.unroute("**/api/chat/note/*/stream");
+    }
+  });
+
   await runTest("chat uses right-side markdown user bubbles and left-side assistant turns", async () => {
     const reset = page.locator('[data-testid="discuss-reset"]');
     if (await reset.isEnabled()) await reset.click();

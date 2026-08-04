@@ -33,8 +33,6 @@ export function TemplateCreateDialog({
     setTitle("");
     setKind("knowledge");
     setBody("# {{title}}\n\n");
-    const handle = window.setTimeout(() => titleRef.current?.focus(), 50);
-    return () => window.clearTimeout(handle);
   }, [open]);
 
   const createMut = useMutation({
@@ -44,9 +42,11 @@ export function TemplateCreateDialog({
         kind,
         body,
       }),
-    onSuccess: (template) => {
-      void qc.invalidateQueries({ queryKey: QK.templates });
-      void qc.invalidateQueries({ queryKey: QK.tree });
+    onSuccess: async (template) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: QK.templates }),
+        qc.invalidateQueries({ queryKey: QK.tree }),
+      ]);
       onCreated(template);
       onClose();
     },
@@ -65,6 +65,10 @@ export function TemplateCreateDialog({
       <DialogContent
         data-testid="template-create-dialog"
         showCloseButton={false}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          titleRef.current?.focus();
+        }}
         className="p-0"
         style={{
           width: 560,

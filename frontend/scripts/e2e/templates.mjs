@@ -125,16 +125,38 @@ try {
       .isVisible()
       .catch(() => false);
     assert(!newDocVisible, "template creation must not open the New Document dialog");
-    await page.locator('[data-testid="template-title"]').fill("weekly");
-    await page.locator('[data-testid="template-body"]').fill("# {{title}}\n\n- ");
+    const titleInput = page.locator('[data-testid="template-title"]');
+    const bodyInput = page.locator('[data-testid="template-body"]');
+    await titleInput.fill("weekly");
+    await bodyInput.fill("# {{title}}\n\n- ");
+    assert((await titleInput.inputValue()) === "weekly", "template title remains isolated");
+    assert(
+      (await bodyInput.inputValue()) === "# {{title}}\n\n- ",
+      "template body remains isolated",
+    );
+    const createResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/templates",
+    );
     await page.locator('[data-testid="template-create-submit"]').click();
-    await page.waitForTimeout(800);
+    const createResponse = await createResponsePromise;
+    assert(createResponse.ok(), `template POST should succeed — got ${createResponse.status()}`);
+    const created = await createResponse.json();
+    await page
+      .locator('[data-testid="template-create-dialog"]')
+      .waitFor({ state: "hidden", timeout: 5000 });
     // The new template lands under _templates/.
     const r = await page.request.get(`${baseURL}/api/templates`);
     const titles = (await r.json()).map((t) => t.title);
     assert(
       titles.includes("weekly"),
       `'weekly' template created — got ${JSON.stringify(titles)}`,
+    );
+    const indexed = await getNoteByTitle("weekly");
+    assert(
+      indexed?.id === created.id,
+      `'weekly' template indexed in /api/tree — got ${JSON.stringify(indexed)}`,
     );
   });
 

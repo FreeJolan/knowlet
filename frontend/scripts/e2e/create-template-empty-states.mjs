@@ -89,14 +89,42 @@ try {
     await page
       .locator('[data-testid="template-create-dialog"]')
       .waitFor({ state: "visible", timeout: 3000 });
-    await page.locator('[data-testid="template-title"]').fill("meeting template");
-    await page.locator('[data-testid="template-body"]').fill("# {{title}}\n\n## Notes\n");
+    const titleInput = page.locator('[data-testid="template-title"]');
+    const bodyInput = page.locator('[data-testid="template-body"]');
+    await titleInput.fill("meeting template");
+    await bodyInput.fill("# {{title}}\n\n## Notes\n");
+    assert(
+      (await titleInput.inputValue()) === "meeting template",
+      "template title remains isolated",
+    );
+    assert(
+      (await bodyInput.inputValue()) === "# {{title}}\n\n## Notes\n",
+      "template body remains isolated",
+    );
+    const createResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/templates",
+    );
     await page.locator('[data-testid="template-create-submit"]').click();
-    await page.waitForTimeout(800);
+    const createResponse = await createResponsePromise;
+    assert(createResponse.ok(), `template POST should succeed — got ${createResponse.status()}`);
+    const created = await createResponse.json();
+    await page
+      .locator('[data-testid="template-create-dialog"]')
+      .waitFor({ state: "hidden", timeout: 5000 });
     const templates = await (await page.request.get(`${baseURL}/api/templates`)).json();
     assert(
-      templates.some((tpl) => tpl.title === "meeting template"),
+      templates.some((tpl) => tpl.id === created.id && tpl.title === "meeting template"),
       `meeting template should be created — got ${JSON.stringify(templates)}`,
+    );
+    const tree = await (await page.request.get(`${baseURL}/api/tree`)).json();
+    const templateFolder = tree.folders?.find((folder) => folder.name === "_templates");
+    assert(
+      templateFolder?.notes?.some(
+        (note) => note.id === created.id && note.title === "meeting template",
+      ),
+      `meeting template should be indexed in /api/tree — got ${JSON.stringify(tree)}`,
     );
     await page.waitForFunction(
       () =>
@@ -104,7 +132,7 @@ try {
           (el) => (el.textContent ?? "").trim() === "meeting template",
         ),
       null,
-      { timeout: 8000, polling: 100 },
+      { timeout: 3000, polling: 100 },
     );
   });
 

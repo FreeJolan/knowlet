@@ -1,5 +1,6 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { AppShell } from "@/components/AppShell/AppShell";
 import {
@@ -7,6 +8,10 @@ import {
   isDesktopVaultLauncherPage,
 } from "@/components/DesktopVaultLauncher";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import {
+  installExternalLinkHandler,
+  type ExternalLinkFailure,
+} from "@/lib/externalLinks";
 import { queryClient } from "@/lib/queryClient";
 
 function isTextEditingTarget(target: EventTarget | null): boolean {
@@ -21,7 +26,21 @@ function isTextEditingTarget(target: EventTarget | null): boolean {
 }
 
 export default function App() {
+  const { t } = useTranslation();
   const desktopLauncher = isDesktopVaultLauncherPage();
+  const [externalLinkFailure, setExternalLinkFailure] =
+    useState<ExternalLinkFailure | null>(null);
+
+  useEffect(
+    () => installExternalLinkHandler({ onFailure: setExternalLinkFailure }),
+    [],
+  );
+
+  useEffect(() => {
+    if (!externalLinkFailure) return;
+    const timer = window.setTimeout(() => setExternalLinkFailure(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [externalLinkFailure]);
 
   // Global keyboard shortcuts. Mirrors VS Code:
   //   ⌘P     → quick switcher (files mode)
@@ -86,19 +105,40 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [desktopLauncher]);
 
-  if (desktopLauncher) {
-    return (
-      <ErrorBoundary>
-        <DesktopVaultLauncher />
-      </ErrorBoundary>
-    );
-  }
-
-  return (
+  const content = desktopLauncher ? (
+    <ErrorBoundary>
+      <DesktopVaultLauncher />
+    </ErrorBoundary>
+  ) : (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <AppShell />
       </QueryClientProvider>
     </ErrorBoundary>
+  );
+
+  return (
+    <>
+      {content}
+      {externalLinkFailure && (
+        <div
+          data-testid="external-link-error"
+          role="status"
+          aria-live="polite"
+          className="fixed right-4 top-4 z-[100] max-w-sm rounded-lg border px-4 py-3 text-sm shadow-lg"
+          style={{
+            borderColor: "var(--line)",
+            background: "var(--panel)",
+            color: "var(--ink)",
+          }}
+        >
+          {t(
+            externalLinkFailure === "invalid-url"
+              ? "app.externalLinkInvalid"
+              : "app.externalLinkOpenFailed",
+          )}
+        </div>
+      )}
+    </>
   );
 }
