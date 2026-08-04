@@ -33,8 +33,6 @@ export function TemplateCreateDialog({
     setTitle("");
     setKind("knowledge");
     setBody("# {{title}}\n\n");
-    const handle = window.setTimeout(() => titleRef.current?.focus(), 50);
-    return () => window.clearTimeout(handle);
   }, [open]);
 
   const createMut = useMutation({
@@ -67,6 +65,10 @@ export function TemplateCreateDialog({
       <DialogContent
         data-testid="template-create-dialog"
         showCloseButton={false}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          titleRef.current?.focus();
+        }}
         className="p-0"
         style={{
           width: 560,

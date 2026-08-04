@@ -125,8 +125,15 @@ try {
       .isVisible()
       .catch(() => false);
     assert(!newDocVisible, "template creation must not open the New Document dialog");
-    await page.locator('[data-testid="template-title"]').fill("weekly");
-    await page.locator('[data-testid="template-body"]').fill("# {{title}}\n\n- ");
+    const titleInput = page.locator('[data-testid="template-title"]');
+    const bodyInput = page.locator('[data-testid="template-body"]');
+    await titleInput.fill("weekly");
+    await bodyInput.fill("# {{title}}\n\n- ");
+    assert((await titleInput.inputValue()) === "weekly", "template title remains isolated");
+    assert(
+      (await bodyInput.inputValue()) === "# {{title}}\n\n- ",
+      "template body remains isolated",
+    );
     const createResponsePromise = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&

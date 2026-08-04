@@ -17,6 +17,8 @@ Desktop external link release.
   of briefly exposing stale cached state.
 - Wait for template caches to refresh before closing the creation dialog so a
   newly created template appears in the Templates tree reliably.
+- Focus the template title through the dialog lifecycle so quick input cannot
+  spill template body text into the title.
 
 ## [0.0.25] - 2026-08-03
 

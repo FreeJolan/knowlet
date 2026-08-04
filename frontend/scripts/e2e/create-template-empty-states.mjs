@@ -89,8 +89,18 @@ try {
     await page
       .locator('[data-testid="template-create-dialog"]')
       .waitFor({ state: "visible", timeout: 3000 });
-    await page.locator('[data-testid="template-title"]').fill("meeting template");
-    await page.locator('[data-testid="template-body"]').fill("# {{title}}\n\n## Notes\n");
+    const titleInput = page.locator('[data-testid="template-title"]');
+    const bodyInput = page.locator('[data-testid="template-body"]');
+    await titleInput.fill("meeting template");
+    await bodyInput.fill("# {{title}}\n\n## Notes\n");
+    assert(
+      (await titleInput.inputValue()) === "meeting template",
+      "template title remains isolated",
+    );
+    assert(
+      (await bodyInput.inputValue()) === "# {{title}}\n\n## Notes\n",
+      "template body remains isolated",
+    );
     const createResponsePromise = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
