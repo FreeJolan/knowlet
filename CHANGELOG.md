@@ -15,6 +15,8 @@ Desktop external link release.
   after Markdown list continuation.
 - Keep Digest source toggle state in sync immediately after an update instead
   of briefly exposing stale cached state.
+- Wait for template caches to refresh before closing the creation dialog so a
+  newly created template appears in the Templates tree reliably.
 
 ## [0.0.25] - 2026-08-03
 

@@ -147,6 +147,13 @@ def test_create_template_endpoint_writes_template_note(tmp_path: Path) -> None:
     rows = client.get("/api/templates").json()
     assert any(row["id"] == created["id"] and row["kind"] == "reference" for row in rows)
 
+    tree = client.get("/api/tree").json()
+    template_folder = next(folder for folder in tree["folders"] if folder["name"] == "_templates")
+    assert any(
+        note["id"] == created["id"] and note["title"] == "reference clipping"
+        for note in template_folder["notes"]
+    )
+
 
 def test_list_templates_empty_when_no_dir(tmp_path: Path) -> None:
     client, _ = _client(tmp_path)

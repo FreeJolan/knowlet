@@ -44,9 +44,11 @@ export function TemplateCreateDialog({
         kind,
         body,
       }),
-    onSuccess: (template) => {
-      void qc.invalidateQueries({ queryKey: QK.templates });
-      void qc.invalidateQueries({ queryKey: QK.tree });
+    onSuccess: async (template) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: QK.templates }),
+        qc.invalidateQueries({ queryKey: QK.tree }),
+      ]);
       onCreated(template);
       onClose();
     },
