@@ -17,8 +17,9 @@ export function enqueueNoteWrite<T>(
   noteId: string,
   job: () => Promise<T>,
 ): Promise<T> {
-  const prev = tails.get(noteId) ?? Promise.resolve();
-  const run = prev.then(job);
+  const prev = tails.get(noteId);
+  // Start right away when idle (no extra microtask before the request).
+  const run = prev ? prev.then(job) : new Promise<T>((resolve) => resolve(job()));
   const tail = run.then(
     () => undefined,
     () => undefined,
@@ -28,4 +29,9 @@ export function enqueueNoteWrite<T>(
     if (tails.get(noteId) === tail) tails.delete(noteId);
   });
   return run;
+}
+
+/** A write for `noteId` is queued or running. */
+export function isNoteWriteQueued(noteId: string): boolean {
+  return tails.has(noteId);
 }

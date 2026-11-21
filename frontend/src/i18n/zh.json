@@ -497,7 +497,18 @@
     "viewSplit": "分屏",
     "viewPreview": "预览",
     "titlePlaceholder": "无标题",
-    "editTitleHint": "点击重命名"
+    "editTitleHint": "点击重命名",
+    "conflict": {
+      "reloaded": "笔记已被其它设备/进程更新，已载入最新版本。",
+      "unsavedKept": "你未保存的内容没有覆盖它，保留在下方——可以复制，或放回编辑器。",
+      "copy": "复制我的内容",
+      "copied": "已复制",
+      "copyFailed": "复制失败——请直接选中上方文字复制。",
+      "restore": "放回编辑器",
+      "restoreHint": "用你的内容替换编辑器中已载入的版本并保存覆盖；被替换的版本保留在笔记备份中。",
+      "dismiss": "关闭",
+      "dismissHint": "丢弃保留的内容。"
+    }
   },
   "favorites": {
     "heading": "收藏",

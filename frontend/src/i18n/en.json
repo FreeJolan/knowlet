@@ -497,7 +497,18 @@
     "viewSplit": "Split",
     "viewPreview": "Preview",
     "titlePlaceholder": "Untitled",
-    "editTitleHint": "Click to rename"
+    "editTitleHint": "Click to rename",
+    "conflict": {
+      "reloaded": "This note was changed by another device or process. The latest version has been loaded.",
+      "unsavedKept": "Your unsaved text was not saved over it. It is kept below — copy it, or put it back into the editor.",
+      "copy": "Copy my text",
+      "copied": "Copied",
+      "copyFailed": "Couldn't copy — select the text above instead.",
+      "restore": "Put my text back",
+      "restoreHint": "Replaces the loaded version in the editor and saves over it. The replaced version stays in the note's backups.",
+      "dismiss": "Dismiss",
+      "dismissHint": "Discards the kept text."
+    }
   },
   "favorites": {
     "heading": "Starred",

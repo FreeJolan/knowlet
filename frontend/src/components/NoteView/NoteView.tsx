@@ -13,13 +13,17 @@
  *     per note) and builds its payload when it is SENT, from `bodyRef` +
  *     `metaRef`. Whichever PUT lands last therefore carries the newest
  *     body and the newest metadata.
- *   - Server data for the already-loaded note is adopted only when it is
- *     genuinely new: no write of ours is pending, it differs from the last
- *     body the server acknowledged, and the editor has no unsaved edits.
- *     Then it is dispatched into the live editor (sync pull, AI apply,
- *     merge resolution, frontmatter repair). With unsaved edits the local
- *     text wins; the next autosave overwrites the file, and the backend
- *     backs up the replaced version before overwriting.
+ *   - Every PUT is conditional: it sends `base_updated_at`, the version of
+ *     the server copy the editor content is based on. If the file changed
+ *     on disk since (sync auto-pull, another process or tab), the backend
+ *     refuses with 409; the editor then reloads the disk version and keeps
+ *     any unsaved text recoverable in NoteConflictNotice (and localStorage)
+ *     instead of writing it over the newer file.
+ *   - A cache update carrying a newer server version is adopted in place
+ *     (sync pull, AI apply, merge resolution, frontmatter repair) when the
+ *     editor has no unsaved input. With unsaved input the editor keeps it;
+ *     its next save is based on the old version, so it lands in the 409
+ *     path above rather than silently reverting the newer content.
  *
  * Save triggers:
  *   - onChange  → bodyRef.current = next; mark dirty; scheduleSave (800 ms)
@@ -36,6 +40,7 @@ import { useTranslation } from "react-i18next";
 import {
   addFavorite,
   getNote,
+  isNoteChangedOnDisk,
   listFavorites,
   listTemplates,
   removeFavorite,
@@ -58,7 +63,15 @@ import {
 } from "@/lib/pendingMergeOpen";
 
 import { FrontmatterCorruptedNotice } from "./FrontmatterCorruptedNotice";
-import { enqueueNoteWrite } from "./noteWriteQueue";
+import { NoteConflictNotice } from "./NoteConflictNotice";
+import { enqueueNoteWrite, isNoteWriteQueued } from "./noteWriteQueue";
+import {
+  clearUnsavedRecovery,
+  loadUnsavedRecovery,
+  saveUnsavedRecovery,
+  UNSAVED_RECOVERY_EVENT,
+  type UnsavedRecovery,
+} from "./unsavedRecovery";
 import { noteTitleClashesIn } from "@/lib/findCollision";
 import { registerNoteTitleWriter } from "@/lib/noteWrites";
 import { normalizeNoteTitle } from "@/lib/noteTitle";
@@ -108,6 +121,20 @@ function sameValue(a: string | string[], b: string | string[]): boolean {
     return a.length === b.length && a.every((x, i) => x === b[i]);
   }
   return a === b;
+}
+
+function sameMeta(a: NoteMeta | null, b: NoteMeta | null): boolean {
+  return !!a && !!b && META_KEYS.every((k) => sameValue(a[k], b[k]));
+}
+
+/** Content part of a PUT payload, used to skip identical re-sends. */
+function contentKey(p: NoteMeta & { body: string }): string {
+  return JSON.stringify({
+    title: p.title,
+    tags: p.tags,
+    aliases: p.aliases,
+    body: p.body,
+  });
 }
 
 /** One queued PUT. `patch` / `bodySnapshot` are only consulted when the
@@ -189,6 +216,21 @@ export function NoteView({
   // JSON of the last successful PUT payload per note: a queued write
   // whose payload is identical skips the request.
   const lastSentRef = useRef(new Map<string, string>());
+  // `updated_at` of the server copy the loaded editor content is based
+  // on — sent as `base_updated_at`. Older versions of the loaded note go
+  // into `supersededRef`: a cache snapshot carrying one is stale (a raced
+  // read, another view's rollback). `noteVersionsRef` holds the latest
+  // version each note reached through this view's own writes, the base
+  // for writes that are sent after the view switched notes.
+  const baseVersionRef = useRef<string | null>(null);
+  const supersededRef = useRef(new Set<string>());
+  const staleRefetchedRef = useRef(new Set<string>());
+  const noteVersionsRef = useRef(new Map<string, string>());
+  // Shown after a save was refused because the note changed on disk.
+  const [conflict, setConflict] = useState<{
+    noteId: string;
+    recovery: UnsavedRecovery | null;
+  } | null>(null);
   const [savingState, setSavingState] = useState<SaveState>("idle");
   const [viewMode, setViewMode] = useState<ViewMode>(loadInitialViewMode);
   // Title click-to-edit state. Notion / Bear / Typora all let you edit
@@ -253,18 +295,89 @@ export function NoteView({
 
   // The single PUT path for this view. Runs inside the per-note queue and
   // builds the payload at send time (see the module docstring).
+  const moveBase = useCallback((id: string, version: string) => {
+    const old = baseVersionRef.current;
+    if (old && old !== version) supersededRef.current.add(old);
+    baseVersionRef.current = version;
+    noteVersionsRef.current.set(id, version);
+  }, []);
+
+  // Load `fresh` into the live editor and the refs as the new base.
+  const resetToServer = useCallback(
+    (id: string, fresh: NoteFull) => {
+      moveBase(id, fresh.updated_at);
+      serverMetaRef.current = metaOf(fresh);
+      metaRef.current = metaOf(fresh);
+      lastSavedRef.current = fresh.body;
+      bodyRef.current = fresh.body;
+      dirtyRef.current = false;
+      const view = editorViewRef.current;
+      if (view && view.state.doc.toString() !== fresh.body) {
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: fresh.body },
+        });
+      }
+      setPreviewBody(fresh.body);
+    },
+    [moveBase],
+  );
+
+  // The backend refused a save because the file changed on disk since the
+  // copy it was based on. Runs inside the write queue, so writes queued
+  // behind this one are built from the reloaded state.
+  const resolveChangedOnDisk = useCallback(
+    async (w: NoteWrite, live: boolean) => {
+      const fresh = await qc.fetchQuery({
+        queryKey: QK.note(w.id),
+        queryFn: () => getNote(w.id),
+        staleTime: 0,
+      });
+      noteVersionsRef.current.set(w.id, fresh.updated_at);
+      lastSentRef.current.delete(w.id);
+      const stillLive =
+        live &&
+        loadedIdRef.current === w.id &&
+        loadTokenRef.current === w.loadToken;
+      // Text the user typed that never reached the disk.
+      const mine = stillLive
+        ? bodyRef.current !== lastSavedRef.current
+          ? bodyRef.current
+          : undefined
+        : w.bodySnapshot;
+      if (mine !== undefined && mine !== fresh.body) {
+        saveUnsavedRecovery(w.id, mine);
+      }
+      if (!stillLive) return;
+      if (debounceRef.current !== null) {
+        window.clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      resetToServer(w.id, fresh);
+      lastSentRef.current.set(
+        w.id,
+        contentKey({ ...metaOf(fresh), body: fresh.body }),
+      );
+      setSavingState("idle");
+      setConflict({ noteId: w.id, recovery: loadUnsavedRecovery(w.id) });
+    },
+    [qc, resetToServer],
+  );
+
   const runWrite = useCallback(
     (w: NoteWrite): Promise<NoteWriteResult> =>
       enqueueNoteWrite(w.id, async () => {
+        const isLive = () =>
+          loadedIdRef.current === w.id &&
+          loadTokenRef.current === w.loadToken &&
+          metaRef.current !== null;
+        let live = false;
         try {
           // A GET started before this PUT may resolve after it with the
           // pre-PUT file; cancel it instead of letting it land.
-          await qc.cancelQueries({ queryKey: QK.note(w.id) });
-          const isLive = () =>
-            loadedIdRef.current === w.id &&
-            loadTokenRef.current === w.loadToken &&
-            metaRef.current !== null;
-          const live = isLive();
+          if (qc.isFetching({ queryKey: QK.note(w.id) }) > 0) {
+            await qc.cancelQueries({ queryKey: QK.note(w.id) });
+          }
+          live = isLive();
           const baseBefore = live ? serverMetaRef.current : null;
           const cached = qc.getQueryData<NoteFull>(QK.note(w.id));
           let payload: NoteMeta & { body: string };
@@ -288,16 +401,24 @@ export function NoteView({
             }
             payload = { title, tags, aliases, body };
           }
-          const key = JSON.stringify(payload);
+          const key = contentKey(payload);
           if (cached && lastSentRef.current.get(w.id) === key) {
             // Nothing changed since our last successful write.
             return { data: cached, sentBody: payload.body };
           }
-          const data = await updateNote(w.id, payload);
+          const base = live
+            ? baseVersionRef.current
+            : (noteVersionsRef.current.get(w.id) ?? cached?.updated_at);
+          const data = await updateNote(w.id, {
+            ...payload,
+            ...(base ? { base_updated_at: base } : {}),
+          });
           lastSentRef.current.set(w.id, key);
+          noteVersionsRef.current.set(w.id, data.updated_at);
           void qc.cancelQueries({ queryKey: QK.note(w.id) });
           const result = metaOf(data);
           if (live && isLive()) {
+            moveBase(w.id, data.updated_at);
             lastSavedRef.current = payload.body;
             serverMetaRef.current = result;
             // Take the server's normalized value (inline #tags merged
@@ -344,10 +465,13 @@ export function NoteView({
           return { data, sentBody: payload.body };
         } catch (err) {
           w.rollback?.();
+          if (isNoteChangedOnDisk(err)) {
+            await resolveChangedOnDisk(w, live && isLive());
+          }
           throw err;
         }
       }),
-    [qc],
+    [qc, moveBase, resolveChangedOnDisk],
   );
 
   // After any successful write: the body may now be saved even if this
@@ -372,7 +496,8 @@ export function NoteView({
     // exponential backoff. After 3 attempts (~14s max wait) we give
     // up and surface the failure visibly via onError below — per the
     // "no silent failure" UX rule from sync-design discussion.
-    retry: 3,
+    // A 409 "changed on disk" is final: retrying would hit it again.
+    retry: (failureCount, err) => !isNoteChangedOnDisk(err) && failureCount < 3,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
     onSuccess: (_res, w) => {
       // Body saves can include inline `#tag` syntax that the backend
@@ -382,7 +507,10 @@ export function NoteView({
       void qc.invalidateQueries({ queryKey: QK.tagsWithNotes });
       settleSaveState(w);
     },
-    onError: (_err, w) => {
+    onError: (err, w) => {
+      // The editor already reloaded the disk version (and kept any
+      // unsaved text) in resolveChangedOnDisk.
+      if (isNoteChangedOnDisk(err)) return;
       // Reaching here means the backend rejected us OR all retries
       // exhausted. The user must know — saving silently dropping
       // edits is exactly the "沉默地陷入糟糕状态" failure mode the
@@ -543,10 +671,25 @@ export function NoteView({
   const setKindMutation = useMutation({
     // Queued with the PUTs: the kind endpoint rewrites the same file.
     mutationFn: ({ id, kind }: { id: string; kind: NoteKind }) =>
-      enqueueNoteWrite(id, () => setNoteKind(id, { kind, confirm: true })),
+      enqueueNoteWrite(id, async () => {
+        const data = await setNoteKind(id, { kind, confirm: true });
+        // The kind endpoint rewrites the file (new `updated_at`). When it
+        // rewrote exactly the content the editor is based on, that is our
+        // own write: advance the base so the next save isn't refused.
+        // Otherwise the file had already moved on and the cache update
+        // below goes through the normal external-change handling.
+        if (
+          loadedIdRef.current === id &&
+          data.body === lastSavedRef.current &&
+          sameMeta(metaOf(data), serverMetaRef.current)
+        ) {
+          moveBase(id, data.updated_at);
+        }
+        return data;
+      }),
     onSuccess: (data, vars) => {
       qc.setQueryData<NoteFull>(QK.note(vars.id), (prev) =>
-        prev ? { ...prev, kind: data.kind } : data,
+        prev ? { ...prev, ...data } : data,
       );
     },
   });
@@ -616,7 +759,7 @@ export function NoteView({
   }, [flushSave]);
 
   // Prime the refs when a note is loaded; afterwards, decide whether a
-  // cache change for the same note is ours or genuinely external.
+  // cache change for the same note is ours, stale, or a newer version.
   useEffect(() => {
     const data = note.data;
     if (!data) return;
@@ -627,61 +770,82 @@ export function NoteView({
       lastSavedRef.current = data.body;
       metaRef.current = metaOf(data);
       serverMetaRef.current = metaOf(data);
+      baseVersionRef.current = data.updated_at;
+      supersededRef.current = new Set();
+      staleRefetchedRef.current = new Set();
+      // A write of ours still queued for this note will know a newer one.
+      if (!isNoteWriteQueued(data.id)) {
+        noteVersionsRef.current.set(data.id, data.updated_at);
+      }
       setPreviewBody(data.body);
       dirtyRef.current = false;
       setSavingState("idle");
+      const recovery = loadUnsavedRecovery(data.id);
+      setConflict(recovery ? { noteId: data.id, recovery } : null);
       return;
     }
-    // Same note: three-way merge per field. local = refs, base = what the
-    // server is known to hold, incoming = cache. Only a change the server
-    // made (incoming != base) on a field the user hasn't touched
-    // (local == base) is adopted; our own optimistic updates and save
-    // responses never overwrite local state.
+    const version = data.updated_at;
+    // The version we're based on: any difference is our optimistic state.
+    if (version === baseVersionRef.current) return;
+    if (supersededRef.current.has(version)) {
+      // An older snapshot (a read that raced our write, another view's
+      // rollback). Refetch the truth once rather than adopt it.
+      if (!staleRefetchedRef.current.has(version)) {
+        staleRefetchedRef.current.add(version);
+        void qc.invalidateQueries({ queryKey: QK.note(data.id) });
+      }
+      return;
+    }
+    // A version we haven't seen: the file changed on disk.
+    lastSentRef.current.delete(data.id);
     const incoming = metaOf(data);
-    const local = metaRef.current;
-    const base = serverMetaRef.current;
-    let serverChanged = data.body !== lastSavedRef.current;
-    if (local && base) {
-      const nextLocal: Record<string, unknown> = { ...local };
-      const nextBase: Record<string, unknown> = { ...base };
-      let adopted = false;
-      for (const k of META_KEYS) {
-        if (sameValue(incoming[k], base[k]) || sameValue(incoming[k], local[k])) {
-          continue;
-        }
-        serverChanged = true;
-        if (sameValue(local[k], base[k])) {
-          nextLocal[k] = incoming[k];
-          nextBase[k] = incoming[k];
-          adopted = true;
-        }
-      }
-      if (adopted) {
-        metaRef.current = nextLocal as NoteMeta;
-        serverMetaRef.current = nextBase as NoteMeta;
-      }
-    }
-    // The file changed under us: a later write must not be skipped as
-    // "identical to what we last sent".
-    if (serverChanged) lastSentRef.current.delete(data.id);
-    if (data.body === lastSavedRef.current) return;
-    if (data.body === bodyRef.current) {
-      lastSavedRef.current = data.body;
-      dirtyRef.current = false;
+    if (
+      data.body === lastSavedRef.current &&
+      sameMeta(incoming, serverMetaRef.current)
+    ) {
+      moveBase(data.id, version);
       return;
     }
-    // Unsaved local edits win over a concurrent external change.
-    if (dirtyRef.current) return;
-    lastSavedRef.current = data.body;
-    bodyRef.current = data.body;
+    const clean =
+      !dirtyRef.current && sameMeta(metaRef.current, serverMetaRef.current);
+    const converged =
+      data.body === bodyRef.current && sameMeta(incoming, metaRef.current);
+    // Unsaved input stays in the editor; its next save is based on the
+    // old version and is refused, which reloads while keeping that input.
+    if (!clean && !converged) return;
+    resetToServer(data.id, data);
+  }, [note.data, qc, moveBase, resetToServer]);
+
+  // A refused save for this note may have set text aside while another
+  // note was open (the flush that runs when switching notes).
+  useEffect(() => {
+    const onRecovery = (e: Event) => {
+      const id = (e as CustomEvent<{ noteId?: string }>).detail?.noteId;
+      if (!id || id !== loadedIdRef.current) return;
+      setConflict({ noteId: id, recovery: loadUnsavedRecovery(id) });
+    };
+    window.addEventListener(UNSAVED_RECOVERY_EVENT, onRecovery);
+    return () => window.removeEventListener(UNSAVED_RECOVERY_EVENT, onRecovery);
+  }, []);
+
+  // "Put my text back": an ordinary edit on top of the reloaded version,
+  // saved by the normal autosave.
+  const restoreUnsaved = useCallback((body: string) => {
+    const id = loadedIdRef.current;
     const view = editorViewRef.current;
-    if (view && view.state.doc.toString() !== data.body) {
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: data.body },
-      });
-    }
-    setPreviewBody(data.body);
-  }, [note.data]);
+    if (!id || !view) return;
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: body },
+    });
+    view.focus();
+    clearUnsavedRecovery(id);
+    setConflict(null);
+  }, []);
+  const dismissConflict = useCallback(() => {
+    const id = loadedIdRef.current;
+    if (id) clearUnsavedRecovery(id);
+    setConflict(null);
+  }, []);
 
   // Persist the user's view-mode choice across reloads.
   useEffect(() => {
@@ -999,6 +1163,13 @@ export function NoteView({
         <FrontmatterCorruptedNotice
           noteId={note.data.id}
           corruption={note.data.frontmatter_corruption}
+        />
+      )}
+      {conflict && conflict.noteId === note.data.id && (
+        <NoteConflictNotice
+          recovery={conflict.recovery}
+          onRestore={restoreUnsaved}
+          onDismiss={dismissConflict}
         />
       )}
       <header className="shrink-0 px-10 pt-6 pb-3">

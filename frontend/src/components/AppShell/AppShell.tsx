@@ -31,6 +31,7 @@ import {
   getDigestStatus,
   getHealth,
   getTree,
+  isNoteChangedOnDisk,
   pullDigestSources,
   updateNoteFromLatest,
 } from "@/api/client";
@@ -845,6 +846,9 @@ export function AppShell() {
         setProposedEdit(null);
       } catch (err) {
         console.error("apply AI edit failed", err);
+        // The PUT is conditional on the version read under the lock; a 409
+        // means the note was rewritten in between, same as a body mismatch.
+        if (isNoteChangedOnDisk(err)) stale = true;
         const detail =
           (err as ApiError)?.detail ??
           (err instanceof Error ? err.message : String(err));

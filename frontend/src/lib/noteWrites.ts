@@ -33,8 +33,9 @@ const tails = new Map<string, Promise<void>>();
  *  each other. `fn` must not call `runExclusive` with the same key, or it
  *  will wait on itself. */
 export function runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const prev = tails.get(key) ?? Promise.resolve();
-  const run = prev.then(fn);
+  const prev = tails.get(key);
+  // Start right away when idle (no extra microtask before the request).
+  const run = prev ? prev.then(fn) : new Promise<T>((resolve) => resolve(fn()));
   const tail = run.then(
     () => undefined,
     () => undefined,
@@ -55,7 +56,10 @@ export function runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
  * of issuing their own PUT, so the owner's copy changes before its next
  * save is built and that save can't write the old title back.
  * The writer resolves with the server's note after the title is saved and
- * rejects if the write fails (the owner rolls back its own state).
+ * rejects if the write fails (the owner rolls back its own state). Writes
+ * are conditional on the version the owner loaded: if the note changed on
+ * disk meanwhile, the writer rejects with that 409 (`isNoteChangedOnDisk`)
+ * after the owner has reloaded the newer version.
  */
 export type NoteTitleWriter = (title: string) => Promise<NoteFull>;
 

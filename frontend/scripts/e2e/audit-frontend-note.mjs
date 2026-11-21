@@ -16,6 +16,10 @@
  *   - New document / New template dialogs surface create failures
  *   - image upload result survives an undo of its placeholder
  *   - slash-template {{title}} uses the title after an inline rename
+ *   - a save based on an outdated copy never overwrites a newer file on
+ *     disk: the editor reloads the disk version and keeps the user's
+ *     unsaved text recoverable
+ *   - a sync auto-pull reported by note-status refreshes a clean editor
  */
 
 import { assert, exitAfter, runTest, setupTestEnv } from "./_fixture.mjs";
@@ -35,6 +39,9 @@ const env = await setupTestEnv({
     { title: "slash-old", body: "slash body" },
     { title: "graph-note", body: "graph body" },
     { title: "tpl", body: "T={{title}}", folder: "_templates" },
+    { title: "remote-edit", body: "local base" },
+    { title: "auto-pull", body: "before pull" },
+    { title: "kind-then-edit", body: "kind body" },
   ],
   language: "en",
 });
@@ -548,6 +555,137 @@ try {
     } finally {
       await page.unroute("**/api/templates", failCreate);
     }
+  });
+
+  await runTest(
+    "autosave on an outdated copy does not overwrite a newer file on disk",
+    async () => {
+      await clickRow("remote-edit");
+      const id = await noteIdByTitle("remote-edit");
+      // updated_at has 1 s resolution; make the external write land in a
+      // later second than the copy the editor loaded.
+      await page.waitForTimeout(1100);
+      const current = await serverNote(id);
+      const put = await page.request.put(`${baseURL}/api/notes/${id}`, {
+        data: {
+          title: current.title,
+          tags: current.tags,
+          body: "remote version",
+          aliases: current.aliases ?? [],
+        },
+      });
+      assert(put.ok(), `external PUT ok — got ${put.status()}`);
+      await focusEditorEnd();
+      await page.keyboard.type(" mine");
+      await waitFor(
+        async () => (await editorText()) === "remote version",
+        8000,
+        "editor to reload the disk version",
+      );
+      await page.waitForTimeout(1500);
+      const disk = await serverNote(id);
+      assert(
+        disk.body === "remote version",
+        `the newer file on disk must survive — got "${disk.body}"`,
+      );
+      const notice = page.locator('[data-testid="note-conflict-notice"]');
+      await notice.waitFor({ state: "visible", timeout: 2000 });
+      const kept = await page
+        .locator('[data-testid="note-conflict-unsaved"]')
+        .inputValue();
+      assert(kept === "local base mine", `unsaved text kept — got "${kept}"`);
+      // Second branch: the user explicitly puts their text back; that is
+      // a normal edit and saves on top of the loaded version.
+      await page.locator('[data-testid="note-conflict-restore"]').click();
+      await notice.waitFor({ state: "hidden", timeout: 2000 });
+      const restored = await editorText();
+      assert(restored === "local base mine", `restored text — got "${restored}"`);
+      await waitForServer(
+        id,
+        (n) => n.body === "local base mine",
+        6000,
+        "restored text to be saved",
+      );
+    },
+  );
+
+  await runTest("a sync auto-pull refreshes a clean editor in place", async () => {
+    await clickRow("auto-pull");
+    const id = await noteIdByTitle("auto-pull");
+    await page.waitForTimeout(1100);
+    const current = await serverNote(id);
+    // Stand-in for the Drive download the note-status poll performed.
+    const put = await page.request.put(`${baseURL}/api/notes/${id}`, {
+      data: {
+        title: current.title,
+        tags: current.tags,
+        body: "pulled body",
+        aliases: current.aliases ?? [],
+      },
+    });
+    assert(put.ok(), `pull stand-in PUT ok — got ${put.status()}`);
+    const pulled = safeRoute(async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          state: "synced",
+          last_synced_at: null,
+          drive_file_id: null,
+          last_known_revision: null,
+          current_drive_revision: null,
+          detail: null,
+          auto_pulled: true,
+        }),
+      });
+    });
+    await page.route(`**/api/sync/note-status/${id}`, pulled);
+    try {
+      await waitFor(
+        async () => (await editorText()) === "pulled body",
+        14000,
+        "editor to show the auto-pulled body",
+      );
+    } finally {
+      await page.unroute(`**/api/sync/note-status/${id}`, pulled);
+    }
+    const noticeOpen = await page
+      .locator('[data-testid="note-conflict-notice"]')
+      .isVisible();
+    assert(!noticeOpen, "a clean editor refreshes silently");
+    // Editing afterwards saves on top of the pulled version.
+    await focusEditorEnd();
+    await page.keyboard.type(" plus");
+    await waitForServer(
+      id,
+      (n) => n.body === "pulled body plus",
+      6000,
+      "edit after the pull to be saved",
+    );
+  });
+
+  await runTest("changing the kind then editing still saves normally", async () => {
+    await clickRow("kind-then-edit");
+    const id = await noteIdByTitle("kind-then-edit");
+    await page.waitForTimeout(1100);
+    await page.locator('[data-testid="kind-chip-knowledge-button"]').click();
+    await page
+      .locator('[data-testid="kind-chip-demote-popover"]')
+      .waitFor({ state: "visible", timeout: 2000 });
+    await page.locator('[data-testid="kind-chip-demote-confirm"]').click();
+    await waitForServer(id, (n) => n.kind === "reference", 4000, "kind change");
+    await focusEditorEnd();
+    await page.keyboard.type(" edited");
+    await waitForServer(
+      id,
+      (n) => n.body === "kind body edited" && n.kind === "reference",
+      6000,
+      "edit after the kind change to be saved",
+    );
+    const noticeOpen = await page
+      .locator('[data-testid="note-conflict-notice"]')
+      .isVisible();
+    assert(!noticeOpen, "our own kind change is not a conflict");
   });
 
   await teardown();

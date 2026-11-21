@@ -281,6 +281,21 @@ export interface NoteWritePayload {
   tags: string[];
   body: string;
   aliases?: string[];
+  /** `updated_at` of the copy this write is based on. When the file on
+   *  disk has moved on since, the backend refuses with 409 (see
+   *  `isNoteChangedOnDisk`) instead of overwriting the newer content.
+   *  Omit for an unconditional write. */
+  base_updated_at?: string;
+}
+
+/** True for the 409 a PUT gets when `base_updated_at` is outdated. */
+export function isNoteChangedOnDisk(err: unknown): boolean {
+  const e = err as Partial<ApiError> | null;
+  return (
+    e?.status === 409 &&
+    typeof e.detail === "string" &&
+    e.detail.includes("changed on disk")
+  );
 }
 
 const putNote = (id: string, payload: NoteWritePayload): Promise<NoteFull> =>
@@ -297,12 +312,17 @@ export const updateNote = (
 /** Read-modify-write against the latest server copy. The GET and the PUT
  *  run inside the same per-note critical section as `updateNote`, so a
  *  save that was already in flight lands first and its body is what
- *  `build` sees. `build` may throw to abort without writing. */
+ *  `build` sees. `build` may throw to abort without writing. The PUT is
+ *  conditional on the copy that was read, so a write by another process
+ *  in between rejects with 409 instead of being reverted. */
 export const updateNoteFromLatest = (
   id: string,
   build: (latest: NoteFull) => NoteWritePayload,
 ): Promise<NoteFull> =>
-  runExclusive(noteWriteKey(id), async () => putNote(id, build(await getNote(id))));
+  runExclusive(noteWriteKey(id), async () => {
+    const latest = await getNote(id);
+    return putNote(id, { base_updated_at: latest.updated_at, ...build(latest) });
+  });
 
 /** Change only the title. The PUT endpoint has no partial-update form, so
  *  tags / body / aliases are echoed from the latest server copy (never
@@ -471,6 +491,9 @@ export interface NoteSyncStatus {
   last_known_revision: string | null;
   current_drive_revision: string | null;
   detail: string | null;
+  /** This poll replaced the local file with the Drive copy; an editor
+   *  holding the previous body must reload it. */
+  auto_pulled?: boolean;
 }
 
 export const getNoteSyncStatus = (
