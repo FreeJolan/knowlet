@@ -23,6 +23,7 @@ from knowlet.cli._common import (
     make_index,
     resolve_vault_or_die,
 )
+from knowlet.cli._sync_marks import mark_deleted, mark_dirty, mark_restored
 from knowlet.core.backlinks import find_backlinks
 from knowlet.core.index import Index
 from knowlet.core.note import Note
@@ -101,11 +102,13 @@ def _persist_folder_hint(vault: Vault, path: Path) -> Note | None:
     return note
 
 
-def _resync_moved_folder(vault: Vault, idx: Index, old_root: Path, new_root: Path) -> None:
+def _resync_moved_folder(vault: Vault, idx: Index, old_root: Path, new_root: Path) -> list[str]:
     """After a folder move / rename, point every moved note's index row
-    at its new path (by real note id) and refresh its folder hint."""
+    at its new path (by real note id) and refresh its folder hint.
+    Returns the ids of the moved notes."""
     old_ids = _index_ids_by_path_under(vault, idx, old_root)
     resolved_old_root = old_root.resolve()
+    moved: list[str] = []
     for md in sorted(new_root.rglob("*.md")):
         if not md.is_file() or any(p.startswith(".") for p in md.relative_to(new_root).parts):
             continue
@@ -116,6 +119,8 @@ def _resync_moved_folder(vault: Vault, idx: Index, old_root: Path, new_root: Pat
         else:
             note_id = old_ids.get(resolved_old_root / rel, md.stem)
         idx.update_note_path(note_id, str(md))
+        moved.append(note_id)
+    return moved
 
 
 @app.command("delete")
@@ -150,6 +155,7 @@ def notes_delete(
         path = vault.resolve_note_path_from_index(meta["path"])
         trashed = vault.trash_note(path)
         idx.delete_note(meta["id"])
+        mark_deleted(vault.root, [meta["id"]])
         console.print(f"[yellow]trashed[/yellow] → {trashed}")
     finally:
         idx.close()
@@ -184,6 +190,9 @@ def notes_restore(
     except FileExistsError as exc:
         err_console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
+    restored = Note.from_file(target)
+    restored_id = restored.id if restored.frontmatter_status == "valid" else target.stem
+    mark_restored(vault.root, [restored_id])
     console.print(f"[green]restored[/green] → {target}")
     console.print("[dim]hint: run `knowlet reindex` so the index picks the file back up.[/dim]")
 
@@ -280,6 +289,7 @@ def notes_mv(
             raise typer.Exit(code=2) from exc
         _persist_folder_hint(vault, new_path)
         idx.update_note_path(meta["id"], str(new_path))
+        mark_dirty(vault.root, [meta["id"]])
         console.print(f"[green]moved[/green] → {new_path}")
     finally:
         idx.close()
@@ -304,7 +314,7 @@ def notes_mvfolder(
         except (ValueError, FileNotFoundError, FileExistsError) as exc:
             err_console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=2) from exc
-        _resync_moved_folder(vault, idx, vault.notes_dir / src, new_path)
+        mark_dirty(vault.root, _resync_moved_folder(vault, idx, vault.notes_dir / src, new_path))
         console.print(f"[green]moved[/green] → {new_path}")
     finally:
         idx.close()
@@ -325,7 +335,7 @@ def notes_rnfolder(
         except (ValueError, FileNotFoundError, FileExistsError) as exc:
             err_console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=2) from exc
-        _resync_moved_folder(vault, idx, vault.notes_dir / folder, new_path)
+        mark_dirty(vault.root, _resync_moved_folder(vault, idx, vault.notes_dir / folder, new_path))
         console.print(f"[green]renamed[/green] → {new_path}")
     finally:
         idx.close()
@@ -412,6 +422,7 @@ def notes_rmfolder(
                 stale_ids.add(trashed_note.id)
         for stale_id in sorted(stale_ids):
             idx.delete_note(stale_id)
+        mark_deleted(vault.root, sorted(stale_ids))
         console.print(f"[yellow]trashed {len(trashed)} note(s) → .trash/[/yellow]")
     finally:
         idx.close()

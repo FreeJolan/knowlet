@@ -15,6 +15,7 @@ from knowlet.cli._common import (
     load_config_or_default,
     resolve_vault_or_die,
 )
+from knowlet.cli._sync_marks import mark_dirty
 from knowlet.cli.mining import exit_on_ambiguous_id
 
 app = typer.Typer(help="AI-extracted drafts pending review.", no_args_is_help=True)
@@ -224,4 +225,5 @@ def _draft_approve_or_reject(draft_id: str, *, approve: bool) -> None:
         raise typer.Exit(code=1) from None
     finally:
         idx.close()
+    mark_dirty(vault.root, [result.note_id])
     console.print(f"[green]approved[/green] → {result.path}")

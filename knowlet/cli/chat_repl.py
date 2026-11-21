@@ -25,6 +25,7 @@ from rich.table import Table
 from knowlet import __version__
 from knowlet.cli._common import console, err_console, render_notes_table
 from knowlet.cli._doctor import print_doctor, run_doctor_checks
+from knowlet.cli._sync_marks import mark_dirty
 from knowlet.cli.cards import run_cards_review
 from knowlet.cli.config import redacted_config_dump
 from knowlet.cli.mining import AMBIGUOUS_ID_ERRORS, _render_run_report, print_ambiguous_id
@@ -299,6 +300,7 @@ def _handle_slash(text: str, runtime: Any) -> tuple[bool, bool]:
                 except DraftFlowError as exc:
                     console.print(f"[red]cannot approve draft:[/red] {escape(str(exc))}")
                     return True, False
+                mark_dirty(runtime.vault.root, [result.note_id])
                 console.print(f"[green]approved[/green] → {result.path}")
         else:
             console.print(
@@ -468,5 +470,6 @@ def _do_sediment(runtime: Any, quiet_skip: bool = False) -> None:
                 return
             continue
         note = commit_draft(draft, runtime.vault, runtime.index, runtime.config)
+        mark_dirty(runtime.vault.root, [note.id])
         console.print(f"[green]saved[/green] → {note.path}")
         return
