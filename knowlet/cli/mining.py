@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Annotated
 
 import typer
+from rich.markup import escape
+from rich.prompt import Confirm
 from rich.table import Table
 
 from knowlet.cli._common import (
@@ -13,9 +17,46 @@ from knowlet.cli._common import (
     load_config_or_default,
     resolve_vault_or_die,
 )
+from knowlet.core.digest_items import AmbiguousIdError
+from knowlet.core.drafts import AmbiguousDraftIdError
 from knowlet.core.mining.runner import RunReport
+from knowlet.core.mining.task_store import AmbiguousTaskIdError
 
 app = typer.Typer(help="Knowledge-mining tasks (scenario B).", no_args_is_help=True)
+
+# Raised by the task / digest-source / raw-info / draft stores when a short
+# id prefix matches several entities. Each carries `.candidates`.
+AMBIGUOUS_ID_ERRORS: tuple[type[LookupError], ...] = (
+    AmbiguousTaskIdError,
+    AmbiguousIdError,
+    AmbiguousDraftIdError,
+)
+
+
+def print_ambiguous_id(exc: LookupError) -> None:
+    given = (
+        getattr(exc, "task_id", None)
+        or getattr(exc, "given", None)
+        or getattr(exc, "draft_id", None)
+    )
+    candidates = list(getattr(exc, "candidates", []))
+    err_console.print(
+        f"[red]ambiguous id {escape(repr(given))} matches {len(candidates)} items; "
+        "pass a longer id:[/red]"
+    )
+    for candidate in candidates:
+        err_console.print(f"  · {escape(str(candidate))}")
+
+
+@contextmanager
+def exit_on_ambiguous_id() -> Iterator[None]:
+    """Report an id-prefix collision with its candidates and exit 2. The
+    store refused to pick one, so nothing was changed."""
+    try:
+        yield
+    except AMBIGUOUS_ID_ERRORS as exc:
+        print_ambiguous_id(exc)
+        raise typer.Exit(code=2) from exc
 
 
 @app.command("list")
@@ -167,7 +208,8 @@ def mining_edit(
 
     vault = resolve_vault_or_die()
     store = TaskStore(vault.tasks_dir)
-    task = store.get(task_id)
+    with exit_on_ambiguous_id():
+        task = store.get(task_id)
     if task is None or task.path is None:
         err_console.print(f"[red]task not found:[/red] {task_id}")
         raise typer.Exit(code=1)
@@ -185,7 +227,9 @@ def mining_remove(
 
     vault = resolve_vault_or_die()
     store = TaskStore(vault.tasks_dir)
-    if not store.delete(task_id):
+    with exit_on_ambiguous_id():
+        removed = store.delete(task_id)
+    if not removed:
         err_console.print(f"[red]task not found:[/red] {task_id}")
         raise typer.Exit(code=1)
     console.print(f"[green]removed[/green] {task_id}")
@@ -218,6 +262,10 @@ def mining_reset(
             "only the seen-set is cleared and existing drafts stay.",
         ),
     ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip the confirmation prompt for --delete-drafts."),
+    ] = False,
 ) -> None:
     """Clear the seen-set so the next run re-extracts everything."""
     from knowlet.core.drafts import DraftStore
@@ -226,11 +274,21 @@ def mining_reset(
 
     vault = resolve_vault_or_die()
     store = TaskStore(vault.tasks_dir)
-    task = store.get(task_id)
+    with exit_on_ambiguous_id():
+        task = store.get(task_id)
     if task is None:
         err_console.print(f"[red]task not found:[/red] {task_id}")
         raise typer.Exit(code=1)
     drafts = DraftStore(vault.drafts_dir)
+    if delete_drafts and not yes:
+        doomed = len(drafts.list_for_task(task.id))
+        console.print(
+            f"[bold red]permanently delete {doomed} draft(s)[/bold red] produced by "
+            f"{escape(task.name)} ({task.id[:8]}…)"
+        )
+        if not Confirm.ask("delete them?", default=False):
+            console.print("[dim]cancelled[/dim]")
+            return
     out = reset_task_state(vault, task.id, drafts=drafts, delete_drafts=delete_drafts)
     console.print(
         f"[green]reset[/green] {task.name} ({task.id[:8]}…)  "
@@ -273,7 +331,8 @@ def _run_one_task(task_id: str, limit: int | None = None) -> None:
         err_console.print("[red]LLM api_key is empty. Run `knowlet config init` first.[/red]")
         raise typer.Exit(code=2)
     store = TaskStore(vault.tasks_dir)
-    task = store.get(task_id)
+    with exit_on_ambiguous_id():
+        task = store.get(task_id)
     if task is None:
         err_console.print(f"[red]task not found:[/red] {task_id}")
         raise typer.Exit(code=1)

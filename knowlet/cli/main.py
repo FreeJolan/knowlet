@@ -11,15 +11,19 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sys
 import threading
 import time
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
+import click
 import typer
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Prompt
+from typer.core import TyperGroup
 
 from knowlet import __version__
 from knowlet.cli import backups as backups_cli
@@ -54,16 +58,40 @@ from knowlet.config import (
     find_vault,
     save_config,
 )
+from knowlet.core.digest_items import AmbiguousIdError
+from knowlet.core.drafts import AmbiguousDraftIdError
 from knowlet.core.embedding import make_backend
 from knowlet.core.i18n import t
-from knowlet.core.index import reindex_vault
+from knowlet.core.index import IndexDimensionMismatchError, delete_index_db, reindex_vault
+from knowlet.core.mining.task_store import AmbiguousTaskIdError
 from knowlet.core.vault import Vault
+
+# Errors that describe a user-fixable situation (stale index after an
+# embedding switch, an id prefix matching several entities). Any command
+# can hit them; they get a one-line message instead of a traceback.
+_USER_FACING_ERRORS: tuple[type[Exception], ...] = (
+    IndexDimensionMismatchError,
+    AmbiguousDraftIdError,
+    AmbiguousIdError,
+    AmbiguousTaskIdError,
+)
+
+
+class _KnowletGroup(TyperGroup):
+    def invoke(self, ctx: click.Context) -> Any:
+        try:
+            return super().invoke(ctx)
+        except _USER_FACING_ERRORS as exc:
+            err_console.print(f"[red]{escape(str(exc))}[/red]")
+            raise typer.Exit(code=2) from exc
+
 
 app = typer.Typer(
     name="knowlet",
     help="A personal knowledge base that organizes itself.",
     no_args_is_help=False,
     add_completion=False,
+    cls=_KnowletGroup,
 )
 app.add_typer(vault_cli.app, name="vault")
 app.add_typer(config_cli.app, name="config")
@@ -82,6 +110,14 @@ app.add_typer(backups_cli.app, name="backups")
 app.add_typer(sync_cli.app, name="sync")
 
 DESKTOP_PARENT_PID_ENV = "KNOWLET_DESKTOP_PARENT_PID"
+# uvicorn stops waiting for in-flight responses (a streaming chat turn can
+# run for minutes) after this long and moves on to the lifespan shutdown,
+# where the push drainer / scheduler / runtime get to finish their writes.
+WEB_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS = 5
+# How long the desktop watchdog waits after asking for a graceful shutdown
+# before it hard-exits. Must exceed the uvicorn timeout above plus the
+# lifespan cleanup itself.
+DESKTOP_SHUTDOWN_GRACE_SECONDS = 15.0
 
 
 # ------------------------------------------------------------------ root
@@ -153,7 +189,13 @@ def web(
             title=f"knowlet {__version__}",
         )
     )
-    uvicorn.run(fastapi_app, host=host, port=port, log_level="info")
+    uvicorn.run(
+        fastapi_app,
+        host=host,
+        port=port,
+        log_level="info",
+        timeout_graceful_shutdown=WEB_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS,
+    )
 
 
 def _desktop_parent_pid_from_env() -> int | None:
@@ -180,7 +222,11 @@ def _process_exists(pid: int) -> bool:
     return True
 
 
-def _start_desktop_parent_watchdog_from_env(*, interval_seconds: float = 2.0) -> None:
+def _start_desktop_parent_watchdog_from_env(
+    *,
+    interval_seconds: float = 2.0,
+    grace_seconds: float = DESKTOP_SHUTDOWN_GRACE_SECONDS,
+) -> None:
     parent_pid = _desktop_parent_pid_from_env()
     if parent_pid is None:
         return
@@ -196,7 +242,17 @@ def _start_desktop_parent_watchdog_from_env(*, interval_seconds: float = 2.0) ->
                     "desktop parent process %s is gone; stopping knowlet web",
                     parent_pid,
                 )
-                os._exit(0)
+                # SIGTERM goes through uvicorn's handler, so the lifespan
+                # shutdown (drainer.stop / scheduler / runtime.close) runs.
+                # The hard exit is only the backstop for a hung shutdown;
+                # a clean one ends the process before the sleep returns.
+                signal.raise_signal(signal.SIGTERM)
+                time.sleep(grace_seconds)
+                log.error(
+                    "graceful shutdown did not finish within %.0fs; forcing exit",
+                    grace_seconds,
+                )
+                os._exit(1)
 
     threading.Thread(
         target=_watch,
@@ -244,7 +300,7 @@ def reindex(
     vault = resolve_vault_or_die()
     cfg = load_config_or_default(vault)
     if rebuild and vault.db_path.exists():
-        vault.db_path.unlink()
+        delete_index_db(vault.db_path)
         console.print(f"[dim]dropped {vault.db_path}[/dim]")
     backend = make_backend(cfg.embedding.backend, cfg.embedding.model, cfg.embedding.dim)
     if backend.dim != cfg.embedding.dim:
@@ -257,6 +313,7 @@ def reindex(
         chunk_size=cfg.retrieval.chunk_size,
         chunk_overlap=cfg.retrieval.chunk_overlap,
         note_paths=list(vault.iter_note_paths()),
+        vault=vault,
     )
     console.print(f"reindex done: {changed} updated, {deleted} removed, {unchanged} unchanged")
 

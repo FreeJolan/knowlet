@@ -8,9 +8,11 @@ that the React UI mirrors over `/api/folders`, `/api/trash`, and
 
 from __future__ import annotations
 
-from typing import Annotated
+from pathlib import Path
+from typing import Annotated, Any
 
 import typer
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Confirm
 
@@ -22,8 +24,98 @@ from knowlet.cli._common import (
     resolve_vault_or_die,
 )
 from knowlet.core.backlinks import find_backlinks
+from knowlet.core.index import Index
+from knowlet.core.note import Note
+from knowlet.core.vault import Vault
 
 app = typer.Typer(help="Note operations (delete / restore).", no_args_is_help=True)
+
+
+def _resolve_note_meta(idx: Index, note_id: str) -> dict[str, Any]:
+    """Resolve a full note id or a unique id prefix to its index row.
+
+    Exits on a miss, and on a prefix matching several notes: callers go
+    on to trash / move whatever this returns, and list views only show
+    8-char prefixes, which collide for notes created in the same second.
+    """
+    needle = note_id.strip()
+    if not needle:
+        err_console.print("[red]note id is empty[/red]")
+        raise typer.Exit(code=1)
+    meta = idx.get_note_meta(needle)
+    if meta is not None:
+        return meta
+    matches = [row for row in idx.list_notes(limit=None) if row["id"].startswith(needle)]
+    if not matches:
+        err_console.print(f"[red]note not found:[/red] {escape(needle)}")
+        raise typer.Exit(code=1)
+    if len(matches) > 1:
+        err_console.print(
+            f"[red]ambiguous prefix {escape(repr(needle))} matches {len(matches)} notes; "
+            "pass a longer id:[/red]"
+        )
+        for row in sorted(matches, key=lambda r: r["id"]):
+            err_console.print(f"  · {row['id']}  {escape(row.get('title') or '')}")
+        raise typer.Exit(code=2)
+    resolved = idx.get_note_meta(matches[0]["id"])
+    if resolved is None:
+        err_console.print(f"[red]note not found:[/red] {escape(needle)}")
+        raise typer.Exit(code=1)
+    return resolved
+
+
+def _index_ids_by_path_under(vault: Vault, idx: Index, folder: Path) -> dict[Path, str]:
+    """Index rows whose stored path lies under ``folder``, keyed by the
+    resolved path. The index is the authority on which id a file was
+    indexed under — filename stems are not (hand-named notes, trash
+    collision suffixes)."""
+    root = folder.resolve()
+    out: dict[Path, str] = {}
+    for row in idx.list_notes(limit=None):
+        try:
+            path = vault.resolve_note_path_from_index(row["path"]).resolve()
+        except ValueError:
+            continue
+        if path.is_relative_to(root):
+            out[path] = row["id"]
+    return out
+
+
+def _persist_folder_hint(vault: Vault, path: Path) -> Note | None:
+    """Rewrite the note's ``folder`` frontmatter to match where it now
+    lives (what the web move endpoints do), so a flat Drive appData
+    restore rebuilds the same tree. Rewrites in place: the filename of a
+    hand-named note must not change. Corrupted frontmatter is left
+    byte-for-byte untouched. Returns the note, or None if unreadable."""
+    try:
+        note = vault.read_note(path)
+    except (OSError, ValueError):
+        return None
+    if note.frontmatter_status == "corrupted":
+        return note
+    folder = vault.folder_of(path) or None
+    if note.folder != folder:
+        note.folder = folder
+        note.path = path
+        vault.write_note(note)
+    return note
+
+
+def _resync_moved_folder(vault: Vault, idx: Index, old_root: Path, new_root: Path) -> None:
+    """After a folder move / rename, point every moved note's index row
+    at its new path (by real note id) and refresh its folder hint."""
+    old_ids = _index_ids_by_path_under(vault, idx, old_root)
+    resolved_old_root = old_root.resolve()
+    for md in sorted(new_root.rglob("*.md")):
+        if not md.is_file() or any(p.startswith(".") for p in md.relative_to(new_root).parts):
+            continue
+        rel = md.relative_to(new_root)
+        note = _persist_folder_hint(vault, md)
+        if note is not None and note.frontmatter_status != "corrupted":
+            note_id = note.id
+        else:
+            note_id = old_ids.get(resolved_old_root / rel, md.stem)
+        idx.update_note_path(note_id, str(md))
 
 
 @app.command("delete")
@@ -39,16 +131,7 @@ def notes_delete(
     cfg = load_config_or_default(vault)
     idx = make_index(vault, cfg)
     try:
-        meta = idx.get_note_meta(note_id)
-        if meta is None:
-            # Tolerate prefix lookup
-            for row in idx.list_notes(limit=10000):
-                if row["id"].startswith(note_id):
-                    meta = idx.get_note_meta(row["id"])
-                    break
-        if meta is None:
-            err_console.print(f"[red]note not found:[/red] {note_id}")
-            raise typer.Exit(code=1)
+        meta = _resolve_note_meta(idx, note_id)
 
         title = meta.get("title", "(untitled)")
         if not yes:
@@ -187,15 +270,7 @@ def notes_mv(
     cfg = load_config_or_default(vault)
     idx = make_index(vault, cfg)
     try:
-        meta = idx.get_note_meta(note_id)
-        if meta is None:
-            for row in idx.list_notes(limit=10000):
-                if row["id"].startswith(note_id):
-                    meta = idx.get_note_meta(row["id"])
-                    break
-        if meta is None:
-            err_console.print(f"[red]note not found:[/red] {note_id}")
-            raise typer.Exit(code=1)
+        meta = _resolve_note_meta(idx, note_id)
         path = vault.resolve_note_path_from_index(meta["path"])
         clean_folder = "" if target_folder in (".", "/") else target_folder
         try:
@@ -203,6 +278,7 @@ def notes_mv(
         except (ValueError, FileExistsError) as exc:
             err_console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=2) from exc
+        _persist_folder_hint(vault, new_path)
         idx.update_note_path(meta["id"], str(new_path))
         console.print(f"[green]moved[/green] → {new_path}")
     finally:
@@ -228,9 +304,7 @@ def notes_mvfolder(
         except (ValueError, FileNotFoundError, FileExistsError) as exc:
             err_console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=2) from exc
-        for md in new_path.rglob("*.md"):
-            if md.is_file() and not any(p.startswith(".") for p in md.relative_to(new_path).parts):
-                idx.update_note_path(md.stem, str(md))
+        _resync_moved_folder(vault, idx, vault.notes_dir / src, new_path)
         console.print(f"[green]moved[/green] → {new_path}")
     finally:
         idx.close()
@@ -251,9 +325,7 @@ def notes_rnfolder(
         except (ValueError, FileNotFoundError, FileExistsError) as exc:
             err_console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=2) from exc
-        for md in new_path.rglob("*.md"):
-            if md.is_file() and not any(p.startswith(".") for p in md.relative_to(new_path).parts):
-                idx.update_note_path(md.stem, str(md))
+        _resync_moved_folder(vault, idx, vault.notes_dir / folder, new_path)
         console.print(f"[green]renamed[/green] → {new_path}")
     finally:
         idx.close()
@@ -272,15 +344,7 @@ def notes_backlinks(
     cfg = load_config_or_default(vault)
     idx = make_index(vault, cfg)
     try:
-        meta = idx.get_note_meta(note_id)
-        if meta is None:
-            for row in idx.list_notes(limit=10000):
-                if row["id"].startswith(note_id):
-                    meta = idx.get_note_meta(row["id"])
-                    break
-        if meta is None:
-            err_console.print(f"[red]note not found:[/red] {note_id}")
-            raise typer.Exit(code=1)
+        meta = _resolve_note_meta(idx, note_id)
 
         title = (meta.get("title") or "").strip()
         if not title:
@@ -336,8 +400,18 @@ def notes_rmfolder(
         except (ValueError, FileNotFoundError) as exc:
             err_console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=2) from exc
+        # delete_folder validated `folder`; the index rows still carry the
+        # pre-trash paths.
+        stale_ids = set(_index_ids_by_path_under(vault, idx, vault.notes_dir / folder).values())
         for trashed_path in trashed:
-            idx.delete_note(trashed_path.stem)
+            try:
+                trashed_note = Note.from_file(trashed_path)
+            except (OSError, ValueError):
+                continue
+            if trashed_note.frontmatter_status == "valid" and not trashed_note.id_assigned:
+                stale_ids.add(trashed_note.id)
+        for stale_id in sorted(stale_ids):
+            idx.delete_note(stale_id)
         console.print(f"[yellow]trashed {len(trashed)} note(s) → .trash/[/yellow]")
     finally:
         idx.close()

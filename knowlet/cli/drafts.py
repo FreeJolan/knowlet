@@ -15,6 +15,7 @@ from knowlet.cli._common import (
     load_config_or_default,
     resolve_vault_or_die,
 )
+from knowlet.cli.mining import exit_on_ambiguous_id
 
 app = typer.Typer(help="AI-extracted drafts pending review.", no_args_is_help=True)
 
@@ -49,7 +50,8 @@ def drafts_show(
 
     vault = resolve_vault_or_die()
     store = DraftStore(vault.drafts_dir)
-    d = store.get(draft_id)
+    with exit_on_ambiguous_id():
+        d = store.get(draft_id)
     if d is None:
         err_console.print(f"[red]draft not found:[/red] {draft_id}")
         raise typer.Exit(code=1)
@@ -80,7 +82,7 @@ def drafts_commit(
 def drafts_reject(
     draft_id: Annotated[str, typer.Argument(help="Draft id (or 8-char prefix).")],
 ) -> None:
-    """Delete a draft."""
+    """Reject a draft: move it to `drafts/.archive/` (recoverable)."""
     _draft_approve_or_reject(draft_id, approve=False)
 
 
@@ -95,7 +97,8 @@ def drafts_accept_diff(
     vault = resolve_vault_or_die()
     store = DraftStore(vault.drafts_dir)
     try:
-        draft = accept_draft_diff(store, draft_id)
+        with exit_on_ambiguous_id():
+            draft = accept_draft_diff(store, draft_id)
     except KeyError:
         err_console.print(f"[red]draft not found:[/red] {draft_id}")
         raise typer.Exit(code=1) from None
@@ -116,7 +119,8 @@ def drafts_reject_diff(
     vault = resolve_vault_or_die()
     store = DraftStore(vault.drafts_dir)
     try:
-        draft = reject_draft_diff(store, draft_id)
+        with exit_on_ambiguous_id():
+            draft = reject_draft_diff(store, draft_id)
     except KeyError:
         err_console.print(f"[red]draft not found:[/red] {draft_id}")
         raise typer.Exit(code=1) from None
@@ -140,7 +144,8 @@ def drafts_edit(
 
     vault = resolve_vault_or_die()
     store = DraftStore(vault.drafts_dir)
-    d = store.get(draft_id)
+    with exit_on_ambiguous_id():
+        d = store.get(draft_id)
     if d is None or d.path is None:
         err_console.print(f"[red]draft not found:[/red] {draft_id}")
         raise typer.Exit(code=1)
@@ -169,7 +174,8 @@ def drafts_kind(
         raise typer.Exit(code=1)
     vault = resolve_vault_or_die()
     store = DraftStore(vault.drafts_dir)
-    d = store.get(draft_id)
+    with exit_on_ambiguous_id():
+        d = store.get(draft_id)
     if d is None:
         err_console.print(f"[red]draft not found:[/red] {draft_id}")
         raise typer.Exit(code=1)
@@ -188,13 +194,18 @@ def _draft_approve_or_reject(draft_id: str, *, approve: bool) -> None:
     vault = resolve_vault_or_die()
     cfg = load_config_or_default(vault)
     store = DraftStore(vault.drafts_dir)
-    draft = store.get(draft_id)
+    with exit_on_ambiguous_id():
+        draft = store.get(draft_id)
     if draft is None:
         err_console.print(f"[red]draft not found:[/red] {draft_id}")
         raise typer.Exit(code=1)
     if not approve:
-        store.delete(draft.id)
-        console.print(f"[green]rejected[/green] {draft.id[:8]}…")
+        try:
+            archived = store.archive_draft(draft.id)
+        except KeyError:
+            err_console.print(f"[red]draft not found:[/red] {draft_id}")
+            raise typer.Exit(code=1) from None
+        console.print(f"[green]rejected[/green] {draft.id[:8]}… [dim](archived → {archived})[/dim]")
         return
     backend = make_backend(cfg.embedding.backend, cfg.embedding.model, cfg.embedding.dim)
     idx = Index(vault.db_path, backend)

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import sqlite3
 from collections.abc import Iterator
 from contextlib import suppress
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from rich.markup import escape
 from rich.panel import Panel
 
 from knowlet.cli._common import console, err_console, resolve_vault_or_die
@@ -131,18 +135,73 @@ SNAPSHOT_DIR_NAME = "snapshots"
 # user has acted on belongs in a safety copy even if it's "auxiliary."
 #
 # SQLite WAL mode produces `<db>-shm` and `<db>-wal` sidecars holding
-# in-flight transactions; we match by stem prefix so those never sneak
-# in (an inconsistent snapshot of mid-transaction data is worse than
+# in-flight transactions; we match by stem prefix so the index ones never
+# sneak in (an inconsistent snapshot of mid-transaction data is worse than
 # rebuilding from scratch on next start).
 _SNAPSHOT_SKIP_NAMES = {SNAPSHOT_DIR_NAME}
 _SNAPSHOT_SKIP_STEMS = {"index.sqlite", "vectors.sqlite"}
 # Public alias preserved for the regression test that pins this set.
 _SNAPSHOT_SKIP = _SNAPSHOT_SKIP_NAMES | _SNAPSHOT_SKIP_STEMS
 
+# Non-rebuildable databases (events.sqlite, sync_state.sqlite) may be open
+# in a running web server / desktop app while we copy. They are copied with
+# SQLite's online backup API — one transactionally consistent image that
+# already contains the WAL — so their sidecars are never copied verbatim.
+_SQLITE_DB_SUFFIXES = (".sqlite", ".sqlite3", ".db")
+_SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+_SQLITE_MAGIC = b"SQLite format 3\x00"
+
+
+def _is_sqlite_sidecar(name: str) -> bool:
+    return any(
+        name.endswith(db_suffix + sidecar)
+        for db_suffix in _SQLITE_DB_SUFFIXES
+        for sidecar in _SQLITE_SIDECAR_SUFFIXES
+    )
+
+
+def _is_sqlite_db(path: Path) -> bool:
+    if not path.name.endswith(_SQLITE_DB_SUFFIXES):
+        return False
+    try:
+        with path.open("rb") as fh:
+            return fh.read(len(_SQLITE_MAGIC)) == _SQLITE_MAGIC
+    except OSError:
+        return False
+
+
+def _remove_sqlite_sidecars(db_path: Path) -> None:
+    for sidecar in _SQLITE_SIDECAR_SUFFIXES:
+        Path(f"{db_path}{sidecar}").unlink(missing_ok=True)
+
+
+def _backup_sqlite(src: Path, dst: Path) -> None:
+    partial = dst.with_name(dst.name + ".partial")
+    partial.unlink(missing_ok=True)
+    try:
+        source = sqlite3.connect(src, timeout=30)
+        try:
+            target = sqlite3.connect(partial)
+            try:
+                source.backup(target)
+            finally:
+                target.close()
+        finally:
+            source.close()
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        _remove_sqlite_sidecars(partial)
+        raise
+    _remove_sqlite_sidecars(partial)
+    os.replace(partial, dst)
+
 
 def _should_skip(name: str) -> bool:
-    """Match snapshot dir by exact name + indexes by stem prefix."""
+    """Match snapshot dir by exact name + indexes by stem prefix + every
+    SQLite sidecar (the DB copy already carries its WAL content)."""
     if name in _SNAPSHOT_SKIP_NAMES:
+        return True
+    if _is_sqlite_sidecar(name):
         return True
     return any(name == s or name.startswith(s + "-") for s in _SNAPSHOT_SKIP_STEMS)
 
@@ -162,6 +221,66 @@ def _copy_skip_filter(src: str, names: list[str]) -> list[str]:
     """`shutil.copytree` ignore-callable. Skips snapshot dir + indexes
     (including SQLite WAL `-shm` / `-wal` sidecars)."""
     return [n for n in names if _should_skip(n)]
+
+
+def _snapshot_copy(src: str | Path, dst: str | Path) -> str:
+    """`shutil.copytree` copy_function for taking a snapshot."""
+    src_path = Path(src)
+    if _is_sqlite_db(src_path):
+        try:
+            _backup_sqlite(src_path, Path(dst))
+            return str(dst)
+        except sqlite3.Error as exc:
+            # A damaged database still belongs in the safety copy: fall back
+            # to the raw bytes, sidecars included.
+            err_console.print(
+                f"[yellow]warning:[/yellow] {escape(src_path.name)}: online backup "
+                f"failed ({escape(str(exc))}); copying the raw files instead"
+            )
+            for sidecar in _SQLITE_SIDECAR_SUFFIXES:
+                side = Path(f"{src_path}{sidecar}")
+                if side.is_file():
+                    shutil.copy2(side, f"{dst}{sidecar}")
+    return str(shutil.copy2(src, dst))
+
+
+def _restore_copy(src: str | Path, dst: str | Path) -> str:
+    """`shutil.copytree` copy_function for restoring a snapshot. Database
+    files are swapped in atomically so a process still holding the old
+    file keeps a consistent (old) inode instead of reading a half-copied
+    one."""
+    if _is_sqlite_db(Path(src)):
+        partial = Path(f"{dst}.partial")
+        shutil.copy2(src, partial)
+        os.replace(partial, dst)
+        return str(dst)
+    return str(shutil.copy2(src, dst))
+
+
+def _copy_vault_to_snapshot(vault_root: Path, target: Path) -> tuple[int, int]:
+    """Copy the snapshot-worthy parts of the vault into ``target``.
+    Returns ``(files_copied, bytes_copied)``."""
+    for src, rel in _iter_snapshot_targets(vault_root):
+        dst = target / rel
+        if src.is_file():
+            if _should_skip(src.name):
+                continue
+            _snapshot_copy(src, dst)
+        elif src.is_dir():
+            shutil.copytree(
+                src,
+                dst,
+                ignore=_copy_skip_filter,
+                copy_function=_snapshot_copy,
+                dirs_exist_ok=True,
+            )
+    files_copied = 0
+    bytes_copied = 0
+    for p in target.rglob("*"):
+        if p.is_file():
+            bytes_copied += p.stat().st_size
+            files_copied += 1
+    return files_copied, bytes_copied
 
 
 @app.command("snapshot")
@@ -192,11 +311,15 @@ def vault_snapshot(
     indexes (`index.sqlite`, `vectors.sqlite` — `knowlet reindex`
     rebuilds them in seconds).
 
+    SQLite databases that may be in use (`events.sqlite`,
+    `sync_state.sqlite`) are copied with SQLite's online backup API, so
+    the snapshot is consistent even while the web server / desktop app
+    is running.
+
     Recommended: run **before** `git pull && uv sync` to upgrade
     knowlet, so you can restore if a migration goes wrong. Snapshots
     accumulate; clean old ones with `knowlet vault list-snapshots`.
     """
-    import shutil
     from datetime import UTC, datetime
 
     vault = resolve_vault_or_die()
@@ -208,22 +331,7 @@ def vault_snapshot(
         raise typer.Exit(code=2)
 
     target.mkdir(parents=True, exist_ok=True)
-    bytes_copied = 0
-    files_copied = 0
-    for src, rel in _iter_snapshot_targets(vault.root):
-        dst = target / rel
-        if src.is_file():
-            if _should_skip(src.name):
-                continue
-            shutil.copy2(src, dst)
-            bytes_copied += dst.stat().st_size
-            files_copied += 1
-        elif src.is_dir():
-            shutil.copytree(src, dst, ignore=_copy_skip_filter, dirs_exist_ok=True)
-            for p in dst.rglob("*"):
-                if p.is_file():
-                    bytes_copied += p.stat().st_size
-                    files_copied += 1
+    files_copied, bytes_copied = _copy_vault_to_snapshot(vault.root, target)
 
     mb = bytes_copied / (1024 * 1024)
     console.print(f"[green]snapshot ok[/green] · {files_copied} files / {mb:.1f} MB")
@@ -282,10 +390,11 @@ def vault_restore_snapshot(
     cleared so the next `knowlet` command rebuilds them from scratch
     against the restored notes — avoids stale-index drift.
     """
-    import shutil
     from datetime import UTC, datetime
 
     from rich.prompt import Confirm
+
+    from knowlet.core.index import delete_index_db
 
     vault = resolve_vault_or_die()
     snap_dir = vault.state_dir / SNAPSHOT_DIR_NAME
@@ -320,13 +429,7 @@ def vault_restore_snapshot(
     pre_ts = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
     pre_path = snap_dir / f"{pre_ts}-pre-restore"
     pre_path.mkdir(parents=True, exist_ok=True)
-    for src, rel in _iter_snapshot_targets(vault.root):
-        dst = pre_path / rel
-        if src.is_file():
-            if not _should_skip(src.name):
-                shutil.copy2(src, dst)
-        elif src.is_dir():
-            shutil.copytree(src, dst, ignore=_copy_skip_filter, dirs_exist_ok=True)
+    _copy_vault_to_snapshot(vault.root, pre_path)
     console.print(f"[dim]· current state snapshotted to {pre_path.name}[/dim]")
 
     # 2. Wipe live entity dirs (the ones we restore over).
@@ -342,19 +445,24 @@ def vault_restore_snapshot(
         if d.exists():
             shutil.rmtree(d)
 
-    # 3. Drop rebuildable indexes so they get rebuilt fresh.
+    # 3. Drop rebuildable indexes (with their WAL sidecars) so they get
+    # rebuilt fresh.
     for idx_name in ("index.sqlite", "vectors.sqlite"):
-        p = vault.state_dir / idx_name
-        if p.exists():
-            p.unlink()
+        delete_index_db(vault.state_dir / idx_name)
 
-    # 4. Copy snapshot contents back.
+    # 4. Copy snapshot contents back. A restored database must not sit
+    # next to the live one's WAL: SQLite would replay it on open and
+    # silently undo the restore. Drop those sidecars first; any sidecars
+    # the snapshot itself carries are copied back after.
+    for snap_db in src_root.rglob("*"):
+        if snap_db.is_file() and _is_sqlite_db(snap_db):
+            _remove_sqlite_sidecars(vault.root / snap_db.relative_to(src_root))
     for entry in src_root.iterdir():
         dst = vault.root / entry.name
         if entry.is_file():
-            shutil.copy2(entry, dst)
+            _restore_copy(entry, dst)
         elif entry.is_dir():
-            shutil.copytree(entry, dst, dirs_exist_ok=True)
+            shutil.copytree(entry, dst, copy_function=_restore_copy, dirs_exist_ok=True)
 
     console.print(f"[green]restored from {src_root.name}[/green]")
     console.print("[dim]· run `knowlet reindex` to rebuild the search index[/dim]")
@@ -545,7 +653,5 @@ def _existing_titles(vault_root: Path) -> list[str]:
 
 
 def shutil_rmtree_safe(path: Path) -> None:
-    import shutil
-
     with suppress(FileNotFoundError):
         shutil.rmtree(path)

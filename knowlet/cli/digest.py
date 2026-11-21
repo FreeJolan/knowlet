@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 import typer
+from rich.prompt import Confirm
 from rich.table import Table
 
 from knowlet.cli._common import (
@@ -13,7 +14,7 @@ from knowlet.cli._common import (
     load_config_or_default,
     resolve_vault_or_die,
 )
-from knowlet.cli.mining import _render_run_report
+from knowlet.cli.mining import _render_run_report, exit_on_ambiguous_id
 from knowlet.core.digest import is_digest_task, list_digest_tasks
 from knowlet.core.digest_items import RawInfoStore
 from knowlet.core.digest_pull import pull_digest_sources
@@ -107,7 +108,8 @@ def digest_add(
 
 def _set_enabled(source_id: str, enabled: bool) -> None:
     store = _source_store()
-    source = store.get(source_id)
+    with exit_on_ambiguous_id():
+        source = store.get(source_id)
     if source is None:
         err_console.print(f"[red]digest source not found:[/red] {source_id}")
         raise typer.Exit(code=1)
@@ -139,13 +141,16 @@ def digest_remove(
     """Remove a digest source."""
     vault = resolve_vault_or_die()
     source_store = DigestSourceStore(vault.digest_sources_dir)
-    if source_store.delete(source_id):
+    with exit_on_ambiguous_id():
+        removed = source_store.delete(source_id)
+    if removed:
         console.print(f"[green]removed[/green] {source_id}")
         return
 
     # Back-compat for Stage C v1 digest tasks created before source v2.
     store = TaskStore(vault.tasks_dir)
-    task = store.get(source_id)
+    with exit_on_ambiguous_id():
+        task = store.get(source_id)
     if task is None or not is_digest_task(task):
         err_console.print(f"[red]digest source not found:[/red] {source_id}")
         raise typer.Exit(code=1)
@@ -179,7 +184,8 @@ def digest_run(
         raise typer.Exit(code=2)
     source_store = DigestSourceStore(vault.digest_sources_dir)
     if source_id:
-        source = source_store.get(source_id)
+        with exit_on_ambiguous_id():
+            source = source_store.get(source_id)
         if source is not None:
             report = pull_digest_sources(
                 vault=vault,
@@ -220,7 +226,8 @@ def digest_run(
 
     store = TaskStore(vault.tasks_dir)
     if source_id:
-        task = store.get(source_id)
+        with exit_on_ambiguous_id():
+            task = store.get(source_id)
         tasks = [task] if task is not None and is_digest_task(task) else []
     else:
         tasks = [task for task in list_digest_tasks(store) if task.enabled]
@@ -244,7 +251,7 @@ def digest_run(
 def digest_discard(
     info_id: Annotated[str, typer.Argument(help="Raw Info item id.")],
 ) -> None:
-    """Discard one Raw Info item and delete its linked note Draft if present."""
+    """Discard one Raw Info item and archive its linked note Draft if present."""
     vault = resolve_vault_or_die()
     try:
         result = discard_raw_info(
@@ -259,7 +266,7 @@ def digest_discard(
         err_console.print(f"[red]cannot discard raw info:[/red] {exc}")
         raise typer.Exit(code=2) from None
     suffix = (
-        f" and deleted draft {result.deleted_draft_id[:8]}…"
+        f" and archived draft {result.deleted_draft_id[:8]}…"
         if result.deleted_draft_id and result.draft_deleted
         else ""
     )
@@ -267,16 +274,37 @@ def digest_discard(
 
 
 @app.command("clear")
-def digest_clear() -> None:
-    """Discard every pending Raw Info item in the digest queue."""
+def digest_clear(
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip the confirmation prompt."),
+    ] = False,
+) -> None:
+    """Discard every pending Raw Info item in the digest queue.
+
+    Discarded items are not fetched again by later pulls, and their linked
+    drafts move to `drafts/.archive/`."""
     vault = resolve_vault_or_die()
+    items = RawInfoStore(vault.digest_items_dir)
+    if not yes:
+        pending = items.pending_count()
+        if pending == 0:
+            console.print("[dim]no pending raw info items[/dim]")
+            return
+        console.print(
+            f"[bold yellow]about to discard {pending} pending raw info item(s)[/bold yellow] "
+            "(they will not be pulled again; linked drafts move to drafts/.archive/)"
+        )
+        if not Confirm.ask("discard them all?", default=False):
+            console.print("[dim]cancelled[/dim]")
+            return
     result = discard_pending_raw_infos(
-        items=RawInfoStore(vault.digest_items_dir),
+        items=items,
         drafts=DraftStore(vault.drafts_dir),
     )
     console.print(f"[green]discarded[/green] {result.discarded_count} pending raw info item(s)")
     if result.deleted_draft_ids:
         console.print(
-            "[dim]deleted linked drafts:[/dim] "
+            "[dim]archived linked drafts:[/dim] "
             + ", ".join(draft_id[:8] + "…" for draft_id in result.deleted_draft_ids)
         )

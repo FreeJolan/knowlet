@@ -176,7 +176,7 @@ def test_web_starts_without_llm_api_key(tmp_path, monkeypatch):
 
     called = {}
 
-    def fake_run(app_obj, *, host, port, log_level):
+    def fake_run(app_obj, *, host, port, log_level, **_kwargs):
         called["host"] = host
         called["port"] = port
         called["log_level"] = log_level
