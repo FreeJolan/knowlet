@@ -8,7 +8,9 @@ from pathlib import Path
 def test_desktop_sidecar_build_installs_sync_extra() -> None:
     script = Path("scripts/desktop/build-backend-sidecars.sh").read_text(encoding="utf-8")
 
-    assert '"$ROOT[sync]"' in script, (
+    export_cmd = script.split("uv export", 1)[1].split("\n\n", 1)[0]
+    assert "--extra sync" in export_cmd, (
         "The desktop backend sidecar must bundle Google Drive sync dependencies; "
-        'install the project as "$ROOT[sync]" in build-backend-sidecars.sh.'
+        "export the locked requirements with `--extra sync` in "
+        "build-backend-sidecars.sh."
     )

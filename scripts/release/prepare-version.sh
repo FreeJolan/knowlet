@@ -37,8 +37,15 @@ package_lock_root_version() {
   node -e 'const fs = require("fs"); const doc = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); console.log(doc.packages[""].version);' "$1"
 }
 
-toml_package_version() {
-  awk -F '"' '/^version = "/ { print $2; exit }' "$1"
+# Reads `version = "..."` from one TOML table (e.g. [package] in Cargo.toml,
+# [project] in pyproject.toml) so a version key in another table never matches.
+toml_table_version() {
+  local table="$1"
+  local file="$2"
+  awk -F '"' -v header="[$table]" '
+    /^\[/ { in_table = ($0 == header); next }
+    in_table && /^version = "/ { print $2; exit }
+  ' "$file"
 }
 
 python_module_version() {
@@ -98,7 +105,8 @@ check_version "frontend/package.json" "$(json_version frontend/package.json)"
 check_version "frontend/package-lock.json" "$(json_version frontend/package-lock.json)"
 check_version "frontend/package-lock.json packages.root" "$(package_lock_root_version frontend/package-lock.json)"
 check_version "frontend/src-tauri/tauri.conf.json" "$(json_version frontend/src-tauri/tauri.conf.json)"
-check_version "frontend/src-tauri/Cargo.toml" "$(toml_package_version frontend/src-tauri/Cargo.toml)"
+check_version "frontend/src-tauri/Cargo.toml" "$(toml_table_version package frontend/src-tauri/Cargo.toml)"
+check_version "pyproject.toml" "$(toml_table_version project pyproject.toml)"
 check_version "knowlet/__init__.py" "$(python_module_version knowlet/__init__.py)"
 
 if [[ "$ALLOW_EXISTING_TAG" -eq 0 ]]; then

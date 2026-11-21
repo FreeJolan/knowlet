@@ -14,6 +14,30 @@ export LC_CTYPE="en_US.UTF-8"
 
 mkdir -p "$BIN_DIR" "$BUILD_ROOT"
 
+# Runtime dependencies come from uv.lock, the same versions CI tests against,
+# never from a fresh PyPI resolution of pyproject's '>=' lower bounds. The lock
+# is universal, so one export serves both architectures (markers are evaluated
+# against each venv's interpreter at install time).
+LOCKED_REQUIREMENTS="$BUILD_ROOT/requirements-locked.txt"
+uv export \
+  --project "$ROOT" \
+  --frozen \
+  --no-dev \
+  --no-emit-project \
+  --extra sync \
+  --format requirements-txt \
+  --output-file "$LOCKED_REQUIREMENTS"
+
+# Keep the Intel build on a cryptography release that ships a macOS universal2
+# wheel. Newer source-only resolutions require a cross-compiled OpenSSL
+# toolchain when this script runs on an Apple Silicon release runner, so a lock
+# bump of cryptography must be checked against that before changing this pin.
+if ! grep -q "^cryptography==$CRYPTOGRAPHY_VERSION[ ;\\]" "$LOCKED_REQUIREMENTS"; then
+  echo "uv.lock pins a cryptography version other than $CRYPTOGRAPHY_VERSION;" >&2
+  echo "verify it ships a macOS universal2 wheel, then update CRYPTOGRAPHY_VERSION." >&2
+  exit 1
+fi
+
 build_one() {
   local label="$1"
   local target_triple="$2"
@@ -29,14 +53,15 @@ build_one() {
 
   rm -rf "$venv" "$dist" "$work" "$spec"
   uv venv "$venv" --python "$python_request"
-  # Keep the Intel build on a version that ships a macOS universal2 wheel.
-  # Newer source-only resolutions require a cross-compiled OpenSSL toolchain
-  # when this script runs on an Apple Silicon release runner.
+  uv pip install --python "$venv/bin/python" --requirements "$LOCKED_REQUIREMENTS"
+  # PyInstaller is build tooling, not a locked runtime dependency; constrain it
+  # by the lock so it cannot move any shared package off the locked version.
   uv pip install \
     --python "$venv/bin/python" \
-    "pyinstaller==$PYINSTALLER_VERSION" \
-    "cryptography==$CRYPTOGRAPHY_VERSION" \
-    "$ROOT[sync]"
+    --constraints "$LOCKED_REQUIREMENTS" \
+    "pyinstaller==$PYINSTALLER_VERSION"
+  # --no-deps keeps uv.lock the single source of dependency versions.
+  uv pip install --python "$venv/bin/python" --no-deps "$ROOT"
   local python_cmd=("$venv/bin/python")
   if ((${#arch_prefix[@]})); then
     python_cmd=("${arch_prefix[@]}" "$venv/bin/python")

@@ -74,3 +74,37 @@ jobs:
         env:
           SKIP_BUILD: "1"
         run: node scripts/e2e/run-all.mjs
+
+  desktop:
+    # The Tauri shell only ships for macOS; check it on the same OS the release
+    # workflow builds on so Rust breakage surfaces on the PR, not mid-release.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            frontend/src-tauri/target
+          key: cargo-check-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-check-${{ runner.os }}-
+
+      - name: Stub bundle inputs required by tauri-build
+        # tauri-build checks that externalBin, resources and frontendDist exist
+        # at compile time. cargo check never bundles them, so placeholders do.
+        run: |
+          set -euo pipefail
+          mkdir -p frontend/dist frontend/src-tauri/binaries
+          [[ -f frontend/dist/index.html ]] || echo '<!doctype html><title>Knowlet</title>' > frontend/dist/index.html
+          for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+            bin="frontend/src-tauri/binaries/knowlet-backend-$triple"
+            : > "$bin"
+            chmod 755 "$bin"
+          done
+
+      - name: cargo check (src-tauri)
+        working-directory: frontend/src-tauri
+        run: cargo check --locked --all-targets
