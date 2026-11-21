@@ -22,6 +22,7 @@ const FRONTEND_DIST_RESOURCE: &str = "frontend-dist";
 pub const BACKEND_BIN_ENV: &str = "KNOWLET_BACKEND_BIN";
 pub const VAULT_ENV: &str = "KNOWLET_VAULT";
 pub const DESKTOP_PARENT_PID_ENV: &str = "KNOWLET_DESKTOP_PARENT_PID";
+pub const DESKTOP_LAUNCH_TOKEN_ENV: &str = "KNOWLET_DESKTOP_LAUNCH_TOKEN";
 const DESKTOP_BACKEND_STDIO_LOG: &str = "desktop-backend.log";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -530,6 +531,7 @@ fn spawn_backend(
     frontend_dist: &Path,
     port: u16,
     log_path: &Path,
+    launch_token: &str,
 ) -> Result<Child, String> {
     reset_backend_stdio_log(log_path)?;
     let stdout_log = open_backend_stdio_log(log_path)?;
@@ -541,6 +543,7 @@ fn spawn_backend(
         .env("KNOWLET_VAULT", vault)
         .env("KNOWLET_FRONTEND_DIST", frontend_dist)
         .env(DESKTOP_PARENT_PID_ENV, std::process::id().to_string())
+        .env(DESKTOP_LAUNCH_TOKEN_ENV, launch_token)
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout_log))
         .stderr(Stdio::from(stderr_log));
@@ -658,9 +661,22 @@ impl BackendProcess {
         let mut attempt = 1;
         loop {
             let port = find_available_port()?;
-            let mut child =
-                spawn_backend(&backend_program, &vault, &frontend_dist, port, &log_path)?;
-            match wait_for_backend_health(&mut child, port, HEALTH_TIMEOUT, &log_path) {
+            let launch_token = new_launch_token();
+            let mut child = spawn_backend(
+                &backend_program,
+                &vault,
+                &frontend_dist,
+                port,
+                &log_path,
+                &launch_token,
+            )?;
+            match wait_for_backend_health(
+                &mut child,
+                port,
+                HEALTH_TIMEOUT,
+                &log_path,
+                &launch_token,
+            ) {
                 Ok(()) => {
                     return Ok(Self {
                         child: Some(child),
@@ -741,10 +757,11 @@ pub fn wait_for_backend_health(
     port: u16,
     timeout: Duration,
     log_path: &Path,
+    launch_token: &str,
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if health_check(port) {
+        if health_check(port, Some(launch_token)) {
             return Ok(());
         }
         match child.try_wait() {
@@ -774,7 +791,7 @@ pub fn wait_for_backend_health(
 pub fn wait_for_health(port: u16, timeout: Duration) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if health_check(port) {
+        if health_check(port, None) {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(150));
@@ -807,7 +824,28 @@ pub fn read_log_tail(path: &Path, max_lines: usize) -> String {
     lines.join("\n")
 }
 
-fn health_check(port: u16) -> bool {
+/// 128-bit random hex token handed to one sidecar launch. The sidecar echoes
+/// it from /api/health, so an unrelated local service that happens to answer
+/// 200 on the probed port is never mistaken for our backend.
+pub fn new_launch_token() -> String {
+    let mut bytes = [0_u8; 16];
+    let from_os = File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut bytes))
+        .is_ok();
+    if !from_os {
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+        for (i, chunk) in bytes.chunks_mut(8).enumerate() {
+            let mut hasher = RandomState::new().build_hasher();
+            hasher.write_u32(std::process::id());
+            hasher.write_usize(i);
+            chunk.copy_from_slice(&hasher.finish().to_le_bytes());
+        }
+    }
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn health_check(port: u16, launch_token: Option<&str>) -> bool {
     let Ok(mut stream) = TcpStream::connect((LOOPBACK_HOST, port)) else {
         return false;
     };
@@ -820,12 +858,35 @@ fn health_check(port: u16) -> bool {
         return false;
     }
 
-    let mut response = [0_u8; 256];
-    let Ok(n) = stream.read(&mut response) else {
+    let mut response = Vec::new();
+    let mut buf = [0_u8; 4096];
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                response.extend_from_slice(&buf[..n]);
+                if response.len() > 64 * 1024 {
+                    return false;
+                }
+            }
+            Err(_) if !response.is_empty() => break,
+            Err(_) => return false,
+        }
+    }
+    let text = String::from_utf8_lossy(&response);
+    if !(text.starts_with("HTTP/1.1 200") || text.starts_with("HTTP/1.0 200")) {
+        return false;
+    }
+    let Some(expected) = launch_token else {
+        return true;
+    };
+    let Some((_, body)) = text.split_once("\r\n\r\n") else {
         return false;
     };
-    let status = String::from_utf8_lossy(&response[..n]);
-    status.starts_with("HTTP/1.1 200") || status.starts_with("HTTP/1.0 200")
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|doc| doc.get("launch_token")?.as_str().map(|t| t == expected))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -1086,7 +1147,7 @@ mod tests {
             .unwrap();
         let port = super::find_available_port().unwrap();
 
-        let err = super::wait_for_backend_health(&mut child, port, Duration::from_secs(1), &log)
+        let err = super::wait_for_backend_health(&mut child, port, Duration::from_secs(1), &log, "t")
             .unwrap_err();
 
         assert!(err.contains("exited before health check passed"));
@@ -1159,6 +1220,73 @@ mod tests {
         });
 
         super::wait_for_health(port, Duration::from_secs(1)).unwrap();
+    }
+
+    fn serve_once(response: &'static [u8]) -> u16 {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0_u8; 1024];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                let _ = std::io::Write::write_all(&mut stream, response);
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn backend_health_rejects_foreign_service_without_launch_token() {
+        let dir = tempdir().unwrap();
+        let log = dir.path().join("backend.log");
+        let port = serve_once(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}",
+        );
+        let mut child = Command::new("sleep").arg("5").spawn().unwrap();
+
+        let result = super::wait_for_backend_health(
+            &mut child,
+            port,
+            Duration::from_millis(600),
+            &log,
+            "0123456789abcdef0123456789abcdef",
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(result.unwrap_err().contains("health"));
+    }
+
+    #[test]
+    fn backend_health_accepts_matching_launch_token() {
+        let dir = tempdir().unwrap();
+        let log = dir.path().join("backend.log");
+        let port = serve_once(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 65\r\nConnection: close\r\n\r\n{\"status\":\"ok\",\"launch_token\":\"0123456789abcdef0123456789abcdef\"}",
+        );
+        let mut child = Command::new("sleep").arg("5").spawn().unwrap();
+
+        let result = super::wait_for_backend_health(
+            &mut child,
+            port,
+            Duration::from_secs(2),
+            &log,
+            "0123456789abcdef0123456789abcdef",
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+
+        result.unwrap();
+    }
+
+    #[test]
+    fn launch_tokens_are_random_hex() {
+        let a = super::new_launch_token();
+        let b = super::new_launch_token();
+
+        assert_eq!(a.len(), 32);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
     }
 
     #[test]
