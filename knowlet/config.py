@@ -192,10 +192,24 @@ def _toml_from_payload(payload: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _checked_toml_from_payload(payload: dict[str, Any]) -> str:
+    """``_toml_from_payload`` plus a parse-back check that every value
+    round-trips; raises :class:`TomlWriteError` before anything is written."""
+    text = _toml_from_payload(payload)
+    expected = {
+        section: {k: v for k, v in values.items() if v is not None}
+        for section, values in payload.items()
+        if isinstance(values, dict)
+    }
+    if parse_generated_toml(text) != expected:
+        raise TomlWriteError("refusing to write TOML: values do not round-trip")
+    return text
+
+
 def write_synced_config_snapshot(vault: Path, cfg: KnowletConfig) -> Path:
     p = synced_config_snapshot_path(vault)
     p.parent.mkdir(parents=True, exist_ok=True)
-    text = _toml_from_payload(_scrub_config_for_sync(cfg))
+    text = _checked_toml_from_payload(_scrub_config_for_sync(cfg))
     fd, tmp_name = tempfile.mkstemp(prefix=f"{p.name}.", suffix=".tmp", dir=p.parent)
     tmp = Path(tmp_name)
     try:
@@ -213,6 +227,49 @@ def write_synced_config_snapshot(vault: Path, cfg: KnowletConfig) -> Path:
     return p
 
 
+_TOML_SHORT_ESCAPES = {
+    '"': '\\"',
+    "\\": "\\\\",
+    "\b": "\\b",
+    "\t": "\\t",
+    "\n": "\\n",
+    "\f": "\\f",
+    "\r": "\\r",
+}
+
+
+class TomlWriteError(ValueError):
+    """Generated TOML failed the parse-back self-check; nothing was written."""
+
+
+def toml_basic_string(v: str) -> str:
+    """Quote ``v`` as a TOML basic string.
+
+    TOML forbids raw control characters (U+0000-U+001F except tab, and
+    U+007F) inside basic strings; one stray newline makes the whole file
+    unparseable. Escape them all, using ``\\uXXXX`` where TOML 1.0 has no
+    short form."""
+    out: list[str] = []
+    for ch in v:
+        short = _TOML_SHORT_ESCAPES.get(ch)
+        if short is not None:
+            out.append(short)
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append(f"\\u{ord(ch):04X}")
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
+
+
+def parse_generated_toml(text: str) -> dict[str, Any]:
+    """Parse TOML we are about to write; raise :class:`TomlWriteError`
+    instead of letting an unparseable file reach disk."""
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise TomlWriteError(f"refusing to write invalid TOML: {exc}") from exc
+
+
 def _toml_value(v: Any) -> str:
     """Serialize a single primitive value as TOML.
 
@@ -225,9 +282,7 @@ def _toml_value(v: Any) -> str:
     if isinstance(v, (int, float)):
         return repr(v)
     if isinstance(v, str):
-        # Use double-quoted strings; escape backslash and double quote.
-        escaped = v.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
+        return toml_basic_string(v)
     raise TypeError(f"unsupported config value type: {type(v).__name__}")
 
 
@@ -239,7 +294,7 @@ def save_config(
 ) -> None:
     p = config_path(vault)
     p.parent.mkdir(parents=True, exist_ok=True)
-    text = _toml_from_payload(cfg.model_dump())
+    text = _checked_toml_from_payload(cfg.model_dump())
     fd, tmp_name = tempfile.mkstemp(prefix=f"{p.name}.", suffix=".tmp", dir=p.parent)
     tmp = Path(tmp_name)
     try:

@@ -1053,7 +1053,7 @@ requires-dist = [
     { name = "apscheduler", specifier = ">=3.10,<4" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "feedparser", specifier = ">=6.0" },
-    { name = "fsrs", specifier = ">=6.0" },
+    { name = "fsrs", specifier = ">=6.0,<7" },
     { name = "google-api-python-client", marker = "extra == 'sync'", specifier = ">=2.130" },
     { name = "google-auth", marker = "extra == 'sync'", specifier = ">=2.30" },
     { name = "google-auth-oauthlib", marker = "extra == 'sync'", specifier = ">=1.2" },

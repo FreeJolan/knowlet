@@ -36,7 +36,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 from ulid import ULID
 
-from knowlet.config import VAULT_MARKER_DIR
+from knowlet.config import (
+    VAULT_MARKER_DIR,
+    TomlWriteError,
+    parse_generated_toml,
+    toml_basic_string,
+)
 from knowlet.core.note import Note
 from knowlet.core.vault import Vault
 
@@ -106,10 +111,7 @@ def _toml_value(v: Any) -> str:
     if isinstance(v, int) and not isinstance(v, bool):
         return str(v)
     if isinstance(v, str):
-        # Conservative quoting: prefer the literal triple-quote / quote
-        # form that round-trips; escape backslash + double-quote.
-        escaped = v.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
+        return toml_basic_string(v)
     if v is None:
         return '""'
     raise TypeError(f"unserializable TOML value: {v!r} ({type(v).__name__})")
@@ -154,6 +156,35 @@ def _serialize(actions: list[QuickAction]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _actions_from_toml_data(data: dict[str, Any]) -> list[QuickAction]:
+    # `actions` may be missing or empty.
+    raw = data.get("actions") or []
+    out: list[QuickAction] = []
+    for entry in raw:
+        # Move `params` table into a `params` field for Pydantic.
+        params = entry.pop("params", None) or {}
+        out.append(QuickAction.model_validate({**entry, "params": params}))
+    return out
+
+
+def _checked_serialize(actions: list[QuickAction]) -> str:
+    """``_serialize`` plus a parse-back check: the text must be valid
+    TOML that loads back to the same actions, else
+    :class:`~knowlet.config.TomlWriteError` and nothing is written.
+
+    ``schema_version`` is excluded from the comparison because the
+    serializer only writes the file-level version."""
+    text = _serialize(actions)
+    reloaded = _actions_from_toml_data(parse_generated_toml(text))
+
+    def _dump(items: list[QuickAction]) -> list[dict[str, Any]]:
+        return [a.model_dump(exclude={"schema_version"}) for a in items]
+
+    if _dump(reloaded) != _dump(actions):
+        raise TomlWriteError("refusing to write quick-actions.toml: values do not round-trip")
+    return text
+
+
 def _atomic_write(p: Path, text: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(p.suffix + ".tmp")
@@ -177,14 +208,7 @@ class QuickActionStore:
             return []
         with self.path.open("rb") as f:
             data = tomllib.load(f)
-        # `actions` may be missing or empty.
-        raw = data.get("actions") or []
-        out: list[QuickAction] = []
-        for entry in raw:
-            # Move `params` table into a `params` field for Pydantic.
-            params = entry.pop("params", None) or {}
-            out.append(QuickAction.model_validate({**entry, "params": params}))
-        return out
+        return _actions_from_toml_data(data)
 
     def save(self, actions: list[QuickAction]) -> None:
         # Phase 2 E Slice 4.E — back up the current toml before the
@@ -204,7 +228,7 @@ class QuickActionStore:
                 import logging
 
                 logging.getLogger(__name__).warning("quick-actions backup failed", exc_info=True)
-        _atomic_write(self.path, _serialize(actions))
+        _atomic_write(self.path, _checked_serialize(actions))
         self._queue_sync()
 
     def upsert(self, action: QuickAction) -> QuickAction:
