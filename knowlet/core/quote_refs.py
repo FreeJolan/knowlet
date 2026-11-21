@@ -38,6 +38,8 @@ MAX_REFERENCES = 5
 # Notes use, per ADR-0011 §3 prose-note styling).
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 
+_PARA_SEP_RE = re.compile(r"\n\s*\n")
+
 
 @dataclass(frozen=True)
 class QuoteRef:
@@ -103,14 +105,17 @@ def _locate_quote(body: str, ref: QuoteRef) -> int | None:
     # 3. Anchor-based fuzzy
     anchor = ref.paragraph_anchor
     if anchor:
-        # Walk paragraphs (\n\n-separated chunks) and look for one whose
-        # leading normalized text matches the anchor.
-        offset = 0
-        for para in re.split(r"\n\s*\n", body):
-            head = normalize_anchor(para)
+        # Walk blank-line-separated paragraphs and look for one whose
+        # leading normalized text matches the anchor. Offsets come from
+        # the actual separator spans, which may be longer than "\n\n".
+        start = 0
+        for sep in [*_PARA_SEP_RE.finditer(body), None]:
+            end = sep.start() if sep is not None else len(body)
+            head = normalize_anchor(body[start:end])
             if head and head.startswith(anchor[:32]):  # 32 chars is enough signal
-                return offset
-            offset += len(para) + 2  # rough: paragraphs separated by "\n\n"
+                return start
+            if sep is not None:
+                start = sep.end()
     return None
 
 

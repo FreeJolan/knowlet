@@ -20,17 +20,15 @@ ADR-0013 §1 contract: this module **only computes**; it never decides.
 The web layer surfaces the result as a read-only payload (M8.2 sidebar);
 no auto-merge, no auto-archive, no scores rendered as judgement.
 
-Tradeoffs vs full HDBSCAN: single-link components are cheaper (O(n²) but
-the constant is small) and produce stable, explainable groups
-("everything reachable via cosine ≥ 0.92 chains"). For vault sizes
-≤ 5k notes this fits in well under a second. If/when we need
-density-aware clustering we swap the implementation here without
-changing the wire payload.
+Tradeoffs vs full HDBSCAN: single-link components are cheaper (O(n²)
+similarity, done as blocked numpy matmuls) and produce stable,
+explainable groups ("everything reachable via cosine ≥ 0.92 chains").
+If/when we need density-aware clustering we swap the implementation
+here without changing the wire payload.
 """
 
 from __future__ import annotations
 
-import struct
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -38,13 +36,18 @@ from pathlib import Path
 
 import numpy as np
 
-from knowlet.core.backlinks import find_backlinks
+from knowlet.core.backlinks import _normalize, inbound_link_sources
 from knowlet.core.index import Index
 
 # Defaults pinned here so callers / tests have a single source.
 DEFAULT_NEAR_DUP_COSINE = 0.92
 DEFAULT_ORPHAN_UNTOUCHED_DAYS = 90
 DEFAULT_AGING_UNTOUCHED_DAYS = 180
+DEFAULT_MAX_PAIRS = 500
+_CLUSTER_MAX_PAIRS = 10_000
+# Rows of the similarity matrix materialized at once: bounds peak memory
+# to block * n floats instead of n².
+_SIM_BLOCK_ROWS = 512
 
 
 @dataclass(frozen=True)
@@ -88,8 +91,8 @@ class StructureSignals:
 
 
 def _blob_to_vec(blob: bytes, dim: int) -> np.ndarray:
-    """Inverse of `index._vec_to_blob` — unpacks float32 LE blob."""
-    return np.array(struct.unpack(f"{dim}f", blob), dtype=np.float32)
+    """Inverse of `index._vec_to_blob` — native-order float32 blob."""
+    return np.frombuffer(blob, dtype=np.float32, count=dim)
 
 
 def _l2_normalize(v: np.ndarray) -> np.ndarray:
@@ -153,34 +156,46 @@ def near_duplicates(
     idx: Index,
     *,
     cosine_threshold: float = DEFAULT_NEAR_DUP_COSINE,
-    max_pairs: int = 500,
+    max_pairs: int = DEFAULT_MAX_PAIRS,
 ) -> list[NearDuplicatePair]:
     """All (a, b) pairs with cosine(mean_emb_a, mean_emb_b) ≥ threshold.
 
-    O(n²) — fine for vault sizes ≤ 5k. Sorted by cosine desc; capped at
-    `max_pairs` so a high-similarity vault (translated copies / heavy
-    revision history) doesn't blow up the response."""
+    O(n²) similarity, vectorized. Sorted by cosine desc (ties in (a, b)
+    index order); capped at `max_pairs` so a high-similarity vault
+    (translated copies / heavy revision history) doesn't blow up the
+    response."""
     note_ids, titles, M = _load_note_embeddings(idx)
     n = len(note_ids)
     if n < 2:
         return []
-    sim = M @ M.T  # since rows are L2-normalized
-    pairs: list[NearDuplicatePair] = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            c = float(sim[i, j])
-            if c >= cosine_threshold:
-                pairs.append(
-                    NearDuplicatePair(
-                        a_id=note_ids[i],
-                        a_title=titles[note_ids[i]],
-                        b_id=note_ids[j],
-                        b_title=titles[note_ids[j]],
-                        cosine=c,
-                    )
-                )
-    pairs.sort(key=lambda p: p.cosine, reverse=True)
-    return pairs[:max_pairs]
+    threshold = np.float64(cosine_threshold)
+    a_parts: list[np.ndarray] = []
+    b_parts: list[np.ndarray] = []
+    cos_parts: list[np.ndarray] = []
+    for start in range(0, n, _SIM_BLOCK_ROWS):
+        block = M[start : start + _SIM_BLOCK_ROWS] @ M.T  # rows are L2-normalized
+        rows, cols = np.nonzero(block >= threshold)
+        upper = cols > rows + start  # strict upper triangle: i < j
+        rows, cols = rows[upper], cols[upper]
+        a_parts.append(rows + start)
+        b_parts.append(cols)
+        cos_parts.append(block[rows, cols])
+    a_idx = np.concatenate(a_parts)
+    if a_idx.size == 0:
+        return []
+    b_idx = np.concatenate(b_parts)
+    cos = np.concatenate(cos_parts)
+    order = np.argsort(-cos, kind="stable")[:max_pairs]
+    return [
+        NearDuplicatePair(
+            a_id=note_ids[int(a_idx[k])],
+            a_title=titles[note_ids[int(a_idx[k])]],
+            b_id=note_ids[int(b_idx[k])],
+            b_title=titles[note_ids[int(b_idx[k])]],
+            cosine=float(cos[k]),
+        )
+        for k in order
+    ]
 
 
 # ------------------------------------------------------- clusters
@@ -199,7 +214,11 @@ def cluster_notes(
     Stable + deterministic + no heavy deps. Density-aware clustering
     (HDBSCAN) is a future swap that would change neither the signature
     nor the wire shape."""
-    pairs = near_duplicates(idx, cosine_threshold=cosine_threshold, max_pairs=10_000)
+    pairs = near_duplicates(idx, cosine_threshold=cosine_threshold, max_pairs=_CLUSTER_MAX_PAIRS)
+    return _clusters_from_pairs(pairs, min_size=min_size)
+
+
+def _clusters_from_pairs(pairs: list[NearDuplicatePair], *, min_size: int) -> list[NoteCluster]:
     if not pairs:
         return []
     # Union-find over note ids in any pair.
@@ -256,25 +275,28 @@ def orphan_notes(
     """Notes with **zero inbound `[[…]]` references** AND last touched
     longer than `untouched_days` ago.
 
-    Inbound counted via `core/backlinks.find_backlinks` (M7.0.4) so
-    "orphan" matches the user's own [[Title]] writing convention. Notes
-    edited recently are spared regardless of incoming links — fresh work
-    isn't orphaned."""
+    Inbound links use the same matching rules as the backlinks panel
+    (`core/backlinks`, M7.0.4) so "orphan" matches the user's own
+    [[Title]] writing convention. Notes edited recently are spared
+    regardless of incoming links — fresh work isn't orphaned.
+
+    The vault is read once (O(notes)), not once per candidate."""
     cutoff = datetime.now(UTC) - timedelta(days=untouched_days)
-    paths = list(vault_iter_paths)
     out: list[OrphanNote] = []
-    # Build a quick title → meta map for the iteration. list_notes()
-    # walks the index DB once; cheap.
-    metas_by_id = {row["id"]: row for row in idx.list_notes(limit=None)}
-    for note_id, meta in metas_by_id.items():
+    candidates: list[tuple[str, str, datetime]] = []
+    for meta in idx.list_notes(limit=None):
         ts = _parse_iso_z(meta.get("updated_at") or "")
         if ts is None or ts > cutoff:
             continue
         title = meta.get("title") or ""
         if not title:
             continue
-        backs = find_backlinks(title, paths, exclude_id=note_id)
-        if backs:
+        candidates.append((meta["id"], title, ts))
+    if not candidates:
+        return []
+    inbound = inbound_link_sources(vault_iter_paths)
+    for note_id, title, ts in candidates:
+        if inbound.get(_normalize(title), set()) - {note_id}:
             continue
         days = (datetime.now(UTC) - ts).days
         out.append(OrphanNote(id=note_id, title=title, days_untouched=days))
@@ -323,8 +345,13 @@ def compute_signals(
     """One-shot: compute all four signal types. The web endpoint
     `GET /api/structure/signals` hits this; the M8.2 knowledge map
     sidebar consumes the read-only payload."""
-    pairs = near_duplicates(idx, cosine_threshold=near_dup_cosine)
-    clusters = cluster_notes(idx, cosine_threshold=near_dup_cosine)
+    # One similarity pass feeds both: the sorted cluster-sized list's
+    # prefix is exactly what the default-capped call would return.
+    cluster_pairs = near_duplicates(
+        idx, cosine_threshold=near_dup_cosine, max_pairs=_CLUSTER_MAX_PAIRS
+    )
+    pairs = cluster_pairs[:DEFAULT_MAX_PAIRS]
+    clusters = _clusters_from_pairs(cluster_pairs, min_size=2)
     orphans = orphan_notes(vault_iter_paths, idx, untouched_days=orphan_days)
     aging = aging_candidates(idx, untouched_days=aging_days)
     return StructureSignals(
