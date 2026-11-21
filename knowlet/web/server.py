@@ -6,25 +6,29 @@ the backend functions directly *and* this HTTP API; the UI itself only needs
 smoke testing for rendering and event plumbing.
 
 Single-user, single-vault, localhost-only. Auth is intentionally absent — the
-server binds to 127.0.0.1 by default and trusts the caller. Multi-user would
-need a real auth design that is out of scope for the MVP.
+server binds to 127.0.0.1 by default and trusts local callers; browser pages
+from other origins are kept out by ``web/security.py`` (Origin / Host checks).
+Multi-user would need a real auth design that is out of scope for the MVP.
 """
 
 from __future__ import annotations
 
+import io
 import json
+import logging
 import os
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, BinaryIO, Literal, cast
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 
 from knowlet import __version__
 from knowlet.chat.bootstrap import (
@@ -44,7 +48,7 @@ from knowlet.core.backlinks import find_backlinks
 from knowlet.core.card import Card, parse_due
 from knowlet.core.digest_items import RawInfo
 from knowlet.core.digest_sources import DigestSource, DigestSourceStore
-from knowlet.core.drafts import Draft
+from knowlet.core.drafts import AmbiguousDraftIdError, Draft
 from knowlet.core.events import (
     ErrorEvent,
     ReplyChunkEvent,
@@ -62,7 +66,7 @@ from knowlet.core.llm import ToolCall
 from knowlet.core.mining.runner import reset_task_state, run_task
 from knowlet.core.mining.scheduler import MiningScheduler
 from knowlet.core.mining.task import MiningTask, Schedule, SourceSpec
-from knowlet.core.note import Note
+from knowlet.core.note import Note, is_safe_note_id
 from knowlet.core.quick_actions import (
     CreateNoteParams,
     QuickAction,
@@ -90,17 +94,38 @@ from knowlet.core.structure_signals import (
     DEFAULT_ORPHAN_UNTOUCHED_DAYS,
     compute_signals,
 )
+from knowlet.core.sync.drainer import RuntimeNotReadyError
+from knowlet.core.sync.note_bookkeeping import (
+    mark_note_delete_intent,
+    mark_note_dirty_for_push,
+    unmark_note_delete_intent,
+)
 from knowlet.core.url_capture import (
     ExtractionError,
     FetchError,
-    capture_url,
+    capture_url_detailed,
 )
 from knowlet.core.user_profile import (
     UserProfile,
     read_profile,
     write_profile,
 )
-from knowlet.core.vault import Vault
+from knowlet.core.vault import Vault, atomic_write_text
+from knowlet.web.security import LocalRequestGuard
+
+# Upload / import ceilings. Module-level so tests can shrink them.
+MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
+MAX_CAPTURE_FILE_BYTES = 10 * 1024 * 1024
+MAX_IMPORT_UPLOAD_BYTES = 1024 * 1024 * 1024
+MAX_IMPORT_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_IMPORT_ENTRIES = 100_000
+# Declared Content-Length ceiling for any request (largest upload + slack
+# for multipart framing).
+MAX_REQUEST_BODY_BYTES = MAX_IMPORT_UPLOAD_BYTES + 16 * 1024 * 1024
+DEV_ENDPOINTS_ENV = "KNOWLET_DEV"
+DESKTOP_LAUNCH_TOKEN_ENV = "KNOWLET_DESKTOP_LAUNCH_TOKEN"  # noqa: S105 — env var name, not a secret
+
+log = logging.getLogger(__name__)
 
 # Phase 1 A onwards: the React build under `frontend/dist/` is the served
 # UI. Path is resolved relative to the repo root (server.py → web/ → knowlet/
@@ -412,6 +437,18 @@ class DraftPayload(BaseModel):
 
 class CommitDraftRequest(DraftPayload):
     pass
+
+
+class NoteUpdatePayload(DraftPayload):
+    """Body for PUT /api/notes/{id}.
+
+    ``base_updated_at`` is the ``updated_at`` of the copy the editor
+    started from. When given and the file on disk has moved on (sync
+    auto-pull, chat tool edit, another tab), the PUT is refused with 409
+    instead of overwriting the newer content. Omitted = unconditional
+    write (legacy clients, CLI-style callers)."""
+
+    base_updated_at: str | None = None
 
 
 class CommitDraftResponse(BaseModel):
@@ -1026,6 +1063,15 @@ class WebState:
         self.bootstrap_status: str = "idle"
         self.bootstrap_error: Exception | None = None
         self._bootstrap_thread: threading.Thread | None = None
+        # Mining scheduler + digest auto-pull are app-lifespan services:
+        # only the lifespan's async bootstrap enables them, so tests and
+        # other synchronous callers never spawn their threads.
+        self.background_services_enabled = False
+        self._background_lock = threading.Lock()
+        self._recover_lock = threading.Lock()
+        # Guards the one shared ChatSession (runtime.session): a turn and a
+        # session switch / new session must not interleave on its history.
+        self.chat_turn_lock = threading.Lock()
         # #107a — last preflight scan result. None means "never run".
         # The endpoint POSTs to refresh; the GET reads this without
         # re-scanning. React Query stale-times handle the cadence.
@@ -1063,6 +1109,7 @@ class WebState:
         if self.bootstrap_status in ("running", "ready"):
             return
 
+        self.background_services_enabled = True
         self.bootstrap_status = "running"
         self.bootstrap_error = None
 
@@ -1074,17 +1121,10 @@ class WebState:
                     require_llm=False,
                 )
                 self.runtime = runtime
-                if self.config.llm.api_key:
-                    scheduler = MiningScheduler(
-                        self.vault,
-                        runtime.llm,
-                        default_output_language=self.config.general.language,
-                    )
-                    scheduler.start()
-                    self.scheduler = scheduler
-                    self.start_digest_auto_pull(runtime)
                 self.bootstrap_status = "ready"
+                self.ensure_background_services()
             except Exception as exc:
+                log.exception("knowlet bootstrap failed")
                 self.bootstrap_error = exc
                 self.bootstrap_status = "error"
 
@@ -1092,6 +1132,51 @@ class WebState:
             target=_run, name="knowlet-bootstrap", daemon=True
         )
         self._bootstrap_thread.start()
+
+    def ensure_background_services(self) -> None:
+        """Start the mining scheduler and the daily digest pull once the
+        runtime is ready and an API key is configured. Idempotent; called
+        after bootstrap, after recovering from a bootstrap error, and when
+        the key is saved at runtime (first-run desktop flow)."""
+        runtime = self.runtime
+        if (
+            not self.background_services_enabled
+            or self.bootstrap_status != "ready"
+            or runtime is None
+            or not self.config.llm.api_key
+        ):
+            return
+        with self._background_lock:
+            if self.scheduler is None:
+                scheduler = MiningScheduler(
+                    self.vault,
+                    runtime.llm,
+                    default_output_language=self.config.general.language,
+                )
+                scheduler.start()
+                self.scheduler = scheduler
+            self.start_digest_auto_pull(runtime)
+
+    def recover_from_bootstrap_error(self) -> ChatRuntime:
+        """Re-run bootstrap synchronously after it failed. Other requests
+        see 503 meanwhile; if it fails again the state returns to "error"
+        and the same HTTPException as ``runtime_or_init`` is raised."""
+        with self._recover_lock:
+            if self.bootstrap_status == "ready" and self.runtime is not None:
+                return self.runtime
+            self.bootstrap_status = "running"
+            try:
+                runtime, _report = bootstrap_chat(self.vault, self.config, require_llm=False)
+            except Exception as exc:
+                log.exception("knowlet bootstrap retry failed")
+                self.bootstrap_error = exc
+                self.bootstrap_status = "error"
+                return self.runtime_or_init()
+            self.runtime = runtime
+            self.bootstrap_error = None
+            self.bootstrap_status = "ready"
+        self.ensure_background_services()
+        return runtime
 
     def start_digest_auto_pull(
         self,
@@ -1277,11 +1362,21 @@ def _build_tree(vault: Vault, index: Index) -> TreeFolder:
                 id=row["id"],
                 title=row.get("title") or "(无标题)",
                 updated_at=row.get("updated_at") or "",
-                tags=json.loads(row["tags"]) if isinstance(row.get("tags"), str) else [],
+                tags=_row_tags(row.get("tags")),
             )
         )
     _sort_tree(root)
     return root
+
+
+def _row_tags(raw: Any) -> list[str]:
+    # Index.list_notes already decodes the JSON column; tolerate raw text.
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return []
+    return [str(t) for t in raw] if isinstance(raw, list) else []
 
 
 def _ensure_folder(root: TreeFolder, rel: str) -> TreeFolder:
@@ -1308,9 +1403,60 @@ def _sort_tree(node: TreeFolder) -> None:
         _sort_tree(child)
 
 
+def _indexed_folder(vault: Vault, stored_path: str | None) -> str:
+    """Folder of an index ``path`` value. Rows may store the path relative
+    to ``notes/`` ("sub/<id>.md"), which ``folder_of`` alone reads as root."""
+    if not stored_path:
+        return ""
+    try:
+        return vault.folder_of(vault.resolve_note_path_from_index(stored_path))
+    except (TypeError, ValueError):
+        return ""
+
+
+def _folder_path(vault: Vault, rel: str) -> Path:
+    """``notes/<rel>`` for a folder path the vault has already validated."""
+    parts = [part for part in (rel or "").strip().strip("/").split("/") if part]
+    return vault.notes_dir.joinpath(*parts)
+
+
+def _index_ids_under(runtime: ChatRuntime, folder_path: Path) -> dict[Path, str]:
+    """Index ids of notes whose indexed path lies under ``folder_path``,
+    keyed by the path relative to it. Filenames are not ids (external
+    imports keep their own names), so callers that need ids for files in
+    a folder must go through the index. O(notes)."""
+    root = folder_path.resolve()
+    out: dict[Path, str] = {}
+    for row in runtime.index.list_notes():
+        try:
+            path = runtime.vault.resolve_note_path_from_index(row["path"]).resolve()
+            out[path.relative_to(root)] = row["id"]
+        except ValueError:
+            continue
+    return out
+
+
+def _write_folder_hint(runtime: ChatRuntime, note: Note, path: Path) -> bool:
+    """Record ``path``'s folder in the note's frontmatter, in place.
+
+    A location change is not an edit: ``updated_at`` is kept and no
+    overwrite backup is taken (``Vault.write_note`` would do both, and
+    with a ``folder=`` argument would also write ``<id>.md`` next to a
+    differently named file). Corrupted notes stay byte-for-byte. Returns
+    whether the file was rewritten."""
+    folder = runtime.vault.folder_of(path) or None
+    if note.frontmatter_status == "corrupted" or note.folder == folder:
+        return False
+    note.folder = folder
+    note.path = path
+    atomic_write_text(path, note.to_markdown())
+    return True
+
+
 def _resync_paths_under(
     runtime: ChatRuntime,
-    folder_path: Path,
+    old_folder_path: Path,
+    new_folder_path: Path,
     *,
     mark_note_dirty: Callable[[str], None] | None = None,
 ) -> None:
@@ -1318,24 +1464,55 @@ def _resync_paths_under(
     path. Walk the new location and update the index `path` column for
     each note id. Also persist the new folder hint into frontmatter so
     Drive's flat appData restore can rebuild the same tree."""
-    if not folder_path.is_dir():
+    if not new_folder_path.is_dir():
         return
-    for md in folder_path.rglob("*.md"):
-        if md.is_file() and not any(p.startswith(".") for p in md.relative_to(folder_path).parts):
-            try:
-                note = runtime.vault.read_note(md)
-            except Exception:
-                note_id = md.stem
-                runtime.index.update_note_path(note_id, str(md))
-                if mark_note_dirty is not None:
-                    mark_note_dirty(note_id)
-                continue
-            folder = runtime.vault.folder_of(md) or None
-            note.folder = folder
-            written = runtime.vault.write_note(note, folder=folder)
-            runtime.index.update_note_path(note.id, str(written))
+    ids_by_rel = _index_ids_under(runtime, old_folder_path)
+    for md in new_folder_path.rglob("*.md"):
+        rel = md.relative_to(new_folder_path)
+        if not md.is_file() or any(p.startswith(".") for p in rel.parts):
+            continue
+        indexed_id = ids_by_rel.get(rel)
+        try:
+            note = runtime.vault.read_note(md)
+        except Exception:
+            note_id = indexed_id or md.stem
+            runtime.index.update_note_path(note_id, str(md))
             if mark_note_dirty is not None:
-                mark_note_dirty(note.id)
+                mark_note_dirty(note_id)
+            continue
+        note_id = indexed_id or note.id
+        written = _write_folder_hint(runtime, note, md)
+        runtime.index.update_note_path(note_id, str(md))
+        if written and mark_note_dirty is not None:
+            mark_note_dirty(note_id)
+
+
+# ----------------------------------------------------------------- uploads
+
+
+def _too_large(label: str, limit: int) -> HTTPException:
+    human = f"{limit // (1024 * 1024)} MB" if limit >= 1024 * 1024 else f"{limit} bytes"
+    return HTTPException(
+        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+        detail=f"{label} exceeds {human} limit",
+    )
+
+
+async def _copy_upload_capped(file: UploadFile, dest: BinaryIO, *, limit: int, label: str) -> int:
+    """Stream ``file`` into ``dest`` in chunks; 413 once it passes ``limit``."""
+    total = 0
+    while chunk := await file.read(1024 * 1024):
+        total += len(chunk)
+        if total > limit:
+            raise _too_large(label, limit)
+        dest.write(chunk)
+    return total
+
+
+async def _read_upload_capped(file: UploadFile, *, limit: int, label: str) -> bytes:
+    buf = io.BytesIO()
+    await _copy_upload_capped(file, buf, limit=limit, label=label)
+    return buf.getvalue()
 
 
 # ----------------------------------------------------------------- factory
@@ -1381,6 +1558,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     app = FastAPI(title="knowlet", version=__version__, lifespan=lifespan)
     app.state.web_state = state
+    # No auth on this server, so refuse foreign-Origin writes and
+    # non-local Host headers (CSRF + DNS rebinding). See web/security.py.
+    app.add_middleware(LocalRequestGuard, max_body_bytes=lambda: MAX_REQUEST_BODY_BYTES)
     runtime_dep = _runtime_dep(app)
 
     # ---------------- health ----------------
@@ -1388,53 +1568,76 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     # ---------------- system (M6.5) ----------------
 
     @app.post("/api/system/reindex")
-    def system_reindex(
-        rebuild: bool = False,
-        runtime: ChatRuntime = Depends(runtime_dep),
-    ) -> dict[str, Any]:
+    def system_reindex(rebuild: bool = False) -> dict[str, Any]:
         """Rebuild the index from on-disk Notes. Mirrors `knowlet reindex`
-        (ADR-0008). The Cmd+K palette `重建索引` command calls this."""
-        from knowlet.core.embedding import make_backend
-        from knowlet.core.index import Index, reindex_vault
+        (ADR-0008). The Cmd+K palette `重建索引` command calls this.
 
+        Also the recovery path when bootstrap failed (e.g. an embedding
+        dimension mismatch whose remedy is a rebuild): no runtime exists
+        then, so the DB is dropped (``rebuild``) and bootstrap — which
+        reindexes — is re-run instead of answering 500 forever."""
+        from knowlet.core import index as index_mod
+        from knowlet.core.embedding import make_backend
+
+        if state.bootstrap_status == "error":
+            if rebuild:
+                if state.runtime is not None:
+                    state.runtime.index.close()
+                index_mod.delete_index_db(vault.db_path)
+            state.recover_from_bootstrap_error()
+            return {"changed": 0, "deleted": 0, "unchanged": 0, "recovered": True}
+        runtime = runtime_dep()
         v = runtime.vault
         cfg = runtime.config
-        if rebuild and v.db_path.exists():
-            v.db_path.unlink()
+        if rebuild:
+            # Every Index on this path must be closed before its DB goes;
+            # the old object stays usable (it reconnects to the new file).
+            runtime.index.close()
+            index_mod.delete_index_db(v.db_path)
         backend = make_backend(cfg.embedding.backend, cfg.embedding.model, cfg.embedding.dim)
         if backend.dim != cfg.embedding.dim:
             cfg.embedding.dim = backend.dim
             from knowlet.config import save_config as _save_cfg
 
             _save_cfg(v.root, cfg)
-        changed, deleted, unchanged = reindex_vault(
+        changed, deleted, unchanged = index_mod.reindex_vault(
             v.root,
             v.db_path,
             backend,
             chunk_size=cfg.retrieval.chunk_size,
             chunk_overlap=cfg.retrieval.chunk_overlap,
             note_paths=list(v.iter_note_paths()),
+            vault=v,
         )
-        # The reindex closes/reopens the DB; reload the runtime's index too.
-        runtime.index = Index(v.db_path, backend)
-        runtime.index.connect()
-        runtime.ctx.index = runtime.index
+        # The backend may have changed (dim sync), so swap in a fresh
+        # Index — closing the old one first so no thread keeps writing
+        # through a handle to a replaced DB file.
+        old_index = runtime.index
+        new_index = index_mod.Index(v.db_path, backend)
+        new_index.connect()
+        runtime.backend = backend
+        runtime.index = new_index
+        runtime.ctx.index = new_index
+        runtime.session.ctx.index = new_index
+        if old_index is not new_index:
+            old_index.close()
         return {"changed": changed, "deleted": deleted, "unchanged": unchanged}
 
     @app.post("/api/system/doctor")
     def system_doctor(
         skip_llm: bool = False,
         skip_embedding: bool = False,
-        runtime: ChatRuntime = Depends(runtime_dep),
     ) -> dict[str, Any]:
         """Run the same health checks as `knowlet doctor`. Returns the raw
         (status, name, detail) tuples; the palette renders them as a toast
         summary or links into a richer view."""
         from knowlet.core.doctor import run_doctor_checks
 
+        # Deliberately not runtime-dependent: doctor must keep working
+        # when bootstrap failed, which is when it is needed most.
         results = run_doctor_checks(
-            runtime.vault,
-            runtime.config,
+            vault,
+            config,
             skip_llm=skip_llm,
             skip_embedding=skip_embedding,
         )
@@ -1500,6 +1703,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         from knowlet.core.sync.state import SyncStateStore
         from knowlet.core.sync.status import compute_note_sync_status
 
+        auto_pulled = False
         store = SyncStateStore(vault.root)
         try:
             local_path = _resolve_note_local_path(note_id)
@@ -1515,7 +1719,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 # (Drive errors mid-pull), the recompute below
                 # returns the now-offline state and we degrade to
                 # the badge showing offline.
-                _auto_pull_stale(store, note_id, local_path)
+                auto_pulled = _auto_pull_stale(store, note_id, local_path)
                 status = compute_note_sync_status(
                     vault_root=vault.root,
                     note_id=note_id,
@@ -1538,6 +1742,11 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "last_known_revision": status.last_known_revision,
             "current_drive_revision": status.current_drive_revision,
             "detail": status.detail,
+            # True when this poll replaced the local file with the Drive
+            # copy. An editor holding the old body must reload before its
+            # next save (PUT ``base_updated_at`` turns a stale save into
+            # a 409 instead of silently reverting the remote edit).
+            "auto_pulled": auto_pulled,
         }
 
     # ---------------- explicit pull (Slice S2 primitive) -----------------
@@ -1554,6 +1763,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         )
         from knowlet.core.sync.drive_client import DriveClient
         from knowlet.core.sync.pull import (
+            PullLocalChangedError,
             PullStateMissingError,
             pull_note_to_local,
         )
@@ -1580,13 +1790,14 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     note_id=note_id,
                     local_path=local_path,
                 )
-            except PullStateMissingError as exc:
+            except (PullStateMissingError, PullLocalChangedError) as exc:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=str(exc),
                 ) from exc
         finally:
             store.close()
+        _reindex_note_from_disk(note_id)
         return {
             "drive_file_id": result.drive_file_id,
             "new_revision": result.new_revision,
@@ -1617,11 +1828,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         store: Any,  # SyncStateStore — kept loose to avoid a top-level import
         note_id: str,
         local_path: Path,
-    ) -> None:
+    ) -> bool:
         """Best-effort auto-pull invoked from the status endpoint
-        when state==stale. Failures are swallowed: the recompute
-        afterwards will surface them as offline / conflict /
-        unchanged-stale, whichever the new state actually is."""
+        when state==stale. Returns whether the local file was
+        replaced. Failures are swallowed: the recompute afterwards
+        will surface them as offline / conflict / unchanged-stale,
+        whichever the new state actually is."""
         from knowlet.core.sync.credentials import (
             credentials_path,
             load_credentials,
@@ -1631,7 +1843,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
         creds = load_credentials(credentials_path(vault.root))
         if creds is None:
-            return
+            return False
         try:
             pull_note_to_local(
                 service=DriveClient(creds).service(),
@@ -1647,6 +1859,39 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 note_id,
                 exc_info=True,
             )
+            return False
+        _reindex_note_from_disk(note_id)
+        return True
+
+    def _reindex_note_from_disk(note_id: str) -> None:
+        """Refresh the index row of a note whose file was just rewritten
+        by a sync path (pull / merge). No-op for ids that aren't indexed
+        notes (e.g. non-note vault files in ``auto_pulled_ids``)."""
+        runtime = state.runtime
+        if runtime is None:
+            return
+        path = _resolve_note_local_path(note_id)
+        if path is None:
+            return
+        try:
+            # Pure read: Vault.read_note may rewrite an id-less file, which
+            # would make the just-pulled bytes look like a local edit.
+            note = Note.from_file(path)
+        except Exception:
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "re-index after sync write failed for note %s", note_id, exc_info=True
+            )
+            return
+        # The index row is keyed by the id the client knows; a pulled
+        # file with an unreadable id must not fork a second row.
+        note.id = note_id
+        runtime.index.upsert_note(
+            note,
+            chunk_size=runtime.config.retrieval.chunk_size,
+            chunk_overlap=runtime.config.retrieval.chunk_overlap,
+        )
 
     # ---------------- merge editor (Slice S5) -----------------------
     # The conflict-bundle endpoint hands the frontend everything it
@@ -1858,6 +2103,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 tmp.replace(local_path)
                 _dev_conflict_clear(store, note_id)
                 _drop_from_preflight(note_id)
+                _reindex_note_from_disk(note_id)
                 return {
                     "drive_file_id": DEV_FAKE_DRIVE_FILE_ID,
                     "new_revision": "dev-resolved",
@@ -1909,6 +2155,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         finally:
             store.close()
         _drop_from_preflight(note_id)
+        _reindex_note_from_disk(note_id)
         return {
             "drive_file_id": result.drive_file.id,
             "new_revision": result.drive_file.head_revision_id,
@@ -1922,12 +2169,16 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     # status / bundle / resolve endpoints read that sentinel and
     # serve the fake data instead of calling Drive.
     #
-    # NOT a production feature; it's wired unconditionally for now
-    # because the operations are idempotent + reversible (DELETE
-    # endpoint cleans everything up). Gate behind an env var if it
-    # ever leaves the developer-tools box.
+    # NOT a production feature: these routes (and the real-Drive
+    # simulators below) are only registered when KNOWLET_DEV=1.
+    # The helpers they share with conflict-bundle / resolve-merge
+    # (_dev_conflict_path / _dev_conflict_clear) stay defined.
+    dev_endpoints_enabled = os.environ.get(DEV_ENDPOINTS_ENV) == "1"
 
-    @app.post("/api/sync/dev-seed-conflict/{note_id}")
+    def _dev_only(register: Callable[[Any], Any]) -> Callable[[Any], Any]:
+        return register if dev_endpoints_enabled else (lambda fn: fn)
+
+    @_dev_only(app.post("/api/sync/dev-seed-conflict/{note_id}"))
     def dev_seed_conflict(
         note_id: str,
         body: DevSeedConflictRequest | None = Body(default=None),
@@ -1988,7 +2239,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     # it possible. Both use the user's real Drive credentials; they
     # don't fake anything at the knowlet layer.
 
-    @app.post("/api/sync/dev-simulate-remote-edit/{note_id}")
+    @_dev_only(app.post("/api/sync/dev-simulate-remote-edit/{note_id}"))
     def dev_simulate_remote_edit(note_id: str) -> dict[str, Any]:
         """Carol-persona conflict in a single endpoint.
 
@@ -2109,7 +2360,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             ),
         }
 
-    @app.post("/api/sync/dev-cleanup-orphan-sync-rows")
+    @_dev_only(app.post("/api/sync/dev-cleanup-orphan-sync-rows"))
     def dev_cleanup_orphan_sync_rows() -> dict[str, Any]:
         """Walk sync_state, delete rows whose entity_id isn't in the
         index. Also delete the corresponding Drive files (they're
@@ -2170,7 +2421,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             "drive_errors": drive_errors[:5],
         }
 
-    @app.post("/api/sync/dev-fake-other-device-heartbeat")
+    @_dev_only(app.post("/api/sync/dev-fake-other-device-heartbeat"))
     def dev_fake_other_device_heartbeat() -> dict[str, Any]:
         """Plant a fake heartbeat for a synthetic second device in
         Drive appData. Next preflight reads it + the local device's
@@ -2202,7 +2453,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         _invalidate_preflight_cache()
         return {"fake_device_id": fake_id, "ok": True}
 
-    @app.delete("/api/sync/dev-seed-conflict/{note_id}")
+    @_dev_only(app.delete("/api/sync/dev-seed-conflict/{note_id}"))
     def dev_seed_conflict_clear(note_id: str) -> dict[str, Any]:
         from knowlet.core.sync.state import SyncStateStore
 
@@ -2293,6 +2544,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         else:
             note_meta = runtime.index.get_note_meta
             note_path = _resolve_note_local_path
+        # The Drive-side add/delete passes need the runtime (index, note
+        # paths); while bootstrapping every local path reads as missing,
+        # so skip them entirely rather than act on that.
+        runtime_ready = runtime is not None
 
         def drive_client_factory() -> Any | None:
             creds = load_credentials(credentials_path(vault.root))
@@ -2314,10 +2569,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 note_meta_lookup=note_meta,
                 note_path_lookup=note_path,
                 auto_pull_service_factory=service_factory,
-                materialize_drive_file=_materialize_drive_file,
-                trash_local_for_drive_deleted=_trash_local_for_drive_deleted,
+                materialize_drive_file=_materialize_drive_file if runtime_ready else None,
+                trash_local_for_drive_deleted=(
+                    _trash_local_for_drive_deleted if runtime_ready else None
+                ),
                 delete_local_vault_file_for_drive_deleted=(
-                    _delete_local_vault_file_for_drive_deleted
+                    _delete_local_vault_file_for_drive_deleted if runtime_ready else None
                 ),
             )
             if _preflight_cleared_for_freshness(report):
@@ -2327,6 +2584,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 )
         finally:
             store.close()
+        for pulled_id in report.auto_pulled_ids:
+            _reindex_note_from_disk(pulled_id)
         state.preflight_report = report
         state.preflight_ran_at = _time.time()
         return _serialize_preflight(report, state.preflight_ran_at)
@@ -2441,139 +2700,19 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     def _mark_note_delete_intent(note_id: str, kind: str) -> None:
         """#118 — flag a note's sync_state row for Drive-side deletion
-        by the drainer. ``kind`` must be ``"soft"`` (Drive trash,
-        30-day grace) or ``"hard"`` (permanent). No-op if there's
-        no Drive backing (never-pushed note → no Drive file to
-        clean up).
-
-        Doesn't go through ``upsert_file_state`` so we preserve the
-        existing drive_file_id / etag the drainer needs at delete
-        time."""
-        from knowlet.core.sync.state import FileState, SyncStateStore
-        from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
-
-        if kind not in ("soft", "hard"):
-            raise ValueError(f"delete intent must be soft|hard, got {kind!r}")
-        store = SyncStateStore(vault.root)
-        try:
-            rec = store.get_file_state("note", note_id)
-            if rec is None or not rec.drive_file_id:
-                # Never pushed → nothing for the drainer to clean.
-                # Drop the row entirely if it exists (orphan).
-                if rec is not None:
-                    store.remove_file_state("note", note_id)
-                return
-            if rec.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
-                # Dev seed — pretend nothing to delete on Drive.
-                store.remove_file_state("note", note_id)
-                return
-            store.upsert_file_state(
-                FileState(
-                    entity_type=rec.entity_type,
-                    entity_id=rec.entity_id,
-                    drive_file_id=rec.drive_file_id,
-                    last_known_etag=rec.last_known_etag,
-                    last_synced_at=rec.last_synced_at,
-                    dirty=False,  # not a push — Drive delete instead
-                    dismissed_until=rec.dismissed_until,
-                    delete_intent=kind,
-                )
-            )
-        finally:
-            store.close()
-        _invalidate_preflight_cache()
+        by the drainer (see core.sync.note_bookkeeping)."""
+        if mark_note_delete_intent(vault.root, note_id, kind):
+            _invalidate_preflight_cache()
 
     def _unmark_note_delete_intent(note_id: str) -> None:
         """#118 — user restored a trashed note before the drainer
-        propagated the trash to Drive. Clear the delete_intent
-        flag; we'll keep the local file + Drive copy in sync via
-        normal push."""
-        from knowlet.core.sync.state import FileState, SyncStateStore
-
-        store = SyncStateStore(vault.root)
-        try:
-            rec = store.get_file_state("note", note_id)
-            if rec is None or rec.delete_intent is None:
-                return
-            store.upsert_file_state(
-                FileState(
-                    entity_type=rec.entity_type,
-                    entity_id=rec.entity_id,
-                    drive_file_id=rec.drive_file_id,
-                    last_known_etag=rec.last_known_etag,
-                    last_synced_at=rec.last_synced_at,
-                    dirty=True,  # restore = something changed locally
-                    dismissed_until=rec.dismissed_until,
-                    delete_intent=None,
-                )
-            )
-        finally:
-            store.close()
+        propagated the trash to Drive (see core.sync.note_bookkeeping)."""
+        unmark_note_delete_intent(vault.root, note_id)
 
     def _mark_note_dirty_for_push(note_id: str) -> None:
-        """S4 + #117 — call after Vault.write_note. Marks the note's
-        sync_state row dirty=True so the background drainer picks
-        it up on the next tick.
-
-        Three cases:
-          - Existing row with drive_file_id → flip dirty=True
-            (update path; drainer's update_file_conditional runs).
-          - No row yet AND Drive auth present → CREATE row with
-            drive_file_id=None, dirty=True (first-push path; drainer's
-            upload_new_file runs). Fixes the "new notes never
-            auto-push" bug.
-          - No row + no Drive auth → no-op (sync not configured;
-            saving notes locally is the local-only path).
-          - Dev-seeded (DEV_FAKE_CONFLICT) → skip (no real Drive
-            backing).
-
-        Cheap (one SQLite UPDATE or INSERT); safe to call from
-        every save."""
-        from knowlet.core.sync.credentials import (
-            credentials_path,
-            load_credentials,
-        )
-        from knowlet.core.sync.state import FileState, SyncStateStore
-        from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
-
-        store = SyncStateStore(vault.root)
-        try:
-            rec = store.get_file_state("note", note_id)
-            if rec is not None and rec.drive_file_id == DEV_FAKE_DRIVE_FILE_ID:
-                return
-            if rec is None:
-                # #117 — new note. Only auto-track if Drive auth
-                # exists (otherwise we'd pile up dirty rows that
-                # never get a chance to push).
-                creds = load_credentials(credentials_path(vault.root))
-                if creds is None:
-                    return
-                store.upsert_file_state(
-                    FileState(
-                        entity_type="note",
-                        entity_id=note_id,
-                        drive_file_id=None,
-                        last_known_etag=None,
-                        last_synced_at=None,
-                        dirty=True,
-                    )
-                )
-                return
-            if rec.dirty:
-                return  # already queued
-            store.upsert_file_state(
-                FileState(
-                    entity_type=rec.entity_type,
-                    entity_id=rec.entity_id,
-                    drive_file_id=rec.drive_file_id,
-                    last_known_etag=rec.last_known_etag,
-                    last_synced_at=rec.last_synced_at,
-                    dirty=True,
-                    dismissed_until=rec.dismissed_until,
-                )
-            )
-        finally:
-            store.close()
+        """S4 + #117 — call after Vault.write_note so the background
+        drainer pushes the note (see core.sync.note_bookkeeping)."""
+        mark_note_dirty_for_push(vault.root, note_id)
 
     def _mark_attachment_dirty_for_push(filename: str) -> None:
         """#121 — call after a fresh attachment lands on disk so the
@@ -2996,17 +3135,17 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         unpushed_count = 0
         if runtime is not None:
             unpushed_count = sum(1 for n in runtime.index.list_notes() if n["id"] not in synced_ids)
-        failure_count = len(state.push_drainer.failures) if state.push_drainer is not None else 0
+        failures = _push_failures_snapshot()
+        failure_count = len(failures)
         pending_count = dirty_count + deletion_pending_count + unpushed_count
         overview_state = (
             "error" if failure_count > 0 else ("pending" if pending_count > 0 else "synced")
         )
         first_failure = None
-        if state.push_drainer is not None:
-            for info in state.push_drainer.failures.values():
-                first_failure = info.get("last_error")
-                if first_failure:
-                    break
+        for info in failures.values():
+            first_failure = info.get("last_error")
+            if first_failure:
+                break
         detail = (
             str(first_failure)
             if first_failure
@@ -3085,10 +3224,16 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     # finished indexing — so it's safe to instantiate even on a
     # fresh single-device vault.
 
-    def _drainer_note_lookup(note_id: str) -> Any:
+    def _runtime_for_drainer() -> ChatRuntime:
+        # None from a lookup means "file is gone" and lets the drainer
+        # drop rows / latch the sweep, so "not booted yet" must raise.
         runtime = state.runtime
         if runtime is None:
-            return None
+            raise RuntimeNotReadyError("runtime bootstrapping")
+        return runtime
+
+    def _drainer_note_lookup(note_id: str) -> Any:
+        runtime = _runtime_for_drainer()
         path = _resolve_note_local_path(note_id)
         if path is None:
             return None
@@ -3188,7 +3333,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # filenames are authoritative (notes are always ``<id>.md``;
         # attachments are ``<ulid>.<png|jpg|...>``).
         if entity_type == ATTACHMENT_ENTITY_TYPE:
-            if Path(entity_id).name != entity_id:
+            if entity_id in {"", ".", ".."} or Path(entity_id).name != entity_id:
                 return None
             att_dir = runtime.vault.attachments_dir
             att_dir.mkdir(parents=True, exist_ok=True)
@@ -3228,6 +3373,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 note.id = stem
         elif entity_id:
             note.id = entity_id
+        # The id becomes the ``<id>.md`` filename; a Drive name is
+        # external input.
+        if not is_safe_note_id(note.id):
+            return None
         # Place into the vault honoring the ``folder`` frontmatter
         # field (#120). None → root.
         folder = note.folder
@@ -3270,9 +3419,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         delete_intent — Drive's already done that side."""
         from knowlet.core.sync.state import SyncStateStore
 
-        runtime = state.runtime
-        if runtime is None:
-            return
+        runtime = _runtime_for_drainer()
         meta = runtime.index.get_note_meta(note_id)
         if meta is None:
             return
@@ -3291,29 +3438,25 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             store.close()
 
     def _delete_local_vault_file_for_drive_deleted(entity_type: str, entity_id: str) -> None:
-        from knowlet.core.sync.push import ATTACHMENT_ENTITY_TYPE
+        """Drive no longer has this non-note file: move the local copy
+        into the vault trash (recoverable) and drop its sync row."""
+        from knowlet.core.sync.local_trash import trash_local_vault_file_for_drive_deleted
         from knowlet.core.sync.state import SyncStateStore
-        from knowlet.core.sync.tracked_files import resolve_syncable_vault_file_path
 
-        runtime = state.runtime
-        if runtime is None:
-            return
-        if entity_type == ATTACHMENT_ENTITY_TYPE:
-            if Path(entity_id).name != entity_id:
-                return
-            target = runtime.vault.attachments_dir / entity_id
-        else:
-            candidate = resolve_syncable_vault_file_path(runtime.vault.root, entity_type, entity_id)
-            if candidate is None:
-                return
-            target = candidate
-        with suppress(FileNotFoundError):
-            target.unlink()
+        runtime = _runtime_for_drainer()
+        trash_local_vault_file_for_drive_deleted(runtime.vault.root, entity_type, entity_id)
         store = SyncStateStore(vault.root)
         try:
             store.remove_file_state(entity_type, entity_id)
         finally:
             store.close()
+
+    def _push_failures_snapshot() -> dict[str, dict[str, Any]]:
+        # The drainer thread adds/pops entries between ticks; copy in one
+        # C-level step instead of iterating the live dict.
+        if state.push_drainer is None:
+            return {}
+        return dict(state.push_drainer.failures)
 
     @app.get("/api/sync/push-errors")
     def push_errors_endpoint() -> dict[str, Any]:
@@ -3325,7 +3468,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             return {"errors": []}
         runtime = state.runtime
         errors = []
-        for nid, info in state.push_drainer.failures.items():
+        for nid, info in _push_failures_snapshot().items():
             title = None
             if runtime is not None:
                 meta = runtime.index.get_note_meta(nid)
@@ -3364,17 +3507,15 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         disk but have no sync_state row yet (the "I added these
         before connecting Drive" backlog). Drainer fires this once
         after creds first become available and queues them for first
-        push. Returns [] when the runtime isn't ready — the drainer
-        will retry on the next reconnect cycle."""
+        push. Raises RuntimeNotReadyError while bootstrapping so the
+        drainer retries next tick instead of latching an empty sweep."""
         from knowlet.core.sync.push import (
             ATTACHMENT_ENTITY_TYPE,
         )
         from knowlet.core.sync.state import SyncStateStore
         from knowlet.core.sync.tracked_files import iter_syncable_vault_files
 
-        runtime = state.runtime
-        if runtime is None:
-            return []
+        runtime = _runtime_for_drainer()
         store = SyncStateStore(vault.root)
         try:
             tracked = {(fs.entity_type, fs.entity_id) for fs in store.list_all_files()}
@@ -3410,9 +3551,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     def _drainer_attachment_lookup(filename: str) -> Path | None:
         """Resolve an attachment id (filename) to its on-disk path.
         Returns None if the file is gone (drainer drops the row)."""
-        runtime = state.runtime
-        if runtime is None:
-            return None
+        runtime = _runtime_for_drainer()
         candidate = runtime.vault.attachments_dir / filename
         if not candidate.exists():
             return None
@@ -3421,9 +3560,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     def _drainer_synced_file_lookup(entity_type: str, entity_id: str) -> Path | None:
         from knowlet.core.sync.tracked_files import resolve_syncable_vault_file_path
 
-        runtime = state.runtime
-        if runtime is None:
-            return None
+        runtime = _runtime_for_drainer()
         candidate = resolve_syncable_vault_file_path(runtime.vault.root, entity_type, entity_id)
         if candidate is None:
             return None
@@ -3460,6 +3597,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         }
         if bs == "error" and state.bootstrap_error is not None:
             body["bootstrap_error"] = str(state.bootstrap_error)
+        # Desktop shell passes a per-launch random token to the sidecar and
+        # checks the echo, so another local service answering 200 on the
+        # same port is not mistaken for this backend.
+        body["launch_token"] = os.environ.get(DESKTOP_LAUNCH_TOKEN_ENV)
         return body
 
     @app.get("/api/i18n/{lang}")
@@ -3589,6 +3730,22 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         prefix = format_references_block(pairs)
         return prefix + req.text if prefix else req.text
 
+    _CHAT_SESSION_BUSY = "another chat reply is still in progress — retry when it finishes"
+
+    def _chat_session_busy() -> HTTPException:
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_CHAT_SESSION_BUSY)
+
+    @contextmanager
+    def _shared_chat_session() -> Iterator[None]:
+        """Exclusive use of runtime.session for a non-streaming operation;
+        409 instead of waiting when a turn is in flight."""
+        if not state.chat_turn_lock.acquire(blocking=False):
+            raise _chat_session_busy()
+        try:
+            yield
+        finally:
+            state.chat_turn_lock.release()
+
     @app.post("/api/chat/turn", response_model=ChatTurnResponse)
     def chat_turn(
         req: ChatTurnRequest,
@@ -3599,17 +3756,18 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         def on_tool_call(tc: ToolCall, payload: dict[str, Any]) -> None:
             traces.append(ToolTrace(name=tc.name, arguments=tc.arguments, result=payload))
 
-        try:
-            user_text = _compose_user_text(req, runtime)
-            reply, _ = runtime.session.user_turn(user_text, on_tool_call=on_tool_call)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"LLM error: {exc}",
-            ) from exc
-        # M6.4: persist the active conversation after every turn so a
-        # browser refresh / server restart doesn't lose the exchange.
-        runtime.persist_active()
+        with _shared_chat_session():
+            try:
+                user_text = _compose_user_text(req, runtime)
+                reply, _ = runtime.session.user_turn(user_text, on_tool_call=on_tool_call)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"LLM error: {exc}",
+                ) from exc
+            # M6.4: persist the active conversation after every turn so a
+            # browser refresh / server restart doesn't lose the exchange.
+            runtime.persist_active()
         return ChatTurnResponse(reply=reply, tool_calls=traces)
 
     @app.post("/api/chat/stream")
@@ -3625,8 +3783,17 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         """
 
         user_text = _compose_user_text(req, runtime)
+        if state.chat_turn_lock.locked():
+            raise _chat_session_busy()
 
         def event_source() -> Iterator[str]:
+            # Claimed inside the generator so a stream that never starts
+            # (client gone before the first chunk) never holds the guard;
+            # an abandoned one releases it when the generator is closed.
+            if not state.chat_turn_lock.acquire(blocking=False):
+                err = ErrorEvent(message=_CHAT_SESSION_BUSY)
+                yield f"data: {json.dumps(event_to_dict(err))}\n\n"
+                return
             try:
                 for event in runtime.session.user_turn_stream(user_text):
                     payload = json.dumps(event_to_dict(event), ensure_ascii=False)
@@ -3639,6 +3806,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 # doesn't drop the exchange.
                 with suppress(Exception):
                     runtime.persist_active()
+                state.chat_turn_lock.release()
 
         return StreamingResponse(
             event_source(),
@@ -3657,7 +3825,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         sidebar. This is more honest semantics than truncating history in
         place: nothing is destroyed, and the user gets a fresh slate.
         """
-        new_conv = runtime.new_session()
+        with _shared_chat_session():
+            new_conv = runtime.new_session()
         return {"ok": True, "active_id": new_conv.id}
 
     @app.post("/api/chat/ask-once")
@@ -3677,7 +3846,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         ephemeral = ChatSession(
             llm=runtime.session.llm,
             registry=runtime.session.registry,
-            ctx=runtime.session.ctx,
+            # Own ToolContext copy: user_turn_stream resets ctx.per_turn,
+            # which must not zero the persistent session's tool budget.
+            ctx=replace(runtime.session.ctx, per_turn={}),
             system_prompt=runtime.session.history[0].get("content")
             if runtime.session.history
             else None,
@@ -3748,6 +3919,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         session_ctx = replace(
             runtime.session.ctx,
             pending_note_edit=pending_note_edit,
+            # The apply tool checks the user's own words, never the
+            # model-supplied "explicit request" argument.
+            user_request_text=req.text,
             mark_note_dirty=_mark_note_dirty_for_push,
         )
         session = build_note_chat_session(
@@ -4102,7 +4276,14 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         session = build_note_chat_session(
             llm=runtime.session.llm,
             registry=runtime.session.registry,
-            ctx=runtime.session.ctx,
+            # Anchor the draft tools (propose/accept/reject/commit) to this
+            # draft; current-note tools have no indexed note to act on.
+            ctx=replace(
+                runtime.session.ctx,
+                current_draft_id=draft.id,
+                user_request_text=req.text,
+                mark_note_dirty=_mark_note_dirty_for_push,
+            ),
         )
         for m in req.history:
             session.history.append({"role": m.role, "content": m.content})
@@ -4207,7 +4388,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> dict[str, Any]:
         """Start a fresh session and switch the runtime to it."""
-        new_conv = runtime.new_session()
+        with _shared_chat_session():
+            new_conv = runtime.new_session()
         return {"id": new_conv.id, "title": new_conv.title}
 
     @app.post("/api/chat/sessions/{conv_id}/activate")
@@ -4222,7 +4404,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"conversation not found: {conv_id}",
             )
-        runtime.switch_to(target)
+        with _shared_chat_session():
+            runtime.switch_to(target)
         return {"id": target.id, "title": target.title}
 
     @app.put("/api/chat/sessions/{conv_id}")
@@ -4365,6 +4548,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     ) -> CommitDraftResponse:
         draft = SedimentDraft(title=payload.title, tags=payload.tags, body=payload.body)
         note = commit_draft(draft, runtime.vault, runtime.index, runtime.config)
+        _mark_note_dirty_for_push(note.id)
         return CommitDraftResponse(note_id=note.id, path=str(note.path))
 
     # ---------------- notes (read) ----------------
@@ -4380,13 +4564,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         # the sidebar can build a tree without extra round-trips.
         out: list[NoteSummary] = []
         for r in rows:
-            folder = ""
-            p = r.get("path")
-            if p:
-                try:
-                    folder = runtime.vault.folder_of(Path(p))
-                except (TypeError, ValueError):
-                    folder = ""
+            folder = _indexed_folder(runtime.vault, r.get("path"))
             out.append(NoteSummary(**r, folder=folder))
         return out
 
@@ -4405,7 +4583,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         """
         return [TagSummary(tag=t, count=c) for t, c in runtime.index.aggregate_tags()]
 
-    @app.get("/api/tags/{tag}/notes", response_model=list[NoteSummary])
+    # `{tag:path}`: nested tags (`project/knowlet`) arrive with their `/`
+    # kept. Cannot shadow `/api/tags/all-with-notes` (no `/notes` suffix).
+    @app.get("/api/tags/{tag:path}/notes", response_model=list[NoteSummary])
     def list_notes_with_tag(
         tag: str,
         runtime: ChatRuntime = Depends(runtime_dep),
@@ -4418,13 +4598,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         rows = runtime.index.list_notes_by_tag(tag)
         out: list[NoteSummary] = []
         for r in rows:
-            folder = ""
-            p = r.get("path")
-            if p:
-                try:
-                    folder = runtime.vault.folder_of(Path(p))
-                except (TypeError, ValueError):
-                    folder = ""
+            folder = _indexed_folder(runtime.vault, r.get("path"))
             out.append(NoteSummary(**r, folder=folder))
         return out
 
@@ -4441,13 +4615,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         notes_by_tag: dict[str, list[NoteSummary]] = {}
         counts: dict[str, int] = {}
         for r in runtime.index.list_notes(limit=None):
-            folder = ""
-            p = r.get("path")
-            if p:
-                try:
-                    folder = runtime.vault.folder_of(Path(p))
-                except (TypeError, ValueError):
-                    folder = ""
+            folder = _indexed_folder(runtime.vault, r.get("path"))
             note_summary = NoteSummary(**r, folder=folder)
             for t in r.get("tags") or []:
                 if not isinstance(t, str) or not t.strip():
@@ -4483,14 +4651,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         metas = runtime.index.list_notes(limit=None)
 
         def _read_body(path_str: str) -> str:
-            p = Path(path_str)
-            if not p.is_absolute():
-                p = runtime.vault.notes_dir / p.name
-            return read_body_via_note(p)
+            # Relative index paths keep their folder ("sub/<id>.md");
+            # mirrors `knowlet graph export`.
+            return read_body_via_note(runtime.vault.resolve_note_path_from_index(path_str))
 
         graph = build_graph(
             metas,
-            folder_for=runtime.vault.folder_of,
+            folder_for=lambda path: _indexed_folder(runtime.vault, str(path)),
             read_body=_read_body,
         )
         return GraphPayload(
@@ -4532,12 +4699,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         hits = runtime.index.search(query=q_stripped[:4000], top_k=k)
         out: list[SearchHitRow] = []
         for h in hits:
-            folder = ""
-            if h.path:
-                try:
-                    folder = runtime.vault.folder_of(Path(h.path))
-                except (TypeError, ValueError):
-                    folder = ""
+            folder = _indexed_folder(runtime.vault, h.path)
             # Templates live under `_templates/` as a vault convention
             # (per ADR / Phase 1 B slice 8) — they're storage for the
             # Templates dialog, not user knowledge. Hide from the global
@@ -4611,6 +4773,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             id=note_id,
             title=note.title,
             path=str(path),
+            folder=runtime.vault.folder_of(path),
             tags=note.tags,
             aliases=list(note.aliases),
             source=note.source,
@@ -4679,6 +4842,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             id=note_id,
             title=canonical.title,
             path=str(path),
+            folder=runtime.vault.folder_of(path),
             tags=canonical.tags,
             aliases=list(canonical.aliases),
             source=canonical.source,
@@ -4738,7 +4902,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     @app.put("/api/notes/{note_id}", response_model=NoteFull)
     def update_note(
         note_id: str,
-        payload: DraftPayload,  # reuses {title, tags, body} shape
+        payload: NoteUpdatePayload,
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> NoteFull:
         meta = runtime.index.get_note_meta(note_id)
@@ -4755,16 +4919,32 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_410_GONE,
                 detail=f"note file missing on disk: {path}",
             ) from exc
+        if payload.base_updated_at is not None and payload.base_updated_at != note.updated_at:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "note changed on disk since it was loaded "
+                    f"(base {payload.base_updated_at}, now {note.updated_at}); reload before saving"
+                ),
+            )
+        # Corrupted notes get a fresh synthesized id on every read; keep
+        # the URL id so the save neither forks an index row nor drifts.
+        note.id = note_id
         # ULID-only filenames: the on-disk path doesn't change when the
         # title changes, so this is a pure in-place rewrite — no rename,
         # no unlink, no sync-conflict (B3 / 2026-05-02 critique #5).
+        previous_body = note.body
         note.title = payload.title.strip() or note.title
         note.body = payload.body
         # Phase 1 C polish — merge inline `#tag` from body into frontmatter
         # additively. User-typed body tags become first-class without
         # extra UI gymnastics. ADR-0013 §1 still holds: this is user-
         # initiated (the user wrote `#tag` themselves), not LLM-inferred.
-        note.tags = merge_with_inline_tags(list(payload.tags), payload.body)
+        # Only tags new relative to the previous body are added, so a
+        # chip removed in the UI is not re-added from its old `#tag`.
+        note.tags = merge_with_inline_tags(
+            list(payload.tags), payload.body, previous_body=previous_body
+        )
         # D3 Properties UI: aliases is None == "leave alone"; an empty
         # list clears; a list replaces. Tri-state lets pre-D3 clients
         # do title/body PUTs without wiping aliases someone added in
@@ -4784,6 +4964,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             id=note.id,
             title=note.title,
             path=str(new_path),
+            folder=runtime.vault.folder_of(new_path),
             tags=note.tags,
             aliases=list(note.aliases),
             source=note.source,
@@ -4872,7 +5053,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except FileExistsError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-        _resync_paths_under(runtime, new_path, mark_note_dirty=_mark_note_dirty_for_push)
+        _resync_paths_under(
+            runtime,
+            _folder_path(runtime.vault, req.path),
+            new_path,
+            mark_note_dirty=_mark_note_dirty_for_push,
+        )
         return FolderResponse(path=_rel_folder(runtime.vault, new_path))
 
     @app.post("/api/folders/move", response_model=FolderResponse)
@@ -4888,7 +5074,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except FileExistsError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-        _resync_paths_under(runtime, new_path, mark_note_dirty=_mark_note_dirty_for_push)
+        _resync_paths_under(
+            runtime,
+            _folder_path(runtime.vault, req.src),
+            new_path,
+            mark_note_dirty=_mark_note_dirty_for_push,
+        )
         return FolderResponse(path=_rel_folder(runtime.vault, new_path))
 
     @app.delete("/api/folders")
@@ -4899,6 +5090,9 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         """Delete a folder. Every note under it gets soft-deleted to
         `notes/.trash/` (recoverable) and removed from the index by id; the
         empty subtree is then `rmtree`d."""
+        # Trash filenames are neither stable (collision suffix) nor ids
+        # (external imports), so take the ids from the index first.
+        note_ids = set(_index_ids_under(runtime, _folder_path(runtime.vault, req.path)).values())
         try:
             trashed = runtime.vault.delete_folder(req.path)
         except ValueError as exc:
@@ -4906,7 +5100,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         for trashed_path in trashed:
-            note_id = trashed_path.stem
+            # Unindexed files may still have a sync row under their id.
+            with suppress(Exception):
+                trashed_note = Note.from_file(trashed_path)
+                if trashed_note.frontmatter_status != "corrupted":
+                    note_ids.add(trashed_note.id)
+        for note_id in sorted(note_ids):
             runtime.index.delete_note(note_id)
             _mark_note_delete_intent(note_id, "soft")
         return {"ok": True, "trashed_count": len(trashed)}
@@ -5045,7 +5244,16 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail=f"note not found: {note_id}",
             )
         path = runtime.vault.resolve_note_path_from_index(meta["path"])
-        note = runtime.vault.read_note(path)
+        try:
+            note = runtime.vault.read_note(path)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail=f"note file missing on disk: {path}",
+            ) from exc
+        # Corrupted notes get a fresh synthesized id on every read; the
+        # URL id is the canonical one (same rule as get_note / repair).
+        note.id = note_id
         # ADR-0029 §4.5: knowledge → reference is a downgrade. Reject
         # unless the caller explicitly opted in via confirm=true so
         # accidental clicks can't quietly demote.
@@ -5064,9 +5272,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         if note.kind != payload.kind:
             note.kind = payload.kind
             note.updated_at = _now_iso()
-            folder = runtime.vault.folder_of(path) or None
-            runtime.vault.write_note(note, folder=folder)
-            _mark_note_dirty_for_push(note.id)
+            # In place: ``folder=`` would write ``<id>.md`` beside a
+            # differently named file.
+            runtime.vault.write_note(note)
+            _mark_note_dirty_for_push(note_id)
             runtime.index.upsert_note(
                 note,
                 chunk_size=runtime.config.retrieval.chunk_size,
@@ -5303,13 +5512,11 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         except FileExistsError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         note = runtime.vault.read_note(new_path)
-        folder = runtime.vault.folder_of(new_path) or None
-        note.folder = folder
-        new_path = runtime.vault.write_note(note, folder=folder)
+        if _write_folder_hint(runtime, note, new_path):
+            _mark_note_dirty_for_push(note_id)
         runtime.index.update_note_path(note_id, str(new_path))
-        _mark_note_dirty_for_push(note.id)
         return NoteFull(
-            id=note.id,
+            id=note_id,
             title=note.title,
             path=str(new_path),
             folder=runtime.vault.folder_of(new_path),
@@ -5507,14 +5714,8 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail=f"unsupported image type: {file.content_type!r}",
             )
         # 20 MB ceiling — bigger pastes are usually accidents (scanned PDFs
-        # rasterized into the clipboard). Streaming would be nicer but the
-        # body is already in memory by the time we reach here.
-        data = await file.read()
-        if len(data) > 20 * 1024 * 1024:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="attachment exceeds 20 MB limit",
-            )
+        # rasterized into the clipboard).
+        data = await _read_upload_capped(file, limit=MAX_ATTACHMENT_BYTES, label="attachment")
         path = runtime.vault.write_attachment(data, ext)
         # #121 — register the new attachment in sync_state as dirty
         # so the drainer pushes it on its next tick. Same pattern as
@@ -5578,14 +5779,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail="invalid url (must start with http:// or https://)",
             )
         try:
-            cap = capture_url(url, runtime.llm)
-            return UrlCaptureResponse(
-                url=cap.url,
-                title=cap.title,
-                hostname=cap.hostname,
-                summary=cap.summary,
-                summary_failed=False,
-            )
+            result = capture_url_detailed(url, runtime.llm)
         except FetchError as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -5596,23 +5790,25 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             # _CONTENT and deprecated _ENTITY; either name is a
             # version-coupling hazard, the integer isn't.
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except Exception as exc:
+        cap = result.capsule
+        if result.summary_error is not None:
             # Page fetched + extracted, but the LLM step blew up. Per
             # ADR-0016 §3 we still return a capsule so the user can
             # attach the URL and ask manually.
-            from knowlet.core.url_capture import _hostname, fetch_and_extract
-
-            try:
-                title, _ = fetch_and_extract(url)
-            except Exception:
-                title = url
             return UrlCaptureResponse(
-                url=url,
-                title=title,
-                hostname=_hostname(url),
-                summary=f"(摘要失败:{exc})",
+                url=cap.url,
+                title=cap.title or url,
+                hostname=cap.hostname,
+                summary=f"(摘要失败:{result.summary_error})",
                 summary_failed=True,
             )
+        return UrlCaptureResponse(
+            url=cap.url,
+            title=cap.title,
+            hostname=cap.hostname,
+            summary=cap.summary,
+            summary_failed=False,
+        )
 
     # ---------------- Stage 3 capture flow (ADR-0009 amendment A2) ----
 
@@ -5627,14 +5823,6 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         Differs from the older /api/url/capture (M7.2) which returned
         URL-attachment shape for chat. This returns a generic
         CapturePayload usable for the modal three-button flow."""
-        from knowlet.core.url_capture import (
-            ExtractionError,
-            FetchError,
-            _hostname,
-            capture_url,
-            fetch_and_extract,
-        )
-
         url = (req.url or "").strip()
         if not url or not (url.startswith("http://") or url.startswith("https://")):
             raise HTTPException(
@@ -5642,33 +5830,31 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 detail="invalid url (must start with http:// or https://)",
             )
         try:
-            cap = capture_url(url, runtime.llm)
-            return CapturePayload(
-                title=cap.title or url,
-                body=cap.summary,
-                source=cap.url,
-                hostname=cap.hostname,
-                summary_failed=False,
-            )
+            result = capture_url_detailed(url, runtime.llm)
         except FetchError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         except ExtractionError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except Exception as exc:
+        cap = result.capsule
+        if result.summary_error is not None:
             # Page fetched, but summarize blew up. Return a capsule
-            # with raw extracted text so the user can still triage.
-            try:
-                title, body = fetch_and_extract(url)
-            except Exception:
-                title, body = url, ""
+            # with the already-extracted text so the user can still
+            # triage — no second fetch of the same URL.
             return CapturePayload(
-                title=title or url,
-                body=body or f"(摘要失败: {exc})",
-                source=url,
-                hostname=_hostname(url),
+                title=cap.title or url,
+                body=result.content or f"(摘要失败: {result.summary_error})",
+                source=cap.url,
+                hostname=cap.hostname,
                 summary_failed=True,
-                summary_error=repr(exc)[:300],
+                summary_error=repr(result.summary_error)[:300],
             )
+        return CapturePayload(
+            title=cap.title or url,
+            body=cap.summary,
+            source=cap.url,
+            hostname=cap.hostname,
+            summary_failed=False,
+        )
 
     @app.post("/api/capture/file", response_model=CapturePayload)
     async def capture_flow_file(
@@ -5689,7 +5875,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                     "Only .md / .txt files are supported in Stage 3. PDF support is on the roadmap."
                 ),
             )
-        raw = await file.read()
+        raw = await _read_upload_capped(file, limit=MAX_CAPTURE_FILE_BYTES, label="file")
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
@@ -5908,7 +6094,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
         try:
             questions = generate_quiz(runtime.llm, notes_for_llm, n=n)
-        except ValueError as exc:
+        except Exception as exc:  # invalid output (ValueError) or LLM transport error
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"generation failed: {exc}",
@@ -6904,11 +7090,16 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         draft_id: str,
         runtime: ChatRuntime = Depends(runtime_dep),
     ) -> dict[str, Any]:
-        if not runtime.ctx.drafts.delete(draft_id):
+        # Rejecting is recoverable: the draft moves to drafts/.archive/.
+        try:
+            runtime.ctx.drafts.archive_draft(draft_id)
+        except AmbiguousDraftIdError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except KeyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"draft not found: {draft_id}",
-            )
+            ) from exc
         return {"ok": True}
 
     # ---------------- favorites (Phase 2 D B1) ----------------
@@ -6976,10 +7167,10 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         filename = f"knowlet-vault-{stamp}.zip"
         # Stage the archive in a tempfile so we don't pollute the
         # vault directory with one-off export artifacts. FileResponse
-        # streams it back to the client; we leave cleanup to OS temp
-        # rotation (small enough to be fine — non-issue per dogfood
-        # scale).
-        tmp = Path(tempfile.mkstemp(suffix=".zip", prefix="kn-export-")[1])
+        # streams it back, then the background task removes it.
+        fd, tmp_name = tempfile.mkstemp(suffix=".zip", prefix="kn-export-")
+        os.close(fd)
+        tmp = Path(tmp_name)
         try:
             build_export_archive(vault_root=vault.root, output_path=tmp)
         except Exception:
@@ -6989,6 +7180,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             path=tmp,
             media_type="application/zip",
             filename=filename,
+            background=BackgroundTask(tmp.unlink, missing_ok=True),
         )
 
     def _unpack_for_merge(tmp_path: Path) -> Path:
@@ -6999,10 +7191,46 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         import tempfile
         import zipfile
 
-        walk_root = Path(tempfile.mkdtemp(prefix="kn-import-merge-"))
-        with zipfile.ZipFile(tmp_path, "r") as zf:
-            zf.extractall(walk_root)
+        try:
+            zf = zipfile.ZipFile(tmp_path, "r")
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="uploaded file is not a valid zip archive",
+            ) from exc
+        with zf:
+            infos = zf.infolist()
+            if len(infos) > MAX_IMPORT_ENTRIES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail=f"archive has more than {MAX_IMPORT_ENTRIES} entries",
+                )
+            # ZipExtFile never yields more than the declared file_size, so
+            # the header sum bounds what extractall can write.
+            if sum(i.file_size for i in infos) > MAX_IMPORT_UNCOMPRESSED_BYTES:
+                raise _too_large("uncompressed archive", MAX_IMPORT_UNCOMPRESSED_BYTES)
+            walk_root = Path(tempfile.mkdtemp(prefix="kn-import-merge-"))
+            try:
+                zf.extractall(walk_root)
+            except Exception:
+                shutil_rmtree_safe(walk_root)
+                raise
         return walk_root
+
+    async def _spool_import_upload(file: UploadFile) -> Path:
+        import tempfile
+
+        fd, tmp_name = tempfile.mkstemp(suffix=".zip", prefix="kn-import-")
+        tmp_path = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                await _copy_upload_capped(
+                    file, fh, limit=MAX_IMPORT_UPLOAD_BYTES, label="import archive"
+                )
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        return tmp_path
 
     @app.post("/api/vault/import-preview")
     async def vault_import_preview(
@@ -7017,13 +7245,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         sibling-vault restore use ``knowlet vault import --mode
         restore`` on the CLI.
         """
-        import tempfile
-
         from knowlet.core.portability import merge_directory
 
-        tmp_path = Path(tempfile.mkstemp(suffix=".zip", prefix="kn-import-")[1])
-        tmp_path.write_bytes(await file.read())
-        walk_root = _unpack_for_merge(tmp_path)
+        tmp_path = await _spool_import_upload(file)
+        try:
+            walk_root = _unpack_for_merge(tmp_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
         try:
             existing_titles = _existing_note_titles(vault.root)
             existing_ids = _existing_note_ids(vault.root)
@@ -7041,23 +7269,23 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             return _import_report_to_json(report)
         finally:
             shutil_rmtree_safe(walk_root)
-            tmp_path.unlink(missing_ok=True)
 
     @app.post("/api/vault/import")
     async def vault_import_endpoint(
         file: UploadFile = File(...),
+        runtime: ChatRuntime = Depends(runtime_dep),
     ) -> dict[str, Any]:
         """Commit a merge import. Always lands new notes under
         ``imported/YYYY-MM-DD/`` of the current vault. ID collisions
         skip (the live note wins); title collisions get an
         ``(imported)`` suffix."""
-        import tempfile
-
         from knowlet.core.portability import merge_directory
 
-        tmp_path = Path(tempfile.mkstemp(suffix=".zip", prefix="kn-import-")[1])
-        tmp_path.write_bytes(await file.read())
-        walk_root = _unpack_for_merge(tmp_path)
+        tmp_path = await _spool_import_upload(file)
+        try:
+            walk_root = _unpack_for_merge(tmp_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
         try:
             existing_titles = _existing_note_titles(vault.root)
             existing_ids = _existing_note_ids(vault.root)
@@ -7071,29 +7299,22 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             )
         finally:
             shutil_rmtree_safe(walk_root)
-            tmp_path.unlink(missing_ok=True)
 
-        # Re-index so the new notes show up in tree / search.
-        runtime = state.runtime
-        if runtime is not None:
-            from knowlet.core.embedding import make_backend
-            from knowlet.core.index import Index, reindex_vault
+        # Re-index so the new notes show up in tree / search. Same DB file
+        # and backend, so the live runtime.index sees the new rows as-is —
+        # no Index swap, no embedding-model reload.
+        from knowlet.core.index import reindex_vault
 
-            cfg = runtime.config
-            backend = make_backend(
-                cfg.embedding.backend,
-                cfg.embedding.model,
-                cfg.embedding.dim,
-            )
-            reindex_vault(
-                runtime.vault.root,
-                runtime.vault.db_path,
-                backend,
-                chunk_size=cfg.retrieval.chunk_size,
-                chunk_overlap=cfg.retrieval.chunk_overlap,
-                note_paths=list(runtime.vault.iter_note_paths()),
-            )
-            runtime.index = Index(runtime.vault.db_path, backend)
+        cfg = runtime.config
+        reindex_vault(
+            runtime.vault.root,
+            runtime.vault.db_path,
+            runtime.backend,
+            chunk_size=cfg.retrieval.chunk_size,
+            chunk_overlap=cfg.retrieval.chunk_overlap,
+            note_paths=list(runtime.vault.iter_note_paths()),
+            vault=runtime.vault,
+        )
         return _import_report_to_json(report)
 
     def _existing_note_titles(vault_root: Path) -> list[str]:
@@ -7203,7 +7424,20 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         config.llm.model = fresh.llm.model
         config.llm.api_key = fresh.llm.api_key
         config.llm.max_tokens = fresh.llm.max_tokens
+        # A first key saved after startup (desktop first run) must bring
+        # up the scheduler / digest pull bootstrap skipped without one.
+        state.ensure_background_services()
         return llm_config_get()
+
+    def _saved_key_for(base_url: str) -> str:
+        """The saved api_key if ``base_url`` is the saved base_url, else ""."""
+
+        def _norm(url: str) -> str:
+            return url.strip().rstrip("/").lower()
+
+        if config.llm.api_key and _norm(base_url) == _norm(config.llm.base_url or ""):
+            return config.llm.api_key
+        return ""
 
     @app.post("/api/llm/provider-models")
     def llm_provider_models(
@@ -7229,10 +7463,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         draft_url = (payload.base_url if payload else None) or ""
         draft_key = (payload.api_key if payload else None) or ""
         effective_url = draft_url.strip() or config.llm.base_url
-        # Empty string from caller = "use saved key". Caller can pass
-        # whitespace-only or anything truthy to override; we don't
-        # second-guess the draft.
-        effective_key = draft_key if draft_key else (config.llm.api_key or "knowlet-no-key")
+        # Empty key from caller = "use saved key", but only against the
+        # saved base_url — the saved secret must never be sent to a URL
+        # the caller picked. Otherwise fall back to a placeholder so
+        # no-auth local servers still list their models.
+        saved_key = _saved_key_for(effective_url)
+        effective_key = draft_key if draft_key else (saved_key or "knowlet-no-key")
 
         if not effective_url:
             return {"models": [], "error": "base_url not configured"}
@@ -7266,9 +7502,23 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         draft_url = (payload.base_url if payload else None) or ""
         draft_key = (payload.api_key if payload else None) or ""
         draft_model = (payload.model if payload else None) or ""
+        effective_url = draft_url.strip() or config.llm.base_url
+        # Same rule as provider-models: the saved key only travels to the
+        # saved base_url.
+        effective_key = draft_key or _saved_key_for(effective_url)
+        if not effective_key:
+            return {
+                "ok": False,
+                "error": (
+                    "api_key required: the saved key is only used with the saved base_url"
+                    if config.llm.api_key
+                    else "api_key not configured"
+                ),
+                "latency_ms": 0,
+            }
         effective = LLMConfig(
-            base_url=draft_url.strip() or config.llm.base_url,
-            api_key=draft_key or config.llm.api_key,
+            base_url=effective_url,
+            api_key=effective_key,
             model=draft_model.strip() or config.llm.model,
             max_tokens=config.llm.max_tokens,
         )
@@ -7363,6 +7613,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
 
     dist_dir = frontend_dist()
     if dist_dir.exists():
+        dist_root = dist_dir.resolve()
         # Vite emits hashed bundles under `dist/assets/`. Mount that as a real
         # static dir; everything else falls through to the SPA index so deep
         # links + browser-refresh on a route work without a per-route handler.
@@ -7389,10 +7640,12 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
             ):
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
             # Phase 1 B may serve favicon/manifest from `dist/` root.
-            candidate = dist_dir / full_path
-            if candidate.is_file():
+            # `full_path` may be absolute ("//etc/passwd") or contain "..";
+            # only serve files that resolve inside dist.
+            candidate = (dist_root / full_path).resolve()
+            if candidate.is_relative_to(dist_root) and candidate.is_file():
                 return FileResponse(candidate)
-            return FileResponse(dist_dir / "index.html")
+            return FileResponse(dist_root / "index.html")
 
     return app
 
