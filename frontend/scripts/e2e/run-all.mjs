@@ -28,8 +28,13 @@ const concurrency = Math.max(
   parseInt(process.env.E2E_CONCURRENCY ?? "", 10) || DEFAULT_CONCURRENCY,
 );
 
-console.log("[run-all] build dist…");
-execSync("npm run build --silent", { cwd: join(REPO_ROOT, "frontend"), stdio: "pipe" });
+if (process.env.SKIP_BUILD === "1") {
+  console.log("[run-all] SKIP_BUILD=1 — using existing dist");
+} else {
+  console.log("[run-all] build dist…");
+  // Inherit stdio so a failing tsc/vite build prints its errors.
+  execSync("npm run build --silent", { cwd: join(REPO_ROOT, "frontend"), stdio: "inherit" });
+}
 
 const files = readdirSync(HERE)
   .filter((f) => f.endsWith(".mjs") && !f.startsWith("_") && f !== "run-all.mjs")
