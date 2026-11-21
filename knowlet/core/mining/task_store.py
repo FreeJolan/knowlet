@@ -11,6 +11,24 @@ from knowlet.core.mining.task import MiningTask
 from knowlet.core.note import now_iso
 
 
+class AmbiguousTaskIdError(LookupError):
+    """A task-id prefix matched more than one task file."""
+
+    def __init__(self, task_id: str, candidates: list[str]):
+        self.task_id = task_id
+        self.candidates = candidates
+        super().__init__(f"task id {task_id!r} is ambiguous; matches: {', '.join(candidates)}")
+
+
+def _id_from_stem(stem: str) -> str:
+    """Task filenames are ``<id>-<slug>``; ULIDs never contain ``-``."""
+    return stem.split("-", 1)[0]
+
+
+def _owns_stem(task_id: str, stem: str) -> bool:
+    return stem == task_id or stem.startswith(task_id + "-")
+
+
 class TaskStore:
     def __init__(self, root: Path):
         self.root = root
@@ -31,13 +49,29 @@ class TaskStore:
         return out
 
     def get(self, task_id: str) -> MiningTask | None:
-        for p in self.iter_paths():
-            if p.stem.startswith(task_id):
-                try:
-                    return MiningTask.from_file(p)
-                except (OSError, ValueError):
-                    return None
-        return None
+        """Resolve a full task id or a unique prefix of one.
+
+        An exact id match always wins; a prefix matching several tasks
+        raises :class:`AmbiguousTaskIdError` because callers go on to run /
+        delete whatever this returns."""
+        if not task_id:
+            return None
+        exact: list[Path] = []
+        prefixed: list[Path] = []
+        for p in sorted(self.iter_paths()):
+            if _owns_stem(task_id, p.stem):
+                exact.append(p)
+            elif p.stem.startswith(task_id):
+                prefixed.append(p)
+        if not exact and len(prefixed) > 1:
+            raise AmbiguousTaskIdError(task_id, [_id_from_stem(p.stem) for p in prefixed])
+        matches = exact or prefixed
+        if not matches:
+            return None
+        try:
+            return MiningTask.from_file(matches[0])
+        except (OSError, ValueError):
+            return None
 
     def save(self, task: MiningTask) -> Path:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -45,7 +79,7 @@ class TaskStore:
         target = self.root / task.filename
         # If the slug changed, remove the old file (id-prefix matches but slug differs).
         for p in self.iter_paths():
-            if p.stem.startswith(task.id) and p.name != target.name:
+            if _owns_stem(task.id, p.stem) and p.name != target.name:
                 with contextlib.suppress(OSError):
                     os.unlink(p)
                 self._queue_delete_sync(p)

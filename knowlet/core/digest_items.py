@@ -8,9 +8,10 @@ draft before the user commits anything into the vault.
 from __future__ import annotations
 
 import contextlib
+import glob
 import json
 import os
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -27,6 +28,61 @@ RawInfoStatus = Literal[
     "included",
 ]
 FINAL_STATUSES = {"discarded", "included"}
+_UNREADABLE_ERRORS = (OSError, ValueError, json.JSONDecodeError)
+
+
+class AmbiguousIdError(LookupError):
+    """An id prefix matched more than one stored file."""
+
+    def __init__(self, kind: str, given: str, candidates: list[str]):
+        self.given = given
+        self.candidates = candidates
+        super().__init__(f"{kind} id {given!r} is ambiguous; matches: {', '.join(candidates)}")
+
+
+def owns_stem(entity_id: str, stem: str) -> bool:
+    """Files are named ``<id>-<slug>``; ULIDs never contain ``-``."""
+    return stem == entity_id or stem.startswith(entity_id + "-")
+
+
+def resolve_id_path(paths: Iterable[Path], given: str, *, kind: str) -> Path | None:
+    """Pick the file for a full id or a unique id prefix.
+
+    An exact id wins over prefix hits; several prefix hits raise
+    :class:`AmbiguousIdError` since callers go on to mutate the result."""
+    if not given:
+        return None
+    exact: list[Path] = []
+    prefixed: list[Path] = []
+    for path in sorted(paths):
+        if owns_stem(given, path.stem):
+            exact.append(path)
+        elif path.stem.startswith(given):
+            prefixed.append(path)
+    if exact:
+        return exact[0]
+    if len(prefixed) > 1:
+        raise AmbiguousIdError(kind, given, [p.stem.split("-", 1)[0] for p in prefixed])
+    return prefixed[0] if prefixed else None
+
+
+def remove_stale_files(root: Path, entity_id: str, keep: Path, *, known: Path | None) -> list[Path]:
+    """Delete older ``<id>-<old-slug>`` files of one entity (after a rename).
+
+    When the entity was loaded from ``known`` only that file can be stale,
+    so the directory is not rescanned."""
+    if known is not None:
+        candidates = [known] if known.parent == root else []
+    else:
+        pattern = os.path.join(glob.escape(str(root)), glob.escape(entity_id) + "*.json")
+        candidates = [Path(p) for p in glob.glob(pattern)]
+    removed: list[Path] = []
+    for path in candidates:
+        if path.name != keep.name and owns_stem(entity_id, path.stem) and path.exists():
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+                removed.append(path)
+    return removed
 
 
 @dataclass
@@ -153,32 +209,32 @@ class RawInfoStore:
             return iter(())
         return (path for path in self.root.glob("*.json") if path.is_file())
 
-    def list(self) -> list[RawInfo]:
-        out: list[RawInfo] = []
+    def _iter_items(self) -> Iterator[RawInfo]:
         for path in self.iter_paths():
             try:
-                out.append(RawInfo.from_file(path))
-            except (OSError, ValueError, json.JSONDecodeError):
+                yield RawInfo.from_file(path)
+            except _UNREADABLE_ERRORS:
                 continue
+
+    def list(self) -> list[RawInfo]:
+        out = list(self._iter_items())
         out.sort(key=lambda item: (item.fetched_at, _mtime_ns(item.path), item.id))
         return out
 
     def get(self, info_id: str) -> RawInfo | None:
-        for path in self.iter_paths():
-            if path.stem.startswith(info_id):
-                try:
-                    return RawInfo.from_file(path)
-                except (OSError, ValueError, json.JSONDecodeError):
-                    return None
-        return None
+        """Full id or unique prefix; raises :class:`AmbiguousIdError`."""
+        path = resolve_id_path(self.iter_paths(), info_id, kind="raw info")
+        if path is None:
+            return None
+        try:
+            return RawInfo.from_file(path)
+        except _UNREADABLE_ERRORS:
+            return None
 
     def save(self, item: RawInfo) -> Path:
         self.root.mkdir(parents=True, exist_ok=True)
         target = self.root / item.filename
-        for path in self.iter_paths():
-            if path.stem.startswith(item.id) and path.name != target.name:
-                with contextlib.suppress(OSError):
-                    os.unlink(path)
+        remove_stale_files(self.root, item.id, target, known=item.path)
         item.path = target
         tmp = target.with_suffix(target.suffix + ".tmp")
         tmp.write_text(
@@ -190,10 +246,15 @@ class RawInfoStore:
         return target
 
     def pending_count(self) -> int:
-        return sum(1 for item in self.list() if item.is_pending)
+        return sum(1 for item in self._iter_items() if item.is_pending)
+
+    def item_keys(self) -> set[str]:
+        """All stored item keys in one scan — callers checking many keys
+        should use this instead of repeated :meth:`has_item_key`."""
+        return {item.item_key for item in self._iter_items() if item.item_key}
 
     def has_item_key(self, item_key: str) -> bool:
-        return any(item.item_key == item_key for item in self.list())
+        return any(item.item_key == item_key for item in self._iter_items())
 
     def _queue_sync(self, item: RawInfo) -> None:
         if item.path is None:

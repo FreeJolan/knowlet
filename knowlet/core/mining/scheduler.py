@@ -16,6 +16,7 @@ Per ADR-0009:
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -49,6 +50,7 @@ class MiningScheduler:
         self.default_output_language = default_output_language
         self._sched: BackgroundScheduler | None = None  # type: ignore[no-any-unimported]
         self._task_store = TaskStore(vault.root / "tasks")
+        self._stop = threading.Event()
 
     # ----------------------------------------------------- lifecycle
 
@@ -57,11 +59,19 @@ class MiningScheduler:
 
         Returns the number of jobs scheduled."""
         if self._sched is None:
+            self._stop = threading.Event()
             self._sched = BackgroundScheduler(timezone="UTC")
             self._sched.start()
         return self._reload_jobs()
 
     def shutdown(self) -> None:
+        """Stop scheduling and tell in-flight runs to stop.
+
+        ``wait=False`` does not keep the interpreter from joining the
+        executor's worker threads at exit, so a running task is asked to
+        return after its current item (one LLM call) instead of finishing
+        the whole batch."""
+        self._stop.set()
         if self._sched is not None:
             self._sched.shutdown(wait=False)
             self._sched = None
@@ -85,7 +95,9 @@ class MiningScheduler:
                 self._sched.remove_job(job.id)
         scheduled = 0
         for task in self._task_store.list():
-            if not task.enabled:
+            # Backlog-paused tasks stay scheduled: their next tick is what
+            # auto-resumes them once the user clears drafts.
+            if not task.enabled and task.paused_reason != "backlog":
                 continue
             trigger = self._trigger_for(task)
             if trigger is None:
@@ -135,7 +147,7 @@ class MiningScheduler:
         if task is None:
             log.warning("scheduled task %s no longer on disk", task_id)
             return
-        if not task.enabled:
+        if not task.enabled and task.paused_reason != "backlog":
             return
         try:
             report = run_task(
@@ -143,10 +155,13 @@ class MiningScheduler:
                 self.vault,
                 self.llm,
                 default_output_language=self.default_output_language,
+                should_stop=self._stop.is_set,
             )
         except Exception:
             log.exception("task %s crashed", task_id)
             return
+        for error in report.errors:
+            log.warning("task %s: %s", task_id, error)
         if self.on_run is not None:
             try:
                 self.on_run(task, report)
