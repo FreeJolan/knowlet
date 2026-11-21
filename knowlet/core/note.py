@@ -86,6 +86,21 @@ def new_id() -> str:
     return str(ULID())
 
 
+# Note ids double as filenames (``<id>.md``). Anything outside this
+# alphabet — path separators, ``..``, dots, whitespace, drive colons —
+# must never be trusted as an id taken from untrusted frontmatter.
+_SAFE_NOTE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+
+
+def is_safe_note_id(value: object) -> bool:
+    """True when ``value`` can be used verbatim as a note filename stem.
+
+    Accepts ULIDs and the slug-style ids knowlet itself writes (e.g.
+    the built-in template id); rejects anything that could change the
+    directory a ``<id>.md`` path resolves into."""
+    return isinstance(value, str) and _SAFE_NOTE_ID_RE.fullmatch(value) is not None
+
+
 _SLUG_BAD = re.compile(r"[^a-z0-9一-鿿]+")
 
 
@@ -99,6 +114,26 @@ def slugify(title: str, max_len: int = 40) -> str:
         slug = slug[:max_len].rstrip("-") or "note"
     return slug
 
+
+# Frontmatter keys owned by the Note dataclass itself. Everything else
+# found in a valid frontmatter block is kept in ``Note.extra_meta`` and
+# re-emitted by ``to_markdown``.
+_CANONICAL_FRONTMATTER_KEYS = frozenset(
+    {
+        "schema_version",
+        "id",
+        "title",
+        "tags",
+        "aliases",
+        "created_at",
+        "updated_at",
+        "source",
+        "status",
+        "kind",
+        "trashed_from",
+        "folder",
+    }
+)
 
 # Frontmatter schema version. Bump this whenever a Note field is added,
 # removed, or has its serialization changed in a way old code can't read.
@@ -170,6 +205,16 @@ class Note:
     #                      shows a warning chip + auto-repair button.
     frontmatter_status: Literal["valid", "auto_filled", "corrupted"] = "valid"
     frontmatter_corruption: str | None = None
+    # Unknown frontmatter keys (Obsidian ``cssclasses`` / ``publish``,
+    # user-custom properties, …) from a valid frontmatter block.
+    # ``to_markdown`` re-emits them so an edit in knowlet never drops
+    # fields other tools rely on; canonical keys win on collision.
+    extra_meta: dict[str, Any] = field(default_factory=dict)
+    # Transient (NOT persisted). True when the file had valid
+    # frontmatter but no ``id`` key, i.e. ``id`` was assigned by this
+    # read (ULID-shaped filename when available, else a fresh ULID).
+    # ``Vault.read_note`` persists it once so the identity is stable.
+    id_assigned: bool = False
 
     @property
     def slug(self) -> str:
@@ -193,17 +238,23 @@ class Note:
     def to_markdown(self) -> str:
         # Always stamp with the current schema_version on write — that
         # gives lazy migration of v1 files (next edit upgrades them
-        # to v2) per ADR-0018 §1.
+        # to v2) per ADR-0018 §1. Unknown keys go first so canonical
+        # fields win any collision.
         meta: dict[str, object] = {
-            "schema_version": NOTE_SCHEMA_VERSION,
-            "id": self.id,
-            "title": self.title,
-            "tags": list(self.tags),
-            "status": self.status,
-            "kind": self.kind,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
+            k: v for k, v in self.extra_meta.items() if k not in _CANONICAL_FRONTMATTER_KEYS
         }
+        meta.update(
+            {
+                "schema_version": NOTE_SCHEMA_VERSION,
+                "id": self.id,
+                "title": self.title,
+                "tags": list(self.tags),
+                "status": self.status,
+                "kind": self.kind,
+                "created_at": self.created_at,
+                "updated_at": self.updated_at,
+            }
+        )
         if self.aliases:
             meta["aliases"] = list(self.aliases)
         if self.source:
@@ -305,12 +356,23 @@ class Note:
         folder_raw = meta.get("folder")
         folder = str(folder_raw) if folder_raw is not None else None
         fallback_title = path.stem if path else "Untitled"
+        # Missing ``id`` (typical Obsidian import): reuse a ULID-shaped
+        # filename when there is one and flag the assignment so
+        # ``Vault.read_note`` can persist it.
+        raw_id = meta.get("id")
+        if raw_id:
+            note_id = str(raw_id)
+            id_assigned = False
+        else:
+            note_id = _id_from_filename(path) if path else new_id()
+            id_assigned = True
+        extra_meta = {k: v for k, v in meta.items() if k not in _CANONICAL_FRONTMATTER_KEYS}
         return cls(
-            id=str(meta.get("id") or new_id()),
+            id=note_id,
             title=str(meta.get("title") or fallback_title),
             body=body,
-            tags=list(meta.get("tags") or []),
-            aliases=[str(a) for a in (meta.get("aliases") or [])],
+            tags=coerce_str_list(meta.get("tags")),
+            aliases=coerce_str_list(meta.get("aliases")),
             created_at=str(meta.get("created_at") or now_iso()),
             updated_at=str(meta.get("updated_at") or now_iso()),
             source=meta.get("source"),
@@ -320,6 +382,8 @@ class Note:
             kind=kind,
             trashed_from=trashed_from,
             folder=folder,
+            extra_meta=extra_meta,
+            id_assigned=id_assigned,
         )
 
 
@@ -430,6 +494,17 @@ def _classify_frontmatter(
 
     # Otherwise: pure body, no frontmatter intended. Auto-fill path.
     return ("auto_filled", {}, raw_text, None)
+
+
+def coerce_str_list(raw: Any) -> list[str]:
+    """Normalize a frontmatter list field (``tags`` / ``aliases``) to
+    ``list[str]``. YAML allows a scalar (``tags: physics``); ``list()``
+    on a str would explode it into single characters."""
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, (list, tuple, set)):
+        return [str(t) for t in raw if t is not None and str(t) != ""]
+    return [str(raw)]
 
 
 def _id_from_filename(path: Path) -> str:

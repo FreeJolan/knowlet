@@ -6,7 +6,8 @@ Two directions over the same `.zip` envelope:
   set of paths into a temporary directory, write a ``MANIFEST.json``
   describing the snapshot, then zip the whole tree to a target path.
   Excludes generated / sensitive / recursive paths (index.sqlite,
-  sync_credentials.json, snapshots/, backups/).
+  sync_credentials.json, snapshots/, backups/) and dot entries under
+  ``notes/`` (``.trash/`` — deleted notes don't travel).
 - **Import**: peek at the archive (or directory) to decide between
   two modes:
 
@@ -38,7 +39,8 @@ from pathlib import Path
 from typing import Literal
 
 from knowlet import __version__
-from knowlet.core.note import Note, new_id
+from knowlet.core.note import Note, is_safe_note_id, new_id
+from knowlet.core.vault import atomic_write_text
 
 # Paths inside the vault that we ALWAYS skip when exporting.
 # ``index.sqlite`` is fully derivable from notes/ via reindex.
@@ -55,6 +57,11 @@ EXPORT_EXCLUDE_NAMES = {
     "sync_credentials.json",
 }
 EXPORT_EXCLUDE_DOTKNOWLET_SUBDIRS = {"snapshots", "backups", "dev_conflicts"}
+
+# Top-level folder under ``notes/`` that holds templates (mirrors
+# ``Vault.TEMPLATE_DIR``). Templates travel in an export (a restore must
+# not lose them) but are never merged in as live notes.
+TEMPLATES_DIRNAME = "_templates"
 
 MANIFEST_FILENAME = "MANIFEST.json"
 
@@ -188,8 +195,10 @@ def _count_export_payload(notes_dir: Path) -> tuple[int, int]:
             continue
         if p.name in EXPORT_EXCLUDE_NAMES:
             continue
-        # Anything under _attachments/ that is a file counts.
         rel = p.relative_to(notes_dir)
+        if _has_hidden_part(rel):
+            continue
+        # Anything under _attachments/ that is a file counts.
         if rel.parts and rel.parts[0] == "_attachments":
             attachments += 1
             continue
@@ -199,13 +208,25 @@ def _count_export_payload(notes_dir: Path) -> tuple[int, int]:
 
 
 def _write_dir_to_zip(zf: zipfile.ZipFile, src: Path, arcname_prefix: str) -> None:
+    """Pack ``src`` (the vault's ``notes/``) minus dot entries — above
+    all ``.trash/``: deleted notes must not come back as live notes
+    when the archive is imported elsewhere."""
     for p in sorted(src.rglob("*")):
         if not p.is_file():
             continue
         if p.name in EXPORT_EXCLUDE_NAMES:
             continue
         rel = p.relative_to(src)
+        if _has_hidden_part(rel):
+            continue
         zf.write(p, arcname=f"{arcname_prefix}/{rel.as_posix()}")
+
+
+def _has_hidden_part(rel: Path) -> bool:
+    """Same rule ``Vault.iter_note_paths`` uses: any dot-prefixed path
+    component (``.trash/``, ``.obsidian/``, ``.DS_Store`` …) is not
+    note content."""
+    return any(part.startswith(".") for part in rel.parts)
 
 
 def _write_dotknowlet_to_zip(zf: zipfile.ZipFile, dotk: Path) -> None:
@@ -346,11 +367,19 @@ def merge_directory(
         raise NotADirectoryError(f"not a directory: {source_dir}")
     sub = subfolder or f"imported/{datetime.now().strftime('%Y-%m-%d')}"
     target = vault_root / "notes" / sub
+    target_resolved = target.resolve()
+    notes_root = (vault_root / "notes").resolve()
+    if target_resolved != notes_root and notes_root not in target_resolved.parents:
+        raise ValueError(f"import subfolder must stay inside notes/: {sub!r}")
     titles_seen = set(existing_titles or ())
     ids_seen = set(existing_ids or ())
 
     report = ImportReport(mode="merge", target_path=target, dry_run=dry_run)
-    md_files = sorted(p for p in source_dir.rglob("*.md") if p.is_file())
+    md_files = sorted(
+        p
+        for p in source_dir.rglob("*.md")
+        if p.is_file() and _is_mergeable_note_path(p.relative_to(source_dir))
+    )
     for src in md_files:
         rel = src.relative_to(source_dir)
         rel_str = rel.as_posix()
@@ -361,10 +390,20 @@ def merge_directory(
             report.items.append((rel_str, "skip-empty", None))
             continue
         # ID collision = user almost certainly re-importing their own
-        # backup. Skip rather than overwrite — the live note wins.
-        if note.id in ids_seen:
+        # backup. Skip rather than overwrite — the live note wins. A
+        # same-id file already in the import folder counts too: callers
+        # that pass no ``existing_ids`` (the CLI) would otherwise
+        # overwrite an earlier import into the same dated folder.
+        dest = target / f"{note.id}.md"
+        if note.id in ids_seen or dest.exists():
             report.notes_skipped += 1
             report.items.append((rel_str, "skip-duplicate-id", None))
+            continue
+        # Belt and braces on top of the id validation: the resolved
+        # destination must be a direct child of the import folder.
+        if dest.resolve().parent != target_resolved:
+            report.notes_skipped += 1
+            report.items.append((rel_str, "skip-unsafe-path", None))
             continue
         # Title collision (different ID) → import with suffix.
         if note.title and note.title in titles_seen:
@@ -379,7 +418,7 @@ def merge_directory(
         final_rel = (Path("notes") / sub / f"{note.id}.md").as_posix()
         if not dry_run:
             target.mkdir(parents=True, exist_ok=True)
-            (target / f"{note.id}.md").write_text(note.to_markdown(), encoding="utf-8")
+            atomic_write_text(dest, note.to_markdown())
         report.notes_created += 1
         report.items.append((rel_str, action, final_rel))
 
@@ -403,6 +442,16 @@ def merge_directory(
     return report
 
 
+def _is_mergeable_note_path(rel: Path) -> bool:
+    """Skip trash / hidden dirs (deleted notes, ``.obsidian/``,
+    ``.knowlet/``) and a top-level ``_templates/`` (templates are not
+    notes) — otherwise a merge of a knowlet export resurrects them as
+    live notes under ``imported/<date>/``."""
+    if _has_hidden_part(rel):
+        return False
+    return not (len(rel.parts) > 1 and rel.parts[0] == TEMPLATES_DIRNAME)
+
+
 class _EmptyFileSkip(Exception):
     """Raised internally when a source markdown file is empty /
     whitespace-only. Skipped silently — likely a stub the user
@@ -410,19 +459,22 @@ class _EmptyFileSkip(Exception):
 
 
 def _load_or_synthesize(src: Path) -> Note:
-    """Read a markdown file. If it has a valid knowlet frontmatter,
-    return that Note as-is. Otherwise build a fresh Note with
+    """Read a markdown file. If it has valid frontmatter, keep its
+    metadata; its ``id`` is trusted only when it is a safe filename
+    stem (``is_safe_note_id``) — the id becomes the write path, and the
+    archive is untrusted input. Otherwise build a fresh Note with
     synthesized metadata."""
     raw = src.read_text(encoding="utf-8", errors="replace")
     if not raw.strip():
         raise _EmptyFileSkip()
     note = Note.from_text(raw)
-    if note.frontmatter_status == "valid" and note.id:
-        # Already a knowlet-format note — trust it.
-        return note
-    # Synthesize: take ULID from filename if it looks valid, else new.
+    # Take ULID from filename if it looks valid, else new.
     stem = src.stem
     note_id = stem if _ULID_RE.match(stem) else new_id()
+    if note.frontmatter_status == "valid":
+        if note.id_assigned or not is_safe_note_id(note.id):
+            note.id = note_id
+        return note
     # Title: existing if any, otherwise first H1, otherwise filename.
     title = note.title or _first_h1(raw) or stem
     body = note.body or raw

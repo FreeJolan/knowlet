@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import secrets
 import shutil
 from collections.abc import Iterator
+from contextlib import suppress
 from pathlib import Path
 
 from knowlet.config import VAULT_MARKER_DIR
@@ -77,6 +80,37 @@ mode", borrowed from mature agents' rules-file convention).
 Add / remove rules to taste. The AI reads whatever's here on the
 next prompt — no restart needed.
 """
+
+
+def atomic_write_text(target: Path, text: str) -> None:
+    """Write ``text`` to ``target`` via a temp file that is unique to
+    this writer, fsync'd before the atomic rename.
+
+    A shared fixed ``<name>.tmp`` lets two concurrent writers of the
+    same note publish each other's half-written bytes; a missing fsync
+    lets a power loss publish an empty / truncated file. The temp file
+    is created with ``O_EXCL`` and mode ``0o666`` (filtered by the
+    process umask) so the published file keeps the same permissions a
+    plain ``write_text`` would give it — unlike ``mkstemp``'s 0600.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    while True:
+        tmp = target.with_name(f"{target.name}.{secrets.token_hex(6)}.tmp")
+        try:
+            fd = os.open(tmp, flags, 0o666)
+        except FileExistsError:
+            continue
+        break
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        tmp.replace(target)
+    except BaseException:
+        with suppress(OSError):
+            tmp.unlink()
+        raise
 
 
 def _ensure_wiki_schema_template(path: Path) -> None:
@@ -365,7 +399,9 @@ class Vault:
         parallel callers converge on the same canonical version
         rather than each holding a stale freshly-minted ULID."""
         note = Note.from_file(path)
-        if note.frontmatter_status == "auto_filled":
+        if note.frontmatter_status == "auto_filled" or (
+            note.frontmatter_status == "valid" and note.id_assigned
+        ):
             # Persist the synthesized frontmatter atomically. After
             # the write, the file is canonical and a fresh
             # ``from_file`` call returns a "valid" Note. We re-read
@@ -373,6 +409,10 @@ class Vault:
             # disk (also handles the rare two-callers-race case:
             # whichever lost the rename still gets the winner's id
             # by reading the freshly-canonical file).
+            #
+            # Valid frontmatter without ``id`` (Obsidian import) takes
+            # the same path: otherwise every read — and every reindex —
+            # mints a different ULID for the same file.
             self.write_note(note)
             return Note.from_file(note.path or path)
         # Corrupted notes are returned as-is. The UI shows a warning
@@ -424,9 +464,7 @@ class Vault:
                 )
         note.path = target
         note.updated_at = now_iso()
-        tmp = target.with_suffix(target.suffix + ".tmp")
-        tmp.write_text(note.to_markdown(), encoding="utf-8")
-        tmp.replace(target)
+        atomic_write_text(target, note.to_markdown())
         # Emit AFTER the atomic rename so a failed write doesn't
         # leave a phantom event. Folder is recorded so log readers
         # can see "where did it land".
@@ -569,7 +607,12 @@ class Vault:
         return new_path
 
     def delete_folder(self, folder: str) -> list[Path]:
-        """Trash every note under `folder`, then remove the empty tree.
+        """Trash every note under `folder`, then remove the tree.
+
+        Non-note files left behind (images, PDFs, ``.canvas`` …) are
+        never destroyed: if any remain, the whole leftover subtree is
+        moved into ``.trash/`` under a collision-free name. Only a tree
+        of empty directories is removed outright.
 
         Returns the new locations of the trashed notes. Caller is
         responsible for removing each note from the index by id.
@@ -580,11 +623,15 @@ class Vault:
         if not src_path.is_dir():
             raise FileNotFoundError(f"folder not found: {folder}")
         trashed: list[Path] = []
-        for note_md in src_path.rglob("*.md"):
-            if note_md.is_file():
-                trashed.append(self.trash_note(note_md))
-        # `trash_note` only moved files; remove the now-empty subtree.
-        shutil.rmtree(src_path, ignore_errors=False)
+        # Materialize the list up front — trash_note mutates the tree
+        # while we'd otherwise still be iterating it lazily.
+        for note_md in sorted(p for p in src_path.rglob("*.md") if p.is_file()):
+            trashed.append(self.trash_note(note_md))
+        if any(not p.is_dir() for p in src_path.rglob("*")):
+            self.trash_dir.mkdir(parents=True, exist_ok=True)
+            src_path.rename(self._unique_trash_target(src_path.name))
+        else:
+            shutil.rmtree(src_path, ignore_errors=False)
         return trashed
 
     def backup_note(self, path: Path) -> Path:
@@ -625,17 +672,20 @@ class Vault:
         original_folder = self.folder_of(path)
         try:
             note = Note.from_file(path)
-            note.trashed_from = original_folder
-            path.write_text(note.to_markdown(), encoding="utf-8")
+            # A corrupted note must move byte-for-byte: ``from_file``
+            # does not raise on it, and re-serializing the parsed
+            # remnant would drop the damaged (but hand-recoverable)
+            # frontmatter text. It restores to root.
+            if note.frontmatter_status != "corrupted":
+                note.trashed_from = original_folder
+                atomic_write_text(path, note.to_markdown())
         except Exception:  # noqa: S110
-            # If the note's frontmatter is malformed we still trash
-            # it — restore will fall back to root. Not great, but
-            # better than blocking the delete on a corrupt file.
+            # Unreadable file (I/O, encoding) — still trash it as-is;
+            # restore will fall back to root. Not great, but better
+            # than blocking the delete.
             pass
         self.trash_dir.mkdir(parents=True, exist_ok=True)
-        target = self.trash_dir / path.name
-        if target.exists():
-            target = self.trash_dir / f"{path.stem}-{now_iso().replace(':', '-')}.md"
+        target = self._unique_trash_target(path.name)
         path.rename(target)
         # Emit. note_id is the file stem (filename = "<id>.md").
         # Title may be missing if frontmatter parse failed above —
@@ -654,6 +704,27 @@ class Vault:
         )
         return target
 
+    def _unique_trash_target(self, name: str) -> Path:
+        """Pick a non-existing path under ``.trash/`` for ``name``.
+
+        The timestamp suffix only has second resolution and POSIX
+        ``rename`` silently replaces an existing target, so keep probing
+        (``-<ts>``, then ``-<ts>-N``) until the name is actually free.
+        """
+        target = self.trash_dir / name
+        if not target.exists():
+            return target
+        stem = Path(name).stem
+        suffix = Path(name).suffix
+        ts = now_iso().replace(":", "-")
+        counter = 0
+        while True:
+            unique = f"{stem}-{ts}{suffix}" if counter == 0 else f"{stem}-{ts}-{counter}{suffix}"
+            candidate = self.trash_dir / unique
+            if not candidate.exists():
+                return candidate
+            counter += 1
+
     def restore_note(self, trashed_path: Path) -> Path:
         """Move a trashed Note back to `notes/`. Returns the final path.
 
@@ -667,12 +738,18 @@ class Vault:
             raise FileNotFoundError(str(trashed_path))
         # Read + decide target folder.
         target_dir = self.notes_dir
+        note: Note | None
         try:
             note = Note.from_file(trashed_path)
-            folder = note.trashed_from or ""
-            if folder and self._safe_relative_path(folder):
-                target_dir = self.notes_dir / folder
-            note.trashed_from = None
+            # Corrupted notes move byte-for-byte (see trash_note) and
+            # restore to root.
+            if note.frontmatter_status == "corrupted":
+                note = None
+            else:
+                folder = note.trashed_from or ""
+                if folder and self._safe_relative_path(folder):
+                    target_dir = self.notes_dir / folder
+                note.trashed_from = None
         except Exception:
             note = None
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -682,7 +759,7 @@ class Vault:
         # If we successfully parsed the note, write the cleaned-up
         # frontmatter; otherwise just move the bytes.
         if note is not None:
-            target.write_text(note.to_markdown(), encoding="utf-8")
+            atomic_write_text(target, note.to_markdown())
             trashed_path.unlink()
         else:
             trashed_path.rename(target)

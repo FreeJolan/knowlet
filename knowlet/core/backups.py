@@ -27,6 +27,7 @@ about history should keep their vault in their own git repo.
 
 from __future__ import annotations
 
+import glob
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,6 +103,12 @@ class BackupStore:
             ext = current.suffix or ""
             ts = _ts_for_filename()
             dest = entity_dir / f"{entity_id}.{ts}{ext}"
+            # Two overwrites inside one millisecond would otherwise
+            # replace the first backup; ``-N`` still sorts after ``ts``.
+            n = 0
+            while dest.exists():
+                n += 1
+                dest = entity_dir / f"{entity_id}.{ts}-{n}{ext}"
             # ``copy2`` preserves mtime — useful for debugging /
             # for power users who eyeball the backups directly.
             shutil.copy2(current, dest)
@@ -172,7 +179,31 @@ class BackupStore:
         return out
 
     def _list_for(self, entity_type: str, entity_id: str) -> list[BackupEntry]:
-        return [e for e in self.list_backups(entity_type=entity_type, entity_id=entity_id)]
+        """Newest-first backups of one id. Runs on every note save, so
+        it globs ``<id>.*`` instead of parsing + sorting every note's
+        backups (``list_backups`` would make each save O(notes))."""
+        tdir = self._root / entity_type
+        if not tdir.is_dir():
+            return []
+        out: list[BackupEntry] = []
+        for f in tdir.glob(f"{glob.escape(entity_id)}.*"):
+            if not f.is_file():
+                continue
+            parsed = _parse_backup_filename(f.name)
+            # The prefix glob also matches ids that merely start with
+            # ``<id>.``; keep exact matches only.
+            if parsed is None or parsed[0] != entity_id:
+                continue
+            out.append(
+                BackupEntry(
+                    path=f,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    timestamp=parsed[1],
+                )
+            )
+        out.sort(key=lambda e: e.timestamp, reverse=True)
+        return out
 
     # ----------------------------------------------------- recovery
 
