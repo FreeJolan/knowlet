@@ -18,7 +18,7 @@ from typing import Any
 from knowlet.chat.prompts import SEDIMENT_PROMPT
 from knowlet.config import KnowletConfig
 from knowlet.core.index import Index
-from knowlet.core.llm import LLMClient
+from knowlet.core.llm import LLMClient, max_tokens_for_full_text
 from knowlet.core.note import Note, new_id
 from knowlet.core.vault import Vault
 
@@ -51,7 +51,13 @@ def draft_from_conversation(
         "Now output the JSON object. Output **only** the JSON, nothing else."
     )
     messages = [{"role": "user", "content": user_msg}]
-    resp = llm.chat(messages, tools=None, temperature=0.2)
+    # The JSON reply embeds the full note body distilled from the conversation.
+    resp = llm.chat(
+        messages,
+        tools=None,
+        temperature=0.2,
+        max_tokens=max_tokens_for_full_text(llm, convo_text),
+    )
     raw = (resp.content or "").strip()
     if not raw:
         raise RuntimeError("LLM returned empty content for sediment")

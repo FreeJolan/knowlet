@@ -43,7 +43,8 @@ Knowledge mining (RSS / URL → AI-extracted drafts → user review → Notes):
 - get_draft(draft_id): a draft's full content.
 - approve_draft(draft_id): promote a draft to a Note (irreversible without
   manual cleanup; confirm with the user first).
-- reject_draft(draft_id): delete a draft (irreversible; confirm first).
+- reject_draft(draft_id): move a draft out of the queue into the drafts
+  archive (recoverable; confirm first).
 - propose_current_draft_edit(instruction): when the conversation is anchored
   to a Draft, generate a pending diff for that Draft. Does not change the
   draft body until accepted.

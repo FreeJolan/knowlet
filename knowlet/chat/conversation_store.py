@@ -31,6 +31,10 @@ from typing import Any
 
 from ulid import ULID
 
+from knowlet.chat.log import move_aside
+
+TRASH_DIRNAME = ".trash"
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -180,11 +184,13 @@ class ConversationStore:
         return conv
 
     def delete(self, conv_id: str) -> bool:
+        """Remove a conversation from the store by moving it to
+        ``<root>/.trash/`` (recoverable by hand; never unlinked)."""
         p = self.root / f"{conv_id}.json"
         if not p.exists():
             return False
         try:
-            p.unlink()
+            move_aside(p, self.root / TRASH_DIRNAME)
             return True
         except OSError:
             return False

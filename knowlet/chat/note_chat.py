@@ -21,7 +21,9 @@ import json
 from dataclasses import dataclass, replace
 from typing import Any
 
+from knowlet.chat.intent import is_leading_command
 from knowlet.chat.session import ChatSession
+from knowlet.core.llm import max_tokens_for_full_text
 from knowlet.core.note import Note
 
 # The AI infers its tone from the note's NATURE — there is no
@@ -131,30 +133,20 @@ def wants_current_note_edit_proposal(user_text: str) -> bool:
     return "diff" in text and any(marker in text for marker in _REVIEWABLE_PROPOSAL_MARKERS)
 
 
+_APPLY_VERBS = ("应用", "接受", "确认", "同意", "apply", "accept", "confirm")
+
+
 def wants_current_note_edit_apply(user_text: str) -> bool:
     """True only for explicit requests to apply an already-visible diff.
 
     The proposal router is broad ("帮我改写"). This one is intentionally
-    narrower: applying writes to the vault, so ambiguous edit language must
-    stay in proposal/review mode.
+    narrower: applying writes to the vault, so the message must be a
+    sentence-initial command (see :mod:`knowlet.chat.intent`) — questions,
+    negations ("先不要应用修改") and compound requests go to the model.
     """
-    text = user_text.strip().lower()
-    if not text:
-        return False
-    if any(marker in text for marker in _APPLY_INTENT_MARKERS):
+    if is_leading_command(user_text, _APPLY_INTENT_MARKERS):
         return True
-    return "diff" in text and any(
-        marker in text
-        for marker in (
-            "应用",
-            "接受",
-            "确认",
-            "同意",
-            "apply",
-            "accept",
-            "confirm",
-        )
-    )
+    return "diff" in user_text.lower() and is_leading_command(user_text, _APPLY_VERBS)
 
 
 def build_note_chat_session(
@@ -271,7 +263,9 @@ def propose_note_edit(*, llm: Any, note: Note, instruction: str) -> ProposedEdit
             ),
         },
     ]
-    resp = llm.chat(messages)
+    # The reply carries the whole revised body as JSON; a truncated reply
+    # is unparseable and would surface as "no applicable change".
+    resp = llm.chat(messages, max_tokens=max_tokens_for_full_text(llm, note.body))
     new_body = _extract_new_body(getattr(resp, "content", "") or "")
     if new_body is None:
         return ProposedEdit(
@@ -311,7 +305,7 @@ def propose_draft_internalization(*, llm: Any, note: Note, instruction: str) -> 
             ),
         },
     ]
-    resp = llm.chat(messages)
+    resp = llm.chat(messages, max_tokens=max_tokens_for_full_text(llm, note.body))
     new_body = _extract_new_body(getattr(resp, "content", "") or "")
     if new_body is None:
         return ProposedEdit(

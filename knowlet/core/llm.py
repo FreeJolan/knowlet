@@ -21,6 +21,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
 from openai import BadRequestError, OpenAI
 
 from knowlet.config import LLMConfig
@@ -67,11 +68,60 @@ class ResponsesMessage:
 # with every release, we learn from a 400 once and cache the result per model id.
 _no_temp_cache: set[str] = set()
 
+# Wording of "the value is out of range" 400s. Those are a config error the
+# user must see, not proof that the model ignores temperature.
+_TEMP_VALUE_ERROR_MARKERS = (
+    "between",
+    "maximum",
+    "minimum",
+    "less than",
+    "greater than",
+    "<=",
+    ">=",
+    "out of range",
+    "expected a value",
+)
+
+# The SDK default is 600s with 2 retries, so a proxy that accepts the
+# connection and never answers stalls a chat turn for up to half an hour.
+# For streams, `read` bounds the gap between chunks.
+_CONNECT_TIMEOUT_S = 10.0
+_STREAM_READ_TIMEOUT_S = 120.0
+_CLIENT_TIMEOUT = httpx.Timeout(_STREAM_READ_TIMEOUT_S, connect=_CONNECT_TIMEOUT_S)
+# A non-streamed reply arrives in one piece once generation finishes, so its
+# read timeout has to cover a whole long generation (full-body JSON edits).
+_NON_STREAM_TIMEOUT = httpx.Timeout(300.0, connect=_CONNECT_TIMEOUT_S)
+_MAX_RETRIES = 1
+
+# Output budget for calls whose reply re-emits a whole text (e.g.
+# {"new_body": "<full note>"}). Responses' max_output_tokens also counts
+# reasoning tokens on reasoning models, hence the generous fixed headroom.
+_FULL_TEXT_OUTPUT_HEADROOM = 2048
+_FULL_TEXT_OUTPUT_CEILING = 32768
+
 
 def _is_temp_rejection(exc: BadRequestError) -> bool:
-    """Return True iff the BadRequestError clearly complains about temperature."""
+    """True iff the 400 says the model does not accept ``temperature`` at
+    all (as opposed to rejecting the configured value as out of range)."""
     msg = str(exc).lower()
-    return "temperature" in msg
+    if "temperature" not in msg:
+        return False
+    return not any(marker in msg for marker in _TEMP_VALUE_ERROR_MARKERS)
+
+
+def max_tokens_for_full_text(llm: Any, source_text: str) -> int:
+    """Output-token budget for a reply that must contain ``source_text``
+    (or a revision of it) in full.
+
+    One token per character over-estimates Latin text and roughly matches
+    CJK; x1.5 covers JSON escaping and edits that grow the text. Never
+    below the configured ``max_tokens``. Asking past a model's own limit
+    is safe: ``_create_response`` retries without max_output_tokens.
+    """
+    cfg = getattr(llm, "cfg", None)
+    floor = int(getattr(cfg, "max_tokens", 0) or 0)
+    estimate = int(len(source_text) * 1.5) + _FULL_TEXT_OUTPUT_HEADROOM
+    return max(floor, min(estimate, _FULL_TEXT_OUTPUT_CEILING))
 
 
 class LLMClient:
@@ -82,16 +132,30 @@ class LLMClient:
     ):
         self.cfg = cfg
         self._client: OpenAI | None = None
+        # (base_url, api_key) the cached client was built with. Settings
+        # changes mutate ``cfg`` in place, so _ensure rebuilds on mismatch.
+        # None means the client was injected from outside and is kept as is.
+        self._client_key: tuple[str, str] | None = None
         # Optional. When set, every chat() / chat_stream() call emits
         # an ``ai.call`` audit event. None = no audit (test harnesses,
         # one-off REPL calls, knowlet web before runtime init).
         self.audit_store = audit_store
 
     def _ensure(self) -> OpenAI:
-        if self._client is None:
+        key = (self.cfg.base_url, self.cfg.api_key)
+        stale = self._client_key is not None and self._client_key != key
+        if self._client is None or stale:
             if not self.cfg.api_key:
                 raise RuntimeError("LLM api_key is empty. Run `knowlet config init` to configure.")
-            self._client = OpenAI(base_url=self.cfg.base_url, api_key=self.cfg.api_key)
+            # The replaced client is not closed: another thread may still be
+            # mid-request on it. It is released once unreferenced.
+            self._client = OpenAI(
+                base_url=self.cfg.base_url,
+                api_key=self.cfg.api_key,
+                timeout=_CLIENT_TIMEOUT,
+                max_retries=_MAX_RETRIES,
+            )
+            self._client_key = key
         return self._client
 
     # ----------------------------------------------- audit helpers
@@ -233,7 +297,7 @@ class LLMClient:
             kwargs["tool_choice"] = "auto"
 
         content_buf: list[str] = []
-        tool_calls_count = 0
+        emitted_call_ids: set[str] = set()
         completed_response: Any = None
 
         started = time.monotonic()
@@ -255,8 +319,8 @@ class LLMClient:
                     yield ReplyChunkEvent(text=text)
                 elif event_type == "response.output_item.done":
                     tc = response_tool_call_from_item(data.get("item"))
-                    if tc is not None:
-                        tool_calls_count += 1
+                    if tc is not None and tc.id not in emitted_call_ids:
+                        emitted_call_ids.add(tc.id)
                         yield ToolCallEvent(id=tc.id, name=tc.name, arguments=tc.arguments)
                 elif event_type == "response.completed":
                     completed_response = data.get("response")
@@ -266,6 +330,12 @@ class LLMClient:
                 response_text = response_output_text(completed_response)
                 if response_text:
                     final_text = response_text
+                # Some compatible proxies skip per-item events and only
+                # deliver the full output in response.completed.
+                for tc in response_tool_calls(completed_response):
+                    if tc.id not in emitted_call_ids:
+                        emitted_call_ids.add(tc.id)
+                        yield ToolCallEvent(id=tc.id, name=tc.name, arguments=tc.arguments)
             yield ReplyDoneEvent(final_text=final_text)
         except Exception as exc:
             error_repr = repr(exc)[:500]
@@ -276,7 +346,7 @@ class LLMClient:
                 messages=messages,
                 output_text=final_text,
                 latency_ms=int((time.monotonic() - started) * 1000),
-                tool_calls_count=tool_calls_count,
+                tool_calls_count=len(emitted_call_ids),
                 stream=True,
                 error=error_repr,
             )
@@ -343,6 +413,8 @@ class LLMClient:
         responses_api = getattr(client, "responses", None)
         if responses_api is None:
             raise RuntimeError("OpenAI SDK does not expose responses API")
+        if not kwargs.get("stream"):
+            kwargs = {**kwargs, "timeout": _NON_STREAM_TIMEOUT}
         try:
             return responses_api.create(**kwargs)
         except BadRequestError as exc:
@@ -371,15 +443,33 @@ def _to_plain(obj: Any) -> Any:
 
 
 def responses_input_from_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert Chat Completions-style history into Responses input items."""
+    """Convert Chat Completions-style history into Responses input items.
+
+    A function_call without its function_call_output (or the reverse) makes
+    the Responses API reject the whole request, and an interrupted turn can
+    persist exactly that into a saved conversation. Unpaired items are
+    dropped here so such a history stays usable.
+    """
+    call_ids: set[str] = set()
+    output_ids: set[str] = set()
+    for message in messages:
+        if message.get("role") == "tool":
+            output_ids.add(str(message.get("tool_call_id") or ""))
+        for tool_call in message.get("tool_calls") or []:
+            if isinstance(tool_call, dict):
+                call_ids.add(str(tool_call.get("id") or ""))
+
     out: list[dict[str, Any]] = []
     for message in messages:
         role = message.get("role")
         if role == "tool":
+            call_id = str(message.get("tool_call_id") or "")
+            if call_id not in call_ids:
+                continue
             out.append(
                 {
                     "type": "function_call_output",
-                    "call_id": str(message.get("tool_call_id") or ""),
+                    "call_id": call_id,
                     "output": str(message.get("content") or ""),
                 }
             )
@@ -397,7 +487,7 @@ def responses_input_from_messages(messages: list[dict[str, Any]]) -> list[dict[s
                 )
             for tool_call in message.get("tool_calls") or []:
                 converted = _responses_function_call_from_chat_tool_call(tool_call)
-                if converted is not None:
+                if converted is not None and converted["call_id"] in output_ids:
                     out.append(converted)
     return out
 
@@ -547,7 +637,9 @@ def messages_with_tool_results(
             {
                 "role": "tool",
                 "tool_call_id": tc_id,
-                "content": json.dumps(payload, ensure_ascii=False),
+                # default=str: a tool returning a non-JSON value must not
+                # abort the turn after its assistant tool call is recorded.
+                "content": json.dumps(payload, ensure_ascii=False, default=str),
             }
         )
     return out

@@ -29,6 +29,14 @@ from knowlet.core.llm import (
 )
 from knowlet.core.tools._registry import Registry, ToolContext
 
+# Recorded as the output of a tool call that never ran because the turn was
+# interrupted (client disconnect, Ctrl+C, error), so the history never holds
+# an assistant tool call without a matching tool result.
+INTERRUPTED_TOOL_PAYLOAD: dict[str, Any] = {
+    "error": "tool call interrupted before it ran",
+    "suggestion": "the previous turn was cut off; ask the user whether to retry",
+}
+
 
 @dataclass
 class TurnTrace:
@@ -66,24 +74,42 @@ class ChatSession:
 
         for _ in range(self.max_tool_iters):
             assistant = self.llm.chat(self.history, tools=tools)
-            self.history = messages_with_assistant(self.history, assistant)
 
             if not assistant.tool_calls:
+                self.history = messages_with_assistant(self.history, assistant)
                 trace.final = assistant
                 return assistant.content, trace
 
             results: list[tuple[str, dict[str, Any]]] = []
-            for tc in assistant.tool_calls:
-                payload = self.registry.dispatch(tc.name, tc.arguments, self.ctx)
-                trace.tool_calls.append((tc, payload))
-                if on_tool_call is not None:
-                    on_tool_call(tc, payload)
-                results.append((tc.id, payload))
-
-            self.history = messages_with_tool_results(self.history, results)
+            try:
+                for tc in assistant.tool_calls:
+                    payload = self.registry.dispatch(tc.name, tc.arguments, self.ctx)
+                    results.append((tc.id, payload))
+                    trace.tool_calls.append((tc, payload))
+                    if on_tool_call is not None:
+                        on_tool_call(tc, payload)
+            finally:
+                self._commit_tool_round(assistant, results)
 
         trace.final = AssistantMessage(content="(tool loop iteration limit reached)")
         return trace.final.content, trace
+
+    def _commit_tool_round(
+        self,
+        assistant: AssistantMessage,
+        results: list[tuple[str, dict[str, Any]]],
+    ) -> None:
+        """Append an assistant tool-call message together with one result
+        per call. Calls that never ran get INTERRUPTED_TOOL_PAYLOAD. Runs
+        from ``finally`` so a disconnect / Ctrl+C mid-round cannot persist
+        a tool call without its output (the API rejects such history)."""
+        done = {tc_id for tc_id, _ in results}
+        complete = list(results) + [
+            (tc.id, INTERRUPTED_TOOL_PAYLOAD) for tc in assistant.tool_calls if tc.id not in done
+        ]
+        self.history = messages_with_tool_results(
+            messages_with_assistant(self.history, assistant), complete
+        )
 
     def user_turn_stream(self, user_text: str) -> Iterator[ChatEvent]:
         """Streaming variant of `user_turn`. Yields structured events that
@@ -117,18 +143,22 @@ class ChatSession:
                     elif isinstance(ev, ReplyDoneEvent):
                         final_text = "".join(content_buf)
                         assistant_msg = AssistantMessage(content=final_text, tool_calls=tool_calls)
-                        self.history = messages_with_assistant(self.history, assistant_msg)
 
                         if not tool_calls:
+                            self.history = messages_with_assistant(self.history, assistant_msg)
                             yield TurnDoneEvent(final_text=final_text)
                             return
 
                         results: list[tuple[str, dict[str, Any]]] = []
-                        for tc in tool_calls:
-                            payload = self.registry.dispatch(tc.name, tc.arguments, self.ctx)
-                            yield ToolResultEvent(id=tc.id, name=tc.name, payload=payload)
-                            results.append((tc.id, payload))
-                        self.history = messages_with_tool_results(self.history, results)
+                        try:
+                            for tc in tool_calls:
+                                payload = self.registry.dispatch(tc.name, tc.arguments, self.ctx)
+                                # Record before yielding: the consumer may
+                                # close the generator at this yield.
+                                results.append((tc.id, payload))
+                                yield ToolResultEvent(id=tc.id, name=tc.name, payload=payload)
+                        finally:
+                            self._commit_tool_round(assistant_msg, results)
             except Exception as exc:
                 yield ErrorEvent(message=f"LLM stream error: {exc}")
                 return

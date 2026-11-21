@@ -1,7 +1,8 @@
 """Conversation log persistence (ADR-0006: 30-day raw payload retention).
 
 One file per session at `<vault>/.knowlet/conversations/<ulid>.json`. Pruning
-runs on chat startup so the history doesn't grow unboundedly.
+runs on chat startup and moves aged sessions into `conversations/.archive/`
+so the live list stays bounded without destroying anything.
 """
 
 from __future__ import annotations
@@ -45,17 +46,39 @@ class ConversationLog:
         return target
 
 
+ARCHIVE_DIRNAME = ".archive"
+
+
+def move_aside(path: Path, dest_dir: Path) -> Path:
+    """Move ``path`` into ``dest_dir`` (created on demand) without
+    overwriting an earlier file of the same name: a collision gets a UTC
+    timestamp suffix. Returns the new path."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    target = dest_dir / path.name
+    if target.exists():
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        target = dest_dir / f"{path.stem}-{stamp}{path.suffix}"
+    path.replace(target)
+    return target
+
+
 def prune_old(dir: Path, days: int = 30) -> int:
-    """Delete conversation files older than `days`. Returns count deleted."""
+    """Move conversation files not touched for `days` into `<dir>/.archive/`.
+
+    The same directory holds the user's persistent, renamable
+    conversations, so ageing out must stay recoverable (it is never a
+    delete). Archived files drop out of the live listing, which only scans
+    the top level. Returns the count archived.
+    """
     if not dir.exists():
         return 0
     cutoff = time.time() - days * 86400
-    deleted = 0
+    archived = 0
     for p in dir.glob("*.json"):
         try:
             if p.stat().st_mtime < cutoff:
-                p.unlink()
-                deleted += 1
+                move_aside(p, dir / ARCHIVE_DIRNAME)
+                archived += 1
         except OSError:
             continue
-    return deleted
+    return archived

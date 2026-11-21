@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from knowlet.chat.intent import is_leading_command
 from knowlet.core.digest_items import RawInfo
 from knowlet.core.drafts import Draft
 
@@ -95,70 +96,77 @@ def wants_current_draft_edit_proposal(text: str) -> bool:
     return any(needle in lowered for needle in needles)
 
 
+# The routers below run write tools without asking the model, so they only
+# fire for sentence-initial commands; questions / negations / compound
+# requests fall through to the model (see knowlet.chat.intent).
+
+_ACCEPT_ALL_PHRASES = (
+    "accept all",
+    "apply all",
+    "apply the changes",
+    "接受所有",
+    "接受全部",
+    "应用所有",
+    "应用全部",
+    "全部接受",
+    "全部应用",
+    "应用修改",
+    "接受修改",
+)
+
+_REJECT_ALL_PHRASES = (
+    "reject all",
+    "discard",
+    "revert",
+    "withdraw",
+    "拒绝所有",
+    "全部撤回",
+    "撤回",
+    "放弃修改",
+)
+
+_COMMIT_PHRASES = (
+    "commit",
+    "save as note",
+    "save as a note",
+    "save it as a note",
+    "add to knowledge base",
+    "add to the knowledge base",
+    "add it to the knowledge base",
+    "add this to the knowledge base",
+    "落库",
+    "入库",
+    "保存为正式笔记",
+    "保存为笔记",
+    "存为正式笔记",
+    "存为笔记",
+    "转为正式笔记",
+    "转成正式笔记",
+    "纳入知识库",
+)
+
+_DISCARD_RAW_INFO_PHRASES = (
+    "discard this item",
+    "discard this raw info",
+    "drop this item",
+    "remove this item from review",
+    "舍弃这条",
+    "丢弃这条",
+    "放弃这条资讯",
+)
+
+
 def wants_accept_all_draft_diff(text: str) -> bool:
-    lowered = text.lower()
-    return any(
-        needle in lowered
-        for needle in (
-            "accept all",
-            "apply all",
-            "apply the changes",
-            "接受所有",
-            "应用所有",
-            "全部接受",
-            "应用修改",
-            "接受修改",
-        )
-    )
+    return is_leading_command(text, _ACCEPT_ALL_PHRASES)
 
 
 def wants_reject_all_draft_diff(text: str) -> bool:
-    lowered = text.lower()
-    return any(
-        needle in lowered
-        for needle in (
-            "reject all",
-            "discard",
-            "revert",
-            "withdraw",
-            "拒绝所有",
-            "全部撤回",
-            "撤回",
-            "放弃修改",
-            "不要改",
-        )
-    )
+    return is_leading_command(text, _REJECT_ALL_PHRASES)
 
 
 def wants_commit_note_draft(text: str) -> bool:
-    lowered = text.lower()
-    return any(
-        needle in lowered
-        for needle in (
-            "commit",
-            "save as note",
-            "knowledge base",
-            "落库",
-            "入库",
-            "正式笔记",
-            "保存为笔记",
-            "纳入",
-        )
-    )
+    return is_leading_command(text, _COMMIT_PHRASES)
 
 
 def wants_discard_raw_info(text: str) -> bool:
-    lowered = text.lower()
-    return any(
-        needle in lowered
-        for needle in (
-            "discard this item",
-            "discard this raw info",
-            "drop this item",
-            "remove this item from review",
-            "舍弃这条",
-            "丢弃这条",
-            "不要这条",
-            "放弃这条资讯",
-        )
-    )
+    return is_leading_command(text, _DISCARD_RAW_INFO_PHRASES)

@@ -12,9 +12,13 @@ LLM can react to (typically: "stop and answer with what you have").
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import time
 from typing import Any
+
+from openai import APIConnectionError
 
 from knowlet.config import LLMConfig
 from knowlet.core.llm import LLMClient, response_has_output_type
@@ -28,6 +32,19 @@ from knowlet.core.web_search import (
 )
 
 _PER_TURN_KEY = "web_search"
+
+_HOSTED_TOOL_VARIANTS: list[list[dict[str, Any]]] = [
+    [{"type": "web_search", "external_web_access": True}],
+    [{"type": "web_search"}],
+    [{"type": "web_search_preview"}],
+]
+# How long an endpoint that failed every hosted variant is skipped before
+# being probed again. Each probe costs up to len(_HOSTED_TOOL_VARIANTS)
+# LLM round-trips, which would otherwise repeat on every tool call.
+_HOSTED_FAILURE_TTL_S = 600.0
+# (base_url, api-key hash, model) -> (monotonic time, index of the working
+# variant, or None when every variant failed).
+_HOSTED_SEARCH_STATUS: dict[tuple[str, str, str], tuple[float, int | None]] = {}
 
 
 def _handler(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
@@ -51,10 +68,15 @@ def _handler(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
             ),
         }
 
+    ws_cfg = ctx.config.web_search
     hosted_error: str | None = None
-    if not (ctx.config.web_search.provider or "").strip():
+    # Auto mode: a search provider the user configured a key / URL for wins
+    # (pick_provider order). Hosted search only replaces the zero-setup DDG
+    # fallback.
+    keyed_provider = bool(ws_cfg.brave_api_key or ws_cfg.tavily_api_key or ws_cfg.searx_url)
+    if not (ws_cfg.provider or "").strip() and not keyed_provider:
         try:
-            results = _hosted_web_search(ctx.config.llm, query, top_k=top_k)
+            results = _hosted_web_search(_hosted_client(ctx), query, top_k=top_k)
             ctx.per_turn[_PER_TURN_KEY] = used + 1
             return _payload(
                 provider="hosted_web_search",
@@ -129,8 +151,21 @@ def _payload(
     }
 
 
+def _hosted_client(ctx: ToolContext) -> LLMClient:
+    """The session's LLMClient when there is one (shares its HTTP client and
+    its audit store, so hosted searches show up as ``ai.call`` events)."""
+    if isinstance(ctx.llm, LLMClient):
+        return ctx.llm
+    return LLMClient(ctx.config.llm)
+
+
+def _hosted_status_key(cfg: LLMConfig) -> tuple[str, str, str]:
+    key_hash = hashlib.sha256((cfg.api_key or "").encode("utf-8")).hexdigest()[:16]
+    return ((cfg.base_url or "").rstrip("/"), key_hash, cfg.model)
+
+
 def _hosted_web_search(
-    llm_cfg: LLMConfig,
+    client: LLMClient,
     query: str,
     *,
     top_k: int,
@@ -141,8 +176,20 @@ def _hosted_web_search(
     It deliberately returns the same SearchResult shape as local providers
     so the rest of the tool loop stays unchanged.
     """
+    llm_cfg = client.cfg
     if not llm_cfg.api_key:
         raise WebSearchUnconfigured("LLM api_key is empty")
+
+    status_key = _hosted_status_key(llm_cfg)
+    order = list(range(len(_HOSTED_TOOL_VARIANTS)))
+    cached = _HOSTED_SEARCH_STATUS.get(status_key)
+    if cached is not None:
+        checked_at, working = cached
+        if working is None and time.monotonic() - checked_at < _HOSTED_FAILURE_TTL_S:
+            raise WebSearchError("hosted web_search is not available on this endpoint")
+        if working is not None:
+            order.remove(working)
+            order.insert(0, working)
 
     prompt = (
         "Use web search to find relevant pages for this query.\n"
@@ -152,29 +199,31 @@ def _hosted_web_search(
         '{"results":[{"title":"...","url":"https://...","snippet":"..."}]}\n'
         "No prose outside JSON."
     )
-    client = LLMClient(llm_cfg)
     last_error: Exception | None = None
-    tool_variants: list[list[dict[str, Any]]] = [
-        [{"type": "web_search", "external_web_access": True}],
-        [{"type": "web_search"}],
-        [{"type": "web_search_preview"}],
-    ]
-    for tools in tool_variants:
+    for variant in order:
         try:
             resp = client.responses(
                 prompt,
-                tools=tools,
+                tools=_HOSTED_TOOL_VARIANTS[variant],
                 max_output_tokens=900,
                 role="web_search_tool",
             )
-            if not response_has_output_type(resp.raw, "web_search_call"):
-                raise WebSearchError("Responses returned no web_search_call")
-            results = _parse_hosted_results(resp.content, top_k=top_k)
-            if results:
-                return results
-            raise WebSearchError("hosted search returned no parseable results")
+        except APIConnectionError as exc:
+            # Unreachable / timed out: every other variant would hit the same wall.
+            last_error = exc
+            break
         except Exception as exc:
             last_error = exc
+            continue
+        if not response_has_output_type(resp.raw, "web_search_call"):
+            last_error = WebSearchError("Responses returned no web_search_call")
+            continue
+        _HOSTED_SEARCH_STATUS[status_key] = (time.monotonic(), variant)
+        results = _parse_hosted_results(resp.content, top_k=top_k)
+        if results:
+            return results
+        raise WebSearchError("hosted search returned no parseable results")
+    _HOSTED_SEARCH_STATUS[status_key] = (time.monotonic(), None)
     assert last_error is not None
     raise WebSearchError(f"hosted web_search failed: {last_error}") from last_error
 
