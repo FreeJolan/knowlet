@@ -56,6 +56,13 @@ class PullStateMissingError(RuntimeError):
     us to pull a note we've never synced — probably a logic bug."""
 
 
+class PullLocalChangedError(RuntimeError):
+    """The local file or its sync_state row changed while the remote
+    bytes were downloading (typically an autosave). Nothing was
+    written; the note now has local edits and a moved remote, i.e. a
+    real conflict the caller should surface instead of retrying."""
+
+
 def pull_note_to_local(
     *,
     service: Any,
@@ -69,7 +76,11 @@ def pull_note_to_local(
     Caller contract:
       - The local file is "clean" relative to last_synced_at — no
         unsaved local edits to lose. Verify upstream via
-        ``status.py`` before invoking; we do not re-check here.
+        ``status.py`` before invoking. Because the download takes
+        network round trips, this function re-checks that the local
+        bytes and the sync_state row are unchanged right before the
+        swap and raises ``PullLocalChangedError`` (writing nothing)
+        if a save landed in that window.
       - sync_state has a row for ("note", note_id) with a non-null
         ``drive_file_id``. If absent, ``PullStateMissingError``.
 
@@ -88,6 +99,7 @@ def pull_note_to_local(
     record = state.get_file_state("note", note_id)
     if record is None or not record.drive_file_id:
         raise PullStateMissingError(f"cannot pull note {note_id}: no Drive id in sync_state")
+    local_before = _read_bytes_or_none(local_path)
 
     # Fetch metadata first so we know the post-pull revision; do
     # the bytes download next. Two round trips, but they're cheap
@@ -95,6 +107,18 @@ def pull_note_to_local(
     # check before we go to the trouble of downloading.
     meta = get_file_metadata(service, record.drive_file_id)
     body = download_file(service, record.drive_file_id)
+
+    current = state.get_file_state("note", note_id)
+    if (
+        current is None
+        or current.dirty
+        or current.drive_file_id != record.drive_file_id
+        or current.last_known_etag != record.last_known_etag
+        or _read_bytes_or_none(local_path) != local_before
+    ):
+        raise PullLocalChangedError(
+            f"note {note_id} changed locally while pulling; remote bytes not applied"
+        )
 
     local_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = local_path.with_suffix(local_path.suffix + ".tmp")
@@ -112,6 +136,10 @@ def pull_note_to_local(
     with suppress(OSError):
         os.utime(local_path, (synced_epoch, synced_epoch))
 
+    # A save that lands between the swap and here would otherwise be
+    # marked clean (and its mtime just got pinned to the sync time),
+    # so it would never be pushed. Keep it queued instead.
+    changed_after_swap = _read_bytes_or_none(local_path) != body
     state.upsert_file_state(
         FileState(
             entity_type="note",
@@ -119,7 +147,7 @@ def pull_note_to_local(
             drive_file_id=record.drive_file_id,
             last_known_etag=meta.head_revision_id,
             last_synced_at=synced_iso,
-            dirty=False,
+            dirty=changed_after_swap,
         )
     )
     return PullResult(
@@ -129,6 +157,13 @@ def pull_note_to_local(
         new_revision=meta.head_revision_id,
         new_bytes=body,
     )
+
+
+def _read_bytes_or_none(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        return None
 
 
 def _iso_to_epoch(iso: str) -> float:

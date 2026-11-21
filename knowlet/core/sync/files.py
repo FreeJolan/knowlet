@@ -211,25 +211,37 @@ class DriveFileBrief:
     name: str | None
 
 
+class DriveListingIncompleteError(RuntimeError):
+    """The appData listing could not be read to the end (malformed
+    page, repeating page token, or the page safety cap was hit).
+
+    A partial listing must never be treated as authoritative: callers
+    infer "deleted remotely" from absence, so a truncated result would
+    read as a mass remote deletion."""
+
+
+# Safety valve against a service that never stops paginating. At
+# 1000 entries per page this is 1M files — far past any real vault, so
+# reaching it means the listing is broken, not that the vault is big.
+_MAX_LISTING_PAGES = 1000
+
+
 def list_appdata_revisions(service: Any) -> dict[str, DriveFileBrief]:
     """Slice 5.D.3.A — bulk fetch ``file_id → DriveFileBrief`` for
     every file in the appDataFolder. One paginated round-trip
     regardless of file count, so the conflict-detection path stays
     cheap as a vault grows.
 
-    Drive caps page size at 1000; few users will have >1000 synced
-    notes, so the loop usually exits after the first call. Tracked
-    files no longer present on Drive aren't in the returned dict —
-    caller treats that as a "remote was deleted/trashed" conflict
-    signal.
+    The result is complete or the call raises: transport / HTTP errors
+    propagate, and a listing that cannot be read to the last page
+    raises ``DriveListingIncompleteError``. Tracked files absent from
+    the returned dict are therefore genuinely gone (deleted/trashed)
+    on Drive.
     """
     out: dict[str, DriveFileBrief] = {}
     page_token: str | None = None
-    # Hard cap pages so a misbehaving service (or a unit-test
-    # MagicMock that truthy-loops on ``nextPageToken``) can't hang
-    # the scan. 1000 entries per page x 10 pages = 10k files,
-    # well past any single-user vault.
-    for _ in range(10):
+    seen_tokens: set[str] = set()
+    for _ in range(_MAX_LISTING_PAGES):
         kwargs: dict[str, Any] = {
             "spaces": "appDataFolder",
             "fields": "nextPageToken, files(id,name,headRevisionId)",
@@ -240,10 +252,12 @@ def list_appdata_revisions(service: Any) -> dict[str, DriveFileBrief]:
             kwargs["pageToken"] = page_token
         resp = service.files().list(**kwargs).execute()
         if not isinstance(resp, dict):
-            break
+            raise DriveListingIncompleteError(
+                f"Drive returned a malformed listing page ({type(resp).__name__})"
+            )
         files = resp.get("files", [])
         if not isinstance(files, list):
-            break
+            raise DriveListingIncompleteError("Drive listing page has no file list")
         for f in files:
             if not isinstance(f, dict):
                 continue
@@ -252,10 +266,42 @@ def list_appdata_revisions(service: Any) -> dict[str, DriveFileBrief]:
                 name=f.get("name"),
             )
         next_token = resp.get("nextPageToken")
-        if not isinstance(next_token, str) or not next_token:
-            break
+        if next_token is None or next_token == "":
+            return out
+        if not isinstance(next_token, str):
+            raise DriveListingIncompleteError("Drive listing returned a malformed page token")
+        if next_token in seen_tokens:
+            raise DriveListingIncompleteError("Drive listing repeated a page token")
+        seen_tokens.add(next_token)
         page_token = next_token
-    return out
+    raise DriveListingIncompleteError(
+        f"Drive listing still had more pages after {_MAX_LISTING_PAGES} pages"
+    )
+
+
+def find_appdata_files_by_name(service: Any, name: str) -> list[DriveFile]:
+    """Every live (non-trashed) appData file named exactly ``name``.
+
+    appData allows duplicate names, so a first push uses this to detect
+    a copy created by an earlier attempt whose response was lost."""
+    escaped = name.replace("\\", "\\\\").replace("'", "\\'")
+    resp = (
+        service.files()
+        .list(
+            spaces="appDataFolder",
+            q=f"name = '{escaped}' and trashed = false",
+            fields=f"files({_FIELDS})",
+            pageSize=100,
+        )
+        .execute()
+    )
+    if not isinstance(resp, dict) or not isinstance(resp.get("files", []), list):
+        raise DriveListingIncompleteError("Drive returned a malformed name lookup")
+    return [
+        _file_resource_to_drive_file(f)
+        for f in resp.get("files", [])
+        if isinstance(f, dict) and f.get("name") == name
+    ]
 
 
 # ----------------------------------------------------- forced overwrite
