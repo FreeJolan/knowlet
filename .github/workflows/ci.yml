@@ -40,7 +40,9 @@ jobs:
           fail_ci_if_error: false
 
   frontend:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, where Playwright 1.59 cannot
+    # install Chromium (`playwright install --with-deps` fails).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
