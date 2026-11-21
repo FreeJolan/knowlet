@@ -19,12 +19,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from knowlet.chat.intent import is_leading_command
 from knowlet.chat.session import ChatSession
 from knowlet.core.llm import max_tokens_for_full_text
 from knowlet.core.note import Note
+
+if TYPE_CHECKING:
+    from knowlet.core.drafts import Draft
 
 # The AI infers its tone from the note's NATURE — there is no
 # user-selected stance. We list a few illustrative cases (gentle for
@@ -194,6 +197,36 @@ def build_grounded_turn(note: Note, user_text: str) -> str:
         "如果界面中已经存在一个待审阅 diff,并且我明确说要应用、接受、确认、保存"
         "或落盘当前改动,你才可以调用 apply_current_note_edit 工具。不要因为我只是"
         "要求修改、优化、检查、讨论或生成提案就调用它。\n\n"
+        f"我的话:{user_text}"
+    )
+
+
+def build_draft_grounded_turn(draft: Draft, user_text: str) -> str:
+    """User-turn text for a chat anchored to a Draft (digest review).
+
+    Same contract as :func:`build_grounded_turn` — everything rides in the
+    user turn — but the tool guidance names the draft tools. A Draft is not
+    in the index, so the *current-note* tools cannot find it.
+    """
+    pending = "有" if draft.pending_diff_body is not None else "无"
+    return (
+        f"{TONE_GUIDANCE}\n\n"
+        "我们在讨论一份还没落库的笔记草稿(Draft),它还不是正式笔记:\n"
+        f"- 标题:{draft.title}\n"
+        f"- 类型:{draft.kind}\n"
+        f"- 目录:{draft.folder or '(根目录)'}\n"
+        f"- 标签:{', '.join(draft.tags) or '(无)'}\n"
+        f"- 来源:{draft.source or '(无)'}\n"
+        f"- 待审阅 diff:{pending}\n"
+        f"<anchored-draft title={draft.title!r}>\n{draft.body}\n</anchored-draft>\n\n"
+        "如果我的话是在要求你改写、修改、修正、润色、整理这份草稿,或给出 diff,"
+        "你应该调用 propose_current_draft_edit 工具生成可审阅的草稿 diff。"
+        "这个工具只记录待审阅 diff,不会改动草稿正文;不要在聊天里直接贴整篇改写正文。\n\n"
+        "只有当已经存在待审阅 diff,并且我明确说要接受/应用全部改动时,"
+        "你才可以调用 accept_all_draft_diff(只更新草稿,不会落库)。"
+        "如果我明确说要拒绝/放弃/撤回这次 diff,调用 reject_all_draft_diff。\n\n"
+        "只有当我明确要求把这份草稿落库/保存为正式笔记时,才调用 commit_note_draft。"
+        "不要因为我只是在提问、讨论或要求修改就调用它。\n\n"
         f"我的话:{user_text}"
     )
 

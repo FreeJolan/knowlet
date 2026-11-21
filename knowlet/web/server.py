@@ -4256,13 +4256,13 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
     ) -> StreamingResponse:
         """SSE stream for a draft-anchored digest discussion (Stage C3).
 
-        A digest item is still a Draft while the user is deciding. We
-        project it to Note shape only in memory, then reuse the same
-        grounded note-chat generator so "chat about this" works before
-        any write/promotion happens.
+        A digest item is still a Draft while the user is deciding. The
+        turn is grounded with the draft-specific prompt so the model uses
+        the draft tools; the current-note tools cannot see an unindexed
+        draft.
         """
         from knowlet.chat.note_chat import (
-            build_grounded_turn,
+            build_draft_grounded_turn,
             build_note_chat_session,
         )
 
@@ -4272,7 +4272,6 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"draft not found: {draft_id}",
             )
-        note = draft.to_note()
         session = build_note_chat_session(
             llm=runtime.session.llm,
             registry=runtime.session.registry,
@@ -4287,7 +4286,7 @@ def create_app(vault: Vault, config: KnowletConfig) -> FastAPI:
         )
         for m in req.history:
             session.history.append({"role": m.role, "content": m.content})
-        grounded = build_grounded_turn(note, req.text)
+        grounded = build_draft_grounded_turn(draft, req.text)
 
         def event_source() -> Iterator[str]:
             try:
