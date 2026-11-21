@@ -53,6 +53,11 @@ export function DraftsFocusMode({
   const qc = useQueryClient();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) setActionError(null);
+  }, [open]);
 
   // Esc closes — unless the edit dialog is open, in which case Esc
   // closes the dialog and the global Esc closes the panel.
@@ -78,15 +83,23 @@ export function DraftsFocusMode({
 
   const approveMut = useMutation({
     mutationFn: approveDraft,
+    onMutate: () => setActionError(null),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["drafts"] });
       void qc.invalidateQueries({ queryKey: QK.tree });
     },
+    onError: (err) => {
+      setActionError(`${t("drafts.approve")} — ${describeError(err)}`);
+    },
   });
   const rejectMut = useMutation({
     mutationFn: rejectDraft,
+    onMutate: () => setActionError(null),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["drafts"] });
+    },
+    onError: (err) => {
+      setActionError(`${t("drafts.reject")} — ${describeError(err)}`);
     },
   });
 
@@ -125,6 +138,17 @@ export function DraftsFocusMode({
           <X className="size-4" />
         </button>
       </header>
+
+      {actionError && (
+        <div
+          role="alert"
+          className="text-destructive border-b px-6 py-2 text-xs"
+          style={{ borderColor: "var(--line)" }}
+          data-testid="drafts-action-error"
+        >
+          {t("vaultPortability.errorPrefix", { detail: actionError })}
+        </div>
+      )}
 
       {showSoftLimit && (
         <div
@@ -190,6 +214,15 @@ export function DraftsFocusMode({
       )}
     </div>
   );
+}
+
+function describeError(err: unknown): string {
+  if (err && typeof err === "object") {
+    const detail = (err as { detail?: unknown }).detail;
+    if (typeof detail === "string" && detail) return detail;
+  }
+  if (err instanceof Error && err.message) return err.message;
+  return String(err);
 }
 
 function DraftRow({

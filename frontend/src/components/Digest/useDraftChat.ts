@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  appendReplyChunk,
   applyToolResult,
   chatHistoryForRequest,
   formatErrorDetail,
@@ -16,6 +17,7 @@ import {
   type ChatSSEEvent,
   type ChatStatus,
   upsertToolCall,
+  usePersistChatMessages,
 } from "@/components/Discuss";
 
 export function useDraftChat(draftId: string | null) {
@@ -44,21 +46,11 @@ export function useDraftChat(draftId: string | null) {
     setStatus("idle");
   }, [draftId]);
 
-  useEffect(() => {
-    if (!draftId) return;
-    try {
-      if (messages.length > 0) {
-        window.localStorage.setItem(
-          `knowlet.digest.discuss.${draftId}`,
-          JSON.stringify(messages),
-        );
-      } else {
-        window.localStorage.removeItem(`knowlet.digest.discuss.${draftId}`);
-      }
-    } catch {
-      /* localStorage unavailable / over quota — non-fatal */
-    }
-  }, [draftId, messages]);
+  usePersistChatMessages(
+    draftId ? `knowlet.digest.discuss.${draftId}` : null,
+    messages,
+    status,
+  );
 
   const dropEmptyAssistant = (m: ChatMessage[]): ChatMessage[] => {
     const last = m[m.length - 1];
@@ -131,16 +123,7 @@ export function useDraftChat(draftId: string | null) {
             }
             if (ev.type === "reply_chunk" && ev.text) {
               const chunk = ev.text;
-              setMessages((m) => {
-                const copy = m.slice();
-                const last = copy[copy.length - 1];
-                if (last && last.role === "assistant")
-                  copy[copy.length - 1] = {
-                    ...last,
-                    content: last.content + chunk,
-                  };
-                return copy;
-              });
+              setMessages((m) => appendReplyChunk(m, chunk));
             } else if (ev.type === "tool_call") {
               setMessages((m) => upsertToolCall(m, ev));
             } else if (ev.type === "tool_result") {

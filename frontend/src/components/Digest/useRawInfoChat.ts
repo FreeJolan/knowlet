@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  appendReplyChunk,
   applyToolResult,
   chatHistoryForRequest,
   formatErrorDetail,
@@ -8,6 +9,7 @@ import {
   type ChatSSEEvent,
   type ChatStatus,
   upsertToolCall,
+  usePersistChatMessages,
 } from "@/components/Discuss";
 
 export interface DraftEditProposal {
@@ -77,21 +79,11 @@ export function useRawInfoChat(infoId: string | null) {
     setStatus("idle");
   }, [infoId]);
 
-  useEffect(() => {
-    if (!infoId) return;
-    try {
-      if (messages.length > 0) {
-        window.localStorage.setItem(
-          `knowlet.digest.raw-info.${infoId}`,
-          JSON.stringify(messages),
-        );
-      } else {
-        window.localStorage.removeItem(`knowlet.digest.raw-info.${infoId}`);
-      }
-    } catch {
-      // localStorage unavailable / over quota; conversation still works in memory.
-    }
-  }, [infoId, messages]);
+  usePersistChatMessages(
+    infoId ? `knowlet.digest.raw-info.${infoId}` : null,
+    messages,
+    status,
+  );
 
   const dropEmptyAssistant = (m: ChatMessage[]): ChatMessage[] => {
     const last = m[m.length - 1];
@@ -164,16 +156,7 @@ export function useRawInfoChat(infoId: string | null) {
             }
             if (ev.type === "reply_chunk" && ev.text) {
               const chunk = ev.text;
-              setMessages((m) => {
-                const copy = m.slice();
-                const last = copy[copy.length - 1];
-                if (last && last.role === "assistant")
-                  copy[copy.length - 1] = {
-                    ...last,
-                    content: last.content + chunk,
-                  };
-                return copy;
-              });
+              setMessages((m) => appendReplyChunk(m, chunk));
             } else if (ev.type === "tool_call") {
               setMessages((m) => upsertToolCall(m, ev));
             } else if (ev.type === "tool_result") {

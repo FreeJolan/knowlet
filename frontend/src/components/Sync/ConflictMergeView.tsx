@@ -72,8 +72,26 @@ export function ConflictMergeView({
   const { t } = useTranslation();
   const qc = useQueryClient();
 
+  // Data-safety: the two conflicting texts must be fetched fresh every
+  // time the dialog opens. This component stays mounted with the note
+  // view (only ``open`` toggles), so a bundle cached during an earlier
+  // conflict on the same note would otherwise be served again on a
+  // later conflict — and the user would merge, then force-push,
+  // hours-old local/remote text, silently overwriting newer edits.
+  // Every open gets its own cache entry: ``openEpoch`` is bumped during
+  // the same render that flips ``open`` to true, so no render ever reads
+  // the previous open's bundle, and ``gcTime: 0`` evicts that bundle as
+  // soon as it loses its observer. Within one open the bundle stays
+  // fixed (``staleTime: Infinity``) so the hunks don't shift mid-merge.
+  const [openEpoch, setOpenEpoch] = useState(0);
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open) setOpenEpoch((n) => n + 1);
+  }
+
   const bundleQ = useQuery<ConflictBundle>({
-    queryKey: ["sync-conflict-bundle", noteId],
+    queryKey: ["sync-conflict-bundle", noteId, openEpoch],
     queryFn: () => {
       if (!noteId) throw new Error("no noteId");
       return getConflictBundle(noteId);
@@ -81,6 +99,7 @@ export function ConflictMergeView({
     enabled: !!noteId && open,
     refetchOnWindowFocus: false,
     staleTime: Infinity,
+    gcTime: 0,
   });
 
   const hunks = useMemo<LineHunk[] | { error: "too-large" }>(() => {

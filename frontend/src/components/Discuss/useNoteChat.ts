@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { CHAT_PERSIST_THROTTLE_MS, writeChatMessages } from "./chatPersistence";
 import { summarizeToolPayload } from "./ToolTrace";
 
 export type ChatRole = "user" | "assistant" | "tool";
@@ -88,11 +89,23 @@ export function formatErrorDetail(value: unknown): string {
 }
 
 export function chatHistoryForRequest(messages: ChatMessage[]): ChatMessage[] {
-  return messages.filter(
-    (m) =>
-      (m.role === "user" || m.role === "assistant") &&
-      m.content.trim() !== "",
-  );
+  const history: ChatMessage[] = [];
+  for (const m of messages) {
+    if (m.role !== "user" && m.role !== "assistant") continue;
+    if (m.content.trim() === "") continue;
+    const prev = history[history.length - 1];
+    // A turn with a tool round can leave several assistant messages
+    // (text before the call, the answer after it); they are one reply.
+    if (m.role === "assistant" && prev?.role === "assistant") {
+      history[history.length - 1] = {
+        ...prev,
+        content: `${prev.content}\n\n${m.content}`,
+      };
+    } else {
+      history.push(m);
+    }
+  }
+  return history;
 }
 
 const sessions = new Map<string, NoteChatSession>();
@@ -111,15 +124,32 @@ function loadMessages(noteId: string): ChatMessage[] {
 }
 
 function saveMessages(noteId: string, messages: ChatMessage[]) {
-  try {
-    if (messages.length > 0) {
-      window.localStorage.setItem(storageKey(noteId), JSON.stringify(messages));
-    } else {
-      window.localStorage.removeItem(storageKey(noteId));
-    }
-  } catch {
-    /* localStorage unavailable / over quota — non-fatal */
+  writeChatMessages(storageKey(noteId), messages);
+}
+
+const persistTimers = new Map<string, number>();
+
+/** Throttled while the session streams (see chatPersistence.ts); written
+ *  immediately once it settles. */
+function persistSession(noteId: string, session: NoteChatSession) {
+  if (session.status === "streaming") {
+    if (persistTimers.has(noteId)) return;
+    persistTimers.set(
+      noteId,
+      window.setTimeout(() => {
+        persistTimers.delete(noteId);
+        const current = sessions.get(noteId);
+        if (current) saveMessages(noteId, current.messages);
+      }, CHAT_PERSIST_THROTTLE_MS),
+    );
+    return;
   }
+  const timer = persistTimers.get(noteId);
+  if (timer !== undefined) {
+    window.clearTimeout(timer);
+    persistTimers.delete(noteId);
+  }
+  saveMessages(noteId, session.messages);
 }
 
 function getSession(noteId: string): NoteChatSession {
@@ -150,7 +180,7 @@ function updateSession(
 ) {
   const session = getSession(noteId);
   fn(session);
-  saveMessages(noteId, session.messages);
+  persistSession(noteId, session);
   notify(noteId);
 }
 
@@ -159,6 +189,24 @@ function dropEmptyAssistant(messages: ChatMessage[]): ChatMessage[] {
   if (last && last.role === "assistant" && last.content === "")
     return messages.slice(0, -1);
   return messages;
+}
+
+/** Append a streamed text chunk to the reply in progress. Text that
+ *  arrives after a tool message is the model's next round (typically the
+ *  answer written from the tool results), so it opens a new assistant
+ *  message rather than being dropped. */
+export function appendReplyChunk(
+  messages: ChatMessage[],
+  chunk: string,
+): ChatMessage[] {
+  const last = messages[messages.length - 1];
+  if (last?.role === "assistant") {
+    return [
+      ...messages.slice(0, -1),
+      { ...last, content: last.content + chunk },
+    ];
+  }
+  return [...messages, { role: "assistant", content: chunk }];
 }
 
 export function upsertToolCall(
@@ -415,15 +463,7 @@ export function useNoteChat(noteId: string | null) {
           if (ev.type === "reply_chunk" && ev.text) {
             const chunk = ev.text;
             updateSession(id, (s) => {
-              const copy = s.messages.slice();
-              const last = copy[copy.length - 1];
-              if (last && last.role === "assistant") {
-                copy[copy.length - 1] = {
-                  ...last,
-                  content: last.content + chunk,
-                };
-                s.messages = copy;
-              }
+              s.messages = appendReplyChunk(s.messages, chunk);
             });
           } else if (ev.type === "tool_call") {
             updateSession(id, (s) => {
