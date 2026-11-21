@@ -55,6 +55,15 @@ export function AliasChipStrip({ aliases, onAdd, onRemove, noteId }: Props) {
     inputRef.current?.focus();
   };
 
+  // Blur keeps the typed alias but closes the input instead of pulling
+  // focus back from wherever the user went (see TagChipStrip).
+  const commitOnBlur = (raw: string) => {
+    const value = sanitize(raw);
+    if (value && !aliases.includes(value)) onAdd(value);
+    setDraft("");
+    setEditing(false);
+  };
+
   return (
     <div
       className="flex flex-wrap items-center gap-1.5"
@@ -113,9 +122,10 @@ export function AliasChipStrip({ aliases, onAdd, onRemove, noteId }: Props) {
             }
           })}
           onBlur={() => {
+            const pending = draft;
             window.setTimeout(() => {
-              if (draft.trim()) commit(draft);
-              else setEditing(false);
+              if (document.activeElement === inputRef.current) return;
+              commitOnBlur(pending);
             }, 150);
           }}
           className="rounded-full border px-2 text-[11.5px] italic outline-none focus:border-accent"

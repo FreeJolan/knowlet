@@ -23,7 +23,7 @@ import { languages } from "@codemirror/language-data";
 import { EditorSelection, type Extension, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { TemplateSummary } from "@/api/client";
 import type { TreeFolder } from "@/api/types";
@@ -127,7 +127,8 @@ const paperTheme = EditorView.theme({
 type Props = {
   /**
    * Seeds the editor doc on mount. Updates to this prop AFTER mount are
-   * IGNORED — the parent should remount via `key=` to reseed.
+   * IGNORED (enforced here) — remount via `key=` to reseed, or dispatch
+   * into the view from `onViewMount` for an in-place replacement.
    */
   initialValue: string;
   onChange: (next: string) => void;
@@ -177,6 +178,32 @@ export function MarkdownEditor({
   templateSlashLabels,
   onViewMount,
 }: Props) {
+  // @uiw/react-codemirror replaces the whole document whenever its
+  // `value` prop differs from the doc, so the seed is frozen at mount.
+  const [seed] = useState(initialValue);
+
+  // The extensions are built once per mount (rebuilding reconfigures the
+  // live editor); their callbacks read the latest props through this
+  // ref so e.g. `{{title}}` substitution sees a title renamed in place.
+  const latest = useRef({
+    getTree,
+    getNoteBody,
+    getTemplates,
+    fetchTemplateBody,
+    substituteTemplate,
+    templateSlashLabels,
+  });
+  useLayoutEffect(() => {
+    latest.current = {
+      getTree,
+      getNoteBody,
+      getTemplates,
+      fetchTemplateBody,
+      substituteTemplate,
+      templateSlashLabels,
+    };
+  });
+
   const extensions = useMemo<Extension[]>(() => {
     // Collect all our domain completion sources into a single
     // `autocompletion()` extension. CM6 doesn't merge multiple
@@ -184,7 +211,13 @@ export function MarkdownEditor({
     // the keymap + popup behaviour consistent across `[[` and `/`.
     const sources = [];
     if (getTree && getNoteBody) {
-      sources.push(...wikilinkSources({ getTree, getNoteBody }));
+      sources.push(
+        ...wikilinkSources({
+          getTree: () => latest.current.getTree?.(),
+          getNoteBody: (id) =>
+            latest.current.getNoteBody?.(id) ?? Promise.resolve(null),
+        }),
+      );
     }
     if (
       getTemplates &&
@@ -194,10 +227,19 @@ export function MarkdownEditor({
     ) {
       sources.push(
         templateSlashSource({
-          getTemplates,
-          fetchTemplateBody,
-          substitute: substituteTemplate,
-          labels: templateSlashLabels,
+          getTemplates: () => latest.current.getTemplates?.() ?? [],
+          fetchTemplateBody: (id) =>
+            latest.current.fetchTemplateBody?.(id) ?? Promise.resolve(null),
+          substitute: (body) =>
+            latest.current.substituteTemplate?.(body) ?? body,
+          labels: {
+            get insert() {
+              return latest.current.templateSlashLabels?.insert ?? "";
+            },
+            get empty() {
+              return latest.current.templateSlashLabels?.empty ?? "";
+            },
+          },
         }),
       );
     }
@@ -220,18 +262,16 @@ export function MarkdownEditor({
       paperTheme,
       EditorView.lineWrapping,
     ];
-    // Closures are stable per QueryClient; we intentionally don't
-    // rebuild the editor on every render.
+    // Only which features are enabled is fixed at mount; the callbacks
+    // themselves go through `latest`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <CodeMirror
-      // Pass initialValue via `value` only on first render. After mount,
-      // react-codemirror's effect compares prop to current doc and skips
-      // when equal — but to fully avoid pushback, the parent passes the
-      // SAME initialValue forever for this mount; remount on note swap.
-      value={initialValue}
+      // Constant for the lifetime of this mount, so react-codemirror's
+      // value-sync effect never pushes text back into the editor.
+      value={seed}
       onChange={onChange}
       onBlur={onBlur}
       extensions={extensions}

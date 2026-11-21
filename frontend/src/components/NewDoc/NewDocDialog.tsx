@@ -44,6 +44,14 @@ import { QK } from "@/lib/queryClient";
 
 import { INSPIRATIONS } from "./inspirations";
 
+/** `ApiError` carries `detail`; network failures are plain `Error`s. */
+function errorText(err: unknown): string {
+  const e = err as { detail?: unknown; message?: unknown } | null;
+  if (typeof e?.detail === "string" && e.detail) return e.detail;
+  if (typeof e?.message === "string" && e.message) return e.message;
+  return String(err);
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -218,6 +226,12 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
       onClose();
     },
   });
+
+  // A failure from the previous opening must not greet the next one.
+  const resetCreate = createMutation.reset;
+  useEffect(() => {
+    if (open) resetCreate();
+  }, [open, resetCreate]);
 
   const submit = () => {
     if (createMutation.isPending) return;
@@ -588,7 +602,21 @@ export function NewDocDialog({ open, onClose, seedFolder, onCreated }: Props) {
            *  Templates left-rail tab (always visible). The link was
            *  a helpful crutch when templates were behind a header
            *  dialog; with a tab right there, it's redundant. */}
-          <span className="flex-1" />
+          {createMutation.isError ? (
+            <span
+              role="alert"
+              data-testid="new-document-error"
+              className="min-w-0 flex-1 truncate"
+              style={{ fontSize: 12, color: "var(--destructive)" }}
+              title={errorText(createMutation.error)}
+            >
+              {t("vaultPortability.errorPrefix", {
+                detail: errorText(createMutation.error),
+              })}
+            </span>
+          ) : (
+            <span className="flex-1" />
+          )}
           <button
             type="button"
             onClick={onClose}

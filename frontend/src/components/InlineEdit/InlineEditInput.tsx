@@ -65,14 +65,16 @@ export function InlineEditInput({
 
   // useLayoutEffect: synchronous focus right after the commit phase, so
   // the input is focused before the browser paints. This wins the race
-  // against arborist's row reclone (which would otherwise remount us
-  // and discard the first focus call).
+  // against arborist's row reclone (which remounts us, re-running this).
+  // Mount-only: the component exists only while editing, and re-selecting
+  // on every parent re-render would let the next keystroke replace the
+  // draft the user has typed so far.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.focus();
     el.select();
-  });
+  }, []);
 
   // Outside-click commits the current value (Finder / VS Code / Notion
   // convention — blur saves, Esc cancels). Empty value is the one

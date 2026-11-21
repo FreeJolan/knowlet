@@ -1,13 +1,27 @@
 /**
  * Phase 1 B note view — uncontrolled CodeMirror editor + debounced auto-save.
  *
- * The editor is uncontrolled: we seed it with `initialValue` once per
- * note (forced via `key={note.id}`) and then read changes into a ref
- * inside `onChange`. We do NOT keep the body in React state — that would
- * re-render on every keystroke and race react-codemirror's value-sync
- * back into the editor.
+ * Data flow:
+ *   - The mounted editor's document is the source of truth for the body.
+ *     MarkdownEditor reads `initialValue` once per mount (`key={note.id}`)
+ *     and never re-syncs from props, so the per-note query cache can
+ *     change underneath it (save responses, tag / title responses,
+ *     right-rail refetches) without touching what the user is typing.
+ *   - `metaRef` is the client's source of truth for title / tags /
+ *     aliases of the loaded note; header edits update it synchronously.
+ *   - Every PUT for a note goes through `enqueueNoteWrite` (one at a time
+ *     per note) and builds its payload when it is SENT, from `bodyRef` +
+ *     `metaRef`. Whichever PUT lands last therefore carries the newest
+ *     body and the newest metadata.
+ *   - Server data for the already-loaded note is adopted only when it is
+ *     genuinely new: no write of ours is pending, it differs from the last
+ *     body the server acknowledged, and the editor has no unsaved edits.
+ *     Then it is dispatched into the live editor (sync pull, AI apply,
+ *     merge resolution, frontmatter repair). With unsaved edits the local
+ *     text wins; the next autosave overwrites the file, and the backend
+ *     backs up the replaced version before overwriting.
  *
- * Save flow:
+ * Save triggers:
  *   - onChange  → bodyRef.current = next; mark dirty; scheduleSave (800 ms)
  *   - onBlur    → flushSave (cancel debounce, save now)
  *   - noteId change → flushSave for the previous note before remount
@@ -44,7 +58,9 @@ import {
 } from "@/lib/pendingMergeOpen";
 
 import { FrontmatterCorruptedNotice } from "./FrontmatterCorruptedNotice";
+import { enqueueNoteWrite } from "./noteWriteQueue";
 import { noteTitleClashesIn } from "@/lib/findCollision";
+import { registerNoteTitleWriter } from "@/lib/noteWrites";
 import { normalizeNoteTitle } from "@/lib/noteTitle";
 import { QK } from "@/lib/queryClient";
 
@@ -79,6 +95,34 @@ const VIEW_MODE_STORAGE_KEY = "knowlet:view-mode";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 type ViewMode = "edit" | "split" | "preview";
+
+type NoteMeta = { title: string; tags: string[]; aliases: string[] };
+const META_KEYS = ["title", "tags", "aliases"] as const;
+
+function metaOf(n: NoteFull): NoteMeta {
+  return { title: n.title, tags: n.tags, aliases: n.aliases ?? [] };
+}
+
+function sameValue(a: string | string[], b: string | string[]): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((x, i) => x === b[i]);
+  }
+  return a === b;
+}
+
+/** One queued PUT. `patch` / `bodySnapshot` are only consulted when the
+ *  note is no longer the one loaded in the editor by the time the PUT
+ *  is sent (e.g. the flush that runs while switching notes). */
+type NoteWrite = {
+  id: string;
+  loadToken: number;
+  patch: Partial<NoteMeta>;
+  bodySnapshot?: string;
+  /** Undo this write's optimistic state. Runs inside the queue, before
+   *  the next queued write builds its payload. */
+  rollback?: () => void;
+};
+type NoteWriteResult = { data: NoteFull; sentBody: string };
 
 function loadInitialViewMode(): ViewMode {
   if (typeof window === "undefined") return "edit";
@@ -129,14 +173,22 @@ export function NoteView({
   // The id this body belongs to. When noteId switches, we use this to know
   // which id to save to during the transition flush.
   const loadedIdRef = useRef<string | null>(null);
-  // The note metadata (title/tags) we send back unchanged in the PUT.
-  // Kept as a ref so flushSave doesn't depend on a re-rendering value.
-  const noteMetaRef = useRef<NoteFull | null>(null);
-  // Last value that successfully reached the backend. Used to skip no-op
-  // saves and to short-circuit dirty checks.
+  // Bumped each time a note is (re)loaded into the editor. A queued write
+  // reads the live refs only if it was queued during the same load.
+  const loadTokenRef = useRef(0);
+  // Title / tags / aliases the next PUT sends for the loaded note, and
+  // the values the server is known to hold (the merge base used to tell
+  // our own echoes from external changes).
+  const metaRef = useRef<NoteMeta | null>(null);
+  const serverMetaRef = useRef<NoteMeta | null>(null);
+  // Last body the backend acknowledged for the loaded note. Used to skip
+  // no-op saves and to tell our own echoes from external changes.
   const lastSavedRef = useRef("");
   const dirtyRef = useRef(false);
   const debounceRef = useRef<number | null>(null);
+  // JSON of the last successful PUT payload per note: a queued write
+  // whose payload is identical skips the request.
+  const lastSentRef = useRef(new Map<string, string>());
   const [savingState, setSavingState] = useState<SaveState>("idle");
   const [viewMode, setViewMode] = useState<ViewMode>(loadInitialViewMode);
   // Title click-to-edit state. Notion / Bear / Typora all let you edit
@@ -199,112 +251,289 @@ export function NoteView({
     return () => window.removeEventListener(MERGE_OPEN_EVENT, onOpenMerge);
   }, [note.data?.id]);
 
-  const saveMutation = useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: NoteFull }) =>
-      updateNote(id, {
-        title: payload.title,
-        tags: payload.tags,
-        body: payload.body,
-        // D3: PUT defaults aliases to [] when missing (which CLEARS
-        // them server-side). Pass current aliases through so a body /
-        // title / tag save never wipes them.
-        aliases: payload.aliases ?? [],
+  // The single PUT path for this view. Runs inside the per-note queue and
+  // builds the payload at send time (see the module docstring).
+  const runWrite = useCallback(
+    (w: NoteWrite): Promise<NoteWriteResult> =>
+      enqueueNoteWrite(w.id, async () => {
+        try {
+          // A GET started before this PUT may resolve after it with the
+          // pre-PUT file; cancel it instead of letting it land.
+          await qc.cancelQueries({ queryKey: QK.note(w.id) });
+          const isLive = () =>
+            loadedIdRef.current === w.id &&
+            loadTokenRef.current === w.loadToken &&
+            metaRef.current !== null;
+          const live = isLive();
+          const baseBefore = live ? serverMetaRef.current : null;
+          const cached = qc.getQueryData<NoteFull>(QK.note(w.id));
+          let payload: NoteMeta & { body: string };
+          if (live) {
+            payload = { ...metaRef.current!, body: bodyRef.current };
+          } else {
+            const title = w.patch.title ?? cached?.title;
+            const tags = w.patch.tags ?? cached?.tags;
+            const aliases =
+              w.patch.aliases ?? cached?.aliases ?? (cached ? [] : undefined);
+            const body = w.bodySnapshot ?? cached?.body;
+            if (
+              title === undefined ||
+              tags === undefined ||
+              aliases === undefined ||
+              body === undefined
+            ) {
+              // Never send a guessed snapshot: an empty tags / aliases
+              // list would clear them on disk.
+              throw new Error(`no snapshot available to write note ${w.id}`);
+            }
+            payload = { title, tags, aliases, body };
+          }
+          const key = JSON.stringify(payload);
+          if (cached && lastSentRef.current.get(w.id) === key) {
+            // Nothing changed since our last successful write.
+            return { data: cached, sentBody: payload.body };
+          }
+          const data = await updateNote(w.id, payload);
+          lastSentRef.current.set(w.id, key);
+          void qc.cancelQueries({ queryKey: QK.note(w.id) });
+          const result = metaOf(data);
+          if (live && isLive()) {
+            lastSavedRef.current = payload.body;
+            serverMetaRef.current = result;
+            // Take the server's normalized value (inline #tags merged
+            // into tags) for fields the user hasn't changed since send.
+            const cur = metaRef.current!;
+            metaRef.current = {
+              title: sameValue(cur.title, payload.title) ? result.title : cur.title,
+              tags: sameValue(cur.tags, payload.tags) ? result.tags : cur.tags,
+              aliases: sameValue(cur.aliases, payload.aliases)
+                ? result.aliases
+                : cur.aliases,
+            };
+          }
+          qc.setQueryData<NoteFull>(QK.note(w.id), (prev) => {
+            if (!prev) return data;
+            // PUT rewrites in place (ULID filenames) and its response
+            // does not carry `folder`.
+            const merged: NoteFull = { ...prev, ...data, folder: prev.folder };
+            if (!baseBefore) return merged;
+            // Keep cached metadata that changed after this payload was
+            // built (a queued edit's optimistic value, or another
+            // writer's) instead of flashing this response's older value.
+            const prevMeta = metaOf(prev);
+            if (
+              !sameValue(prevMeta.title, payload.title) &&
+              !sameValue(prevMeta.title, baseBefore.title)
+            ) {
+              merged.title = prevMeta.title;
+            }
+            if (
+              !sameValue(prevMeta.tags, payload.tags) &&
+              !sameValue(prevMeta.tags, baseBefore.tags)
+            ) {
+              merged.tags = prevMeta.tags;
+            }
+            if (
+              !sameValue(prevMeta.aliases, payload.aliases) &&
+              !sameValue(prevMeta.aliases, baseBefore.aliases)
+            ) {
+              merged.aliases = prevMeta.aliases;
+            }
+            return merged;
+          });
+          return { data, sentBody: payload.body };
+        } catch (err) {
+          w.rollback?.();
+          throw err;
+        }
       }),
+    [qc],
+  );
+
+  // After any successful write: the body may now be saved even if this
+  // write was a tag / title change (every PUT carries the latest body).
+  const settleSaveState = useCallback((w: NoteWrite) => {
+    if (loadedIdRef.current !== w.id || loadTokenRef.current !== w.loadToken) {
+      return;
+    }
+    dirtyRef.current = bodyRef.current !== lastSavedRef.current;
+    // Keystrokes that arrived after this PUT was sent have their own
+    // save scheduled / queued; keep showing "saving" until it lands.
+    if (dirtyRef.current) return;
+    setSavingState((s) => (s === "saving" || s === "error" ? "saved" : s));
+    window.setTimeout(() => {
+      setSavingState((s) => (s === "saved" ? "idle" : s));
+    }, 1200);
+  }, []);
+
+  const saveMutation = useMutation({
+    mutationFn: (w: NoteWrite) => runWrite(w),
     // Auto-retry transient failures (network blip, slow backend) with
     // exponential backoff. After 3 attempts (~14s max wait) we give
     // up and surface the failure visibly via onError below — per the
     // "no silent failure" UX rule from sync-design discussion.
     retry: 3,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
-    onSuccess: (data, vars) => {
-      qc.setQueryData(QK.note(vars.id), data);
+    onSuccess: (_res, w) => {
       // Body saves can include inline `#tag` syntax that the backend
       // merges into frontmatter. Invalidate tag caches so the Tag
       // browser reflects new tags without a manual reload.
       void qc.invalidateQueries({ queryKey: QK.tags });
       void qc.invalidateQueries({ queryKey: QK.tagsWithNotes });
-      // Only update the badge / dirty flag for the CURRENTLY-loaded note.
-      // A late-arriving response from the previous note (after a switch)
-      // shouldn't flip the new note's UI back to "saved".
-      if (loadedIdRef.current === vars.id) {
-        lastSavedRef.current = data.body;
-        dirtyRef.current = false;
-        setSavingState("saved");
-        window.setTimeout(() => {
-          if (loadedIdRef.current === vars.id) setSavingState("idle");
-        }, 1200);
-      }
+      settleSaveState(w);
     },
-    onError: (_err, vars) => {
+    onError: (_err, w) => {
       // Reaching here means the backend rejected us OR all retries
       // exhausted. The user must know — saving silently dropping
       // edits is exactly the "沉默地陷入糟糕状态" failure mode the
-      // sync-design memory rules out.
-      if (loadedIdRef.current === vars.id) {
-        setSavingState("error");
+      // sync-design memory rules out. (A later tag / title write may
+      // already have carried the same body — then nothing is unsaved.)
+      if (loadedIdRef.current !== w.id || loadTokenRef.current !== w.loadToken) {
+        return;
       }
+      if (bodyRef.current !== lastSavedRef.current) setSavingState("error");
+      else settleSaveState(w);
     },
   });
 
-  // Manual retry — clicked from the error badge. Re-fires the same
-  // save with the current editor body so the user doesn't lose
-  // anything just because the auto-retries exhausted.
+  // Manual retry — clicked from the error badge. Re-fires the save with
+  // the current editor body so the user doesn't lose anything just
+  // because the auto-retries exhausted.
   const retryFailedSave = useCallback(() => {
     const id = loadedIdRef.current;
-    const meta = note.data;
+    const meta = metaRef.current;
     if (!id || !meta) return;
+    dirtyRef.current = true;
     setSavingState("saving");
     saveMutation.mutate({
       id,
-      payload: { ...meta, body: bodyRef.current },
+      loadToken: loadTokenRef.current,
+      patch: { ...meta },
+      bodySnapshot: bodyRef.current,
     });
-  }, [note.data, saveMutation]);
+  }, [saveMutation]);
 
-  // Title rename — fired when the user finishes editing the inline
-  // title input. Optimistic against both the per-note query AND the
-  // tree query, so the right-pane h1 + the file tree row both update
-  // on the same frame the user pressed Enter (no flash of old name).
-  const renameTitleMutation = useMutation({
-    mutationFn: ({
-      id,
-      title,
-      payload,
-    }: {
-      id: string;
-      title: string;
-      payload: NoteFull;
-    }) =>
-      updateNote(id, {
-        title,
-        tags: payload.tags,
-        body: payload.body,
-        aliases: payload.aliases ?? [],
-      }),
-    onMutate: ({ id, title }) => {
-      const prevTree = qc.getQueryData<TreeFolder>(QK.tree);
-      const prevNote = qc.getQueryData<NoteFull>(QK.note(id));
-      if (prevTree) {
-        qc.setQueryData<TreeFolder>(
-          QK.tree,
-          updateNoteTitleInTree(prevTree, id, title),
-        );
+  // Header metadata edits (title rename, tag chips, alias chips).
+  const metaMutation = useMutation({
+    mutationFn: (w: NoteWrite) => runWrite(w),
+    onSuccess: (_res, w) => settleSaveState(w),
+    onSettled: (_d, _e, w) => {
+      if (w.patch.tags) {
+        void qc.invalidateQueries({ queryKey: QK.tags });
+        void qc.invalidateQueries({ queryKey: QK.tagsWithNotes });
       }
-      if (prevNote) {
-        qc.setQueryData<NoteFull>(QK.note(id), { ...prevNote, title });
+      if (w.patch.tags || w.patch.title !== undefined) {
+        void qc.invalidateQueries({ queryKey: QK.tree });
       }
-      return { prevTree, prevNote };
-    },
-    onError: (_err, vars, ctx) => {
-      if (ctx?.prevTree) qc.setQueryData(QK.tree, ctx.prevTree);
-      if (ctx?.prevNote) qc.setQueryData(QK.note(vars.id), ctx.prevNote);
-    },
-    onSuccess: (data, vars) => {
-      qc.setQueryData(QK.note(vars.id), data);
-    },
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: QK.tree });
     },
   });
+  const mutateMeta = metaMutation.mutateAsync;
+
+  // Latest metadata for `id`: the live refs for the loaded note, the
+  // cache for a note this view has already switched away from.
+  const currentMeta = useCallback(
+    (id: string): NoteMeta | null => {
+      if (loadedIdRef.current === id && metaRef.current) return metaRef.current;
+      const cached = qc.getQueryData<NoteFull>(QK.note(id));
+      return cached ? metaOf(cached) : null;
+    },
+    [qc],
+  );
+
+  // Apply a metadata change optimistically (refs + per-note cache) and
+  // queue the PUT. Rollback restores only the fields this change set,
+  // and only while they still hold the values it set. Rejects when the
+  // write fails (state is already rolled back by then).
+  const changeMeta = useCallback(
+    (
+      id: string,
+      patch: Partial<NoteMeta>,
+      extraRollback?: () => void,
+    ): Promise<NoteWriteResult> => {
+      const keys = Object.keys(patch) as (keyof NoteMeta)[];
+      const live = loadedIdRef.current === id && metaRef.current !== null;
+      const prevMeta = live ? metaRef.current : null;
+      if (live) metaRef.current = { ...metaRef.current!, ...patch };
+      const prevNote = qc.getQueryData<NoteFull>(QK.note(id));
+      if (prevNote) {
+        qc.setQueryData<NoteFull>(QK.note(id), { ...prevNote, ...patch });
+      }
+      const restore = <T extends Partial<NoteMeta>>(cur: T, prev: T): T => {
+        const next: Record<string, unknown> = { ...cur };
+        for (const k of keys) {
+          if (cur[k] === patch[k]) next[k] = prev[k];
+        }
+        return next as T;
+      };
+      return mutateMeta({
+        id,
+        loadToken: live ? loadTokenRef.current : -1,
+        patch,
+        rollback: () => {
+          if (prevMeta && metaRef.current && loadedIdRef.current === id) {
+            metaRef.current = restore(metaRef.current, prevMeta);
+          }
+          if (prevNote) {
+            qc.setQueryData<NoteFull>(QK.note(id), (cur) =>
+              cur ? restore(cur, prevNote) : cur,
+            );
+          }
+          extraRollback?.();
+        },
+      });
+    },
+    [mutateMeta, qc],
+  );
+
+  const addTag = useCallback(
+    (id: string, tag: string) => {
+      const meta = currentMeta(id);
+      if (!meta || meta.tags.includes(tag)) return;
+      changeMeta(id, { tags: [...meta.tags, tag] }).catch(() => undefined);
+    },
+    [changeMeta, currentMeta],
+  );
+  const removeTag = useCallback(
+    (id: string, tag: string) => {
+      const meta = currentMeta(id);
+      if (!meta) return;
+      changeMeta(id, { tags: meta.tags.filter((x) => x !== tag) }).catch(
+        () => undefined,
+      );
+    },
+    [changeMeta, currentMeta],
+  );
+  const addAlias = useCallback(
+    (id: string, alias: string) => {
+      const meta = currentMeta(id);
+      if (!meta) return;
+      changeMeta(id, { aliases: [...meta.aliases, alias] }).catch(
+        () => undefined,
+      );
+    },
+    [changeMeta, currentMeta],
+  );
+  const removeAlias = useCallback(
+    (id: string, alias: string) => {
+      const meta = currentMeta(id);
+      if (!meta) return;
+      changeMeta(id, {
+        aliases: meta.aliases.filter((a) => a !== alias),
+      }).catch(() => undefined);
+    },
+    [changeMeta, currentMeta],
+  );
+
+  // A file-tree rename of the open note goes through this view's own
+  // metadata path, so no later autosave can send the old title back.
+  const loadedNoteId = note.data?.id ?? null;
+  useEffect(() => {
+    if (!loadedNoteId) return;
+    return registerNoteTitleWriter(loadedNoteId, async (title) => {
+      const res = await changeMeta(loadedNoteId, { title });
+      return res.data;
+    });
+  }, [loadedNoteId, changeMeta]);
 
   // Phase 3 Stage 2 — knowledge / reference toggle (ADR-0029 §4.5).
   // Demote confirmation is handled inside KindChip itself (popover);
@@ -312,8 +541,9 @@ export function NoteView({
   // Backend still enforces confirm=true for safety in case some other
   // caller (CLI / future MCP) tries to demote without it.
   const setKindMutation = useMutation({
+    // Queued with the PUTs: the kind endpoint rewrites the same file.
     mutationFn: ({ id, kind }: { id: string; kind: NoteKind }) =>
-      setNoteKind(id, { kind, confirm: true }),
+      enqueueNoteWrite(id, () => setNoteKind(id, { kind, confirm: true })),
     onSuccess: (data, vars) => {
       qc.setQueryData<NoteFull>(QK.note(vars.id), (prev) =>
         prev ? { ...prev, kind: data.kind } : data,
@@ -352,79 +582,6 @@ export function NoteView({
       );
   }, [note.data, setKindMutation]);
 
-  // Phase 1 C polish — tag-only update (chip strip add/remove). Mirrors
-  // the rename pattern: optimistic update on the cached note + tree, with
-  // QK.tags invalidation on success so the left-rail Tag browser refreshes.
-  const updateTagsMutation = useMutation({
-    mutationFn: ({
-      id,
-      tags,
-      payload,
-    }: {
-      id: string;
-      tags: string[];
-      payload: NoteFull;
-    }) =>
-      updateNote(id, {
-        title: payload.title,
-        tags,
-        body: payload.body,
-        aliases: payload.aliases ?? [],
-      }),
-    onMutate: ({ id, tags }) => {
-      const prevNote = qc.getQueryData<NoteFull>(QK.note(id));
-      if (prevNote) {
-        qc.setQueryData<NoteFull>(QK.note(id), { ...prevNote, tags });
-      }
-      return { prevNote };
-    },
-    onError: (_err, vars, ctx) => {
-      if (ctx?.prevNote) qc.setQueryData(QK.note(vars.id), ctx.prevNote);
-    },
-    onSuccess: (data, vars) => {
-      qc.setQueryData(QK.note(vars.id), data);
-    },
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: QK.tags });
-      void qc.invalidateQueries({ queryKey: QK.tagsWithNotes });
-      void qc.invalidateQueries({ queryKey: QK.tree });
-    },
-  });
-
-  // Phase 1 D / D3 — aliases mutation. Same shape as tag updates but
-  // doesn't touch QK.tags / QK.tagsWithNotes (aliases are per-note
-  // metadata, not a vault-wide taxonomy).
-  const updateAliasesMutation = useMutation({
-    mutationFn: ({
-      id,
-      aliases,
-      payload,
-    }: {
-      id: string;
-      aliases: string[];
-      payload: NoteFull;
-    }) =>
-      updateNote(id, {
-        title: payload.title,
-        tags: payload.tags,
-        body: payload.body,
-        aliases,
-      }),
-    onMutate: ({ id, aliases }) => {
-      const prevNote = qc.getQueryData<NoteFull>(QK.note(id));
-      if (prevNote) {
-        qc.setQueryData<NoteFull>(QK.note(id), { ...prevNote, aliases });
-      }
-      return { prevNote };
-    },
-    onError: (_err, vars, ctx) => {
-      if (ctx?.prevNote) qc.setQueryData(QK.note(vars.id), ctx.prevNote);
-    },
-    onSuccess: (data, vars) => {
-      qc.setQueryData(QK.note(vars.id), data);
-    },
-  });
-
   const flushSave = useCallback(() => {
     if (debounceRef.current !== null) {
       window.clearTimeout(debounceRef.current);
@@ -432,15 +589,20 @@ export function NoteView({
     }
     if (!dirtyRef.current) return;
     const id = loadedIdRef.current;
-    const meta = noteMetaRef.current;
+    const meta = metaRef.current;
     const body = bodyRef.current;
     if (!id || !meta) return;
     if (body === lastSavedRef.current) {
       dirtyRef.current = false;
       return;
     }
-    if (loadedIdRef.current === id) setSavingState("saving");
-    saveMutation.mutate({ id, payload: { ...meta, body } });
+    setSavingState("saving");
+    saveMutation.mutate({
+      id,
+      loadToken: loadTokenRef.current,
+      patch: { ...meta },
+      bodySnapshot: body,
+    });
   }, [saveMutation]);
 
   const scheduleSave = useCallback(() => {
@@ -453,24 +615,72 @@ export function NoteView({
     }, AUTOSAVE_DEBOUNCE_MS);
   }, [flushSave]);
 
-  // When server data lands for a new note, prime the refs. This runs once
-  // per note (the equality check guards against re-runs from refetch).
+  // Prime the refs when a note is loaded; afterwards, decide whether a
+  // cache change for the same note is ours or genuinely external.
   useEffect(() => {
-    if (!note.data) return;
-    if (loadedIdRef.current === note.data.id) {
-      // Same note — keep the user's in-progress edits intact, but
-      // refresh the metadata snapshot in case title/tags were updated
-      // by a tree-side rename mutation.
-      noteMetaRef.current = note.data;
+    const data = note.data;
+    if (!data) return;
+    if (loadedIdRef.current !== data.id) {
+      loadTokenRef.current += 1;
+      loadedIdRef.current = data.id;
+      bodyRef.current = data.body;
+      lastSavedRef.current = data.body;
+      metaRef.current = metaOf(data);
+      serverMetaRef.current = metaOf(data);
+      setPreviewBody(data.body);
+      dirtyRef.current = false;
+      setSavingState("idle");
       return;
     }
-    bodyRef.current = note.data.body;
-    lastSavedRef.current = note.data.body;
-    loadedIdRef.current = note.data.id;
-    noteMetaRef.current = note.data;
-    setPreviewBody(note.data.body);
-    dirtyRef.current = false;
-    setSavingState("idle");
+    // Same note: three-way merge per field. local = refs, base = what the
+    // server is known to hold, incoming = cache. Only a change the server
+    // made (incoming != base) on a field the user hasn't touched
+    // (local == base) is adopted; our own optimistic updates and save
+    // responses never overwrite local state.
+    const incoming = metaOf(data);
+    const local = metaRef.current;
+    const base = serverMetaRef.current;
+    let serverChanged = data.body !== lastSavedRef.current;
+    if (local && base) {
+      const nextLocal: Record<string, unknown> = { ...local };
+      const nextBase: Record<string, unknown> = { ...base };
+      let adopted = false;
+      for (const k of META_KEYS) {
+        if (sameValue(incoming[k], base[k]) || sameValue(incoming[k], local[k])) {
+          continue;
+        }
+        serverChanged = true;
+        if (sameValue(local[k], base[k])) {
+          nextLocal[k] = incoming[k];
+          nextBase[k] = incoming[k];
+          adopted = true;
+        }
+      }
+      if (adopted) {
+        metaRef.current = nextLocal as NoteMeta;
+        serverMetaRef.current = nextBase as NoteMeta;
+      }
+    }
+    // The file changed under us: a later write must not be skipped as
+    // "identical to what we last sent".
+    if (serverChanged) lastSentRef.current.delete(data.id);
+    if (data.body === lastSavedRef.current) return;
+    if (data.body === bodyRef.current) {
+      lastSavedRef.current = data.body;
+      dirtyRef.current = false;
+      return;
+    }
+    // Unsaved local edits win over a concurrent external change.
+    if (dirtyRef.current) return;
+    lastSavedRef.current = data.body;
+    bodyRef.current = data.body;
+    const view = editorViewRef.current;
+    if (view && view.state.doc.toString() !== data.body) {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: data.body },
+      });
+    }
+    setPreviewBody(data.body);
   }, [note.data]);
 
   // Persist the user's view-mode choice across reloads.
@@ -534,7 +744,7 @@ export function NoteView({
     // intra-note jumps).
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!preserveViewMode && viewMode === "edit") setViewMode("split");
-    setPreviewBody(note.data.body);
+    setPreviewBody(bodyRef.current);
     const slugger = new GithubSlugger();
     const slug = slugger.slug(pendingHash);
     let cancelled = false;
@@ -613,10 +823,8 @@ export function NoteView({
   const handleChange = useCallback(
     (next: string) => {
       bodyRef.current = next;
-      if (next !== lastSavedRef.current) {
-        dirtyRef.current = true;
-        scheduleSave();
-      }
+      dirtyRef.current = next !== lastSavedRef.current;
+      if (dirtyRef.current) scheduleSave();
       // Live-mirror to preview only in split mode — keeps the right
       // pane in sync as the user types. In edit-only and preview-only
       // modes there's no live render, so skip the re-render cost.
@@ -704,11 +912,8 @@ export function NoteView({
     [t],
   );
 
-  // Title click-to-edit handlers. We:
-  //   - flush any pending body save first (so its payload reflects the
-  //     pre-rename body before the title-rename payload overwrites it)
-  //   - send the rename via PUT /api/notes/{id} with the latest body
-  //     to avoid a race where two in-flight PUTs trample each other
+  // Title click-to-edit handlers. The rename is queued behind any
+  // in-flight save and, like every write, sends the editor's latest body.
   const submitTitle = useCallback(
     (raw: string) => {
       // Same normalization as create + tree-rename — trailing `.md` is
@@ -740,15 +945,25 @@ export function NoteView({
         setEditingTitle(false);
         return;
       }
-      flushSave();
-      renameTitleMutation.mutate({
-        id: note.data.id,
-        title: next,
-        payload: { ...note.data, body: bodyRef.current },
-      });
+      const id = note.data.id;
+      const prevTitle = note.data.title;
+      // Optimistic in the tree as well, so the file-tree row updates on
+      // the same frame as the h1.
+      const prevTree = qc.getQueryData<TreeFolder>(QK.tree);
+      if (prevTree) {
+        qc.setQueryData<TreeFolder>(
+          QK.tree,
+          updateNoteTitleInTree(prevTree, id, next),
+        );
+      }
+      changeMeta(id, { title: next }, () => {
+        qc.setQueryData<TreeFolder>(QK.tree, (cur) =>
+          cur ? updateNoteTitleInTree(cur, id, prevTitle) : cur,
+        );
+      }).catch(() => undefined);
       setEditingTitle(false);
     },
-    [flushSave, note.data, qc, renameTitleMutation, t],
+    [changeMeta, note.data, qc, t],
   );
   const cancelTitle = useCallback(() => setEditingTitle(false), []);
 
@@ -762,7 +977,7 @@ export function NoteView({
   if (note.isLoading) {
     return <div className="p-6 text-sm text-muted-foreground">{t("tree.loading")}</div>;
   }
-  if (note.isError) {
+  if (note.isError && !note.data) {
     // ApiError is `{status, detail}`. ``String({...})`` gives the
     // notorious "[object Object]" — extract ``detail`` first, then
     // fall back to ``message`` for native Error, then a final
@@ -831,6 +1046,9 @@ export function NoteView({
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === "F2") {
                   e.preventDefault();
+                  // Consumed here: the file tree's window-level F2 must
+                  // not also open a rename of its selected row.
+                  e.stopPropagation();
                   setEditingTitle(true);
                 }
               }}
@@ -939,22 +1157,8 @@ export function NoteView({
             <TagChipStrip
               tags={note.data.tags}
               noteId={note.data.id}
-              onAdd={(tag) => {
-                const next = [...note.data!.tags, tag];
-                updateTagsMutation.mutate({
-                  id: note.data!.id,
-                  tags: next,
-                  payload: note.data!,
-                });
-              }}
-              onRemove={(tag) => {
-                const next = note.data!.tags.filter((t) => t !== tag);
-                updateTagsMutation.mutate({
-                  id: note.data!.id,
-                  tags: next,
-                  payload: note.data!,
-                });
-              }}
+              onAdd={(tag) => addTag(note.data.id, tag)}
+              onRemove={(tag) => removeTag(note.data.id, tag)}
             />
             {note.data.tags.length > 0 && (note.data.aliases ?? []).length > 0 && (
               <span
@@ -971,24 +1175,8 @@ export function NoteView({
             <AliasChipStrip
               aliases={note.data.aliases ?? []}
               noteId={note.data.id}
-              onAdd={(alias) => {
-                const next = [...(note.data!.aliases ?? []), alias];
-                updateAliasesMutation.mutate({
-                  id: note.data!.id,
-                  aliases: next,
-                  payload: note.data!,
-                });
-              }}
-              onRemove={(alias) => {
-                const next = (note.data!.aliases ?? []).filter(
-                  (a) => a !== alias,
-                );
-                updateAliasesMutation.mutate({
-                  id: note.data!.id,
-                  aliases: next,
-                  payload: note.data!,
-                });
-              }}
+              onAdd={(alias) => addAlias(note.data.id, alias)}
+              onRemove={(alias) => removeAlias(note.data.id, alias)}
             />
           </div>
         )}
@@ -1010,13 +1198,7 @@ export function NoteView({
               <TagChipStrip
                 tags={note.data.tags}
                 noteId={note.data.id}
-                onAdd={(tag) =>
-                  updateTagsMutation.mutate({
-                    id: note.data!.id,
-                    tags: [tag],
-                    payload: note.data!,
-                  })
-                }
+                onAdd={(tag) => addTag(note.data.id, tag)}
                 onRemove={() => {
                   /* no-op — empty */
                 }}
@@ -1034,13 +1216,7 @@ export function NoteView({
               <AliasChipStrip
                 aliases={note.data.aliases ?? []}
                 noteId={note.data.id}
-                onAdd={(alias) =>
-                  updateAliasesMutation.mutate({
-                    id: note.data!.id,
-                    aliases: [alias],
-                    payload: note.data!,
-                  })
-                }
+                onAdd={(alias) => addAlias(note.data.id, alias)}
                 onRemove={() => {
                   /* no-op — empty */
                 }}
@@ -1067,10 +1243,15 @@ export function NoteView({
           data-view-mode={viewMode}
         >
           <MarkdownEditor
-            // key forces a fresh mount per note — the editor is uncontrolled
-            // after that, so we never push value back in mid-edit.
+            // key forces a fresh mount per note; MarkdownEditor reads
+            // initialValue only on mount. A remount of the already-loaded
+            // note reseeds from the live editor text, not the cache.
             key={note.data.id}
-            initialValue={note.data.body}
+            initialValue={
+              loadedIdRef.current === note.data.id
+                ? bodyRef.current
+                : note.data.body
+            }
             onChange={handleChange}
             onBlur={flushSave}
             getTree={getTreeForAutocomplete}

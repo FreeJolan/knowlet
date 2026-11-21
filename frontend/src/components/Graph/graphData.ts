@@ -101,3 +101,14 @@ export function nodeRadius(node: GraphNodeRow): number {
   const r = 4 + Math.sqrt(deg) * 2.4;
   return Math.max(4, Math.min(14, r));
 }
+
+/** Message for a failed graph fetch: `ApiError` carries `detail`,
+ *  network failures are plain `Error`s. */
+export function errorDetail(err: unknown): string {
+  if (err && typeof err === "object") {
+    const e = err as { detail?: unknown; message?: unknown };
+    if (typeof e.detail === "string" && e.detail) return e.detail;
+    if (typeof e.message === "string" && e.message) return e.message;
+  }
+  return err ? String(err) : "unknown";
+}

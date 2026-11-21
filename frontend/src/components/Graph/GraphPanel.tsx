@@ -17,7 +17,7 @@ import { QK } from "@/lib/queryClient";
 
 import { GraphCanvas } from "./GraphCanvas";
 import { GraphTooltip } from "./GraphTooltip";
-import { egoSubgraph } from "./graphData";
+import { egoSubgraph, errorDetail } from "./graphData";
 
 interface Props {
   noteId: string | null;
@@ -56,19 +56,33 @@ export function GraphPanel({ noteId, onOpenNote, onEnterFocus }: Props) {
       </div>
     );
   }
-  if (graphQuery.isLoading || !graphQuery.data) {
+  if (graphQuery.isError && !graphQuery.data) {
     return (
-      <div className="px-3 py-3 text-xs" style={{ color: "var(--ink-mute)" }}>
-        {t("rail.graph.loading")}
+      <div
+        className="flex flex-col items-start gap-2 px-3 py-3 text-xs"
+        style={{ color: "var(--ink-mute)" }}
+        data-testid="graph-panel-error"
+      >
+        <span>
+          {t("rail.graph.loadFailed", { error: errorDetail(graphQuery.error) })}
+        </span>
+        <button
+          type="button"
+          onClick={() => void graphQuery.refetch()}
+          disabled={graphQuery.isFetching}
+          data-testid="graph-panel-retry"
+          className="rounded border px-1.5 py-0.5 text-[10.5px] transition-colors hover:bg-accent/30 disabled:opacity-50"
+          style={{ borderColor: "var(--line)" }}
+        >
+          {t("tree.retry")}
+        </button>
       </div>
     );
   }
-  if (graphQuery.isError) {
+  if (!graphQuery.data) {
     return (
       <div className="px-3 py-3 text-xs" style={{ color: "var(--ink-mute)" }}>
-        {t("rail.graph.loadFailed", {
-          error: (graphQuery.error as { detail?: string })?.detail ?? "unknown",
-        })}
+        {t("rail.graph.loading")}
       </div>
     );
   }
