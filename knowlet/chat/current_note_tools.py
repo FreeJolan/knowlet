@@ -156,7 +156,9 @@ def _apply_current_note_edit(args: dict[str, Any], ctx: ToolContext) -> dict[str
     if not isinstance(old_body, str) or not isinstance(new_body, str):
         return _reject_apply(
             "no pending note edit",
-            "Ask the user to generate a diff proposal first, then apply it after they explicitly confirm.",
+            "Only a diff the user has reviewed can be applied. If you just proposed one, tell "
+            "the user it is ready for review and that they can accept it in the diff view; "
+            "do not call this tool again in this turn. Otherwise propose an edit first.",
         )
     note, error = _read_current_note(ctx)
     if error is not None:
