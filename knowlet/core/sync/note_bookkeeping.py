@@ -18,10 +18,20 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from knowlet.core.sync import credentials as _credentials
-from knowlet.core.sync.state import FileState, SyncStateStore
+from knowlet.core.sync.state import FileState, SyncStateStore, sync_state_db_path
 from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
 
 DELETE_INTENT_KINDS = ("soft", "hard")
+
+
+def sync_configured(vault_root: Path) -> bool:
+    """True once the vault has sync state or Drive credentials. Callers that
+    run outside the web server use it to avoid creating a ``sync_state``
+    database in vaults that never set up sync."""
+    return (
+        sync_state_db_path(vault_root).exists()
+        or _credentials.credentials_path(vault_root).exists()
+    )
 
 
 @contextmanager

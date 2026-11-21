@@ -8,7 +8,10 @@ desktop) just calls this and starts driving turns.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from knowlet.chat.conversation_store import Conversation, ConversationStore
@@ -34,9 +37,28 @@ from knowlet.core.embedding import EmbeddingBackend, make_backend
 from knowlet.core.index import Index, reindex_vault
 from knowlet.core.llm import LLMClient
 from knowlet.core.mining.task_store import TaskStore
+from knowlet.core.sync.note_bookkeeping import mark_note_dirty_for_push, sync_configured
 from knowlet.core.tools._registry import Registry, ToolContext, default_registry
 from knowlet.core.user_profile import UserProfile, read_profile
 from knowlet.core.vault import Vault
+
+logger = logging.getLogger(__name__)
+
+
+def _queue_note_push(vault_root: Path) -> Callable[[str], None]:
+    """Default ``ToolContext.mark_note_dirty`` for non-web sessions (the web
+    server passes its own). It runs after the AI edit is already on disk, so
+    a bookkeeping failure is logged rather than failing the tool call."""
+
+    def mark(note_id: str) -> None:
+        if not sync_configured(vault_root):
+            return
+        try:
+            mark_note_dirty_for_push(vault_root, note_id)
+        except Exception:
+            logger.warning("could not queue note %s for Drive push", note_id, exc_info=True)
+
+    return mark
 
 
 class ChatNotReadyError(RuntimeError):
@@ -198,6 +220,7 @@ def bootstrap_chat(
         tasks=tasks,
         drafts=drafts,
         llm=llm,
+        mark_note_dirty=_queue_note_push(vault.root),
     )
     session = ChatSession(llm=llm, registry=registry, ctx=ctx, system_prompt=system_prompt)
     conversations = ConversationStore(vault.conversations_dir)

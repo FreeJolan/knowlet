@@ -22,21 +22,16 @@ if TYPE_CHECKING:
     from knowlet.core.sync.state import SyncStateStore
 
 
-def _sync_configured(vault_root: Path) -> bool:
-    from knowlet.core.sync.credentials import credentials_path
-    from knowlet.core.sync.state import sync_state_db_path
-
-    return sync_state_db_path(vault_root).exists() or credentials_path(vault_root).exists()
-
-
 def _apply(
     vault_root: Path,
     note_ids: Iterable[str],
     action: Callable[..., object],
     *args: str,
 ) -> None:
+    from knowlet.core.sync.note_bookkeeping import sync_configured
+
     ids = [i for i in dict.fromkeys(note_ids) if i]
-    if not ids or not _sync_configured(vault_root):
+    if not ids or not sync_configured(vault_root):
         return
     from knowlet.core.sync.state import SyncStateStore
 
