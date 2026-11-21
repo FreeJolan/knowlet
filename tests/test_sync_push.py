@@ -59,10 +59,13 @@ def test_push_first_time_uploads_and_records(tmp_path: Path) -> None:
     vault, note = _vault_with_note(tmp_path)
     state = SyncStateStore(vault.root)
     try:
-        with patch(
-            "knowlet.core.sync.push.upload_new_file",
-            return_value=_drive_file(),
-        ) as up:
+        with (
+            patch(
+                "knowlet.core.sync.push.upload_new_file",
+                return_value=_drive_file(),
+            ) as up,
+            patch("knowlet.core.sync.push.find_appdata_files_by_name", return_value=[]),
+        ):
             result = push_note(service=object(), state=state, note=note)
         assert isinstance(result, PushResult)
         assert result.created is True
@@ -108,10 +111,13 @@ def test_push_note_serializes_runtime_folder_hint(tmp_path: Path) -> None:
     pushed_note.folder = vault.folder_of(path)
     state = SyncStateStore(vault.root)
     try:
-        with patch(
-            "knowlet.core.sync.push.upload_new_file",
-            return_value=_drive_file(),
-        ) as up:
+        with (
+            patch(
+                "knowlet.core.sync.push.upload_new_file",
+                return_value=_drive_file(),
+            ) as up,
+            patch("knowlet.core.sync.push.find_appdata_files_by_name", return_value=[]),
+        ):
             push_note(service=object(), state=state, note=pushed_note)
         content = up.call_args.kwargs["content"].decode("utf-8")
         assert "folder: projects/ai" in content

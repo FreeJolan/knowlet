@@ -31,6 +31,7 @@ from knowlet.cli._common import (
     load_config_or_default,
     resolve_vault_or_die,
 )
+from knowlet.cli._sync_marks import mark_dirty
 
 app = typer.Typer(
     help="Capture external material (URL / file) into the vault.",
@@ -83,6 +84,7 @@ def _commit_capsule(*, title: str, body: str, source: str | None, decision: Deci
     note = Note(id=new_id(), title=title, body=body, source=source, kind=decision)
     path = vault.write_note(note)
     note.path = path
+    mark_dirty(vault.root, [note.id])
     backend = make_backend(cfg.embedding.backend, cfg.embedding.model, cfg.embedding.dim)
     idx = Index(vault.db_path, backend)
     idx.connect()

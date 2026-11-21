@@ -87,6 +87,16 @@ export function TagChipStrip({ tags, onAdd, onRemove, noteId }: Props) {
     inputRef.current?.focus();
   };
 
+  // Blur keeps the typed tag (blur saves, Esc cancels — same convention
+  // as InlineEditInput) but closes the input: focus has moved on, and
+  // pulling it back would send the user's next keystrokes in here.
+  const commitOnBlur = (raw: string) => {
+    const value = sanitize(raw);
+    if (value && !tags.includes(value)) onAdd(value);
+    setDraft("");
+    setEditing(false);
+  };
+
   return (
     <div
       className="flex flex-wrap items-center gap-1.5"
@@ -147,9 +157,11 @@ export function TagChipStrip({ tags, onAdd, onRemove, noteId }: Props) {
             })}
             onBlur={() => {
               // Defer so a click on a suggestion can register first.
+              const pending = draft;
               window.setTimeout(() => {
-                if (draft.trim()) commit(draft);
-                else setEditing(false);
+                // Focus came back (suggestion click / re-focus): still editing.
+                if (document.activeElement === inputRef.current) return;
+                commitOnBlur(pending);
               }, 150);
             }}
             className="rounded-full border px-2 text-[11.5px] outline-none focus:border-accent"

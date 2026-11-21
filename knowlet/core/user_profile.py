@@ -16,12 +16,16 @@ See ADR-0008 for why these two paths share a single backend function.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import frontmatter
+import yaml
 
 from knowlet.core.note import now_iso
+
+logger = logging.getLogger(__name__)
 
 PROFILE_FILENAME = "me.md"
 PROFILE_BODY_CHAR_LIMIT = 8000  # ~2000 tokens; truncate beyond this for safety
@@ -87,6 +91,9 @@ class UserProfile:
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
     path: Path | None = None
+    # Set when the file's frontmatter could not be parsed; metadata then
+    # falls back to defaults and only the body is kept.
+    frontmatter_error: str | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -109,12 +116,43 @@ class UserProfile:
         return body[:limit].rstrip() + "\n\n…(profile truncated for prompt)"
 
 
+def _body_after_broken_frontmatter(raw: str) -> str:
+    """Body text of a file whose frontmatter failed to parse: whatever
+    follows the closing ``---`` fence, or the whole file when no
+    complete fence pair exists (so no user text is hidden)."""
+    lines = raw.split("\n")
+    start = 0
+    while start < len(lines) and not lines[start].strip():
+        start += 1
+    if start < len(lines) and lines[start].strip() == "---":
+        for j in range(start + 1, len(lines)):
+            if lines[j].strip() == "---":
+                return "\n".join(lines[j + 1 :]).lstrip("\n")
+    return raw
+
+
 def read_profile(profile_path: Path) -> UserProfile | None:
-    """Load `<vault>/users/me.md` if present. Returns None when missing."""
+    """Load `<vault>/users/me.md` if present. Returns None when missing.
+
+    The file is meant to be hand-edited, so broken frontmatter must not
+    propagate: it degrades to default metadata + the body, logs a
+    warning, and sets ``frontmatter_error``."""
     if not profile_path.exists():
         return None
-    with profile_path.open("r", encoding="utf-8") as f:
-        post = frontmatter.load(f)
+    raw = profile_path.read_text(encoding="utf-8")
+    try:
+        post = frontmatter.loads(raw)
+    except (yaml.YAMLError, ValueError, TypeError) as exc:
+        logger.warning(
+            "user profile %s has unparseable frontmatter; using defaults: %s",
+            profile_path,
+            exc,
+        )
+        return UserProfile(
+            body=_body_after_broken_frontmatter(raw),
+            path=profile_path,
+            frontmatter_error=str(exc),
+        )
     meta = post.metadata
     return UserProfile(
         body=post.content,
@@ -183,6 +221,10 @@ def edit_profile_in_editor(profile_path: Path, lang: str = "en") -> UserProfile:
     subprocess.run([editor, str(profile_path)], check=True)  # noqa: S603 — editor is the user's own $EDITOR
     profile = read_profile(profile_path)
     assert profile is not None  # ensure_profile guaranteed it exists
+    if profile.frontmatter_error is not None:
+        # Rewriting would replace the user's unparseable frontmatter with
+        # defaults; leave the file exactly as they saved it.
+        return profile
     # Refresh updated_at since the user may have edited the body without touching frontmatter.
     write_profile(profile_path, profile)
     return profile

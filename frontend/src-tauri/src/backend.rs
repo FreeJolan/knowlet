@@ -10,14 +10,19 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 const LOOPBACK_HOST: &str = "127.0.0.1";
-const VAULT_MARKER_DIR: &str = ".knowlet";
+pub(crate) const VAULT_MARKER_DIR: &str = ".knowlet";
 const EMPTY_DIR_IGNORED_ENTRIES: &[&str] = &[".DS_Store", ".localized", "Icon\r"];
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
+// Must cover uvicorn's graceful-shutdown timeout (5s, knowlet/cli/main.py)
+// plus the lifespan cleanup (drainer / scheduler / index close).
+const BACKEND_STOP_GRACE: Duration = Duration::from_secs(10);
+const BACKEND_START_ATTEMPTS: usize = 3;
 const BACKEND_BIN_NAME: &str = "knowlet-backend";
 const FRONTEND_DIST_RESOURCE: &str = "frontend-dist";
 pub const BACKEND_BIN_ENV: &str = "KNOWLET_BACKEND_BIN";
 pub const VAULT_ENV: &str = "KNOWLET_VAULT";
 pub const DESKTOP_PARENT_PID_ENV: &str = "KNOWLET_DESKTOP_PARENT_PID";
+pub const DESKTOP_LAUNCH_TOKEN_ENV: &str = "KNOWLET_DESKTOP_LAUNCH_TOKEN";
 const DESKTOP_BACKEND_STDIO_LOG: &str = "desktop-backend.log";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -520,8 +525,123 @@ pub fn repo_root_from_manifest() -> Result<PathBuf, String> {
         .map(Path::to_path_buf)
 }
 
+fn spawn_backend(
+    program: &BackendProgram,
+    vault: &Path,
+    frontend_dist: &Path,
+    port: u16,
+    log_path: &Path,
+    launch_token: &str,
+) -> Result<Child, String> {
+    reset_backend_stdio_log(log_path)?;
+    let stdout_log = open_backend_stdio_log(log_path)?;
+    let stderr_log = open_backend_stdio_log(log_path)?;
+
+    let mut cmd = Command::new(&program.executable);
+    cmd.args(&program.prefix_args)
+        .args(["web", "--host", LOOPBACK_HOST, "--port", &port.to_string()])
+        .env("KNOWLET_VAULT", vault)
+        .env("KNOWLET_FRONTEND_DIST", frontend_dist)
+        .env(DESKTOP_PARENT_PID_ENV, std::process::id().to_string())
+        .env(DESKTOP_LAUNCH_TOKEN_ENV, launch_token)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout_log))
+        .stderr(Stdio::from(stderr_log));
+    configure_backend_process_group(&mut cmd);
+    cmd.spawn()
+        .map_err(|err| format!("failed to start knowlet backend: {err}"))
+}
+
+/// find_available_port releases the probed port before the sidecar binds it,
+/// so another process can take it in that window; the backend then exits with
+/// a bind error and a fresh port is worth one more try.
+fn should_retry_backend_start(attempt: usize, exited: bool, log_tail: &str) -> bool {
+    attempt < BACKEND_START_ATTEMPTS
+        && exited
+        && log_tail
+            .to_ascii_lowercase()
+            .contains("address already in use")
+}
+
+/// Starts the backend as the leader of its own process group so the whole
+/// tree can be signalled. The packaged sidecar is a PyInstaller onefile
+/// bootloader that forks the real Python server; signalling only the
+/// bootloader's pid leaves that server running.
+pub fn configure_backend_process_group(cmd: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    #[cfg(not(unix))]
+    let _ = cmd;
+}
+
+/// Stops a backend started with [`configure_backend_process_group`]: SIGTERM
+/// to the whole group so the Python server shuts down gracefully, wait until
+/// every member has exited (the leader may go first, e.g. `uv run` in dev or a
+/// crashed bootloader), then SIGKILL whatever is left after `grace`.
+pub fn terminate_backend_process(child: &mut Child, grace: Duration) {
+    #[cfg(unix)]
+    {
+        let group = child.id();
+        process_group::signal(group, process_group::SIGTERM);
+        let deadline = Instant::now() + grace;
+        loop {
+            // try_wait also reaps the leader, so a zombie leader does not keep
+            // the group looking alive.
+            let leader_running = matches!(child.try_wait(), Ok(None));
+            if (!leader_running && !process_group::has_members(group)) || Instant::now() >= deadline
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        process_group::signal(group, process_group::SIGKILL);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = grace;
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+#[cfg(unix)]
+mod process_group {
+    // POSIX-specified numbers, identical on macOS and Linux.
+    pub const SIGTERM: i32 = 15;
+    pub const SIGKILL: i32 = 9;
+
+    extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+
+    pub fn signal(group: u32, sig: i32) {
+        let _ = send(group, sig);
+    }
+
+    /// Signal 0 only checks whether any process is still in the group.
+    pub fn has_members(group: u32) -> bool {
+        send(group, 0)
+    }
+
+    fn send(group: u32, sig: i32) -> bool {
+        let Ok(group) = i32::try_from(group) else {
+            return false;
+        };
+        // kill(0|-1, ..) would address our own group / every process.
+        if group <= 1 {
+            return false;
+        }
+        // A negative pid addresses every member of that process group.
+        // SAFETY: kill(2) has no memory-safety preconditions.
+        unsafe { kill(-group, sig) == 0 }
+    }
+}
+
 pub struct BackendProcess {
-    child: Child,
+    child: Option<Child>,
     pub url: String,
     pub vault: PathBuf,
     pub log_path: PathBuf,
@@ -531,49 +651,58 @@ impl BackendProcess {
     pub fn start(vault: PathBuf, frontend_dist: PathBuf) -> Result<Self, String> {
         let vault = validate_vault_dir(&vault)?;
         let frontend_dist = validate_frontend_dist(&frontend_dist)?;
-        let port = find_available_port()?;
-        let url = backend_url(port);
         let repo_root = repo_root_from_manifest()?;
         let current_exe = std::env::current_exe()
             .map_err(|err| format!("failed to resolve current executable: {err}"))?;
         let backend_program =
             resolve_backend_program(std::env::var_os(BACKEND_BIN_ENV), &current_exe, &repo_root)?;
         let log_path = desktop_backend_log_path(&vault);
-        reset_backend_stdio_log(&log_path)?;
-        let stdout_log = open_backend_stdio_log(&log_path)?;
-        let stderr_log = open_backend_stdio_log(&log_path)?;
 
-        let mut cmd = Command::new(&backend_program.executable);
-        cmd.args(&backend_program.prefix_args)
-            .args(["web", "--host", LOOPBACK_HOST, "--port", &port.to_string()])
-            .env("KNOWLET_VAULT", &vault)
-            .env("KNOWLET_FRONTEND_DIST", &frontend_dist)
-            .env(DESKTOP_PARENT_PID_ENV, std::process::id().to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(stdout_log))
-            .stderr(Stdio::from(stderr_log));
-
-        let child = cmd
-            .spawn()
-            .map_err(|err| format!("failed to start knowlet backend: {err}"))?;
-        let mut child = child;
-        if let Err(err) = wait_for_backend_health(&mut child, port, HEALTH_TIMEOUT, &log_path) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(err);
+        let mut attempt = 1;
+        loop {
+            let port = find_available_port()?;
+            let launch_token = new_launch_token();
+            let mut child = spawn_backend(
+                &backend_program,
+                &vault,
+                &frontend_dist,
+                port,
+                &log_path,
+                &launch_token,
+            )?;
+            match wait_for_backend_health(
+                &mut child,
+                port,
+                HEALTH_TIMEOUT,
+                &log_path,
+                &launch_token,
+            ) {
+                Ok(()) => {
+                    return Ok(Self {
+                        child: Some(child),
+                        url: backend_url(port),
+                        vault,
+                        log_path,
+                    });
+                }
+                Err(err) => {
+                    let exited = matches!(child.try_wait(), Ok(Some(_)));
+                    terminate_backend_process(&mut child, BACKEND_STOP_GRACE);
+                    if !should_retry_backend_start(attempt, exited, &read_log_tail(&log_path, 20)) {
+                        return Err(err);
+                    }
+                    attempt += 1;
+                }
+            }
         }
-
-        Ok(Self {
-            child,
-            url,
-            vault,
-            log_path,
-        })
     }
 
+    /// Idempotent: the child is taken on the first call so a later stop (or
+    /// Drop) never signals a process group id that may have been reused.
     pub fn stop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Some(mut child) = self.child.take() {
+            terminate_backend_process(&mut child, BACKEND_STOP_GRACE);
+        }
     }
 }
 
@@ -628,10 +757,11 @@ pub fn wait_for_backend_health(
     port: u16,
     timeout: Duration,
     log_path: &Path,
+    launch_token: &str,
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if health_check(port) {
+        if health_check(port, Some(launch_token)) {
             return Ok(());
         }
         match child.try_wait() {
@@ -661,7 +791,7 @@ pub fn wait_for_backend_health(
 pub fn wait_for_health(port: u16, timeout: Duration) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if health_check(port) {
+        if health_check(port, None) {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(150));
@@ -694,7 +824,28 @@ pub fn read_log_tail(path: &Path, max_lines: usize) -> String {
     lines.join("\n")
 }
 
-fn health_check(port: u16) -> bool {
+/// 128-bit random hex token handed to one sidecar launch. The sidecar echoes
+/// it from /api/health, so an unrelated local service that happens to answer
+/// 200 on the probed port is never mistaken for our backend.
+pub fn new_launch_token() -> String {
+    let mut bytes = [0_u8; 16];
+    let from_os = File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut bytes))
+        .is_ok();
+    if !from_os {
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+        for (i, chunk) in bytes.chunks_mut(8).enumerate() {
+            let mut hasher = RandomState::new().build_hasher();
+            hasher.write_u32(std::process::id());
+            hasher.write_usize(i);
+            chunk.copy_from_slice(&hasher.finish().to_le_bytes());
+        }
+    }
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn health_check(port: u16, launch_token: Option<&str>) -> bool {
     let Ok(mut stream) = TcpStream::connect((LOOPBACK_HOST, port)) else {
         return false;
     };
@@ -707,12 +858,35 @@ fn health_check(port: u16) -> bool {
         return false;
     }
 
-    let mut response = [0_u8; 256];
-    let Ok(n) = stream.read(&mut response) else {
+    let mut response = Vec::new();
+    let mut buf = [0_u8; 4096];
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                response.extend_from_slice(&buf[..n]);
+                if response.len() > 64 * 1024 {
+                    return false;
+                }
+            }
+            Err(_) if !response.is_empty() => break,
+            Err(_) => return false,
+        }
+    }
+    let text = String::from_utf8_lossy(&response);
+    if !(text.starts_with("HTTP/1.1 200") || text.starts_with("HTTP/1.0 200")) {
+        return false;
+    }
+    let Some(expected) = launch_token else {
+        return true;
+    };
+    let Some((_, body)) = text.split_once("\r\n\r\n") else {
         return false;
     };
-    let status = String::from_utf8_lossy(&response[..n]);
-    status.starts_with("HTTP/1.1 200") || status.starts_with("HTTP/1.0 200")
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|doc| doc.get("launch_token")?.as_str().map(|t| t == expected))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -721,9 +895,177 @@ mod tests {
     use std::net::TcpListener;
     use std::path::Path;
     use std::process::{Command, Stdio};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use tempfile::tempdir;
+
+    #[cfg(unix)]
+    fn spawn_backend_like_tree(script: &str, pid_file: &Path) -> std::process::Child {
+        // Mirrors the PyInstaller onefile layout: the spawned process is a
+        // bootloader that forks the real server and waits for it.
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c")
+            .arg(script.replace("PID_FILE", &pid_file.display().to_string()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        super::configure_backend_process_group(&mut cmd);
+        let child = cmd.spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if fs::read_to_string(pid_file).is_ok_and(|raw| raw.trim().parse::<u32>().is_ok()) {
+                return child;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("backend-like process tree did not report its child pid");
+    }
+
+    #[cfg(unix)]
+    fn read_pid(pid_file: &Path) -> u32 {
+        fs::read_to_string(pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
+    }
+
+    #[cfg(unix)]
+    fn process_is_running(pid: u32) -> bool {
+        // `ps` reports zombies (already dead, awaiting reaping by launchd/init)
+        // with a Z state; only a non-zombie entry counts as still running.
+        let output = Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        let stat = String::from_utf8_lossy(&output.stdout);
+        output.status.success() && !stat.trim().is_empty() && !stat.trim().starts_with('Z')
+    }
+
+    #[cfg(unix)]
+    fn wait_until_gone(pid: u32, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if !process_is_running(pid) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+
+    /// Cleanup for a failed assertion only: once the pid is gone it may be
+    /// reused by a process from a test running in parallel.
+    #[cfg(unix)]
+    fn kill_if_outlived(pid: u32, gone: bool) {
+        if !gone {
+            let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+        }
+    }
+
+    #[test]
+    fn backend_start_retries_only_when_the_probed_port_was_taken() {
+        let uvicorn_bind_error = "ERROR:    [Errno 48] error while attempting to bind on address \
+            ('127.0.0.1', 54321): address already in use";
+
+        assert!(super::should_retry_backend_start(
+            1,
+            true,
+            uvicorn_bind_error
+        ));
+        assert!(super::should_retry_backend_start(
+            1,
+            true,
+            "OSError: [Errno 48] Address already in use"
+        ));
+        // Still running (health timeout) or a different crash: no retry.
+        assert!(!super::should_retry_backend_start(
+            1,
+            false,
+            uvicorn_bind_error
+        ));
+        assert!(!super::should_retry_backend_start(
+            1,
+            true,
+            "Traceback: index corrupt"
+        ));
+        // Bounded attempts.
+        assert!(!super::should_retry_backend_start(
+            super::BACKEND_START_ATTEMPTS,
+            true,
+            uvicorn_bind_error
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_backend_terminates_the_forked_server_process() {
+        let dir = tempdir().unwrap();
+        let pid_file = dir.path().join("server.pid");
+        let mut child = spawn_backend_like_tree("sleep 30 & echo $! > 'PID_FILE'; wait", &pid_file);
+        let server = read_pid(&pid_file);
+
+        super::terminate_backend_process(&mut child, Duration::from_secs(5));
+
+        let gone = wait_until_gone(server, Duration::from_secs(3));
+        kill_if_outlived(server, gone);
+        assert!(
+            gone,
+            "the forked server process outlived the stopped backend"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_backend_asks_for_graceful_shutdown_first() {
+        let dir = tempdir().unwrap();
+        let pid_file = dir.path().join("server.pid");
+        let marker = dir.path().join("graceful");
+        let script = format!(
+            "(trap 'echo graceful > \"{}\"; exit 0' TERM; while :; do sleep 1; done) & \
+             echo $! > 'PID_FILE'; wait",
+            marker.display()
+        );
+        let mut child = spawn_backend_like_tree(&script, &pid_file);
+        let server = read_pid(&pid_file);
+
+        super::terminate_backend_process(&mut child, Duration::from_secs(5));
+
+        let gone = wait_until_gone(server, Duration::from_secs(3));
+        kill_if_outlived(server, gone);
+        assert!(
+            gone,
+            "the forked server process outlived the stopped backend"
+        );
+        assert_eq!(
+            fs::read_to_string(&marker).unwrap_or_default().trim(),
+            "graceful",
+            "the backend must receive SIGTERM (graceful shutdown) before any SIGKILL"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_backend_force_kills_a_tree_that_ignores_sigterm() {
+        let dir = tempdir().unwrap();
+        let pid_file = dir.path().join("server.pid");
+        let mut child = spawn_backend_like_tree(
+            "trap '' TERM; sleep 30 & echo $! > 'PID_FILE'; wait",
+            &pid_file,
+        );
+        let server = read_pid(&pid_file);
+        let started = Instant::now();
+
+        super::terminate_backend_process(&mut child, Duration::from_millis(300));
+
+        let gone = wait_until_gone(server, Duration::from_secs(3));
+        kill_if_outlived(server, gone);
+        assert!(
+            gone,
+            "a server ignoring SIGTERM must be killed once the grace period ends"
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
 
     #[test]
     fn accepts_directory_with_knowlet_marker() {
@@ -805,7 +1147,7 @@ mod tests {
             .unwrap();
         let port = super::find_available_port().unwrap();
 
-        let err = super::wait_for_backend_health(&mut child, port, Duration::from_secs(1), &log)
+        let err = super::wait_for_backend_health(&mut child, port, Duration::from_secs(1), &log, "t")
             .unwrap_err();
 
         assert!(err.contains("exited before health check passed"));
@@ -878,6 +1220,73 @@ mod tests {
         });
 
         super::wait_for_health(port, Duration::from_secs(1)).unwrap();
+    }
+
+    fn serve_once(response: &'static [u8]) -> u16 {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0_u8; 1024];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                let _ = std::io::Write::write_all(&mut stream, response);
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn backend_health_rejects_foreign_service_without_launch_token() {
+        let dir = tempdir().unwrap();
+        let log = dir.path().join("backend.log");
+        let port = serve_once(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}",
+        );
+        let mut child = Command::new("sleep").arg("5").spawn().unwrap();
+
+        let result = super::wait_for_backend_health(
+            &mut child,
+            port,
+            Duration::from_millis(600),
+            &log,
+            "0123456789abcdef0123456789abcdef",
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(result.unwrap_err().contains("health"));
+    }
+
+    #[test]
+    fn backend_health_accepts_matching_launch_token() {
+        let dir = tempdir().unwrap();
+        let log = dir.path().join("backend.log");
+        let port = serve_once(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 65\r\nConnection: close\r\n\r\n{\"status\":\"ok\",\"launch_token\":\"0123456789abcdef0123456789abcdef\"}",
+        );
+        let mut child = Command::new("sleep").arg("5").spawn().unwrap();
+
+        let result = super::wait_for_backend_health(
+            &mut child,
+            port,
+            Duration::from_secs(2),
+            &log,
+            "0123456789abcdef0123456789abcdef",
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+
+        result.unwrap();
+    }
+
+    #[test]
+    fn launch_tokens_are_random_hex() {
+        let a = super::new_launch_token();
+        let b = super::new_launch_token();
+
+        assert_eq!(a.len(), 32);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
     }
 
     #[test]

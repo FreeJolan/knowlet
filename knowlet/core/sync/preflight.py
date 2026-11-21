@@ -34,17 +34,28 @@ What this module does NOT do:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from knowlet.core.sync.pull import PullStateMissingError, pull_note_to_local
+from knowlet.core.sync.pull import (
+    PullLocalChangedError,
+    PullStateMissingError,
+    pull_note_to_local,
+)
 from knowlet.core.sync.state import FileState, SyncStateStore
 from knowlet.core.sync.status import (
+    DEV_FAKE_DRIVE_FILE_ID,
     NoteSyncStatus,
+    classify_note_sync_status,
     compute_note_sync_status,
+    has_unpushed_local_changes,
+    sync_auth_status,
 )
+
+logger = logging.getLogger(__name__)
 
 NoteMetaLookup = Callable[[str], dict[str, Any] | None]
 NotePathLookup = Callable[[str], Path | None]
@@ -58,6 +69,11 @@ ServiceFactory = Callable[[], Any | None]
 MaterializeCallback = Callable[[str, Any], str | None]
 TrashLocalCallback = Callable[[str], None]
 DeleteLocalVaultFileCallback = Callable[[str, str], None]
+
+# ``PreflightOffline.note_id`` of the row reported when the bulk appData
+# listing failed: remote additions / deletions were not reconciled, so
+# the scan must not read as "cleared".
+DRIVE_LISTING_OFFLINE_ID = "__drive_listing__"
 
 
 @dataclass(frozen=True)
@@ -173,34 +189,62 @@ def preflight_scan(
         alive_devices_out=alive_devices,
     )
 
-    # #119 — list Drive appData files ONCE per scan. Used twice
-    # below: to detect Drive-side deletions (sync_state has the
-    # file_id but Drive doesn't) and Drive-side additions (Drive
-    # has the file but no sync_state row tracks it).
-    drive_files: dict[str, Any] = {}
+    # #119 — list Drive appData files ONCE per scan. Used to read
+    # every tracked file's head revision without a per-note files.get,
+    # to detect Drive-side deletions (sync_state has the file_id but
+    # Drive doesn't) and Drive-side additions (Drive has the file but
+    # no sync_state row tracks it).
+    #
+    # ``None`` = no complete listing this scan. Absence from a listing
+    # is read as "deleted remotely", so only a complete one may drive
+    # Pass A / Pass B; a failed or truncated listing skips both.
+    drive_files: dict[str, Any] | None = None
+    listing_error: str | None = None
     if drive_service is not None:
         try:
             from knowlet.core.sync.files import list_appdata_revisions
 
             drive_files = list_appdata_revisions(drive_service)
-        except Exception:
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "preflight: Drive list failed; bidirectional sync skipped this tick",
+        except Exception as exc:
+            listing_error = repr(exc)
+            logger.warning(
+                "preflight: Drive list failed; remote deletions/additions skipped this scan",
                 exc_info=True,
             )
 
+    auth_checked = False
     for row in rows:
         if row.entity_type != "note":
             continue
         local_path = note_path_lookup(row.entity_id)
-        status = compute_note_sync_status(
-            vault_root=vault_root,
-            note_id=row.entity_id,
-            state_store=state_store,
-            local_path=local_path,
-        )
+        if (
+            drive_files is not None
+            and row.drive_file_id
+            and row.drive_file_id != DEV_FAKE_DRIVE_FILE_ID
+            and (row.drive_file_id in drive_files or trash_local_for_drive_deleted is not None)
+        ):
+            if not auth_checked:
+                auth_checked = True
+                if sync_auth_status(vault_root) is not None:
+                    unauthenticated = True
+                    break
+            brief = drive_files.get(row.drive_file_id)
+            if brief is None:
+                # Gone from Drive: Pass A decides between propagating
+                # the deletion and keeping unpushed local edits.
+                continue
+            status = classify_note_sync_status(
+                row,
+                current_drive_revision=brief.head_revision_id,
+                local_path=local_path,
+            )
+        else:
+            status = compute_note_sync_status(
+                vault_root=vault_root,
+                note_id=row.entity_id,
+                state_store=state_store,
+                local_path=local_path,
+            )
 
         if status.state == "unauthenticated":
             # First row already revealed no creds — bail early. The
@@ -238,6 +282,10 @@ def preflight_scan(
                 )
                 auto_pulled.append(row.entity_id)
                 synced += 1
+            except PullLocalChangedError:
+                # A save landed while downloading: local edits + moved
+                # remote is a real conflict now.
+                conflicts.append(_conflict_row(row, status, note_meta_lookup))
             except PullStateMissingError:
                 # Sync state malformed — surface as offline so it
                 # doesn't get lost. Manual repair via the doctor
@@ -281,7 +329,7 @@ def preflight_scan(
                     continue
                 if not row.drive_file_id or row.delete_intent is not None:
                     continue
-                brief = drive_files.get(row.drive_file_id)
+                brief = (drive_files or {}).get(row.drive_file_id)
                 if brief is None:
                     continue
                 if brief.head_revision_id and brief.head_revision_id == row.last_known_etag:
@@ -302,16 +350,20 @@ def preflight_scan(
                     )
 
         # Pass A: Drive-side deletions. Any sync_state row whose
-        # drive_file_id is missing from the current Drive list
-        # gets its local file moved to trash. Skip dev-seeded rows
+        # drive_file_id is missing from the current (complete) Drive
+        # list gets its local file moved to trash. Skip dev-seeded rows
         # (no real Drive backing) and rows with pending delete
         # intent (those are OUR deletes, drainer handles them).
-        if (
+        #
+        # Remote delete vs. unpushed local edit: the edit wins. The row
+        # is detached from the dead Drive id and re-queued as a first
+        # push, so the local version is re-uploaded instead of being
+        # trashed here (or pushed into a trashed Drive file).
+        if drive_files is not None and (
             trash_local_for_drive_deleted is not None
             or delete_local_vault_file_for_drive_deleted is not None
         ):
             from knowlet.core.sync.push import ATTACHMENT_ENTITY_TYPE
-            from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
             from knowlet.core.sync.tracked_files import SYNCABLE_VAULT_FILE_ENTITY_TYPES
 
             for row in rows:
@@ -324,15 +376,13 @@ def preflight_scan(
                 if row.drive_file_id in drive_files:
                     continue
                 if row.entity_type != "note":
-                    if (
-                        delete_local_vault_file_for_drive_deleted is None
-                        or row.dirty
-                        or row.entity_type
-                        not in {
-                            ATTACHMENT_ENTITY_TYPE,
-                            *SYNCABLE_VAULT_FILE_ENTITY_TYPES,
-                        }
-                    ):
+                    if delete_local_vault_file_for_drive_deleted is None or row.entity_type not in {
+                        ATTACHMENT_ENTITY_TYPE,
+                        *SYNCABLE_VAULT_FILE_ENTITY_TYPES,
+                    }:
+                        continue
+                    if row.dirty:
+                        _requeue_as_first_push(state_store, row)
                         continue
                     try:
                         delete_local_vault_file_for_drive_deleted(
@@ -352,6 +402,10 @@ def preflight_scan(
                     continue
                 if trash_local_for_drive_deleted is None:
                     continue
+                if has_unpushed_local_changes(row, note_path_lookup(row.entity_id)):
+                    _requeue_as_first_push(state_store, row)
+                    dirty += 1
+                    continue
                 try:
                     trash_local_for_drive_deleted(row.entity_id)
                     trashed_for_drive_delete.append(row.entity_id)
@@ -367,17 +421,45 @@ def preflight_scan(
         # Pass B: Drive-side additions. Any file_id in Drive's
         # appData not currently tracked in sync_state gets pulled
         # down. Skip heartbeat files (those aren't notes).
-        if materialize_drive_file is not None:
+        #
+        # A Drive file whose name maps to a note that already has a
+        # sync_state row (bound to another Drive id, or pending its
+        # first push) is a duplicate copy, e.g. left by a first push
+        # whose response was lost. Materializing it would overwrite the
+        # local note with that copy and steal the row; push_note's first
+        # push reconciles same-name copies instead. Non-note types have
+        # no such reconciliation, so they keep the materialize path.
+        if drive_files is not None and materialize_drive_file is not None:
             from knowlet.core.sync.heartbeat import HEARTBEAT_SUFFIX
             from knowlet.core.sync.namespace import name_belongs_to_vault
+            from knowlet.core.sync.push import NOTE_ENTITY_TYPE, appdata_entity_from_drive_name
 
             known_drive_ids = {row.drive_file_id for row in rows if row.drive_file_id}
+            tracked_note_ids = {
+                row.entity_id for row in rows if row.entity_type == NOTE_ENTITY_TYPE
+            }
             for file_id, brief in drive_files.items():
                 if file_id in known_drive_ids:
                     continue
                 if brief.name and brief.name.endswith(HEARTBEAT_SUFFIX):
                     continue
                 if not name_belongs_to_vault(brief.name, state_store.vault_root):
+                    continue
+                parsed = appdata_entity_from_drive_name(
+                    str(brief.name or ""),
+                    vault_root=state_store.vault_root,
+                    allow_legacy_flat_json=True,
+                )
+                if (
+                    parsed is not None
+                    and parsed[0] == NOTE_ENTITY_TYPE
+                    and parsed[1] in tracked_note_ids
+                ):
+                    logger.warning(
+                        "preflight: skipping duplicate Drive copy %s of tracked note %s",
+                        file_id,
+                        parsed[1],
+                    )
                     continue
                 try:
                     materialized_id = materialize_drive_file(file_id, brief)
@@ -392,6 +474,26 @@ def preflight_scan(
                         exc_info=True,
                     )
 
+    if (
+        listing_error is not None
+        and not unauthenticated
+        and (
+            materialize_drive_file is not None
+            or trash_local_for_drive_deleted is not None
+            or delete_local_vault_file_for_drive_deleted is not None
+        )
+    ):
+        offline.append(
+            PreflightOffline(
+                note_id=DRIVE_LISTING_OFFLINE_ID,
+                note_title=None,
+                detail=(
+                    "Drive file list unavailable; remote additions and deletions "
+                    f"were not applied this scan: {listing_error}"
+                ),
+            )
+        )
+
     return PreflightReport(
         conflicts=conflicts,
         offline=offline,
@@ -404,6 +506,18 @@ def preflight_scan(
         cloned_from_drive_ids=cloned_from_drive,
         trashed_for_drive_delete_ids=trashed_for_drive_delete,
         deleted_for_drive_delete_ids=deleted_for_drive_delete,
+    )
+
+
+def _requeue_as_first_push(state_store: SyncStateStore, row: FileState) -> None:
+    logger.info(
+        "preflight: %s/%s was deleted on Drive but has unpushed local changes; "
+        "keeping it and re-uploading",
+        row.entity_type,
+        row.entity_id,
+    )
+    state_store.upsert_file_state(
+        replace(row, drive_file_id=None, last_known_etag=None, dirty=True, delete_intent=None)
     )
 
 

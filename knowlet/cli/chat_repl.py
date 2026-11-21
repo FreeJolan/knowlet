@@ -17,15 +17,18 @@ if TYPE_CHECKING:
 
 import typer
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
 from knowlet import __version__
-from knowlet.cli._common import console, err_console, mask, render_notes_table
+from knowlet.cli._common import console, err_console, render_notes_table
 from knowlet.cli._doctor import print_doctor, run_doctor_checks
+from knowlet.cli._sync_marks import mark_dirty
 from knowlet.cli.cards import run_cards_review
-from knowlet.cli.mining import _render_run_report
+from knowlet.cli.config import redacted_config_dump
+from knowlet.cli.mining import AMBIGUOUS_ID_ERRORS, _render_run_report, print_ambiguous_id
 from knowlet.core.i18n import t
 from knowlet.core.index import Index
 
@@ -53,7 +56,7 @@ def run_chat(
         raise typer.Exit(code=2) from exc
 
     if report.pruned_conversations:
-        console.print(f"[dim]pruned {report.pruned_conversations} old conversation log(s)[/dim]")
+        console.print(f"[dim]archived {report.pruned_conversations} old conversation log(s)[/dim]")
 
     console.print(
         Panel.fit(
@@ -136,7 +139,9 @@ def _handle_slash(text: str, runtime: Any) -> tuple[bool, bool]:
             chunk_size=runtime.config.retrieval.chunk_size,
             chunk_overlap=runtime.config.retrieval.chunk_overlap,
             note_paths=list(runtime.vault.iter_note_paths()),
+            vault=runtime.vault,
         )
+        runtime.index.close()
         runtime.index = Index(runtime.vault.db_path, runtime.backend)
         runtime.index.connect()
         runtime.ctx.index = runtime.index
@@ -153,9 +158,10 @@ def _handle_slash(text: str, runtime: Any) -> tuple[bool, bool]:
     if name == "config":
         sub = args[0] if args else "show"
         if sub == "show":
-            safe = runtime.config.model_dump()
-            safe["llm"]["api_key"] = mask(runtime.config.llm.api_key)
-            console.print(json.dumps(safe, indent=2, ensure_ascii=False))
+            safe = redacted_config_dump(runtime.config)
+            console.print(
+                json.dumps(safe, indent=2, ensure_ascii=False), markup=False, soft_wrap=True
+            )
         else:
             console.print(
                 "[yellow]inside the chat REPL, only `:config show` is supported.\n"
@@ -197,7 +203,11 @@ def _handle_slash(text: str, runtime: Any) -> tuple[bool, bool]:
             else:
                 from knowlet.core.mining.runner import run_task as _run
 
-                task = runtime.ctx.tasks.get(args[1])
+                try:
+                    task = runtime.ctx.tasks.get(args[1])
+                except AMBIGUOUS_ID_ERRORS as exc:
+                    print_ambiguous_id(exc)
+                    return True, False
                 if task is None:
                     console.print(f"[red]task not found:[/red] {args[1]}")
                 else:
@@ -250,26 +260,48 @@ def _handle_slash(text: str, runtime: Any) -> tuple[bool, bool]:
             if len(args) < 2:
                 console.print(f"[yellow]usage: :drafts {sub} <draft_id>[/yellow]")
                 return True, False
-            d = runtime.ctx.drafts.get(args[1])
+            try:
+                d = runtime.ctx.drafts.get(args[1])
+            except AMBIGUOUS_ID_ERRORS as exc:
+                print_ambiguous_id(exc)
+                return True, False
             if d is None:
-                console.print(f"[red]draft not found:[/red] {args[1]}")
+                console.print(f"[red]draft not found:[/red] {escape(args[1])}")
                 return True, False
             if sub == "show":
                 console.print(Panel(Markdown(d.body), title=d.title))
             elif sub == "reject":
-                runtime.ctx.drafts.delete(d.id)
-                console.print(f"[green]rejected[/green] {d.id[:8]}…")
-            elif sub == "approve":
-                note = d.to_note()
-                path = runtime.vault.write_note(note)
-                note.path = path
-                runtime.index.upsert_note(
-                    note,
-                    chunk_size=runtime.config.retrieval.chunk_size,
-                    chunk_overlap=runtime.config.retrieval.chunk_overlap,
+                try:
+                    archived = runtime.ctx.drafts.archive_draft(d.id)
+                except KeyError:
+                    console.print(f"[red]draft not found:[/red] {escape(args[1])}")
+                    return True, False
+                console.print(
+                    f"[green]rejected[/green] {d.id[:8]}… [dim](archived → {archived})[/dim]"
                 )
-                runtime.ctx.drafts.delete(d.id)
-                console.print(f"[green]approved[/green] → {path}")
+            elif sub == "approve":
+                from knowlet.core.digest_items import RawInfoStore
+                from knowlet.core.draft_flow import DraftFlowError, commit_note_draft
+
+                # Same commit path as the web UI / `knowlet drafts approve`:
+                # pending-diff guard, draft.folder placement, Raw Info status.
+                try:
+                    result = commit_note_draft(
+                        vault=runtime.vault,
+                        index=runtime.index,
+                        config=runtime.config,
+                        drafts=runtime.ctx.drafts,
+                        draft_id=d.id,
+                        raw_infos=RawInfoStore(runtime.vault.digest_items_dir),
+                    )
+                except KeyError:
+                    console.print(f"[red]draft not found:[/red] {escape(args[1])}")
+                    return True, False
+                except DraftFlowError as exc:
+                    console.print(f"[red]cannot approve draft:[/red] {escape(str(exc))}")
+                    return True, False
+                mark_dirty(runtime.vault.root, [result.note_id])
+                console.print(f"[green]approved[/green] → {result.path}")
         else:
             console.print(
                 f"[yellow]unknown :drafts subcommand: {sub}  "
@@ -438,5 +470,6 @@ def _do_sediment(runtime: Any, quiet_skip: bool = False) -> None:
                 return
             continue
         note = commit_draft(draft, runtime.vault, runtime.index, runtime.config)
+        mark_dirty(runtime.vault.root, [note.id])
         console.print(f"[green]saved[/green] → {note.path}")
         return

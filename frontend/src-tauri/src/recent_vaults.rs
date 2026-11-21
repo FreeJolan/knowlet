@@ -1,10 +1,11 @@
 use std::ffi::OsString;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::backend::validate_vault_dir;
+use crate::backend::{validate_vault_dir, VAULT_MARKER_DIR};
 
 const RECENT_VAULTS_VERSION: u8 = 1;
 const MAX_RECENT_VAULTS: usize = 8;
@@ -70,16 +71,27 @@ pub fn forget_recent_vault(path: &Path, vault: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
+/// Returns the recent vaults that can be opened right now. Records that fail
+/// validation are only dropped from disk when the vault is positively gone;
+/// an unmounted disk or a denied permission hides the entry but keeps it.
 pub fn load_valid_recent_vaults(path: &Path) -> Vec<PathBuf> {
     let recent_vaults = load_recent_vaults(path).unwrap_or_default();
-    let still_valid = recent_vaults
-        .iter()
-        .filter_map(|candidate| validate_vault_dir(candidate).ok())
-        .collect::<Vec<_>>();
-    if recent_vaults != still_valid {
-        let _ = save_recent_vaults(path, &still_valid);
+    let mut available = Vec::new();
+    let mut kept = Vec::new();
+    for candidate in &recent_vaults {
+        match validate_vault_dir(candidate) {
+            Ok(vault) => {
+                kept.push(vault.clone());
+                available.push(vault);
+            }
+            Err(_) if recent_vault_is_gone(candidate) => {}
+            Err(_) => kept.push(candidate.clone()),
+        }
     }
-    still_valid
+    if recent_vaults != kept {
+        let _ = save_recent_vaults(path, &kept);
+    }
+    available
 }
 
 pub fn resolve_startup_vault_with_recent(
@@ -104,6 +116,33 @@ pub fn resolve_startup_vault_with_recent(
     let vault = validate_vault_dir(&path)?;
     let _ = record_recent_vault(recent_vaults_path, &vault);
     Ok(vault)
+}
+
+/// True only when the filesystem positively shows the vault is gone: the
+/// folder exists but is no vault any more, or it is missing while its parent
+/// is readable. Missing parents (unmounted volume) and permission or I/O
+/// errors may be temporary.
+fn recent_vault_is_gone(path: &Path) -> bool {
+    match fs::metadata(path) {
+        Ok(meta) => {
+            !meta.is_dir()
+                || matches!(
+                    fs::metadata(path.join(VAULT_MARKER_DIR)),
+                    Err(err) if err.kind() == ErrorKind::NotFound
+                )
+        }
+        Err(err) if err.kind() == ErrorKind::NotFound => path
+            .parent()
+            .filter(|parent| !is_volume_mount_point_parent(parent))
+            .is_some_and(|parent| fs::metadata(parent).is_ok_and(|meta| meta.is_dir())),
+        Err(_) => false,
+    }
+}
+
+/// A vault at a volume root (e.g. /Volumes/SSD) disappears together with its
+/// mount point while /Volumes itself stays readable.
+fn is_volume_mount_point_parent(dir: &Path) -> bool {
+    dir == Path::new("/Volumes")
 }
 
 fn dedupe_and_limit(vaults: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -240,6 +279,72 @@ mod tests {
         let stale = dir.path().join("stale-vault");
         let valid = make_vault(dir.path(), "valid-vault");
         super::save_recent_vaults(&store, &[stale.clone(), valid.clone()]).unwrap();
+
+        let valid_vaults = super::load_valid_recent_vaults(&store);
+
+        assert_eq!(valid_vaults, vec![valid.clone()]);
+        assert_eq!(super::load_recent_vaults(&store).unwrap(), vec![valid]);
+    }
+
+    #[test]
+    fn valid_recent_vaults_keep_records_on_an_unavailable_volume() {
+        let dir = tempdir().unwrap();
+        let store = dir.path().join("recent-vaults.json");
+        // The whole tree above the vault is missing, as when an external disk
+        // or network volume is not mounted: hide it, but keep the record.
+        let offline = dir
+            .path()
+            .join("unmounted-volume")
+            .join("vaults")
+            .join("research");
+        let valid = make_vault(dir.path(), "valid-vault");
+        super::save_recent_vaults(&store, &[offline.clone(), valid.clone()]).unwrap();
+
+        let valid_vaults = super::load_valid_recent_vaults(&store);
+
+        assert_eq!(valid_vaults, vec![valid.clone()]);
+        assert_eq!(
+            super::load_recent_vaults(&store).unwrap(),
+            vec![offline, valid]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn valid_recent_vaults_keep_records_when_access_is_denied() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let store = dir.path().join("recent-vaults.json");
+        let locked_parent = dir.path().join("locked");
+        let locked = make_vault(&locked_parent, "research");
+        let valid = make_vault(dir.path(), "valid-vault");
+        super::save_recent_vaults(&store, &[locked.clone(), valid.clone()]).unwrap();
+        fs::set_permissions(&locked_parent, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let valid_vaults = super::load_valid_recent_vaults(&store);
+        let records = super::load_recent_vaults(&store).unwrap();
+        fs::set_permissions(&locked_parent, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(valid_vaults, vec![valid.clone()]);
+        assert_eq!(records, vec![locked, valid]);
+    }
+
+    #[test]
+    fn valid_recent_vaults_keep_volume_root_records_when_unmounted() {
+        let offline = Path::new("/Volumes/knowlet-test-volume-that-is-not-mounted");
+
+        assert!(!super::recent_vault_is_gone(offline));
+    }
+
+    #[test]
+    fn valid_recent_vaults_prune_folder_that_is_no_longer_a_vault() {
+        let dir = tempdir().unwrap();
+        let store = dir.path().join("recent-vaults.json");
+        let unmarked = dir.path().join("plain-folder");
+        fs::create_dir_all(&unmarked).unwrap();
+        let valid = make_vault(dir.path(), "valid-vault");
+        super::save_recent_vaults(&store, &[unmarked, valid.clone()]).unwrap();
 
         let valid_vaults = super::load_valid_recent_vaults(&store);
 

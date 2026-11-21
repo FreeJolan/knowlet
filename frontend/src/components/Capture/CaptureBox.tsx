@@ -69,15 +69,30 @@ export function CaptureBox({
   const urlRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Reset state when the modal opens/closes so a stale "done" view
-  // doesn't show on reopen.
+  const initialUrlRef = useRef(initialUrl);
+  const stateKindRef = useRef(state.kind);
   useEffect(() => {
-    if (open) {
-      setUrlInput(initialUrl ?? "");
-      setState({ kind: "empty" });
-      // Defer focus to next tick so the input is mounted.
-      setTimeout(() => urlRef.current?.focus(), 0);
-    }
+    initialUrlRef.current = initialUrl;
+    stateKindRef.current = state.kind;
+  });
+
+  // Reset state when the modal opens so a stale "done" view doesn't show
+  // on reopen. Only `open` resets — a prop change while open must not
+  // wipe what the user typed or an in-flight fetch.
+  useEffect(() => {
+    if (!open) return;
+    setUrlInput(initialUrlRef.current ?? "");
+    setState({ kind: "empty" });
+    // Defer focus to next tick so the input is mounted.
+    const handle = window.setTimeout(() => urlRef.current?.focus(), 0);
+    return () => window.clearTimeout(handle);
+  }, [open]);
+
+  // The clipboard URL is read asynchronously and can arrive after the box
+  // opened: pre-fill it only while the box is still untouched.
+  useEffect(() => {
+    if (!open || !initialUrl || stateKindRef.current !== "empty") return;
+    setUrlInput((cur) => (cur === "" ? initialUrl : cur));
   }, [open, initialUrl]);
 
   const fetchUrl = useCallback(

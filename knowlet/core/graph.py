@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from knowlet.core.backlinks import extract_wikilinks
+from knowlet.core.backlinks import extract_wikilinks, link_target_keys
 from knowlet.core.note import Note
 
 log = logging.getLogger(__name__)
@@ -104,10 +104,11 @@ def build_graph(
             continue
         seen_targets: set[str] = set()
         for w in extract_wikilinks(body):
-            # Strip heading anchor before resolution: `[[Foo#Heading]]`
-            # still points at note `Foo`.
-            target_title = w.target.split("#", 1)[0].split("^", 1)[0].strip()
-            target_id = title_to_id.get(_normalize(target_title))
+            # `[[Foo#Heading]]` still points at note `Foo`.
+            target_id = next(
+                (title_to_id[k] for k in link_target_keys(w.target) if k in title_to_id),
+                None,
+            )
             if not target_id or target_id == note_id:
                 continue
             if target_id in seen_targets:

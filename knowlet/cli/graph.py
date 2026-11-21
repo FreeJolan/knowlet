@@ -11,6 +11,7 @@ can chain on top.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -57,14 +58,14 @@ def graph_export(
         metas = idx.list_notes(limit=None)
 
         def _read_body(path_str: str) -> str:
-            p = Path(path_str)
-            if not p.is_absolute():
-                p = vault.notes_dir / p.name
-            return read_body_via_note(p)
+            return read_body_via_note(vault.resolve_note_path_from_index(path_str))
+
+        def _folder_for(path: Path) -> str:
+            return vault.folder_of(vault.resolve_note_path_from_index(path))
 
         graph = build_graph(
             metas,
-            folder_for=vault.folder_of,
+            folder_for=_folder_for,
             read_body=_read_body,
         )
         payload = {
@@ -82,7 +83,10 @@ def graph_export(
         }
         text = json.dumps(payload, ensure_ascii=False, indent=2 if pretty else None)
         if output == "-":
-            console.print(text)
+            # Machine-readable: bypass rich (it hard-wraps at 80 columns when
+            # piped and parses `[...]` in titles as markup).
+            sys.stdout.write(text + "\n")
+            sys.stdout.flush()
         else:
             Path(output).write_text(text, encoding="utf-8")
             console.print(

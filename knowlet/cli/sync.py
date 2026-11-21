@@ -472,9 +472,21 @@ def sync_push(
                         f"[red]No note with id {note_id!r} found in {vault.notes_dir}.[/red]"
                     )
                     raise typer.Exit(code=2)
-                targets = [_note_for_push(vault, target)]
+                target_paths = [target]
             else:
-                targets = [_note_for_push(vault, p) for p in vault.iter_note_paths()]
+                # Materialize the list first: read_note may write files.
+                target_paths = list(vault.iter_note_paths())
+            targets = []
+            for path in target_paths:
+                loaded = _note_for_push(vault, path)
+                if loaded is None:
+                    err_console.print(
+                        f"[yellow]Skip {path.name}: frontmatter is corrupted and the "
+                        "filename is not a note id, so it has no stable identity. "
+                        "Repair the frontmatter first.[/yellow]"
+                    )
+                    continue
+                targets.append(loaded)
 
             pushed = 0
             conflicts: list[ConflictReport] = []
@@ -546,9 +558,15 @@ def sync_push(
 
 
 def _note_for_push(vault: Any, path: Path) -> Any:
-    from knowlet.core.note import Note
+    """Load a note for pushing, or None when it has no stable id.
 
-    note = Note.from_file(path)
+    ``Vault.read_note`` persists a synthesized id for frontmatterless /
+    id-less files, so repeated runs push under the same id instead of
+    minting a new Drive file each time. A corrupted note is not
+    rewritten; it is only pushable when its filename is the note id."""
+    note = vault.read_note(path)
+    if note.frontmatter_status == "corrupted" and note.id != path.stem:
+        return None
     note.folder = vault.folder_of(path) or None
     return note
 
@@ -578,7 +596,6 @@ def sync_resolve(
     vault = resolve_vault_or_die()
     cfg = load_config_or_default(vault)
     _, tok_path = _resolve_paths(vault.root, cfg.sync)
-    from knowlet.core.note import Note
 
     try:
         creds = _load_and_verify_creds(tok_path)
@@ -614,7 +631,12 @@ def sync_resolve(
             if target is None:
                 err_console.print(f"[red]No note with id {note_id!r} found.[/red]")
                 raise typer.Exit(code=2)
-            note = Note.from_file(target)
+            note = _note_for_push(vault, target)
+            if note is None:
+                err_console.print(
+                    f"[red]{target.name} has corrupted frontmatter; repair it before resolving.[/red]"
+                )
+                raise typer.Exit(code=2)
             # Re-trigger the push to capture a fresh conflict snapshot.
             result = push_note(service=service, state=state, note=note)
             if not isinstance(result, ConflictReport):

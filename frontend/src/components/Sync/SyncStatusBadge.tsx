@@ -15,7 +15,7 @@
  *   not to spam Drive's quota.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Check,
@@ -87,11 +87,21 @@ export function SyncStatusBadge({
   onConflictClick?: () => void;
 }): ReactNode {
   const { t } = useTranslation();
+  const qc = useQueryClient();
   const q = useQuery<NoteSyncStatus>({
     queryKey: QK.noteSyncStatus(noteId ?? ""),
-    queryFn: () => {
+    queryFn: async () => {
       if (!noteId) throw new Error("no noteId");
-      return getNoteSyncStatus(noteId);
+      const status = await getNoteSyncStatus(noteId);
+      if (status.auto_pulled) {
+        // The poll just replaced the file on disk with the Drive copy.
+        // Refetch it so an open editor picks the new body up (NoteView
+        // refreshes in place when it has no unsaved input; otherwise
+        // its next save is refused and it reloads keeping that input).
+        void qc.invalidateQueries({ queryKey: QK.note(noteId) });
+        void qc.invalidateQueries({ queryKey: QK.tree });
+      }
+      return status;
     },
     enabled: !!noteId,
     refetchInterval: POLL_MS,

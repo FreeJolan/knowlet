@@ -70,6 +70,35 @@ def _normalize(s: str) -> str:
     return " ".join(s.split()).lower()
 
 
+def link_target_keys(target: str) -> tuple[str, ...]:
+    """Normalized titles a wikilink target may refer to, most specific
+    first: the target as written, then with its `#heading` / `^block`
+    anchor stripped (`[[Foo#Bar]]` → `Foo`). The as-written key comes
+    first so titles that themselves contain `#` (`C# 入门`) still resolve.
+    Shared by backlinks, the graph and orphan detection so they agree."""
+    raw = _normalize(target)
+    bare = _normalize(target.split("#", 1)[0].split("^", 1)[0])
+    if bare and bare != raw:
+        return (raw, bare)
+    return (raw,) if raw else ()
+
+
+def inbound_link_sources(sources: Iterable[Path]) -> dict[str, set[str]]:
+    """One pass over `sources`: normalized target title → ids of the notes
+    linking to it (every key from `link_target_keys`). Lets callers answer
+    "does X have inbound links" for many X without re-reading the vault."""
+    inbound: dict[str, set[str]] = {}
+    for path in sources:
+        try:
+            note = Note.from_file(path)
+        except Exception:  # noqa: S112 — same tolerance as find_backlinks
+            continue
+        for w in extract_wikilinks(note.body):
+            for key in link_target_keys(w.target):
+                inbound.setdefault(key, set()).add(note.id)
+    return inbound
+
+
 def _sentence_preview(line_text: str, target: str) -> str:
     """Trim `line_text` around the wikilink so the panel shows a focused
     snippet. If the line is short, return it as-is; otherwise window it."""
@@ -115,7 +144,7 @@ def find_backlinks(
         if exclude_id is not None and note.id == exclude_id:
             continue
         for w in extract_wikilinks(note.body):
-            if _normalize(w.target) == target_norm:
+            if target_norm in link_target_keys(w.target):
                 out.append(
                     Backlink(
                         source_id=note.id,

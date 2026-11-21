@@ -7,9 +7,11 @@ Realtime sync has two separate phases:
 2. If the probe finds relevant remote changes, the UI enters a blocking
    sync gate and runs the heavier preflight/pull path.
 
-The probe deliberately does not advance ``start_page_token``. Advancing
-the cursor before preflight completes would let a failed pull hide the
-same remote change from the next attempt.
+The probe does not advance ``start_page_token`` past a relevant change:
+advancing before preflight completes would let a failed pull hide that
+change from the next attempt. A batch with no relevant change (e.g. this
+device's own pushes echoed back) has nothing left to apply, so the probe
+consumes it — otherwise every poll would re-page the whole backlog.
 """
 
 from __future__ import annotations
@@ -107,6 +109,8 @@ def check_sync_freshness(
 
     relevant = _relevant_changes(changes, state_store)
     if not relevant:
+        if next_token and next_token != token:
+            state_store.set_start_page_token(next_token)
         return FreshnessReport(
             mode="realtime",
             state="up_to_date",

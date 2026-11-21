@@ -22,6 +22,7 @@ user can edit/inspect at any time.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Iterator
 from contextlib import suppress
@@ -30,16 +31,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import frontmatter
+import yaml
 
 from knowlet.core.note import (
     DEFAULT_NOTE_KIND,
     NOTE_KINDS,
     Note,
     NoteKind,
+    coerce_str_list,
     new_id,
     now_iso,
     slugify,
 )
+
+logger = logging.getLogger(__name__)
 
 DRAFTS_DIR = "drafts"
 
@@ -55,6 +60,25 @@ STALE_AGE_DAYS = 7  # row visually muted after this
 WARN_AGE_DAYS = 30  # one-time banner on open after this
 ARCHIVE_AGE_DAYS = 90  # auto-archive after this
 SOFT_LIMIT_DRAFTS = 20  # >this active = inline soft warning
+
+
+class AmbiguousDraftIdError(LookupError):
+    """A draft-id prefix matched more than one draft file."""
+
+    def __init__(self, draft_id: str, candidates: list[str]):
+        self.draft_id = draft_id
+        self.candidates = candidates
+        super().__init__(f"draft id {draft_id!r} is ambiguous; matches: {', '.join(candidates)}")
+
+
+# Errors a single unreadable / hand-broken draft file can raise from
+# ``Draft.from_file``. List scans skip such files instead of failing.
+_UNREADABLE_DRAFT_ERRORS: tuple[type[Exception], ...] = (
+    OSError,
+    ValueError,  # includes UnicodeDecodeError
+    TypeError,
+    yaml.YAMLError,
+)
 
 
 def _age_days_from_iso(iso_ts: str | None) -> int:
@@ -173,7 +197,7 @@ class Draft:
             id=str(meta.get("id") or new_id()),
             title=str(meta.get("title") or path.stem),
             body=post.content,
-            tags=list(meta.get("tags") or []),
+            tags=coerce_str_list(meta.get("tags")),
             source=meta.get("source"),
             task_id=meta.get("task_id"),
             folder=str(meta["folder"]) if meta.get("folder") is not None else None,
@@ -209,6 +233,12 @@ class Draft:
         )
 
 
+def _id_from_stem(stem: str) -> str:
+    """Best-effort id from a ``<id>-<slug>`` filename (ULIDs contain no
+    ``-``); used only to list candidates in error messages."""
+    return stem.split("-", 1)[0]
+
+
 class DraftStore:
     """Filesystem operations for drafts. Mirrors `Vault` for Notes."""
 
@@ -225,15 +255,35 @@ class DraftStore:
         for p in self.iter_paths():
             try:
                 out.append(Draft.from_file(p))
-            except OSError:
+            except _UNREADABLE_DRAFT_ERRORS as exc:
+                logger.warning("skipping unreadable draft %s: %s", p, exc)
                 continue
         out.sort(key=lambda d: d.created_at, reverse=True)
         return out
 
     def get(self, draft_id: str) -> Draft | None:
-        for p in self.iter_paths():
-            if p.stem.startswith(draft_id):
-                return Draft.from_file(p)
+        """Resolve ``draft_id`` (full id or unique prefix) to a Draft.
+
+        An exact id match always wins. Otherwise a prefix must match
+        exactly one draft; several matches raise
+        :class:`AmbiguousDraftIdError` because callers go on to delete /
+        commit whatever this returns."""
+        if not draft_id:
+            return None
+        exact: list[Path] = []
+        prefixed: list[Path] = []
+        for p in sorted(self.iter_paths()):
+            stem = p.stem
+            if stem == draft_id or stem.startswith(draft_id + "-"):
+                exact.append(p)
+            elif stem.startswith(draft_id):
+                prefixed.append(p)
+        if exact:
+            return Draft.from_file(exact[0])
+        if len(prefixed) > 1:
+            raise AmbiguousDraftIdError(draft_id, [_id_from_stem(p.stem) for p in prefixed])
+        if prefixed:
+            return Draft.from_file(prefixed[0])
         return None
 
     def save(self, draft: Draft) -> Path:
@@ -259,6 +309,9 @@ class DraftStore:
         return target
 
     def delete(self, draft_id: str) -> bool:
+        """Remove the draft file outright. Only for drafts whose content
+        now lives elsewhere (committed to a Note); user-facing "reject"
+        should use :meth:`archive_draft` so it stays recoverable."""
         d = self.get(draft_id)
         if d is None or d.path is None:
             return False
@@ -266,6 +319,20 @@ class DraftStore:
         os.unlink(d.path)
         self._queue_delete_sync(deleted_path)
         return True
+
+    def archive_draft(self, draft_id: str) -> Path:
+        """Soft-delete a draft by id: move it into ``.archive/``.
+
+        Returns the archived file path. Raises ``KeyError`` when no
+        draft matches and :class:`AmbiguousDraftIdError` when a prefix
+        matches several."""
+        d = self.get(draft_id)
+        if d is None or d.path is None:
+            raise KeyError(f"draft not found: {draft_id}")
+        target = self.archive(d)
+        if target is None:
+            raise KeyError(f"draft not found: {draft_id}")
+        return target
 
     # ---------------------------------------------------- archive (M6.5)
 
@@ -367,7 +434,8 @@ class DraftStore:
         for path in list(self.iter_paths()):  # snapshot — we mutate
             try:
                 draft = Draft.from_file(path)
-            except OSError:
+            except _UNREADABLE_DRAFT_ERRORS as exc:
+                logger.warning("skipping unreadable draft %s: %s", path, exc)
                 continue
             if draft.should_auto_archive and self.archive(draft, month_subdir=True) is not None:
                 archived += 1

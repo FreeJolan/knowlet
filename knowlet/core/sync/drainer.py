@@ -29,6 +29,10 @@ Lifecycle:
 - ``stop()`` signals the thread to exit and joins (with timeout).
 - The thread no-ops while creds are absent (single-device users
   who never connected Drive).
+- Lookup / sweep callbacks raise ``RuntimeNotReadyError`` while the
+  host runtime is still bootstrapping; the drainer then skips the work
+  that depends on them for this tick (no row is dropped, marked for
+  deletion, or latched as done).
 """
 
 from __future__ import annotations
@@ -58,9 +62,21 @@ from knowlet.core.sync.push import (
 )
 from knowlet.core.sync.state import SyncStateStore
 from knowlet.core.sync.status import DEV_FAKE_DRIVE_FILE_ID
-from knowlet.core.sync.tracked_files import SYNCABLE_VAULT_FILE_ENTITY_TYPES
+from knowlet.core.sync.tracked_files import (
+    SYNCABLE_VAULT_FILE_ENTITY_TYPES,
+    resolve_syncable_vault_file_path,
+)
+from knowlet.core.vault import Vault
 
 logger = logging.getLogger(__name__)
+
+
+class RuntimeNotReadyError(RuntimeError):
+    """Raised by a drainer callback (note / attachment / synced-file
+    lookup, untracked sweep) when the host runtime cannot answer yet,
+    e.g. during startup bootstrap. Distinct from returning None / [],
+    which mean "the file is gone" / "no backlog" and can trigger
+    destructive or latching behavior."""
 
 
 NoteLookup = Callable[[str], Note | None]
@@ -181,8 +197,14 @@ class PushDrainer:
         # push" forever — the drainer's dirty-only filter never sees
         # them, and the user has to manually click "Push all".
         if not self._untracked_sweep_done:
+            sweep_ran = True
             try:
                 untracked = self.untracked_sweep()
+            except RuntimeNotReadyError:
+                # Retry on the next tick instead of latching an empty
+                # result for the whole session.
+                sweep_ran = False
+                untracked = []
             except Exception:
                 logger.warning("untracked-sweep callback raised", exc_info=True)
                 untracked = []
@@ -192,7 +214,7 @@ class PushDrainer:
                     len(untracked),
                 )
                 self._queue_untracked(untracked)
-            self._untracked_sweep_done = True
+            self._untracked_sweep_done = sweep_ran
         store = SyncStateStore(self.vault_root)
         try:
             service: Any = None
@@ -229,7 +251,10 @@ class PushDrainer:
                     # Unknown type — leave it alone so a future
                     # slice handling it doesn't have to back-fill.
                     continue
-                note = self.note_lookup(row.entity_id)
+                try:
+                    note = self.note_lookup(row.entity_id)
+                except RuntimeNotReadyError:
+                    continue
                 if note is None:
                     logger.warning(
                         "drainer: note %s in dirty list but unloadable; "
@@ -324,8 +349,13 @@ class PushDrainer:
         conflict path — they're immutable once written — so the
         outcome is success or transient failure (logged + retried
         next tick)."""
-        path = self.attachment_lookup(row.entity_id)
+        try:
+            path = self.attachment_lookup(row.entity_id)
+        except RuntimeNotReadyError:
+            return
         if path is None or not path.exists():
+            if self._local_copy_present(ATTACHMENT_ENTITY_TYPE, row.entity_id):
+                return
             logger.warning(
                 "drainer: attachment %s missing on disk; dropping row",
                 row.entity_id,
@@ -361,8 +391,13 @@ class PushDrainer:
 
     def _push_synced_file_row(self, store: SyncStateStore, service: Any, row: Any) -> None:
         """Push a non-note vault data file such as profile, cards, or digest items."""
-        path = self.synced_file_lookup(row.entity_type, row.entity_id)
+        try:
+            path = self.synced_file_lookup(row.entity_type, row.entity_id)
+        except RuntimeNotReadyError:
+            return
         if path is None or not path.exists():
+            if self._local_copy_present(row.entity_type, row.entity_id):
+                return
             logger.warning(
                 "drainer: synced file %s/%s missing on disk; dropping row",
                 row.entity_type,
@@ -414,14 +449,25 @@ class PushDrainer:
 
         Rows with delete_intent already set are skipped (idempotent).
         Rows where drive_file_id is None (never pushed) are dropped
-        directly — nothing to clean."""
+        directly — nothing to clean.
+
+        ``files().delete`` on appData is permanent, so a row is only
+        marked when the lookup says the file is gone AND the file is
+        absent from its canonical vault location. A not-ready runtime
+        aborts the sweep for this tick."""
         for fs in store.list_all_files():
             if fs.entity_type != ATTACHMENT_ENTITY_TYPE:
                 continue
             if fs.delete_intent is not None:
                 continue
-            path = self.attachment_lookup(fs.entity_id)
+            try:
+                path = self.attachment_lookup(fs.entity_id)
+            except RuntimeNotReadyError:
+                return
             if path is not None and path.exists():
+                continue
+            canonical = self._canonical_local_path(ATTACHMENT_ENTITY_TYPE, fs.entity_id)
+            if canonical is None or canonical.exists():
                 continue
             # File is gone. Two cases:
             if not fs.drive_file_id:
@@ -437,6 +483,19 @@ class PushDrainer:
                     dirty=False,
                 )
             )
+
+    def _canonical_local_path(self, entity_type: str, entity_id: str) -> Path | None:
+        """Where the entity lives under ``vault_root``, resolved without
+        the host runtime. None for ids that cannot name a vault file."""
+        if entity_type == ATTACHMENT_ENTITY_TYPE:
+            if not entity_id or Path(entity_id).name != entity_id:
+                return None
+            return Vault(self.vault_root).attachments_dir / entity_id
+        return resolve_syncable_vault_file_path(self.vault_root, entity_type, entity_id)
+
+    def _local_copy_present(self, entity_type: str, entity_id: str) -> bool:
+        path = self._canonical_local_path(entity_type, entity_id)
+        return path is not None and path.exists()
 
     def _process_deletions(self, store: SyncStateStore, creds: Any, service: Any) -> Any:
         """Drain ``delete_intent`` rows. ``soft`` calls Drive's

@@ -3,7 +3,9 @@ export { ChatTranscript, groupChatMessages } from "./ChatTranscript";
 export { DiscussPane } from "./DiscussPane";
 export { DiffReview } from "./DiffReview";
 export { ToolTrace } from "./ToolTrace";
+export { usePersistChatMessages } from "./chatPersistence";
 export {
+  appendReplyChunk,
   applyToolResult,
   chatHistoryForRequest,
   formatErrorDetail,

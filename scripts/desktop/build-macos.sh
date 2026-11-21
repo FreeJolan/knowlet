@@ -59,6 +59,12 @@ codesign --verify --deep --strict --verbose=2 "$APP"
 "$APP/Contents/MacOS/knowlet-backend" --version
 arch -x86_64 "$APP/Contents/MacOS/knowlet-backend" --version
 
+# tauri build (createUpdaterArtifacts) archived the app before the codesign
+# pass above, so that archive holds the unsigned snapshot. Drop it here; it is
+# rebuilt from the same app that goes into the notarized DMG further down.
+UPDATER_ARCHIVE="$TAURI/target/universal-apple-darwin/release/bundle/macos/Knowlet.app.tar.gz"
+rm -f "$UPDATER_ARCHIVE" "$UPDATER_ARCHIVE.sig"
+
 # The universal app already contains the sidecars and merged Rust binary.
 # Reclaim their large intermediate trees before hdiutil needs a second copy of
 # the app while creating the DMG on space-constrained hosted runners.
@@ -76,7 +82,11 @@ rm -rf \
 rm -f "$DMG"
 mkdir -p "$(dirname "$DMG")"
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/knowlet-dmg.XXXXXX")"
-trap 'rm -rf "$STAGE"' EXIT
+UPDATER_CHECK=""
+cleanup() {
+  rm -rf "$STAGE" ${UPDATER_CHECK:+"$UPDATER_CHECK"}
+}
+trap cleanup EXIT
 cp -R "$APP" "$STAGE/Knowlet.app"
 ln -s /Applications "$STAGE/Applications"
 
@@ -95,6 +105,9 @@ hdiutil create \
   -ov \
   -format UDZO \
   "$DMG"
+# The staged copy is only an hdiutil input; free its space for the updater
+# archive and its verification copy below.
+rm -rf "$STAGE"
 codesign --force --sign "$SIGNING_IDENTITY" "$DMG"
 codesign --verify --deep --strict --verbose=2 "$DMG"
 if [[ -n "$NOTARY_API_KEY" && -n "$NOTARY_API_ISSUER" && -n "$NOTARY_API_KEY_PATH" ]]; then
@@ -112,5 +125,27 @@ fi
 xcrun stapler staple "$DMG"
 xcrun stapler validate "$DMG"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
+
+# Auto-update must ship exactly the app that was signed and notarized inside
+# the DMG. Tauri's updater strips the first path component, so the archive
+# root is the .app directory, as tauri build lays it out.
+COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -czf "$UPDATER_ARCHIVE" \
+  -C "$(dirname "$APP")" "$(basename "$APP")"
+(
+  # `tauri signer sign` accepts key content, not a key path, in this variable.
+  if [[ -f "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+    TAURI_SIGNING_PRIVATE_KEY="$(cat "$TAURI_SIGNING_PRIVATE_KEY")"
+    export TAURI_SIGNING_PRIVATE_KEY
+  fi
+  npx tauri signer sign "$UPDATER_ARCHIVE"
+)
+test -s "$UPDATER_ARCHIVE.sig"
+
+# Verify the bytes auto-update users install, not only the DMG.
+UPDATER_CHECK="$(mktemp -d "${TMPDIR:-/tmp}/knowlet-updater.XXXXXX")"
+tar -xzf "$UPDATER_ARCHIVE" -C "$UPDATER_CHECK"
+codesign --verify --deep --strict --verbose=2 "$UPDATER_CHECK/Knowlet.app"
+"$UPDATER_CHECK/Knowlet.app/Contents/MacOS/knowlet-backend" --version
+arch -x86_64 "$UPDATER_CHECK/Knowlet.app/Contents/MacOS/knowlet-backend" --version
 
 echo "$DMG"

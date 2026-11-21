@@ -1,27 +1,21 @@
 #!/usr/bin/env bash
-# Rebuild knowlet/web/static/tailwind.css from tailwind.input.css.
+# Build the React frontend into frontend/dist.
 #
-# tailwindcss CLI ships as a single Go-built binary. Install once:
-#   brew install tailwindcss   # macOS
-#   # or download from https://github.com/tailwindlabs/tailwindcss/releases
-#
-# Run after editing markup, tokens, or app.js. The output is committed
-# to the repo so installs work offline (no Play CDN, no Node at runtime).
+# The old Tailwind bundle under knowlet/web/ no longer exists; the backend
+# serves frontend/dist (KNOWLET_FRONTEND_DIST) and the desktop app bundles it.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT/frontend"
 
-if ! command -v tailwindcss >/dev/null 2>&1; then
-  echo "tailwindcss not found. Install via 'brew install tailwindcss'." >&2
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm not found. Install Node 22+ (e.g. 'brew install node')." >&2
+  exit 1
+fi
+if [[ ! -d node_modules ]]; then
+  echo "frontend/node_modules is missing. Run 'cd frontend && npm ci' first." >&2
   exit 1
 fi
 
-STATIC=knowlet/web/static
-tailwindcss \
-  -i "$STATIC/tailwind.input.css" \
-  -o "$STATIC/tailwind.css" \
-  --minify
-
-echo "✓ $STATIC/tailwind.css rebuilt ($(wc -c < $STATIC/tailwind.css) bytes)"
+npm run build

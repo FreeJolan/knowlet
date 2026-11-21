@@ -19,6 +19,7 @@ export const queryClient = new QueryClient({
 });
 
 export const QK = {
+  health: ["health"] as const,
   tree: ["tree"] as const,
   note: (id: string) => ["note", id] as const,
   trash: ["trash"] as const,

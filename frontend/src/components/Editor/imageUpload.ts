@@ -31,6 +31,12 @@
  *   4. on response: replace the placeholder with the real
  *      `![<filename>](<vault-relative-path>)`
  *   5. on error: replace the placeholder with `![upload-failed: <err>]()`
+ *
+ * The placeholder's range is mapped through every edit while the upload
+ * is in flight. If the user undid or edited the placeholder meanwhile,
+ * the result is inserted at its last position instead of being dropped —
+ * otherwise the uploaded file would sit in `_attachments/` unreferenced
+ * (or the failure would vanish) with no sign anything happened.
  */
 
 import {
@@ -103,6 +109,29 @@ const ALLOWED_EXT = /\.(png|jpe?g|gif|webp)$/i;
 
 let placeholderCounter = 0;
 
+type Placeholder = { id: number; from: number; to: number };
+const addPlaceholder = StateEffect.define<Placeholder>();
+const dropPlaceholder = StateEffect.define<number>();
+const placeholderField = StateField.define<readonly Placeholder[]>({
+  create: () => [],
+  update(value, tr) {
+    let next = value;
+    if (tr.docChanged) {
+      next = value.map((p) => {
+        // Text typed right before / after the placeholder stays outside it.
+        const from = tr.changes.mapPos(p.from, 1);
+        const to = Math.max(from, tr.changes.mapPos(p.to, -1));
+        return { id: p.id, from, to };
+      });
+    }
+    for (const e of tr.effects) {
+      if (e.is(addPlaceholder)) next = [...next, e.value];
+      else if (e.is(dropPlaceholder)) next = next.filter((p) => p.id !== e.value);
+    }
+    return next;
+  },
+});
+
 function deriveFilename(file: File | Blob): string {
   if (file instanceof File && file.name) return file.name;
   const ext = ((file.type.split("/")[1] || "png") as string).replace("jpeg", "jpg");
@@ -120,24 +149,48 @@ function looksLikeImage(file: File): boolean {
   return false;
 }
 
-function insertAtCursor(view: EditorView, text: string): { from: number; to: number } {
+function insertPlaceholder(view: EditorView, id: number, marker: string): void {
   const { from } = view.state.selection.main;
   view.dispatch({
-    changes: { from, insert: text },
-    selection: EditorSelection.cursor(from + text.length),
+    changes: { from, insert: marker },
+    selection: EditorSelection.cursor(from + marker.length),
+    effects: addPlaceholder.of({ id, from, to: from + marker.length }),
     scrollIntoView: true,
   });
-  return { from, to: from + text.length };
 }
 
-function replaceMarker(view: EditorView, marker: string, replacement: string): boolean {
-  const doc = view.state.doc.toString();
-  const idx = doc.indexOf(marker);
-  if (idx < 0) return false;
+function replacePlaceholder(
+  view: EditorView,
+  id: number,
+  marker: string,
+  replacement: string,
+): void {
+  const { state } = view;
+  const tracked = state.field(placeholderField, false)?.find((p) => p.id === id);
+  let from: number;
+  let to: number;
+  if (tracked && state.sliceDoc(tracked.from, tracked.to) === marker) {
+    ({ from, to } = tracked);
+  } else {
+    // A redo can restore the marker text without restoring the mapped
+    // range; failing that, insert at the placeholder's last position.
+    const idx = state.doc.toString().indexOf(marker);
+    if (idx >= 0) {
+      from = idx;
+      to = idx + marker.length;
+    } else {
+      from = to = Math.min(tracked?.to ?? state.selection.main.head, state.doc.length);
+    }
+  }
   view.dispatch({
-    changes: { from: idx, to: idx + marker.length, insert: replacement },
+    changes: { from, to, insert: replacement },
+    effects: dropPlaceholder.of(id),
   });
-  return true;
+}
+
+/** Keep an error detail from breaking out of the `![...]()` it lands in. */
+function markdownSafeDetail(detail: string): string {
+  return detail.replace(/\s+/g, " ").replace(/[[\]()]/g, "").trim().slice(0, 200);
 }
 
 async function handleFiles(view: EditorView, files: File[]): Promise<void> {
@@ -145,17 +198,22 @@ async function handleFiles(view: EditorView, files: File[]): Promise<void> {
     const filename = deriveFilename(file);
     const id = ++placeholderCounter;
     const marker = `![uploading…](knowlet-placeholder-${id})`;
-    insertAtCursor(view, marker);
+    insertPlaceholder(view, id, marker);
     void (async () => {
       try {
         const r = await uploadAttachment(file, filename);
-        replaceMarker(view, marker, `![${filename}](${r.path})`);
+        replacePlaceholder(view, id, marker, `![${filename}](${r.path})`);
       } catch (err) {
         const detail =
           err && typeof err === "object" && "detail" in err
             ? String((err as { detail: unknown }).detail)
             : String(err);
-        replaceMarker(view, marker, `![upload-failed: ${detail}]()`);
+        replacePlaceholder(
+          view,
+          id,
+          marker,
+          `![upload-failed: ${markdownSafeDetail(detail)}]()`,
+        );
       }
     })();
   }
@@ -308,5 +366,5 @@ export function imageUploadExtension(): Extension {
   });
   // The state field has to be combined with the plugin so the field is
   // installed on every editor that uses our extension.
-  return [dropPosField, plugin];
+  return [dropPosField, placeholderField, plugin];
 }

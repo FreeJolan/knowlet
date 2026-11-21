@@ -25,11 +25,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from knowlet.core.note import Note, now_iso
+from knowlet.core.note import Note, new_id, now_iso
 from knowlet.core.sync.files import (
     DriveFile,
     RemoteVersionMismatchError,
     download_file,
+    find_appdata_files_by_name,
     force_overwrite,
     get_file_metadata,
     update_file_conditional,
@@ -120,6 +121,9 @@ def push_note(
     ConflictReport (412 — user must resolve)."""
     if note.path is None or not note.path.exists():
         raise NoteFileMissingError(f"Note {note.id} has no on-disk path; cannot push.")
+    # Snapshot the on-disk bytes before the slow network call so a save
+    # landing mid-upload keeps the row dirty instead of being marked synced.
+    disk_before = _read_bytes_or_none(note.path)
     # Serialize the in-memory Note rather than raw on-disk bytes. The drainer
     # injects path-derived fields such as ``folder`` immediately before push,
     # and Drive appData is flat, so those hints must travel in frontmatter.
@@ -127,6 +131,33 @@ def push_note(
     record = state.get_file_state(NOTE_ENTITY_TYPE, note.id)
     name = drive_appdata_name(NOTE_ENTITY_TYPE, note.path.name, vault_root=state.vault_root)
     if record is None or not record.drive_file_id:
+        # A previous attempt may have created the Drive file and then lost
+        # the response (timeout / crash before the row was written).
+        # appData allows duplicate names, so creating again would fork the
+        # note into two Drive files that preflight keeps swapping between.
+        existing = _reconcile_existing_first_push(
+            service,
+            state=state,
+            note_id=note.id,
+            name=name,
+            content=content,
+        )
+        if existing is not None:
+            if isinstance(existing, ConflictReport):
+                return existing
+            _record_push_success(
+                state,
+                entity_type=NOTE_ENTITY_TYPE,
+                entity_id=note.id,
+                drive_file=existing,
+                changed_during_push=_read_bytes_or_none(note.path) != disk_before,
+            )
+            return PushResult(
+                entity_type=NOTE_ENTITY_TYPE,
+                entity_id=note.id,
+                drive_file=existing,
+                created=False,
+            )
         # First push: create in the hidden appDataFolder (per 5.C.1).
         # Without an explicit parent on drive.appdata scope, Drive
         # 403s — the file MUST live in the appDataFolder.
@@ -138,15 +169,12 @@ def push_note(
             content=content,
             parent_folder_id=APPDATA_FOLDER,
         )
-        state.upsert_file_state(
-            FileState(
-                entity_type=NOTE_ENTITY_TYPE,
-                entity_id=note.id,
-                drive_file_id=df.id,
-                last_known_etag=df.head_revision_id,
-                last_synced_at=now_iso(),
-                dirty=False,
-            )
+        _record_push_success(
+            state,
+            entity_type=NOTE_ENTITY_TYPE,
+            entity_id=note.id,
+            drive_file=df,
+            changed_during_push=_read_bytes_or_none(note.path) != disk_before,
         )
         return PushResult(
             entity_type=NOTE_ENTITY_TYPE,
@@ -193,15 +221,12 @@ def push_note(
             remote_bytes=remote_content,
             remote_metadata=remote_meta,
         )
-    state.upsert_file_state(
-        FileState(
-            entity_type=NOTE_ENTITY_TYPE,
-            entity_id=note.id,
-            drive_file_id=df.id,
-            last_known_etag=df.head_revision_id,
-            last_synced_at=now_iso(),
-            dirty=False,
-        )
+    _record_push_success(
+        state,
+        entity_type=NOTE_ENTITY_TYPE,
+        entity_id=note.id,
+        drive_file=df,
+        changed_during_push=_read_bytes_or_none(note.path) != disk_before,
     )
     return PushResult(
         entity_type=NOTE_ENTITY_TYPE,
@@ -209,6 +234,97 @@ def push_note(
         drive_file=df,
         created=False,
     )
+
+
+# Stored as ``last_known_etag`` when a note is bound to a Drive file it
+# shares no known common revision with (first push found a divergent
+# same-name copy). It never equals a real headRevisionId, so the next
+# conditional push raises a conflict instead of silently overwriting.
+UNKNOWN_BASE_REVISION = "knowlet:unknown-base-revision"
+
+
+def _reconcile_existing_first_push(
+    service: Any,
+    *,
+    state: SyncStateStore,
+    note_id: str,
+    name: str,
+    content: bytes,
+) -> DriveFile | ConflictReport | None:
+    """Look for live appData files already named ``name``.
+
+    - None of them → None (caller uploads a new file).
+    - One with byte-identical content → that file (adopt it).
+    - Otherwise → ConflictReport against the most recently modified
+      copy, with the row bound to it under ``UNKNOWN_BASE_REVISION``
+      so the conflict is resolvable through the normal merge paths.
+    """
+    candidates = find_appdata_files_by_name(service, name)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda f: f.modified_time or "", reverse=True)
+    downloaded = [(candidate, download_file(service, candidate.id)) for candidate in candidates]
+    for candidate, remote in downloaded:
+        if remote == content:
+            return candidate
+    newest, newest_bytes = downloaded[0]
+    current = state.get_file_state(NOTE_ENTITY_TYPE, note_id)
+    state.upsert_file_state(
+        FileState(
+            entity_type=NOTE_ENTITY_TYPE,
+            entity_id=note_id,
+            drive_file_id=newest.id,
+            last_known_etag=UNKNOWN_BASE_REVISION,
+            last_synced_at=current.last_synced_at if current else None,
+            dirty=True,
+            delete_intent=current.delete_intent if current else None,
+        )
+    )
+    return ConflictReport(
+        entity_type=NOTE_ENTITY_TYPE,
+        entity_id=note_id,
+        drive_file_id=newest.id,
+        expected_revision=UNKNOWN_BASE_REVISION,
+        local_bytes=content,
+        remote_bytes=newest_bytes,
+        remote_metadata=newest,
+    )
+
+
+def _record_push_success(
+    state: SyncStateStore,
+    *,
+    entity_type: str,
+    entity_id: str,
+    drive_file: DriveFile,
+    changed_during_push: bool,
+) -> None:
+    """Advance the row to the revision just uploaded.
+
+    ``dirty`` only clears when the local file is unchanged since it was
+    read for this push; a save that landed during the upload keeps the
+    row queued so its content is not mistaken for synced. A delete
+    intent recorded during the upload is preserved."""
+    current = state.get_file_state(entity_type, entity_id)
+    delete_intent = current.delete_intent if current else None
+    state.upsert_file_state(
+        FileState(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            drive_file_id=drive_file.id,
+            last_known_etag=drive_file.head_revision_id,
+            last_synced_at=now_iso(),
+            dirty=changed_during_push and delete_intent is None,
+            delete_intent=delete_intent,
+        )
+    )
+
+
+def _read_bytes_or_none(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        return None
 
 
 # ----------------------------------------------------- attachments (#121)
@@ -364,15 +480,12 @@ def push_vault_file(
             mime_type=mime_type,
             parent_folder_id=APPDATA_FOLDER,
         )
-        state.upsert_file_state(
-            FileState(
-                entity_type=entity_type,
-                entity_id=entity_id,
-                drive_file_id=df.id,
-                last_known_etag=df.head_revision_id,
-                last_synced_at=now_iso(),
-                dirty=False,
-            )
+        _record_push_success(
+            state,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            drive_file=df,
+            changed_during_push=_read_bytes_or_none(path) != content,
         )
         return PushResult(
             entity_type=entity_type,
@@ -398,15 +511,12 @@ def push_vault_file(
         mime_type=mime_type,
         name=name,
     )
-    state.upsert_file_state(
-        FileState(
-            entity_type=entity_type,
-            entity_id=entity_id,
-            drive_file_id=df.id,
-            last_known_etag=df.head_revision_id,
-            last_synced_at=now_iso(),
-            dirty=False,
-        )
+    _record_push_success(
+        state,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        drive_file=df,
+        changed_during_push=_read_bytes_or_none(path) != content,
     )
     return PushResult(
         entity_type=entity_type,
@@ -482,14 +592,26 @@ def resolve_use_remote(
 ) -> None:
     """User picked "use remote, drop my version". Overwrite the
     local file with the remote bytes; sync_state advances to the
-    remote etag. The pre-overwrite bytes are still in
-    .knowlet/backups/ (Slice 4.E) so this is reversible.
+    remote etag. The discarded local bytes are first copied into
+    ``.knowlet/backups/<entity_type>/`` (Slice 4.E store) so this is
+    reversible; if that copy cannot be made, nothing is overwritten.
 
-    NOTE: Vault.write_note's atomic .tmp+rename + audit log + backup
-    semantics are NOT used here — the local-side change is "I'm
-    accepting Drive's truth", not a user edit. We bypass Vault and
-    write the raw bytes directly. Audit will reflect this via a
-    `note.synced_from_remote` event (future slice)."""
+    NOTE: Vault.write_note's audit log semantics are NOT used here —
+    the local-side change is "I'm accepting Drive's truth", not a user
+    edit, so we write the raw remote bytes (tmp + rename) directly."""
+    from knowlet.core.backups import BackupStore
+
+    if local_path.exists():
+        backup = BackupStore(state.vault_root).backup_before_overwrite(
+            conflict.entity_type,
+            conflict.entity_id,
+            local_path,
+        )
+        if backup is None:
+            raise OSError(
+                f"could not back up {local_path} before replacing it with the "
+                "remote version; local file left untouched"
+            )
     tmp = local_path.with_suffix(local_path.suffix + ".tmp")
     tmp.write_bytes(conflict.remote_bytes)
     tmp.replace(local_path)
@@ -591,12 +713,21 @@ def resolve_keep_both(
     Naming: ``<stem> (conflict from <device>) <ts>.<ext>``. Distinct
     enough to be obvious in Finder; close enough to the original that
     a sort groups them together.
+
+    The copy is a separate note: when the remote bytes parse as a note
+    it is re-stamped with a fresh id, because two vault files sharing
+    one id make reindex / push resolve the id to either file.
     """
     ts = now_iso().replace(":", "-")
     label_safe = device_label.replace("/", "-").replace(" ", "_")
-    conflict_name = f"{local_path.stem} (conflict from {label_safe}) {ts}{local_path.suffix}"
-    conflict_path = local_path.parent / conflict_name
-    conflict_path.write_bytes(conflict.remote_bytes)
+    conflict_path = _unique_sibling(
+        local_path.parent,
+        f"{local_path.stem} (conflict from {label_safe}) {ts}",
+        local_path.suffix,
+    )
+    tmp = conflict_path.with_name(conflict_path.name + ".tmp")
+    tmp.write_bytes(_as_independent_note_copy(conflict.remote_bytes, path=conflict_path))
+    tmp.replace(conflict_path)
     # The local stays untouched + advances to the remote's etag —
     # next push will reconcile our version against where the remote
     # is now (the "we just split the timeline" state). The conflict
@@ -612,3 +743,27 @@ def resolve_keep_both(
         )
     )
     return conflict_path
+
+
+def _unique_sibling(parent: Path, stem: str, suffix: str) -> Path:
+    candidate = parent / f"{stem}{suffix}"
+    counter = 1
+    while candidate.exists():
+        candidate = parent / f"{stem}-{counter}{suffix}"
+        counter += 1
+    return candidate
+
+
+def _as_independent_note_copy(raw: bytes, *, path: Path) -> bytes:
+    """Re-serialize ``raw`` with a new note id when its frontmatter
+    declares one. Anything else (non-UTF-8, no / broken frontmatter, no
+    ``id`` key) carries no id that could collide and is kept verbatim."""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw
+    copy = Note.from_text(text, path=path)
+    if copy.frontmatter_status != "valid" or copy.id_assigned:
+        return raw
+    copy.id = new_id()
+    return copy.to_markdown().encode("utf-8")

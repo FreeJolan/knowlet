@@ -43,6 +43,7 @@ import {
   updateDraft,
   type DigestStatus,
   type DigestSourceSummary,
+  type DraftSummary,
   type RawInfoDraftResult,
   type RawInfoSummary,
 } from "@/api/client";
@@ -139,6 +140,10 @@ export function DigestFocusMode({
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // An Escape that already dismissed an inner layer (folder picker,
+        // discard confirm, tooltip, …) was consumed there — Radix marks it
+        // with preventDefault — and must not also close the panel.
+        if (e.defaultPrevented) return;
         e.stopPropagation();
         if (configOpen) {
           setConfigOpen(false);
@@ -148,12 +153,16 @@ export function DigestFocusMode({
           setClearConfirmOpen(false);
           return;
         }
+        if (reviewId) {
+          setReviewId(null);
+          return;
+        }
         onClose();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clearConfirmOpen, configOpen, open, onClose]);
+  }, [clearConfirmOpen, configOpen, open, onClose, reviewId]);
 
   useEffect(() => {
     setCollapsedGroups(new Set());
@@ -987,6 +996,16 @@ function ReviewOverlay({
   const draftEditRef = useRef<DraftEdit>(draftEdit);
   const draftResultRef = useRef<RawInfoDraftResult | null>(draftResult);
   const draftSaveStateRef = useRef<DraftSaveState>(draftSaveState);
+  // Draft whose unsaved edits the user deliberately gave up (discard /
+  // commit) — never flushed to the server afterwards.
+  const settledDraftIdRef = useRef<string | null>(null);
+  // Highest save seq written into the ["draft", id] cache per draft, so a
+  // slower, older save cannot overwrite a newer cached version.
+  const cachedDraftSeqRef = useRef(new Map<string, number>());
+  // Cache invalidation / note opening owed by a commit or discard. Runs
+  // when the review transition finishes, or immediately if the overlay
+  // goes away first — it must not depend on the animation timer.
+  const pendingProcessedEffectsRef = useRef<(() => void) | null>(null);
   const existingDraft = useQuery({
     queryKey: ["draft", item?.note_draft_id],
     queryFn: () => getDraft(item?.note_draft_id ?? ""),
@@ -1033,6 +1052,51 @@ function ReviewOverlay({
     }
   }, []);
 
+  const runPendingProcessedEffects = useCallback(() => {
+    const run = pendingProcessedEffectsRef.current;
+    pendingProcessedEffectsRef.current = null;
+    run?.();
+  }, []);
+
+  // Returning to an item reads its draft from the ["draft", id] cache, so
+  // every server-confirmed version of a draft is written back there.
+  const rememberDraft = useCallback(
+    (draft: DraftSummary, seq: number) => {
+      const known = cachedDraftSeqRef.current.get(draft.id) ?? -1;
+      if (seq < known) return;
+      cachedDraftSeqRef.current.set(draft.id, seq);
+      qc.setQueryData(["draft", draft.id], draft);
+    },
+    [qc],
+  );
+
+  // Leaving an item (prev/next, auto-advance, close) must not drop edits
+  // still waiting for the debounced autosave or typed while a save was in
+  // flight: send them now. The result only updates the cache — it belongs
+  // to the item being left, not to whatever the editor shows next.
+  const flushDraftEdits = useCallback(() => {
+    clearAutosaveTimer();
+    const current = draftResultRef.current;
+    if (!current) return;
+    const draftId = current.draft.id;
+    if (settledDraftIdRef.current === draftId) return;
+    const edit = draftEditRef.current;
+    if (sameDraftEdit(edit, draftToEdit(current.draft))) return;
+    const seq = latestSaveSeqRef.current + 1;
+    latestSaveSeqRef.current = seq;
+    const title = edit.title.trim() || current.draft.title;
+    updateDraft(draftId, normalizeDraftEdit(edit)).then(
+      (draft) => rememberDraft(draft, seq),
+      () => {
+        setDraftError(`${title}: ${t("digest.draftSaveFailed")}`);
+      },
+    );
+  }, [clearAutosaveTimer, rememberDraft, t]);
+  const flushDraftEditsRef = useRef(flushDraftEdits);
+  useEffect(() => {
+    flushDraftEditsRef.current = flushDraftEdits;
+  }, [flushDraftEdits]);
+
   useEffect(
     () => () => {
       clearAutosaveTimer();
@@ -1047,6 +1111,14 @@ function ReviewOverlay({
       clearTransitionTimer,
     ],
   );
+
+  useEffect(() => {
+    const flushRef = flushDraftEditsRef;
+    return () => {
+      flushRef.current();
+      runPendingProcessedEffects();
+    };
+  }, [runPendingProcessedEffects]);
 
   const advanceAfterProcessed = useCallback(
     (processedId: string) => {
@@ -1104,6 +1176,7 @@ function ReviewOverlay({
     },
     onSuccess: (result) => {
       const edit = draftToEdit(result.draft);
+      rememberDraft(result.draft, latestSaveSeqRef.current);
       setDraftResult(result);
       setCommitResult(null);
       setDraftEdit(edit);
@@ -1133,7 +1206,11 @@ function ReviewOverlay({
       const draft = await updateDraft(draftId, normalizeDraftEdit(edit));
       return { draft, seq };
     },
-    onSuccess: ({ draft, seq }) => {
+    onSuccess: ({ draft, seq }, variables) => {
+      rememberDraft(draft, seq);
+      // A save for an item the overlay has since moved away from must not
+      // write that item's draft into the editor now showing another one.
+      if (variables.draftId !== draftResultRef.current?.draft.id) return;
       if (seq < latestSaveSeqRef.current) return;
       const savedEdit = draftToEdit(draft);
       setDraftResult((current) => (current ? { ...current, draft } : current));
@@ -1153,6 +1230,7 @@ function ReviewOverlay({
       }
     },
     onError: (err, variables) => {
+      if (variables.draftId !== draftResultRef.current?.draft.id) return;
       if (variables.seq < latestSaveSeqRef.current) return;
       clearSavedIdleTimer();
       draftSaveStateRef.current = "error";
@@ -1187,6 +1265,8 @@ function ReviewOverlay({
     },
     onSuccess: (result) => {
       const edit = draftToEdit(result.draft);
+      latestSaveSeqRef.current += 1;
+      rememberDraft(result.draft, latestSaveSeqRef.current);
       setDraftResult((current) => (current ? { ...current, draft: result.draft } : current));
       setDraftEdit(edit);
       setDraftEditorRevision((revision) => revision + 1);
@@ -1208,6 +1288,8 @@ function ReviewOverlay({
     },
     onSuccess: (result) => {
       const edit = draftToEdit(result.draft);
+      latestSaveSeqRef.current += 1;
+      rememberDraft(result.draft, latestSaveSeqRef.current);
       setDraftResult((current) => (current ? { ...current, draft: result.draft } : current));
       setDraftEdit(edit);
       setDraftEditorRevision((revision) => revision + 1);
@@ -1228,20 +1310,29 @@ function ReviewOverlay({
       return commitNoteDraft(draftResult.draft.id, { folder });
     },
     onSuccess: (result) => {
+      if (draftResultRef.current) {
+        settledDraftIdRef.current = draftResultRef.current.draft.id;
+      }
       setCommitResult({ note_id: result.note_id, title: result.title });
       setFolderDialogOpen(false);
       setPendingDiff(null);
       clearProposal();
+      runPendingProcessedEffects();
+      pendingProcessedEffectsRef.current = () => {
+        void qc.invalidateQueries({ queryKey: ["digest-items"] });
+        void qc.invalidateQueries({ queryKey: ["digest-status"] });
+        void qc.invalidateQueries({ queryKey: ["drafts"] });
+        void qc.invalidateQueries({ queryKey: QK.tree });
+        onOpenNote?.(result.note_id);
+      };
       clearDelayedTransitionTimer();
       delayedTransitionTimerRef.current = window.setTimeout(() => {
         delayedTransitionTimerRef.current = null;
-        beginReviewTransition("commit", result.raw_info_id ?? item?.id ?? activeId, () => {
-          void qc.invalidateQueries({ queryKey: ["digest-items"] });
-          void qc.invalidateQueries({ queryKey: ["digest-status"] });
-          void qc.invalidateQueries({ queryKey: ["drafts"] });
-          void qc.invalidateQueries({ queryKey: QK.tree });
-          onOpenNote?.(result.note_id);
-        });
+        beginReviewTransition(
+          "commit",
+          result.raw_info_id ?? item?.id ?? activeId,
+          runPendingProcessedEffects,
+        );
       }, 120);
     },
     onError: (err) => {
@@ -1257,19 +1348,22 @@ function ReviewOverlay({
       setDiscardConfirmOpen(false);
       setPendingDiff(null);
       clearProposal();
-      beginReviewTransition("discard", result.id, () => {
+      runPendingProcessedEffects();
+      pendingProcessedEffectsRef.current = () => {
         void qc.invalidateQueries({ queryKey: ["digest-items"] });
         void qc.invalidateQueries({ queryKey: ["digest-status"] });
         void qc.invalidateQueries({ queryKey: ["drafts"] });
-      });
+      };
+      beginReviewTransition("discard", result.id, runPendingProcessedEffects);
     },
     onError: (err) => {
+      settledDraftIdRef.current = null;
       setDraftError(err instanceof Error ? err.message : t("digest.discardFailed"));
     },
   });
 
   useEffect(() => {
-    clearAutosaveTimer();
+    flushDraftEditsRef.current();
     clearSavedIdleTimer();
     setInput("");
     setDraftResult(null);
@@ -1284,7 +1378,7 @@ function ReviewOverlay({
     setDraftSaveState("idle");
     setDraftEditorRevision((revision) => revision + 1);
     clearProposal();
-  }, [clearAutosaveTimer, clearProposal, clearSavedIdleTimer, item?.id]);
+  }, [clearProposal, clearSavedIdleTimer, item?.id]);
 
   useEffect(() => {
     if (!item?.note_draft_id || !existingDraft.data) return;
@@ -1732,6 +1826,8 @@ function ReviewOverlay({
                                 onClick={() => {
                                   clearAutosaveTimer();
                                   clearSavedIdleTimer();
+                                  settledDraftIdRef.current =
+                                    draftResult?.draft.id ?? null;
                                   discardMut.mutate(item.id);
                                 }}
                                 data-testid="digest-discard-confirm"

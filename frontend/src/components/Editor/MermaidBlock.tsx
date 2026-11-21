@@ -73,12 +73,14 @@ export function MermaidBlock({ source }: Props) {
       });
     return () => {
       cancelled = true;
-      // Defensive cleanup: if any mermaid render slipped through and
-      // left an orphan element, vacuum it. The library uses ids
-      // starting with `dmermaid-` for its scratch DOM, and the bomb
-      // SVGs use class="error" within those.
+      // Defensive cleanup: if one of THIS block's renders slipped through
+      // and left orphan scratch DOM, vacuum it. mermaid.render(id) mounts
+      // `d<id>` (or `i<id>` when sandboxed) wrapping the `<id>` svg on
+      // <body> while it works; other blocks may be mid-render with their
+      // own scratch there, so match only this block's id prefix.
+      const own = `mmd-${baseId}-`;
       for (const orphan of Array.from(document.querySelectorAll(
-        '[id^="dmermaid-"], [id^="mmd-"]'
+        `[id^="${own}"], [id^="d${own}"], [id^="i${own}"]`
       ))) {
         if (!orphan.closest(".kn-mermaid")) orphan.remove();
       }

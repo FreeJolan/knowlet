@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from knowlet.core.digest_items import RawInfo, RawInfoStore
 from knowlet.core.drafts import Draft, DraftStore
 from knowlet.core.index import Index
+from knowlet.core.llm import max_tokens_for_full_text
 from knowlet.core.note import NOTE_KINDS, NoteKind
 from knowlet.core.vault import Vault
 
@@ -155,19 +156,18 @@ def create_note_draft_from_info(
             )
 
     context = build_library_context(vault, index)
+    prompt = _build_prompt(
+        item=item,
+        context=context,
+        history=history or [],
+        discussion_summary=discussion_summary,
+    )
     messages = [
         {"role": "system", "content": "You turn Raw Info into reviewable Knowlet note drafts."},
-        {
-            "role": "user",
-            "content": _build_prompt(
-                item=item,
-                context=context,
-                history=history or [],
-                discussion_summary=discussion_summary,
-            ),
-        },
+        {"role": "user", "content": prompt},
     ]
-    resp = llm.chat(messages, temperature=None)
+    # The JSON reply embeds a full note body built from the prompt material.
+    resp = llm.chat(messages, temperature=None, max_tokens=max_tokens_for_full_text(llm, prompt))
     output = _parse_llm_output(getattr(resp, "content", "") or "")
     folder = _normalize_folder(output.folder, context.folders)
     draft = Draft(

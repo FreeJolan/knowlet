@@ -111,10 +111,28 @@ class AuditEventStore:
     # ------------------------------------------------------- lifecycle
 
     def _connect(self) -> sqlite3.Connection:
-        if self._conn is not None:
+        conn = self._conn
+        if conn is not None:
+            return conn
+        # Initialization runs under the lock so concurrent first callers
+        # on a shared store open exactly one connection.
+        with self._lock:
+            if self._conn is None:
+                self._conn = self._open_and_migrate()
             return self._conn
+
+    def _open_and_migrate(self) -> sqlite3.Connection:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self._path, check_same_thread=False)
+        try:
+            self._init_schema(conn)
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    @staticmethod
+    def _init_schema(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA foreign_keys = ON")
@@ -148,11 +166,12 @@ class AuditEventStore:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS events_entity_idx ON events(entity_type, entity_id)"
         )
-        # Schema version handshake.
+        # Schema version handshake. OR IGNORE: another process may have
+        # initialized the same fresh DB between our SELECT and INSERT.
         row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         if row is None:
             conn.execute(
-                "INSERT INTO meta(key, value) VALUES('schema_version', ?)",
+                "INSERT OR IGNORE INTO meta(key, value) VALUES('schema_version', ?)",
                 (str(EVENTS_SCHEMA_VERSION),),
             )
         else:
@@ -167,8 +186,6 @@ class AuditEventStore:
             # stored < EVENTS_SCHEMA_VERSION → migration would run here
             # when v2 lands. For now there's no v2.
         conn.commit()
-        self._conn = conn
-        return conn
 
     def close(self) -> None:
         with self._lock:
@@ -221,7 +238,10 @@ class AuditEventStore:
         """Filter by kind list / entity / time window. Results are
         sorted by ts ASCENDING (oldest first) so callers can easily
         replay. Apply ``reversed()`` for "most recent first"
-        rendering."""
+        rendering.
+
+        ``limit`` keeps the *most recent* N matches (like :meth:`tail`),
+        still returned oldest-first."""
         conn = self._connect()
         clauses: list[str] = []
         args: list[Any] = []
@@ -241,13 +261,16 @@ class AuditEventStore:
         sql = "SELECT id, ts, kind, entity_type, entity_id, actor, payload FROM events"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY ts ASC, rowid ASC"
-        if limit is not None:
-            sql += " LIMIT ?"
-            args.append(int(limit))
+        if limit is None:
+            sql += " ORDER BY ts ASC, rowid ASC"
+            with self._lock:
+                rows = conn.execute(sql, args).fetchall()
+            return [_row_to_event(r) for r in rows]
+        sql += " ORDER BY ts DESC, rowid DESC LIMIT ?"
+        args.append(int(limit))
         with self._lock:
             rows = conn.execute(sql, args).fetchall()
-        return [_row_to_event(r) for r in rows]
+        return [_row_to_event(r) for r in reversed(rows)]
 
     def tail(self, n: int) -> list[AuditEvent]:
         """Last ``n`` events, oldest-first."""

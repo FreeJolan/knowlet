@@ -65,6 +65,13 @@ import { QK } from "@/lib/queryClient";
 
 const POLL_MS = 60_000;
 const FRESHNESS_RECHECK_MS = 5 * 60_000;
+// Minimum gap before the freshness gate re-runs the blocking preflight
+// for the *same* remote state. A preflight that leaves conflicts /
+// offline notes behind does not advance the server's freshness token,
+// so the probe that follows it reports the identical remote changes
+// again; re-running immediately would loop full Drive scans for as long
+// as the conflict stays unresolved.
+const PREFLIGHT_SAME_STATE_BACKOFF_MS = FRESHNESS_RECHECK_MS;
 
 export function SyncChip({
   onOpenNote,
@@ -260,7 +267,7 @@ function SyncFreshnessGate(): React.ReactNode {
   const qc = useQueryClient();
   const [offlineOverride, setOfflineOverride] = useState(false);
   const lastProbeAtRef = useRef(0);
-  const lastRunKeyRef = useRef<string | null>(null);
+  const lastRunRef = useRef<{ key: string; at: number } | null>(null);
 
   const auth = useQuery<SyncAuthStatus>({
     queryKey: QK.syncAuth,
@@ -322,14 +329,23 @@ function SyncFreshnessGate(): React.ReactNode {
     if (!report || offlineOverride) return;
     if (report.mode !== "realtime" || report.state !== "needs_sync") return;
     if (preflightPending) return;
+    // Keyed on the remote state, not ``checked_at`` (which is new on
+    // every probe): the same pending changes only re-trigger a preflight
+    // after the backoff, while genuinely new remote changes (new token /
+    // count) run one right away.
     const runKey = [
-      report.checked_at,
       report.reason ?? "",
       report.changed_count,
       report.next_start_page_token ?? "",
     ].join(":");
-    if (lastRunKeyRef.current === runKey) return;
-    lastRunKeyRef.current = runKey;
+    const lastRun = lastRunRef.current;
+    if (
+      lastRun?.key === runKey &&
+      Date.now() - lastRun.at < PREFLIGHT_SAME_STATE_BACKOFF_MS
+    ) {
+      return;
+    }
+    lastRunRef.current = { key: runKey, at: Date.now() };
     runBlockingPreflight();
   }, [freshnessReport, offlineOverride, preflightPending, runBlockingPreflight]);
 
@@ -379,7 +395,7 @@ function SyncFreshnessGate(): React.ReactNode {
                 <Button
                   variant="outline"
                   onClick={() => {
-                    lastRunKeyRef.current = null;
+                    lastRunRef.current = null;
                     void refetchFreshness();
                   }}
                   disabled={freshnessFetching || preflightPending}

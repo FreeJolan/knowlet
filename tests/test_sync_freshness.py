@@ -47,7 +47,7 @@ def test_realtime_without_token_requires_initial_blocking_sync(tmp_path: Path) -
     assert report.requires_sync is True
 
 
-def test_no_relevant_remote_changes_does_not_block_or_advance_token(tmp_path: Path) -> None:
+def test_no_relevant_remote_changes_does_not_block_and_consumes_batch(tmp_path: Path) -> None:
     store = SyncStateStore(tmp_path)
     try:
         store.set_start_page_token("tok-1")
@@ -83,7 +83,9 @@ def test_no_relevant_remote_changes_does_not_block_or_advance_token(tmp_path: Pa
                 state_store=store,
                 client_factory=lambda: MagicMock(),
             )
-        assert store.start_page_token() == "tok-1"
+        # All changes were irrelevant (heartbeat + our own echoed push):
+        # nothing left to apply, so the batch is consumed.
+        assert store.start_page_token() == "tok-2"
     finally:
         store.close()
 

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import logging
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +23,9 @@ from knowlet.core.vault import Vault
 PENDING_LIMIT = 200
 MAX_CONTENT_CHARS = 6000
 AUTO_PULL_STATE_FILE = "auto_pull.json"
+PULL_LOCK_FILE = "pull.lock"
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,6 +39,8 @@ class DigestPullReport:
     skipped: int = 0
     paused: bool = False
     errors: list[str] = field(default_factory=list)
+    # Another pull (CLI process or the app) held the lock; nothing was pulled.
+    busy: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +71,71 @@ def pull_digest_sources(
     """
     started = now_iso()
     report = DigestPullReport(started_at=started, finished_at=started)
+    with _pull_lock(vault) as acquired:
+        if not acquired:
+            report.busy = True
+            report.errors.append(
+                "another digest pull is already running (app or CLI); try again later"
+            )
+            report.finished_at = now_iso()
+            return report
+        _pull_locked(
+            vault=vault,
+            llm=llm,
+            report=report,
+            source_ids=source_ids,
+            max_pending=max_pending,
+            max_items=max_items,
+        )
+    report.finished_at = now_iso()
+    return report
+
+
+def pull_lock_path(vault: Vault) -> Path:
+    return vault.state_dir / "digest" / PULL_LOCK_FILE
+
+
+@contextlib.contextmanager
+def _pull_lock(vault: Vault) -> Iterator[bool]:
+    """Non-blocking cross-process lock around a whole pull.
+
+    The web app's ``digest_pull_lock`` only covers its own threads; a
+    concurrent ``knowlet digest pull`` would pass the same seen /
+    item-key checks and create duplicate RawInfo. flock is released by
+    the OS when the holder dies, so a crash never leaves a stale lock.
+    Platforms without fcntl run unguarded."""
+    try:
+        import fcntl
+    except ImportError:
+        yield True
+        return
+    path = pull_lock_path(vault)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        except OSError as exc:  # e.g. a filesystem without flock support
+            log.warning("digest pull lock unavailable (%s); pulling without it", exc)
+            yield True
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _pull_locked(
+    *,
+    vault: Vault,
+    llm: LLMClient,
+    report: DigestPullReport,
+    source_ids: list[str] | None,
+    max_pending: int,
+    max_items: int | None,
+) -> None:
     sources = _select_sources(DigestSourceStore(vault.digest_sources_dir), source_ids)
     report.source_ids = [source.id for source in sources]
     store = RawInfoStore(vault.digest_items_dir)
@@ -78,34 +151,36 @@ def pull_digest_sources(
         for source in sources:
             _mark_source(source, source_store, status="paused", error=msg)
         report.errors.append(msg)
-        report.finished_at = now_iso()
-        return report
+        return
 
-    for source in sources:
-        if not source.enabled:
+    # One scan for every source in this pull, kept current as items are
+    # saved; per-item has_item_key() would reparse the whole store each time.
+    known_keys = store.item_keys()
+    for selected in sources:
+        # Earlier sources can take minutes; pick up edits made meanwhile.
+        current = source_store.get(selected.id)
+        if current is None or not current.enabled:
             continue
         try:
             _pull_one_source(
-                source,
+                current,
                 vault,
                 llm,
                 store,
                 report,
                 max_items=max_items,
+                known_keys=known_keys,
             )
         except Exception as exc:
-            report.errors.append(f"{source.name}: {type(exc).__name__}: {exc}")
+            report.errors.append(f"{current.name}: {type(exc).__name__}: {exc}")
             _mark_source(
-                source,
+                current,
                 source_store,
                 status="error",
                 error=f"{type(exc).__name__}: {exc}",
             )
             continue
-        _mark_source(source, source_store, status="ok", error=None)
-
-    report.finished_at = now_iso()
-    return report
+        _mark_source(current, source_store, status="ok", error=None)
 
 
 def maybe_auto_pull_digest_sources(
@@ -147,7 +222,7 @@ def maybe_auto_pull_digest_sources(
         source_ids=[source.id for source in due_sources],
         max_pending=max_pending,
     )
-    if not report.paused:
+    if not report.paused and not report.busy:
         refreshed_store = DigestSourceStore(vault.digest_sources_dir)
         for source in due_sources:
             refreshed = refreshed_store.get(source.id)
@@ -176,64 +251,108 @@ def _pull_one_source(
     report: DigestPullReport,
     *,
     max_items: int | None,
+    known_keys: set[str],
 ) -> None:
-    seen = _load_seen(vault, source.id)
-    created_or_seen: list[str] = []
-    if source.kind == "rss":
-        raw_items = fetch_source(SourceSpec(type="rss", url=source.url or ""))
-        report.fetched += len(raw_items)
-        for raw_item in raw_items:
-            if max_items is not None and report.created >= max_items:
-                break
-            item_key = _rss_item_key(source.id, raw_item)
-            if item_key in seen or store.has_item_key(item_key):
-                continue
-            report.new_items += 1
+    seen = set(_load_seen(vault, source.id))
+    newly_seen: list[str] = []
+    try:
+        if source.kind == "rss":
+            _pull_rss_items(source, llm, store, report, seen, newly_seen, known_keys, max_items)
+        else:
+            _pull_prompt_items(source, llm, store, report, seen, newly_seen, known_keys, max_items)
+    finally:
+        # Also on failure: entries finished before the error must not be
+        # sent to the LLM again on the next pull.
+        if newly_seen:
+            _save_seen(vault, source.id, [*seen, *newly_seen])
+
+
+def _pull_rss_items(
+    source: DigestSource,
+    llm: LLMClient,
+    store: RawInfoStore,
+    report: DigestPullReport,
+    seen: set[str],
+    newly_seen: list[str],
+    known_keys: set[str],
+    max_items: int | None,
+) -> None:
+    raw_items = fetch_source(SourceSpec(type="rss", url=source.url or ""))
+    report.fetched += len(raw_items)
+    for raw_item in raw_items:
+        if max_items is not None and report.created >= max_items:
+            break
+        item_key = _rss_item_key(source.id, raw_item)
+        if item_key in seen or item_key in known_keys:
+            continue
+        report.new_items += 1
+        try:
             normalized = _normalize_rss_item(source, raw_item, item_key, llm)
-            if normalized is None:
-                report.skipped += 1
-                continue
-            store.save(normalized)
-            created_or_seen.append(item_key)
-            report.created += 1
-    else:
-        payload = _run_prompt_source(source, llm)
-        items = payload.get("items") or []
-        if not isinstance(items, list):
-            raise ValueError("prompt source JSON must contain items: []")
-        warnings = _prompt_source_warnings(payload)
-        if warnings and not items:
-            raise ValueError("; ".join(warnings))
-        report.fetched += len(items)
-        for raw in items:
-            if max_items is not None and report.created >= max_items:
-                break
-            if not isinstance(raw, dict):
-                report.skipped += 1
-                continue
-            item_key = _prompt_item_key(source.id, raw)
-            if not raw.get("url"):
-                report.skipped += 1
-                continue
-            if item_key in seen or store.has_item_key(item_key):
-                continue
-            info = _raw_info_from_payload(
-                source=source,
-                payload=raw,
-                item_key=item_key,
-                fallback_title=str(raw.get("title") or ""),
-                fallback_url=str(raw.get("url") or ""),
-                content_excerpt="",
-            )
-            if info is None:
-                report.skipped += 1
-                continue
-            store.save(info)
-            created_or_seen.append(item_key)
-            report.created += 1
-            report.new_items += 1
-    if created_or_seen:
-        _save_seen(vault, source.id, [*seen, *created_or_seen])
+        except ValueError as exc:
+            # The model answered, just not with usable JSON. Retrying this
+            # entry every pull would fail the same way, so it is recorded
+            # and marked seen; provider / network errors still abort the
+            # source so a temporary outage doesn't consume the feed.
+            report.skipped += 1
+            label = raw_item.title or raw_item.url or raw_item.item_id
+            report.errors.append(f"{source.name}: entry {label!r} could not be normalized: {exc}")
+            newly_seen.append(item_key)
+            continue
+        newly_seen.append(item_key)
+        if normalized is None:
+            report.skipped += 1
+            continue
+        store.save(normalized)
+        known_keys.add(item_key)
+        report.created += 1
+
+
+def _pull_prompt_items(
+    source: DigestSource,
+    llm: LLMClient,
+    store: RawInfoStore,
+    report: DigestPullReport,
+    seen: set[str],
+    newly_seen: list[str],
+    known_keys: set[str],
+    max_items: int | None,
+) -> None:
+    payload = _run_prompt_source(source, llm)
+    items = payload.get("items") or []
+    if not isinstance(items, list):
+        raise ValueError("prompt source JSON must contain items: []")
+    warnings = _prompt_source_warnings(payload)
+    if warnings and not items:
+        raise ValueError("; ".join(warnings))
+    report.fetched += len(items)
+    for raw in items:
+        if max_items is not None and report.created >= max_items:
+            break
+        if not isinstance(raw, dict):
+            report.skipped += 1
+            continue
+        item_key = _prompt_item_key(source.id, raw)
+        if not raw.get("url"):
+            report.skipped += 1
+            continue
+        if item_key in seen or item_key in known_keys:
+            continue
+        info = _raw_info_from_payload(
+            source=source,
+            payload=raw,
+            item_key=item_key,
+            fallback_title=str(raw.get("title") or ""),
+            fallback_url=str(raw.get("url") or ""),
+            content_excerpt="",
+        )
+        if info is None:
+            report.skipped += 1
+            continue
+        store.save(info)
+        known_keys.add(item_key)
+        newly_seen.append(item_key)
+        report.created += 1
+        report.new_items += 1
 
 
 def _normalize_rss_item(
@@ -333,29 +452,34 @@ Rules:
 - Every saved item needs a real original URL.
 - Do not output Markdown fences, prose, or commentary outside JSON.
 """
+    # No tool-less fallback: without a real search the model answers from
+    # training data and invents "original URLs" that would be saved as
+    # sources. Endpoints without web search get an explicit error instead.
     last_error: Exception | None = None
     tool_variants: list[list[dict[str, Any]]] = [
         [{"type": "web_search", "external_web_access": True}],
         [{"type": "web_search"}],
         [{"type": "web_search_preview"}],
-        [],
     ]
     for tools in tool_variants:
         try:
             response = llm.responses(
                 prompt,
-                tools=tools or None,
+                tools=tools,
                 max_output_tokens=4000,
                 temperature=0.2,
                 role="digest_prompt_source",
             )
-            if tools and not response_has_output_type(response.raw, "web_search_call"):
+            if not response_has_output_type(response.raw, "web_search_call"):
                 raise ValueError("Responses returned no web_search_call")
             return _parse_json_object(response.content)
         except Exception as exc:
             last_error = exc
-    assert last_error is not None
-    raise last_error
+    raise RuntimeError(
+        "prompt sources need a model / endpoint with web search; no web search "
+        f"attempt produced a usable result (last error: {type(last_error).__name__}: "
+        f"{last_error})"
+    ) from last_error
 
 
 def _prompt_source_warnings(payload: dict[str, Any]) -> list[str]:
@@ -430,12 +554,20 @@ def _mark_source(
     status: str,
     error: str | None,
 ) -> None:
-    source.last_pull_at = now_iso()
-    source.pull_status = status  # type: ignore[assignment]
-    source.last_error = error
+    """Record the pull outcome on the source file as it is on disk now.
+
+    A pull can run for minutes; writing back the object loaded at the
+    start would revert user edits (name / prompt / enabled) made
+    meanwhile, or resurrect a source deleted meanwhile."""
+    current = store.get(source.id)
+    if current is None:
+        return
+    current.last_pull_at = now_iso()
+    current.pull_status = status  # type: ignore[assignment]
+    current.last_error = error
     if status == "ok":
-        source.last_success_at = source.last_pull_at
-    store.save(source)
+        current.last_success_at = current.last_pull_at
+    store.save(current)
 
 
 def _seen_path(vault: Vault, source_id: str) -> Path:

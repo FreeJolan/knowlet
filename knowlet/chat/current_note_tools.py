@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from knowlet.chat.intent import has_negation, is_question
 from knowlet.chat.note_chat import propose_note_edit
 from knowlet.chat.note_check import check_note
 from knowlet.core.note import Note
@@ -130,11 +131,21 @@ def _apply_current_note_edit(args: dict[str, Any], ctx: ToolContext) -> dict[str
 
     The guard is intentionally duplicated here even though the prompt says
     "only call after explicit user request": tool-call safety lives in code,
-    not only in model instructions.
+    not only in model instructions. When the session knows the user's real
+    message (``ctx.user_request_text``) that is checked instead of the
+    model-supplied argument, so the model cannot talk its way past it.
     """
-    explicit_request = str(args.get("explicit_user_request") or "").strip()
+    real_request = ctx.user_request_text
+    explicit_request = str(
+        real_request if real_request is not None else args.get("explicit_user_request") or ""
+    ).strip()
     lowered_request = explicit_request.lower()
-    if not explicit_request or not any(m in lowered_request for m in _EXPLICIT_APPLY_MARKERS):
+    if (
+        not explicit_request
+        or not any(m in lowered_request for m in _EXPLICIT_APPLY_MARKERS)
+        or has_negation(explicit_request)
+        or is_question(explicit_request)
+    ):
         return _reject_apply(
             "explicit apply request required",
             "Only call this tool after the user clearly says to apply, accept, confirm, save, or commit the current diff.",
@@ -145,7 +156,9 @@ def _apply_current_note_edit(args: dict[str, Any], ctx: ToolContext) -> dict[str
     if not isinstance(old_body, str) or not isinstance(new_body, str):
         return _reject_apply(
             "no pending note edit",
-            "Ask the user to generate a diff proposal first, then apply it after they explicitly confirm.",
+            "Only a diff the user has reviewed can be applied. If you just proposed one, tell "
+            "the user it is ready for review and that they can accept it in the diff view; "
+            "do not call this tool again in this turn. Otherwise propose an edit first.",
         )
     note, error = _read_current_note(ctx)
     if error is not None:

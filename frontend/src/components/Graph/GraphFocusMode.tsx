@@ -24,7 +24,7 @@ import { QK } from "@/lib/queryClient";
 
 import { GraphCanvas } from "./GraphCanvas";
 import { GraphTooltip } from "./GraphTooltip";
-import { egoSubgraph, splitOrphans } from "./graphData";
+import { egoSubgraph, errorDetail, splitOrphans } from "./graphData";
 
 const FULL_GRAPH_NODE_THRESHOLD = 300;
 
@@ -190,6 +190,29 @@ export function GraphFocusMode({ open, noteId, onClose, onOpenNote }: Props) {
               style={{ color: "var(--ink-mute)" }}
             >
               {t("graph.focus.loading")}
+            </div>
+          )}
+          {graphQuery.isError && !graphQuery.data && (
+            <div
+              className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-xs"
+              style={{ color: "var(--ink-mute)" }}
+              data-testid="graph-focus-error"
+            >
+              <span>
+                {t("rail.graph.loadFailed", {
+                  error: errorDetail(graphQuery.error),
+                })}
+              </span>
+              <button
+                type="button"
+                onClick={() => void graphQuery.refetch()}
+                disabled={graphQuery.isFetching}
+                data-testid="graph-focus-retry"
+                className="rounded border px-2 py-0.5 text-[11px] transition-colors hover:bg-accent/30 disabled:opacity-50"
+                style={{ borderColor: "var(--line)" }}
+              >
+                {t("tree.retry")}
+              </button>
             </div>
           )}
           {visible && visible.connected.nodes.length === 0 && (

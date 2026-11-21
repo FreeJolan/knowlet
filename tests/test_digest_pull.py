@@ -938,7 +938,7 @@ def test_digest_cli_clear_discards_all_pending_raw_info(tmp_path, monkeypatch):
     store.save(first)
     store.save(second)
 
-    result = runner.invoke(app, ["digest", "clear"])
+    result = runner.invoke(app, ["digest", "clear", "--yes"])
 
     assert result.exit_code == 0, result.stdout
     assert "discarded 2 pending raw info item" in result.stdout

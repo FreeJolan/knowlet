@@ -1,5 +1,83 @@
 # Changelog
 
+## [0.0.26] - 2026-11-21
+
+Audit fix release: data-safety, sync, security and reliability fixes from a
+full-codebase review (149 findings).
+
+Data safety
+
+- Google Drive sync no longer treats a failed or truncated Drive listing as
+  "everything was deleted remotely". Before, an offline or rate-limited sync
+  check could move every synced note to the trash and permanently delete
+  attachments, drafts and cards.
+- Attachments are never permanently deleted from Drive while the app is
+  still starting up.
+- Saves that land during a push or pull, and local edits to a note deleted
+  on another device, are no longer lost. Resolving a conflict with the
+  remote version backs up the local copy first, and conflict merges keep the
+  note's kind, folder and custom fields.
+- The editor no longer rolls back text typed while a save is in flight, and
+  tag/title edits can no longer overwrite newer text.
+- A stale editor can no longer overwrite changes pulled from Drive: the save
+  is refused and the latest version is loaded.
+- Deleting a folder moves non-Markdown files (images, PDFs, …) to the trash
+  instead of deleting them. Trashing or restoring a note with broken
+  frontmatter keeps the original text.
+- Custom frontmatter fields (for example Obsidian properties) survive edits,
+  and notes without an id get one stable id instead of a new one on every
+  read.
+- Importing a vault archive can no longer write outside the import folder or
+  overwrite existing notes; export and import skip the trash.
+- Sync-driven local deletes, old conversations and rejected drafts go to the
+  trash or an archive instead of being deleted.
+
+Security
+
+- The local server rejects requests from other websites (cross-site writes
+  and DNS rebinding) and caps upload and import sizes.
+- The app no longer serves files outside its bundle, the saved LLM key is
+  only sent to the saved endpoint, and dev-only endpoints require
+  `KNOWLET_DEV=1`.
+- URL capture refuses local and private network addresses and oversized
+  downloads.
+
+AI and chat
+
+- Questions and negations such as "先不要应用修改" no longer trigger note or
+  draft edits.
+- An interrupted tool call no longer corrupts the saved conversation, and a
+  reply the model writes after a tool call is no longer dropped.
+- Edit proposals for long notes get enough output budget, LLM requests time
+  out instead of hanging, and changing the base URL or key takes effect
+  without a restart.
+- Draft chat uses the draft tools instead of note tools that always failed.
+
+Desktop and release
+
+- Quitting the app shuts the backend down gracefully instead of leaving the
+  Python process running, and a failing default vault falls back to the
+  vault picker instead of crash-looping.
+- The app checks that it is talking to its own backend on startup.
+- The macOS update package is built after notarization, bundled backend
+  dependencies come from `uv.lock`, and pre-release tags are never published
+  as the latest update.
+
+Other fixes
+
+- Inline `#tags` ignore issue numbers and hex colours, and tags removed in
+  the tag strip no longer come back on save.
+- Switching to an embedding model with the same dimension requires a rebuild
+  instead of silently mixing vectors; re-indexing removes stale vectors.
+- RSS and URL fetches time out, one bad item no longer aborts a digest
+  source, and mining runs no longer produce duplicate drafts.
+- CLI: destructive commands refuse ambiguous id prefixes, `config show` masks
+  API keys, irreversible commands ask for confirmation, and CLI note changes
+  (including AI edits from `knowlet discuss`) are synced to Drive.
+- Performance: no more quadratic work in structure signals and orphan
+  detection, one Drive listing per sync check instead of one request per
+  note, and fewer re-renders and effect re-runs in the app shell.
+
 ## [0.0.25] - 2026-08-03
 
 Markdown editing fixes release.

@@ -48,6 +48,10 @@ class ToolContext:
     # reviewed diff. Mutating tools can apply it only after an explicit user
     # request; normal chat/CLI sessions leave this unset.
     pending_note_edit: dict[str, str] | None = None
+    # The user's own message for this turn, when the interface has it. Write
+    # tools that require an explicit user request check this instead of the
+    # model-supplied argument; None = unknown (fall back to the argument).
+    user_request_text: str | None = None
     # Raw-Info review sessions set this so the model can settle "this item"
     # into a note draft without the user copying an internal id into chat.
     current_raw_info_id: str | None = None

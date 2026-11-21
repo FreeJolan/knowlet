@@ -10,6 +10,14 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { imeSafeKeyHandler } from "@/lib/imeSafe";
 import { QK } from "@/lib/queryClient";
 
+/** `ApiError` carries `detail`; network failures are plain `Error`s. */
+function errorText(err: unknown): string {
+  const e = err as { detail?: unknown; message?: unknown } | null;
+  if (typeof e?.detail === "string" && e.detail) return e.detail;
+  if (typeof e?.message === "string" && e.message) return e.message;
+  return String(err);
+}
+
 interface TemplateCreateDialogProps {
   open: boolean;
   onClose: () => void;
@@ -51,6 +59,11 @@ export function TemplateCreateDialog({
       onClose();
     },
   });
+
+  const resetCreate = createMut.reset;
+  useEffect(() => {
+    if (open) resetCreate();
+  }, [open, resetCreate]);
 
   const submit = () => {
     if (createMut.isPending || !title.trim()) return;
@@ -185,7 +198,21 @@ export function TemplateCreateDialog({
             background: "var(--bg-1)",
           }}
         >
-          <span className="flex-1" />
+          {createMut.isError ? (
+            <span
+              role="alert"
+              data-testid="template-create-error"
+              className="min-w-0 flex-1 truncate"
+              style={{ fontSize: 12, color: "var(--destructive)" }}
+              title={errorText(createMut.error)}
+            >
+              {t("vaultPortability.errorPrefix", {
+                detail: errorText(createMut.error),
+              })}
+            </span>
+          ) : (
+            <span className="flex-1" />
+          )}
           <button
             type="button"
             onClick={onClose}

@@ -9,12 +9,21 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import logging
 from typing import Any, Protocol
 
 import numpy as np
 
+log = logging.getLogger(__name__)
+
+_ST_HF_PREFIX = "sentence-transformers/"
+
 
 class EmbeddingBackend(Protocol):
+    """Backends may also expose ``identity: str`` (backend + model). The
+    index records it and refuses to mix vectors from a different identity;
+    backends without it are identified by class name."""
+
     @property
     def dim(self) -> int: ...
 
@@ -28,14 +37,24 @@ class DummyBackend:
 
     Not semantically meaningful — vectors only co-locate when texts share
     sub-string patterns. Sufficient to wire up the index in tests.
+
+    ``stand_in_for`` marks an instance created because the configured
+    backend could not load. The index then keeps verifying against the
+    configured identity and writes no vectors, so hash vectors never land
+    in an index whose other vectors are semantic.
     """
 
-    def __init__(self, dim: int = 384):
+    def __init__(self, dim: int = 384, *, stand_in_for: str | None = None):
         self._dim = dim
+        self.stand_in_for = stand_in_for
 
     @property
     def dim(self) -> int:
         return self._dim
+
+    @property
+    def identity(self) -> str:
+        return "dummy"
 
     def _vec(self, text: str) -> np.ndarray:
         seed = int.from_bytes(hashlib.sha256(text.encode("utf-8")).digest()[:8], "big")
@@ -82,6 +101,10 @@ class SentenceTransformersBackend:
         assert self._dim is not None
         return self._dim
 
+    @property
+    def identity(self) -> str:
+        return _st_identity(self.model_name)
+
     def embed_documents(self, texts: list[str]) -> np.ndarray:
         self._ensure()
         if not texts:
@@ -97,11 +120,48 @@ class SentenceTransformersBackend:
         return result
 
 
+def _st_identity(model_name: str) -> str:
+    # `all-MiniLM-L6-v2` and `sentence-transformers/all-MiniLM-L6-v2`
+    # load the same weights; don't force a rebuild over the spelling.
+    name = model_name.strip()
+    if name.startswith(_ST_HF_PREFIX):
+        name = name[len(_ST_HF_PREFIX) :]
+    return f"sentence_transformers:{name}"
+
+
+def backend_identity(backend: object) -> str:
+    ident = getattr(backend, "identity", None)
+    if isinstance(ident, str) and ident:
+        return ident
+    return type(backend).__name__
+
+
+def configured_identity(backend: object) -> str:
+    """Identity the index must match: the configured backend's, even while
+    a stand-in DummyBackend is serving in its place."""
+    stand_in_for = getattr(backend, "stand_in_for", None)
+    if isinstance(stand_in_for, str) and stand_in_for:
+        return stand_in_for
+    return backend_identity(backend)
+
+
+def writes_vectors(backend: object) -> bool:
+    return not getattr(backend, "stand_in_for", None)
+
+
 def make_backend(backend: str, model: str, dim: int) -> EmbeddingBackend:
     if backend == "dummy":
         return DummyBackend(dim=dim)
     if backend == "sentence_transformers":
         if importlib.util.find_spec("sentence_transformers") is None:
-            return DummyBackend(dim=dim)
+            log.warning(
+                "embedding backend 'sentence_transformers' (model %r) is configured "
+                "but the sentence_transformers package is not installed. Semantic "
+                "retrieval is DISABLED: search falls back to keyword-only and edited "
+                "notes are indexed without vectors until the dependency is restored "
+                "(install the `embed` extra), after which the next reindex re-embeds them.",
+                model,
+            )
+            return DummyBackend(dim=dim, stand_in_for=_st_identity(model))
         return SentenceTransformersBackend(model_name=model)
     raise ValueError(f"unknown embedding backend: {backend}")

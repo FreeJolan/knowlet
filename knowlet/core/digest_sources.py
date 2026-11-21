@@ -7,7 +7,6 @@ Prompt Sources; website subscriptions stay out of this surface.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 from collections.abc import Iterator
@@ -16,6 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+from knowlet.core.digest_items import remove_stale_files, resolve_id_path
 from knowlet.core.note import new_id, now_iso, slugify
 
 DigestSourceKind = Literal["rss", "prompt"]
@@ -137,13 +137,14 @@ class DigestSourceStore:
         return out
 
     def get(self, source_id: str) -> DigestSource | None:
-        for path in self.iter_paths():
-            if path.stem.startswith(source_id):
-                try:
-                    return DigestSource.from_file(path)
-                except (OSError, ValueError, json.JSONDecodeError):
-                    return None
-        return None
+        """Full id or unique prefix; raises ``AmbiguousIdError``."""
+        path = resolve_id_path(self.iter_paths(), source_id, kind="digest source")
+        if path is None:
+            return None
+        try:
+            return DigestSource.from_file(path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
 
     def save(self, source: DigestSource) -> Path:
         problems = source.validate()
@@ -152,10 +153,7 @@ class DigestSourceStore:
         self.root.mkdir(parents=True, exist_ok=True)
         source.updated_at = now_iso()
         target = self.root / source.filename
-        for path in self.iter_paths():
-            if path.stem.startswith(source.id) and path.name != target.name:
-                with contextlib.suppress(OSError):
-                    os.unlink(path)
+        remove_stale_files(self.root, source.id, target, known=None)
         source.path = target
         tmp = target.with_suffix(target.suffix + ".tmp")
         tmp.write_text(

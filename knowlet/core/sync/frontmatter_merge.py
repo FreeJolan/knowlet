@@ -28,7 +28,13 @@ into a body hunk.
 - ``schema_version`` — max. Forward-compat — never downgrade.
 - ``source``       — first non-empty (mine, theirs).
 - ``status``       — newer ``updated_at`` side wins.
+- ``kind``         — newer ``updated_at`` side wins (same as status).
 - ``trashed_from`` — first non-empty. Trash transitions are sticky.
+- ``folder``       — first non-empty (mine, theirs). The merged file
+                     is written at mine's local path, so mine's hint
+                     describes where it actually lives.
+- ``extra_meta``   — union of unknown frontmatter keys; on a key
+                     collision the newer ``updated_at`` side wins.
 - ``body``         — handled OUTSIDE this module; the merge editor
                      gives us the user-assembled merged body.
 
@@ -61,6 +67,7 @@ def merge_notes(*, mine: Note, theirs: Note, merged_body: str) -> Note:
     own the "new edit" semantics.)
     """
     newer = _newer_by_updated_at(mine, theirs)
+    older = theirs if newer is mine else mine
     return Note(
         id=mine.id,
         title=newer.title,
@@ -73,7 +80,10 @@ def merge_notes(*, mine: Note, theirs: Note, merged_body: str) -> Note:
         path=mine.path,
         schema_version=max(mine.schema_version, theirs.schema_version),
         status=newer.status,
+        kind=newer.kind,
         trashed_from=mine.trashed_from or theirs.trashed_from,
+        folder=mine.folder or theirs.folder,
+        extra_meta={**older.extra_meta, **newer.extra_meta},
     )
 
 

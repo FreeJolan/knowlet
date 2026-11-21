@@ -31,7 +31,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import type { QuickAction } from "@/api/types";
+import type { ApiError, NoteFull, QuickAction } from "@/api/types";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { QK } from "@/lib/queryClient";
 
@@ -131,19 +131,12 @@ export function CommandPalette({
     [favoritesOnly, starredNotes, notes],
   );
 
-  // Reset state on every open so the dialog is "clean" each time.
-  useEffect(() => {
-    if (open) {
-      setMode(initialMode);
-      setQuery("");
-      setFavoritesOnly(false);
-    }
-  }, [open, initialMode]);
-
   // Phase 2 D Slice 2c — running a quick action returns NoteFull
   // (idempotent: same-day re-runs reuse the existing note). On
   // success: invalidate tree + open the note via onSelectNote.
-  const runMutation = useMutation({
+  // On failure the palette stays open (and closable) with the reason;
+  // runQuickAction gives up after a timeout, so it can't stay pending.
+  const runMutation = useMutation<NoteFull, ApiError, string>({
     mutationFn: (id: string) => runQuickAction(id),
     onSuccess: (note) => {
       void qc.invalidateQueries({ queryKey: QK.tree });
@@ -151,6 +144,20 @@ export function CommandPalette({
       onClose();
     },
   });
+  const resetRun = runMutation.reset;
+  const runError = runMutation.isError
+    ? (runMutation.error?.detail ?? String(runMutation.error))
+    : null;
+
+  // Reset state on every open so the dialog is "clean" each time.
+  useEffect(() => {
+    if (open) {
+      setMode(initialMode);
+      setQuery("");
+      setFavoritesOnly(false);
+      resetRun();
+    }
+  }, [open, initialMode, resetRun]);
 
   const handleQueryChange = (next: string) => {
     // Files-mode "`>`" prefix → switch to commands mode + strip the `>`.
@@ -303,6 +310,18 @@ export function CommandPalette({
           {/* Bump the list height so a dozen rows are visible without
               scrolling. shadcn's default `max-h-72` (288px) feels
               cramped on a wide dialog. */}
+          {runError !== null && (
+            <div
+              role="alert"
+              data-testid="palette-action-error"
+              className="border-b px-3 py-2 text-xs text-destructive"
+            >
+              {t("palette.actionFailed", {
+                detail: runError,
+                defaultValue: "Action failed: {{detail}}",
+              })}
+            </div>
+          )}
           <CommandList className="max-h-[60vh]">
             <CommandEmpty>{t("palette.noMatches")}</CommandEmpty>
             {mode === "commands" ? (

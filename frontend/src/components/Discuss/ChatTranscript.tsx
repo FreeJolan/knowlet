@@ -24,14 +24,19 @@ export function groupChatMessages(messages: ChatMessage[]): ChatRenderItem[] {
     }
     if (message.role === "tool") {
       const tools: ChatMessage[] = [];
-      while (messages[i]?.role === "tool") {
-        const toolMessage = messages[i];
+      let next = i;
+      while (messages[next]?.role === "tool") {
+        const toolMessage = messages[next];
         if (toolMessage) tools.push(toolMessage);
-        i += 1;
+        next += 1;
       }
       const assistant =
-        messages[i]?.role === "assistant" ? messages[i] : undefined;
+        messages[next]?.role === "assistant" ? messages[next] : undefined;
       grouped.push({ type: "assistant", assistant, tools });
+      // Only the tool run (and its answer, if any) is consumed; whatever
+      // follows — e.g. the next user message after a failed tool turn —
+      // must still be visited by the outer loop.
+      i = assistant ? next : next - 1;
       continue;
     }
     grouped.push({ type: "assistant", assistant: message, tools: [] });

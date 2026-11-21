@@ -3,7 +3,7 @@ pub mod recent_vaults;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 
 use backend::{
     create_vault_dir, delete_vault_local_files, initialize_vault_layout, preview_new_vault,
@@ -40,6 +40,15 @@ const DRIVE_ACCOUNT_VAULT_DIR: &str = "drive-account-vault";
 
 struct DesktopState {
     backend: Mutex<Option<BackendProcess>>,
+    // Vault switches and deletes run on worker threads; this serializes them so
+    // two backends never start for the same vault. Lock order: this before
+    // `backend`, and never held by main-thread code.
+    vault_switch: Mutex<()>,
+}
+
+enum StartupWindow<B> {
+    Main(B),
+    Launcher { error: Option<String> },
 }
 
 #[derive(Serialize)]
@@ -136,12 +145,17 @@ fn desktop_choose_vault_parent() -> Option<String> {
 }
 
 #[tauri::command]
-fn desktop_pick_existing_vault(app: tauri::AppHandle) -> Result<Option<DesktopStatus>, String> {
-    let Some(path) = pick_vault_folder() else {
-        return Ok(None);
-    };
-    let vault = validate_vault_dir(&path)?;
-    switch_to_vault(&app, vault).map(Some)
+async fn desktop_pick_existing_vault(
+    app: tauri::AppHandle,
+) -> Result<Option<DesktopStatus>, String> {
+    run_blocking(move || {
+        let Some(path) = pick_vault_folder() else {
+            return Ok(None);
+        };
+        let vault = validate_vault_dir(&path)?;
+        switch_to_vault(&app, vault).map(Some)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -150,29 +164,48 @@ fn desktop_preview_new_vault(parent: String, name: String) -> NewVaultPreview {
 }
 
 #[tauri::command]
-fn desktop_create_vault(
+async fn desktop_create_vault(
     app: tauri::AppHandle,
     parent: String,
     name: String,
     allow_existing_empty: bool,
 ) -> Result<DesktopStatus, String> {
-    let vault = create_vault_dir(Path::new(&parent), &name, allow_existing_empty)?;
-    switch_to_vault(&app, vault)
+    run_blocking(move || {
+        let vault = create_vault_dir(Path::new(&parent), &name, allow_existing_empty)?;
+        switch_to_vault(&app, vault)
+    })
+    .await
 }
 
 #[tauri::command]
-fn desktop_open_vault(app: tauri::AppHandle, path: String) -> Result<DesktopStatus, String> {
-    let vault = validate_vault_dir(Path::new(&path))?;
-    switch_to_vault(&app, vault)
+async fn desktop_open_vault(app: tauri::AppHandle, path: String) -> Result<DesktopStatus, String> {
+    run_blocking(move || {
+        let vault = validate_vault_dir(Path::new(&path))?;
+        switch_to_vault(&app, vault)
+    })
+    .await
 }
 
 #[tauri::command]
-fn desktop_delete_vault(
+async fn desktop_delete_vault(
     app: tauri::AppHandle,
     path: String,
     delete_local_files: bool,
 ) -> Result<DeleteVaultResult, String> {
-    let requested = PathBuf::from(&path);
+    run_blocking(move || delete_vault(&app, &path, delete_local_files)).await
+}
+
+fn delete_vault(
+    app: &tauri::AppHandle,
+    path: &str,
+    delete_local_files: bool,
+) -> Result<DeleteVaultResult, String> {
+    let state = app.state::<DesktopState>();
+    let _switching = state
+        .vault_switch
+        .lock()
+        .map_err(|_| "desktop vault switch lock poisoned".to_string())?;
+    let requested = PathBuf::from(path);
     let vault = if delete_local_files {
         validate_vault_dir(&requested)?
     } else if requested.exists() {
@@ -182,31 +215,32 @@ fn desktop_delete_vault(
     };
 
     if delete_local_files {
-        let current_vault = app
-            .state::<DesktopState>()
-            .backend
-            .lock()
-            .map_err(|_| "desktop backend state lock poisoned".to_string())?
-            .as_ref()
-            .map(|backend| backend.vault.clone());
-        if current_vault.as_ref() == Some(&vault) {
-            let _stopped = app
-                .state::<DesktopState>()
+        let running = {
+            let mut backend = state
                 .backend
                 .lock()
-                .map_err(|_| "desktop backend state lock poisoned".to_string())?
-                .take();
+                .map_err(|_| "desktop backend state lock poisoned".to_string())?;
+            if backend.as_ref().map(|backend| &backend.vault) == Some(&vault) {
+                backend.take()
+            } else {
+                None
+            }
+        };
+        if let Some(mut running) = running {
             if let Some(window) = app.get_webview_window(WINDOW_MAIN) {
                 let _ = window.close();
             }
+            // The whole backend process tree must be gone before its vault
+            // moves to the trash, or it keeps writing into the trashed folder.
+            running.stop();
         }
         delete_vault_local_files(&vault)?;
     }
 
-    let removed_record = recent_vaults_path(&app)
+    let removed_record = recent_vaults_path(app)
         .and_then(|store| forget_recent_vault(&store, &vault))
         .unwrap_or(false);
-    refresh_desktop_menu(&app)?;
+    refresh_desktop_menu(app)?;
     Ok(DeleteVaultResult {
         path: vault.display().to_string(),
         removed_record,
@@ -220,62 +254,96 @@ fn desktop_drive_account_status(app: tauri::AppHandle) -> Result<DriveAccountSta
 }
 
 #[tauri::command]
-fn desktop_drive_connect(app: tauri::AppHandle) -> Result<DriveAccountStatus, String> {
-    let account_vault = ensure_drive_account_vault(&app)?;
-    run_backend_cli(
-        &account_vault,
-        &["sync".to_string(), "connect".to_string()],
-    )?;
-    drive_account_status(&app)
+async fn desktop_drive_connect(app: tauri::AppHandle) -> Result<DriveAccountStatus, String> {
+    run_blocking(move || {
+        let account_vault = ensure_drive_account_vault(&app)?;
+        // Waits for the user to finish OAuth in the browser (bounded by the
+        // backend's own consent timeout).
+        run_backend_cli(&account_vault, &["sync".to_string(), "connect".to_string()])?;
+        drive_account_status(&app)
+    })
+    .await
 }
 
 #[tauri::command]
-fn desktop_remote_vaults(app: tauri::AppHandle) -> Result<Vec<RemoteVaultSummary>, String> {
-    let account_vault = ensure_drive_account_vault(&app)?;
-    let out = run_backend_cli(
-        &account_vault,
-        &[
-            "sync".to_string(),
-            "vaults".to_string(),
-            "--json".to_string(),
-        ],
-    )?;
-    serde_json::from_str(out.trim())
-        .map_err(|err| format!("failed to parse remote vault list: {err}"))
+async fn desktop_remote_vaults(app: tauri::AppHandle) -> Result<Vec<RemoteVaultSummary>, String> {
+    run_blocking(move || {
+        let account_vault = ensure_drive_account_vault(&app)?;
+        let out = run_backend_cli(
+            &account_vault,
+            &[
+                "sync".to_string(),
+                "vaults".to_string(),
+                "--json".to_string(),
+            ],
+        )?;
+        serde_json::from_str(out.trim())
+            .map_err(|err| format!("failed to parse remote vault list: {err}"))
+    })
+    .await
 }
 
 #[tauri::command]
-fn desktop_restore_remote_vault(
+async fn desktop_restore_remote_vault(
     app: tauri::AppHandle,
     parent: String,
     name: String,
     vault_id: String,
     allow_existing_empty: bool,
 ) -> Result<DesktopStatus, String> {
-    let preview = preview_new_vault(Path::new(&parent), &name);
-    if !preview.can_create {
-        return Err(preview.message);
-    }
-    if preview.requires_empty_dir_confirmation && !allow_existing_empty {
-        return Err(format!(
-            "target folder already exists and is empty: {}",
-            preview.target
-        ));
-    }
-    let account_vault = ensure_drive_account_vault(&app)?;
-    run_backend_cli(
-        &account_vault,
-        &[
-            "sync".to_string(),
-            "restore-vault".to_string(),
-            "--remote-vault-id".to_string(),
-            vault_id,
-            "--to".to_string(),
-            preview.target.clone(),
-            "--json".to_string(),
-        ],
-    )?;
-    switch_to_vault(&app, PathBuf::from(preview.target))
+    run_blocking(move || {
+        let preview = preview_new_vault(Path::new(&parent), &name);
+        if !preview.can_create {
+            return Err(preview.message);
+        }
+        if preview.requires_empty_dir_confirmation && !allow_existing_empty {
+            return Err(format!(
+                "target folder already exists and is empty: {}",
+                preview.target
+            ));
+        }
+        let account_vault = ensure_drive_account_vault(&app)?;
+        run_backend_cli(
+            &account_vault,
+            &[
+                "sync".to_string(),
+                "restore-vault".to_string(),
+                "--remote-vault-id".to_string(),
+                vault_id,
+                "--to".to_string(),
+                preview.target.clone(),
+                "--json".to_string(),
+            ],
+        )?;
+        switch_to_vault(&app, PathBuf::from(preview.target))
+    })
+    .await
+}
+
+/// Synchronous Tauri commands and menu handlers run on the main thread, where
+/// a backend start (health wait up to 30s) or a Drive call would freeze every
+/// window and menu. Blocking work runs on the blocking pool instead.
+async fn run_blocking<T, F>(task: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|err| format!("desktop task failed: {err}"))?
+}
+
+fn spawn_menu_task(
+    app: &tauri::AppHandle,
+    error_title: &'static str,
+    task: impl FnOnce(&tauri::AppHandle) -> Result<(), String> + Send + 'static,
+) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(err) = task(&app) {
+            show_desktop_error(error_title, &err);
+        }
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -300,13 +368,17 @@ pub fn run() {
                     show_desktop_error("Knowlet could not open the vault launcher", &err);
                 }
             } else if event.id() == MENU_OPEN_VAULT {
-                if let Err(err) = open_vault_from_menu(app) {
-                    show_desktop_error("Knowlet could not open that vault", &err);
-                }
+                spawn_menu_task(
+                    app,
+                    "Knowlet could not open that vault",
+                    open_vault_from_menu,
+                );
             } else if let Some(index) = parse_open_recent_vault_menu_id(event.id().as_ref()) {
-                if let Err(err) = open_recent_vault_from_menu(app, index) {
-                    show_desktop_error("Knowlet could not open that recent vault", &err);
-                }
+                spawn_menu_task(
+                    app,
+                    "Knowlet could not open that recent vault",
+                    move |app| open_recent_vault_from_menu(app, index),
+                );
             } else if event.id() == MENU_OPEN_DIGEST {
                 emit_to_main_window(app, EVENT_OPEN_DIGEST);
             } else if event.id() == MENU_PULL_DIGEST {
@@ -319,6 +391,7 @@ pub fn run() {
         })
         .manage(DesktopState {
             backend: Mutex::new(None),
+            vault_switch: Mutex::new(()),
         })
         .invoke_handler(tauri::generate_handler![
             desktop_status,
@@ -342,41 +415,42 @@ pub fn run() {
                 .map_err(|err| format!("failed to resolve desktop config directory: {err}"))?
                 .join(recent_vaults_filename());
 
-            if let Some(vault) =
+            let startup_vault =
                 resolve_startup_vault(std::env::var_os(VAULT_ENV), &recent_vaults_path).map_err(
                     |err| {
                         show_startup_error(&err);
                         err
                     },
-                )?
-            {
+                )?;
+            let startup_window = plan_startup_window(startup_vault, |vault| {
                 let current_exe = std::env::current_exe()
                     .map_err(|err| format!("failed to resolve current executable: {err}"))?;
                 let dev_frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
-                let frontend_dist = resolve_frontend_dist(&current_exe, &dev_frontend_dist)
-                    .map_err(|err| {
+                let frontend_dist = resolve_frontend_dist(&current_exe, &dev_frontend_dist)?;
+                BackendProcess::start(vault, frontend_dist)
+            });
+            match startup_window {
+                StartupWindow::Main(backend) => {
+                    let url = backend.url.clone();
+                    *app.state::<DesktopState>()
+                        .backend
+                        .lock()
+                        .map_err(|_| "desktop backend state lock poisoned".to_string())? =
+                        Some(backend);
+                    open_main_window(app.handle(), &url).map_err(|err| {
                         show_startup_error(&err);
                         err
                     })?;
-                let backend = BackendProcess::start(vault, frontend_dist).map_err(|err| {
-                    show_startup_error(&err);
-                    err
-                })?;
-                let url = backend.url.clone();
-                *app.state::<DesktopState>()
-                    .backend
-                    .lock()
-                    .map_err(|_| "desktop backend state lock poisoned".to_string())? =
-                    Some(backend);
-                open_main_window(app.handle(), &url).map_err(|err| {
-                    show_startup_error(&err);
-                    err
-                })?;
-            } else {
-                show_vault_launcher(app.handle()).map_err(|err| {
-                    show_startup_error(&err);
-                    err
-                })?;
+                }
+                StartupWindow::Launcher { error } => {
+                    if let Some(err) = error {
+                        show_desktop_error("Knowlet could not open the last vault", &err);
+                    }
+                    show_vault_launcher(app.handle()).map_err(|err| {
+                        show_startup_error(&err);
+                        err
+                    })?;
+                }
             }
 
             refresh_desktop_menu(app.handle()).map_err(|err| {
@@ -390,9 +464,41 @@ pub fn run() {
         .expect("error while building Knowlet desktop");
 
     app.run(|app, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            // Managed state is not dropped on exit; stop the backend tree
+            // explicitly instead of leaving it to the parent-pid watchdog.
+            stop_running_backend(app);
+        }
         #[cfg(target_os = "macos")]
         handle_macos_run_event(app, event);
     });
+}
+
+/// A vault that fails to start must not abort the app: the launcher is the
+/// only place the user can pick another vault or remove the broken one.
+fn plan_startup_window<B>(
+    vault: Option<PathBuf>,
+    start: impl FnOnce(PathBuf) -> Result<B, String>,
+) -> StartupWindow<B> {
+    match vault {
+        None => StartupWindow::Launcher { error: None },
+        Some(vault) => match start(vault) {
+            Ok(backend) => StartupWindow::Main(backend),
+            Err(err) => StartupWindow::Launcher { error: Some(err) },
+        },
+    }
+}
+
+fn stop_running_backend<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let running = app
+        .state::<DesktopState>()
+        .backend
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    if let Some(mut backend) = running {
+        backend.stop();
+    }
 }
 
 fn pick_vault_folder() -> Option<PathBuf> {
@@ -761,8 +867,12 @@ fn open_recent_vault_from_menu(app: &tauri::AppHandle, index: usize) -> Result<(
 }
 
 fn switch_to_vault(app: &tauri::AppHandle, vault: PathBuf) -> Result<DesktopStatus, String> {
-    let current_vault = app
-        .state::<DesktopState>()
+    let state = app.state::<DesktopState>();
+    let _switching = state
+        .vault_switch
+        .lock()
+        .map_err(|_| "desktop vault switch lock poisoned".to_string())?;
+    let current_vault = state
         .backend
         .lock()
         .map_err(|_| "desktop backend state lock poisoned".to_string())?
@@ -805,13 +915,21 @@ fn switch_to_vault(app: &tauri::AppHandle, vault: PathBuf) -> Result<DesktopStat
         return Err(err);
     }
 
-    *app.state::<DesktopState>()
+    let previous = state
         .backend
         .lock()
-        .map_err(|_| "desktop backend state lock poisoned".to_string())? = Some(backend);
+        .map_err(|_| "desktop backend state lock poisoned".to_string())?
+        .replace(backend);
     record_vault_as_recent(app, &vault);
-    refresh_desktop_menu(app)?;
+    let menu_result = refresh_desktop_menu(app);
     close_vault_launcher(app);
+    // Stopped outside the state lock (a graceful shutdown takes seconds and
+    // desktop_status must stay responsive) but inside the switch lock, so a
+    // quick switch back cannot start a second backend on the same vault.
+    if let Some(mut previous) = previous {
+        previous.stop();
+    }
+    menu_result?;
 
     Ok(DesktopStatus {
         backend_url: url,
@@ -1151,6 +1269,70 @@ mod tests {
             super::recent_vault_menu_label(path),
             "research (/tmp/knowlet-vaults)"
         );
+    }
+
+    #[test]
+    fn startup_falls_back_to_launcher_when_last_vault_cannot_start() {
+        let plan =
+            super::plan_startup_window(Some(std::path::PathBuf::from("/tmp/broken-vault")), |_| {
+                Err::<(), String>("backend exited before health check passed".to_string())
+            });
+
+        match plan {
+            super::StartupWindow::Launcher { error } => assert_eq!(
+                error.as_deref(),
+                Some("backend exited before health check passed")
+            ),
+            super::StartupWindow::Main(()) => {
+                panic!("a failed backend must not open the main window")
+            }
+        }
+    }
+
+    #[test]
+    fn startup_opens_main_window_when_vault_starts() {
+        let plan =
+            super::plan_startup_window(Some(std::path::PathBuf::from("/tmp/vault")), |vault| {
+                Ok::<_, String>(vault)
+            });
+
+        assert!(matches!(
+            plan,
+            super::StartupWindow::Main(path) if path == std::path::Path::new("/tmp/vault")
+        ));
+    }
+
+    #[test]
+    fn startup_without_recent_vault_shows_launcher_without_error() {
+        let plan = super::plan_startup_window(None, |_| -> Result<(), String> {
+            panic!("no vault means no backend start")
+        });
+
+        assert!(matches!(
+            plan,
+            super::StartupWindow::Launcher { error: None }
+        ));
+    }
+
+    #[test]
+    fn blocking_vault_commands_run_off_the_main_thread() {
+        // Synchronous Tauri commands execute on the main thread; these spawn
+        // backends, wait for health checks, or wait on Drive/OAuth.
+        let source = include_str!("lib.rs");
+        for command in [
+            "desktop_pick_existing_vault",
+            "desktop_create_vault",
+            "desktop_open_vault",
+            "desktop_delete_vault",
+            "desktop_drive_connect",
+            "desktop_remote_vaults",
+            "desktop_restore_remote_vault",
+        ] {
+            assert!(
+                source.contains(&format!("async fn {command}(")),
+                "{command} must be an async command"
+            );
+        }
     }
 
     #[test]

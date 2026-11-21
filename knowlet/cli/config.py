@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.panel import Panel
@@ -13,13 +13,40 @@ from knowlet.cli._common import (
     console,
     err_console,
     load_config_or_default,
-    mask,
     resolve_vault_or_die,
 )
-from knowlet.config import config_path, save_config
+from knowlet.config import KnowletConfig, config_path, save_config
 from knowlet.core.i18n import set_language, t
 
 app = typer.Typer(help="Configuration.", no_args_is_help=True)
+
+
+def is_secret_field(field: str) -> bool:
+    """Credential fields (`llm.api_key`, `web_search.brave_api_key`, …)."""
+    return field == "api_key" or field.endswith("_api_key")
+
+
+def mask_secret(value: str) -> str:
+    """Keep the first 4 and last 2 characters so keys stay tell-apart-able;
+    values too short for that to hide most of them are fully starred."""
+    if not value:
+        return ""
+    if len(value) <= 10:
+        return "*" * len(value)
+    return value[:4] + "*" * (len(value) - 6) + value[-2:]
+
+
+def redacted_config_dump(cfg: KnowletConfig, *, show_secrets: bool = False) -> dict[str, Any]:
+    data = cfg.model_dump()
+    if show_secrets:
+        return data
+    for section in data.values():
+        if not isinstance(section, dict):
+            continue
+        for field, value in section.items():
+            if is_secret_field(field) and isinstance(value, str):
+                section[field] = mask_secret(value)
+    return data
 
 
 @app.command("init")
@@ -44,12 +71,14 @@ def config_init() -> None:
     )
     cfg.llm.base_url = Prompt.ask(t("config.base_url.prompt"), default=cfg.llm.base_url)
     cfg.llm.model = Prompt.ask(t("config.model.prompt"), default=cfg.llm.model)
+    masked_current = mask_secret(cfg.llm.api_key)
     api_key = Prompt.ask(
         t("config.api_key.prompt"),
-        default=(mask(cfg.llm.api_key) if cfg.llm.api_key else ""),
+        default=masked_current,
         password=True,
     )
-    if api_key and not api_key.startswith("****"):
+    # Accepting the default returns the masked string — keep the real key.
+    if api_key and api_key != masked_current:
         cfg.llm.api_key = api_key
 
     console.print()
@@ -135,16 +164,20 @@ def config_set(
     save_config(vault.root, cfg)
     if section_name == "general" and field == "language":
         set_language(str(coerced))
-    shown = mask(str(coerced)) if field == "api_key" else coerced
+    shown = mask_secret(str(coerced)) if is_secret_field(field) else coerced
     console.print(f"[green]✓[/green] {key} = {shown}")
 
 
 @app.command("show")
-def config_show() -> None:
-    """Print the current config (with API key masked)."""
+def config_show(
+    show_secrets: Annotated[
+        bool,
+        typer.Option("--show-secrets", help="Print API keys in full instead of masked."),
+    ] = False,
+) -> None:
+    """Print the current config (API keys masked unless --show-secrets)."""
     vault = resolve_vault_or_die()
     cfg = load_config_or_default(vault)
-    safe = cfg.model_dump()
-    safe["llm"]["api_key"] = mask(cfg.llm.api_key)
-    console.print(json.dumps(safe, indent=2, ensure_ascii=False))
+    safe = redacted_config_dump(cfg, show_secrets=show_secrets)
+    console.print(json.dumps(safe, indent=2, ensure_ascii=False), markup=False, soft_wrap=True)
     console.print(f"[dim]{config_path(vault.root)}[/dim]")

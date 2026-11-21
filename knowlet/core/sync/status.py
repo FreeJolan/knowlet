@@ -61,7 +61,7 @@ from knowlet.core.sync.oauth import (
     ScopeUpgradeRequiredError,
     verify_scope,
 )
-from knowlet.core.sync.state import SyncStateStore
+from knowlet.core.sync.state import FileState, SyncStateStore
 
 # Tolerance for the mtime-vs-last_synced_at comparison. We pick
 # half a second because:
@@ -133,13 +133,9 @@ def compute_note_sync_status(
             detail="dev seed conflict — see /api/sync/dev-seed-conflict",
         )
 
-    creds = load_credentials(credentials_path(vault_root))
+    creds, unauthenticated = _load_verified_credentials(vault_root)
     if creds is None:
-        return _make_status("unauthenticated")
-    try:
-        verify_scope(creds)
-    except ScopeUpgradeRequiredError as exc:
-        return _make_status("unauthenticated", detail=str(exc))
+        return unauthenticated or _make_status("unauthenticated")
 
     if record is None or not record.drive_file_id:
         # First push hasn't happened. The note is local-only;
@@ -163,30 +159,75 @@ def compute_note_sync_status(
             detail=repr(exc),
         )
 
-    if meta.head_revision_id == record.last_known_etag:
+    return classify_note_sync_status(
+        record,
+        current_drive_revision=meta.head_revision_id,
+        local_path=local_path,
+    )
+
+
+def sync_auth_status(vault_root: Path) -> NoteSyncStatus | None:
+    """``unauthenticated`` status when Drive credentials are missing or
+    under-scoped, else None. Lets a vault-wide scan check auth once
+    instead of once per note."""
+    _creds, unauthenticated = _load_verified_credentials(vault_root)
+    return unauthenticated
+
+
+def classify_note_sync_status(
+    record: FileState,
+    *,
+    current_drive_revision: str | None,
+    local_path: Path | None,
+) -> NoteSyncStatus:
+    """Pure classification of a tracked note against an already-known
+    Drive head revision (from ``files.get`` or the bulk appData
+    listing). No I/O beyond a local ``stat``."""
+    if not record.drive_file_id:
+        return _make_status("dirty", last_synced_at=record.last_synced_at)
+    if current_drive_revision == record.last_known_etag:
         return _make_status(
             "synced",
             last_synced_at=record.last_synced_at,
             drive_file_id=record.drive_file_id,
             last_known_revision=record.last_known_etag,
-            current_drive_revision=meta.head_revision_id,
+            current_drive_revision=current_drive_revision,
         )
 
     # Revisions diverge. Distinguish real conflict from stale-remote
     # using sync_state.dirty + local file mtime. Either signal alone
     # is enough to treat as a real conflict — they're independent
     # paths to "local has work that hasn't been pushed yet".
-    locally_dirty = bool(record.dirty) or _is_local_dirty(local_path, record.last_synced_at)
     return _make_status(
-        "conflict" if locally_dirty else "stale",
+        "conflict" if has_unpushed_local_changes(record, local_path) else "stale",
         last_synced_at=record.last_synced_at,
         drive_file_id=record.drive_file_id,
         last_known_revision=record.last_known_etag,
-        current_drive_revision=meta.head_revision_id,
+        current_drive_revision=current_drive_revision,
     )
 
 
+def has_unpushed_local_changes(record: FileState, local_path: Path | None) -> bool:
+    """True when the dirty flag is set or the local file was touched
+    after ``last_synced_at`` — i.e. overwriting/removing the local copy
+    would lose work Drive has never seen."""
+    return bool(record.dirty) or _is_local_dirty(local_path, record.last_synced_at)
+
+
 # --------------------------------------------------- helpers
+
+
+def _load_verified_credentials(
+    vault_root: Path,
+) -> tuple[SyncCredentials | None, NoteSyncStatus | None]:
+    creds = load_credentials(credentials_path(vault_root))
+    if creds is None:
+        return None, _make_status("unauthenticated")
+    try:
+        verify_scope(creds)
+    except ScopeUpgradeRequiredError as exc:
+        return None, _make_status("unauthenticated", detail=str(exc))
+    return creds, None
 
 
 def _is_local_dirty(local_path: Path | None, last_synced_at: str | None) -> bool:

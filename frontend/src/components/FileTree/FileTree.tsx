@@ -34,14 +34,13 @@ import {
   createFolder,
   deleteFolder,
   deleteNote,
-  getNote,
   getTree,
   listFavorites,
   moveFolder,
   moveNote,
   removeFavorite,
   renameFolder,
-  updateNote,
+  renameNote,
 } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import {
@@ -65,6 +64,10 @@ import {
   noteTitleClashesIn,
 } from "@/lib/findCollision";
 import { normalizeNoteTitle } from "@/lib/noteTitle";
+import {
+  getNoteTitleWriter,
+  waitForPendingNoteMutations,
+} from "@/lib/noteWrites";
 import { QK } from "@/lib/queryClient";
 
 import type { NoteFull, TreeFolder } from "@/api/types";
@@ -125,6 +128,8 @@ function renameFolderInTree(root: TreeFolder, path: string, newName: string): Tr
   }
   return walk(root, 0);
 }
+
+const NOTE_RENAME_MUTATION_KEY = ["file-tree", "rename-note"] as const;
 
 type PendingCreate = {
   kind: "note" | "folder";
@@ -270,18 +275,21 @@ export function FileTree({
   };
 
   const renameNoteM = useMutation({
+    mutationKey: NOTE_RENAME_MUTATION_KEY,
     mutationFn: async ({ id, title }: { id: string; title: string }) => {
-      const cur = await getNote(id);
-      return updateNote(id, {
-        title,
-        tags: cur.tags,
-        body: cur.body,
-        // Phase 1 D / D3: aliases is tri-state on the backend
-        // (None=preserve / []=clear / [..]=replace). Echo current so
-        // a tree-driven rename never wipes an aliases list the user
-        // edited via NoteView.
-        aliases: cur.aliases ?? [],
+      // The note open in the editor: its view owns the title it sends
+      // with every autosave, so the rename has to go through it.
+      const ownerWrite = getNoteTitleWriter(id);
+      if (ownerWrite) return ownerWrite(title);
+      // Otherwise the only other writer is a still-pending save (e.g. the
+      // flush after switching notes). Let it settle first — including one
+      // waiting out a retry back-off, which would otherwise re-PUT the old
+      // title after we land — then GET + PUT under the per-note write lock
+      // so the body we echo back is the one that save just wrote.
+      await waitForPendingNoteMutations(qc, id, {
+        ignoreKey: NOTE_RENAME_MUTATION_KEY,
       });
+      return renameNote(id, title);
     },
     // Optimistic update: write the new title into BOTH the tree query
     // cache AND the per-note cache (QK.note(id)) BEFORE the PUT
