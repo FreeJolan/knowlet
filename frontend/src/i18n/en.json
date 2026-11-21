@@ -533,6 +533,7 @@
     "switchToFiles": "Switch back to files (Backspace)",
     "backspaceHint": "(⌫ to leave)",
     "footerFiles": "Esc to close",
+    "actionFailed": "Action failed: {{detail}}",
     "footerCommands": "Esc to close",
     "noMatches": "No matches.",
     "notesCount_one": "1 note",

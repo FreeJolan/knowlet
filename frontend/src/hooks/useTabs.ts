@@ -14,8 +14,12 @@
  *   - vertical/horizontal split panes
  *   - Cmd+W / Cmd+T keyboard
  *
- * Persistence: localStorage `knowlet.tabs.v1` stores
- * `{ tabs: string[], activeId: string | null }`. Restored on mount.
+ * Persistence: localStorage `knowlet.tabs.v1:<vault path>` stores
+ * `{ tabs: string[], activeId: string | null, pinned: string[] }` per
+ * vault. Tab ids only mean something inside one vault, and AppShell
+ * closes every tab whose note is missing from the current tree — with a
+ * shared key, opening another vault would wipe this one's session.
+ * Nothing is read or written until the caller knows which vault is open.
  * If the persisted active id no longer exists in the vault (note
  * deleted between sessions), NoteView's existing 404 handling kicks
  * in; the tab strip renders "(missing)" until the user closes it.
@@ -23,7 +27,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-const STORAGE_KEY = "knowlet.tabs.v1";
+const STORAGE_PREFIX = "knowlet.tabs.v1";
+/** Pre-vault-scoping key. Adopted (then removed) by the first vault that
+ *  loads without a session of its own. */
+const LEGACY_STORAGE_KEY = "knowlet.tabs.v1";
+
+const storageKey = (vaultKey: string) => `${STORAGE_PREFIX}:${vaultKey}`;
 
 interface PersistedState {
   tabs: string[];
@@ -33,12 +42,10 @@ interface PersistedState {
   pinned: string[];
 }
 
-function readPersisted(): PersistedState {
-  if (typeof window === "undefined")
-    return { tabs: [], activeId: null, pinned: [] };
+const EMPTY_STATE: PersistedState = { tabs: [], activeId: null, pinned: [] };
+
+function parsePersisted(raw: string): PersistedState {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { tabs: [], activeId: null, pinned: [] };
     const parsed = JSON.parse(raw) as Partial<PersistedState>;
     const tabs = Array.isArray(parsed.tabs)
       ? parsed.tabs.filter((t): t is string => typeof t === "string")
@@ -58,16 +65,50 @@ function readPersisted(): PersistedState {
       : [];
     return { tabs, activeId, pinned };
   } catch {
-    return { tabs: [], activeId: null, pinned: [] };
+    return EMPTY_STATE;
   }
 }
 
-function writePersisted(state: PersistedState): void {
+function readPersisted(vaultKey: string): PersistedState {
+  if (typeof window === "undefined") return EMPTY_STATE;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const raw = window.localStorage.getItem(storageKey(vaultKey));
+    if (raw) return parsePersisted(raw);
+    const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!legacy) return EMPTY_STATE;
+    const migrated = parsePersisted(legacy);
+    window.localStorage.setItem(storageKey(vaultKey), JSON.stringify(migrated));
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+    return migrated;
+  } catch {
+    return EMPTY_STATE;
+  }
+}
+
+function writePersisted(vaultKey: string, state: PersistedState): void {
+  try {
+    window.localStorage.setItem(storageKey(vaultKey), JSON.stringify(state));
   } catch {
     /* localStorage disabled — tolerate */
   }
+}
+
+/** Tabs opened before the vault was known belong to it too: append them
+ *  to the restored session and keep the newer active tab. */
+function mergeInterim(
+  stored: PersistedState,
+  interim: PersistedState,
+): PersistedState {
+  if (interim.tabs.length === 0) return stored;
+  const tabs = [
+    ...stored.tabs,
+    ...interim.tabs.filter((t) => !stored.tabs.includes(t)),
+  ];
+  const pinned = [
+    ...stored.pinned,
+    ...interim.pinned.filter((p) => !stored.pinned.includes(p)),
+  ];
+  return { tabs, activeId: interim.activeId ?? stored.activeId, pinned };
 }
 
 export interface TabsApi {
@@ -128,13 +169,43 @@ export interface TabsApi {
   canMoveActiveRight: boolean;
 }
 
-export function useTabs(): TabsApi {
-  const [state, setState] = useState<PersistedState>(readPersisted);
+/**
+ * `vaultKey` identifies the open vault (its path); `null` while unknown.
+ * The hook works in memory until then and persists nothing.
+ */
+export function useTabs(vaultKey: string | null): TabsApi {
+  const [store, setStore] = useState<{
+    key: string | null;
+    data: PersistedState;
+  }>({ key: null, data: EMPTY_STATE });
+  const state = store.data;
+  const setState = useCallback(
+    (update: (prev: PersistedState) => PersistedState) => {
+      setStore((s) => {
+        const next = update(s.data);
+        return next === s.data ? s : { key: s.key, data: next };
+      });
+    },
+    [],
+  );
 
-  // Persist whenever state changes.
   useEffect(() => {
-    writePersisted(state);
-  }, [state]);
+    if (vaultKey === null) return;
+    const stored = readPersisted(vaultKey);
+    setStore((prev) =>
+      prev.key === vaultKey
+        ? prev
+        : {
+            key: vaultKey,
+            data: prev.key === null ? mergeInterim(stored, prev.data) : stored,
+          },
+    );
+  }, [vaultKey]);
+
+  // Persist whenever state changes — only into the vault it was loaded for.
+  useEffect(() => {
+    if (store.key !== null) writePersisted(store.key, store.data);
+  }, [store]);
 
   const openNote = useCallback((id: string) => {
     setState((prev) => {
@@ -146,7 +217,7 @@ export function useTabs(): TabsApi {
       // are always unpinned.
       return { tabs: [...prev.tabs, id], activeId: id, pinned: prev.pinned };
     });
-  }, []);
+  }, [setState]);
 
   const closeTab = useCallback((id: string) => {
     setState((prev) => {
@@ -163,7 +234,7 @@ export function useTabs(): TabsApi {
       const nextPinned = prev.pinned.filter((p) => p !== id);
       return { tabs: nextTabs, activeId: nextActive, pinned: nextPinned };
     });
-  }, []);
+  }, [setState]);
 
   const setActive = useCallback((id: string) => {
     setState((prev) =>
@@ -171,11 +242,11 @@ export function useTabs(): TabsApi {
         ? { ...prev, activeId: id }
         : prev,
     );
-  }, []);
+  }, [setState]);
 
   const closeAll = useCallback(() => {
-    setState({ tabs: [], activeId: null, pinned: [] });
-  }, []);
+    setState(() => EMPTY_STATE);
+  }, [setState]);
 
   const closeUnpinned = useCallback(() => {
     setState((prev) => {
@@ -192,7 +263,7 @@ export function useTabs(): TabsApi {
         pinned: prev.pinned,
       };
     });
-  }, []);
+  }, [setState]);
 
   const closeOthers = useCallback((id: string) => {
     setState((prev) => {
@@ -218,7 +289,7 @@ export function useTabs(): TabsApi {
         pinned: prev.pinned,
       };
     });
-  }, []);
+  }, [setState]);
 
   const togglePin = useCallback((id: string) => {
     setState((prev) => {
@@ -249,7 +320,7 @@ export function useTabs(): TabsApi {
       // don't need to reorder `tabs` itself.
       return { ...prev, pinned: [...prev.pinned, id] };
     });
-  }, []);
+  }, [setState]);
 
   const reorder = useCallback(
     (sourceId: string, targetId: string, position: "before" | "after") => {
@@ -294,7 +365,7 @@ export function useTabs(): TabsApi {
         return { ...prev, tabs: nextTabs };
       });
     },
-    [],
+    [setState],
   );
 
   // Computed display order: pinned tabs first (in pin order), then
@@ -356,7 +427,7 @@ export function useTabs(): TabsApi {
       nextTabs[b] = tmp;
       return { ...prev, tabs: nextTabs };
     });
-  }, []);
+  }, [setState]);
 
   const moveActiveLeft = useCallback(() => moveActiveBy(-1), [moveActiveBy]);
   const moveActiveRight = useCallback(() => moveActiveBy(1), [moveActiveBy]);
@@ -380,23 +451,46 @@ export function useTabs(): TabsApi {
     };
   }, [state.activeId, state.tabs, state.pinned]);
 
-  return {
-    tabs: state.tabs,
-    activeId: state.activeId,
-    pinned: state.pinned,
-    displayTabs,
-    openNote,
-    closeTab,
-    setActive,
-    closeAll,
-    closeUnpinned,
-    closeOthers,
-    togglePin,
-    isPinned,
-    reorder,
-    moveActiveLeft,
-    moveActiveRight,
-    canMoveActiveLeft,
-    canMoveActiveRight,
-  };
+  // One object per state change (not per render): consumers put the API
+  // in effect deps, and some of those effects walk the whole tree.
+  return useMemo(
+    () => ({
+      tabs: state.tabs,
+      activeId: state.activeId,
+      pinned: state.pinned,
+      displayTabs,
+      openNote,
+      closeTab,
+      setActive,
+      closeAll,
+      closeUnpinned,
+      closeOthers,
+      togglePin,
+      isPinned,
+      reorder,
+      moveActiveLeft,
+      moveActiveRight,
+      canMoveActiveLeft,
+      canMoveActiveRight,
+    }),
+    [
+      state.tabs,
+      state.activeId,
+      state.pinned,
+      displayTabs,
+      openNote,
+      closeTab,
+      setActive,
+      closeAll,
+      closeUnpinned,
+      closeOthers,
+      togglePin,
+      isPinned,
+      reorder,
+      moveActiveLeft,
+      moveActiveRight,
+      canMoveActiveLeft,
+      canMoveActiveRight,
+    ],
+  );
 }

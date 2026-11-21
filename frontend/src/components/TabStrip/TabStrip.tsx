@@ -16,7 +16,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Pin, PinOff, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { getTree } from "@/api/client";
@@ -92,7 +92,7 @@ export function TabStrip({
 }: Props) {
   const { t } = useTranslation();
   const tree = useQuery<TreeFolder>({ queryKey: QK.tree, queryFn: getTree });
-  const titles = indexTreeTitles(tree.data);
+  const titles = useMemo(() => indexTreeTitles(tree.data), [tree.data]);
   const [drag, setDrag] = useState<DragState | null>(null);
   // useRef mirror so onDragOver / onDrop can read the source id
   // synchronously — setState lag means consecutive native events
@@ -100,6 +100,19 @@ export function TabStrip({
   // committed the state update from onDragStart.
   const dragRef = useRef<DragState | null>(null);
   const writeDrag = (next: DragState | null) => {
+    const cur = dragRef.current;
+    // dragover fires continuously while the pointer rests on a tab; only
+    // re-render when the drop indicator would actually change.
+    if (
+      cur &&
+      next &&
+      cur.sourceId === next.sourceId &&
+      cur.targetId === next.targetId &&
+      cur.side === next.side &&
+      cur.invalid === next.invalid
+    ) {
+      return;
+    }
     dragRef.current = next;
     setDrag(next);
   };

@@ -24,17 +24,17 @@ import {
   Trash2,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
   getDigestStatus,
-  getNote,
+  getHealth,
   getTree,
   pullDigestSources,
-  updateNote,
+  updateNoteFromLatest,
 } from "@/api/client";
-import type { NoteFull, TreeFolder, TreeNote } from "@/api/types";
+import type { ApiError, TreeFolder, TreeNote } from "@/api/types";
 import { FavoritesSection } from "@/components/Favorites/FavoritesSection";
 import { FileTree } from "@/components/FileTree/FileTree";
 import { GraphFocusMode } from "@/components/Graph/GraphFocusMode";
@@ -86,6 +86,12 @@ const MIN_RAIL_PX = 240;
 const MAX_RAIL_PERCENT = 35;
 const RAIL_COLLAPSE_KEY = "knowlet.rail.collapsed.v1";
 
+type ProposedNoteEdit = {
+  noteId: string;
+  oldBody: string;
+  newBody: string;
+};
+
 type VaultSwitchPayload = {
   vault?: string;
   vault_name?: string;
@@ -131,7 +137,15 @@ export function AppShell() {
   // now derived from the active tab in `tabsApi`. `setSelectedNoteId`
   // is wrapped in `openNoteInTab` below so every existing call site
   // creates / activates a tab transparently.
-  const tabsApi = useTabs();
+  // Tabs are persisted per vault; the vault path comes from /api/health.
+  // Resolved once per page load — switching vaults reloads the window.
+  const health = useQuery({
+    queryKey: QK.health,
+    queryFn: getHealth,
+    staleTime: Infinity,
+    retry: true,
+  });
+  const tabsApi = useTabs(health.data?.vault ?? null);
   const selectedNoteId = tabsApi.activeId;
   const setSelectedNoteId = tabsApi.openNote;
   const [trashOpen, setTrashOpen] = useState(false);
@@ -278,6 +292,29 @@ export function AppShell() {
   // Phase 3 Stage 3 §3.4 — CaptureBox modal (⌘⇧V).
   const [captureOpen, setCaptureOpen] = useState(false);
   const [captureInitialUrl, setCaptureInitialUrl] = useState<string | undefined>();
+  // Identifies the current CaptureBox opening, and whether the user has
+  // typed / clicked / dropped inside it since (see openCapture).
+  const captureSessionRef = useRef(0);
+  const captureTouchedRef = useRef(false);
+  useEffect(() => {
+    if (!captureOpen) return;
+    const markTouched = (e: Event) => {
+      const target = e.target;
+      if (
+        target instanceof Element &&
+        target.closest('[data-testid="capture-box"]')
+      ) {
+        captureTouchedRef.current = true;
+      }
+    };
+    const events = ["keydown", "pointerdown", "drop", "paste"] as const;
+    for (const ev of events) document.addEventListener(ev, markTouched, true);
+    return () => {
+      for (const ev of events) {
+        document.removeEventListener(ev, markTouched, true);
+      }
+    };
+  }, [captureOpen]);
   // Phase 3 Stage 4 P1 — note-anchored discussion pane (⌘J). Opens
   // beside the active note (Cursor-style); only meaningful with a note
   // selected.
@@ -285,12 +322,17 @@ export function AppShell() {
   // Phase 3 Stage 4 P3/P4 — an AI-proposed edit awaiting the user's
   // diff review. While set, the note column shows the diff instead of
   // the editor. Cleared on accept (after the write) or reject.
-  const [proposedEdit, setProposedEdit] = useState<{
-    noteId: string;
-    oldBody: string;
-    newBody: string;
-  } | null>(null);
+  const [proposedEdit, setProposedEdit] = useState<ProposedNoteEdit | null>(
+    null,
+  );
   const [savingEdit, setSavingEdit] = useState(false);
+  // Why the last 应用 didn't write (failed PUT, or the note changed since
+  // the proposal). Tied to the proposal it was about, so a new proposal
+  // starts clean.
+  const [applyEditError, setApplyEditError] = useState<{
+    proposal: ProposedNoteEdit;
+    message: string;
+  } | null>(null);
   // Phase 2 D Slice 2 — 新建文档 dialog. `seedFolder` is the folder
   // pre-selected when the dialog opens (current tree selection or the
   // folder right-clicked from the tree's context menu).
@@ -312,14 +354,9 @@ export function AppShell() {
     queryKey: QK.tree,
     queryFn: getTree,
   });
-  useEffect(() => {
-    if (!treeQuery.data) return;
-    // Don't prune while a refetch is in flight — a freshly-created
-    // note (NewDocDialog / Daily) lands in the tabs the same tick we
-    // invalidate QK.tree, but the cached `treeQuery.data` is still
-    // the pre-invalidation snapshot until the refetch completes. If
-    // we prune here we'd erroneously close the just-created tab.
-    if (treeQuery.isFetching) return;
+  // Walk the tree once per tree snapshot, not once per tab change.
+  const treeNoteIds = useMemo(() => {
+    if (!treeQuery.data) return null;
     const valid = new Set<string>();
     const stack: TreeFolder[] = [treeQuery.data];
     while (stack.length) {
@@ -328,9 +365,21 @@ export function AppShell() {
       for (const n of f.notes) valid.add(n.id);
       for (const sub of f.folders) stack.push(sub);
     }
-    const stale = tabsApi.tabs.filter((id) => !valid.has(id));
-    for (const id of stale) tabsApi.closeTab(id);
-  }, [treeQuery.data, treeQuery.isFetching, tabsApi]);
+    return valid;
+  }, [treeQuery.data]);
+  const openTabIds = tabsApi.tabs;
+  const closeTabById = tabsApi.closeTab;
+  useEffect(() => {
+    if (!treeNoteIds) return;
+    // Don't prune while a refetch is in flight — a freshly-created
+    // note (NewDocDialog / Daily) lands in the tabs the same tick we
+    // invalidate QK.tree, but the cached `treeQuery.data` is still
+    // the pre-invalidation snapshot until the refetch completes. If
+    // we prune here we'd erroneously close the just-created tab.
+    if (treeQuery.isFetching) return;
+    const stale = openTabIds.filter((id) => !treeNoteIds.has(id));
+    for (const id of stale) closeTabById(id);
+  }, [treeNoteIds, treeQuery.isFetching, openTabIds, closeTabById]);
 
   // Phase 2 D Slice 2 — seed folder for the New-doc dialog. Default
   // is the folder of the currently-active note; if no note is open,
@@ -463,9 +512,20 @@ export function AppShell() {
   };
 
   useEffect(() => {
-    const onResize = () => setWindowWidth(window.innerWidth);
+    // At most one width update per frame while the window is dragged.
+    let frame: number | null = null;
+    const onResize = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        setWindowWidth(window.innerWidth);
+      });
+    };
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
   }, []);
 
   const sidebarSizes = useMemo(() => {
@@ -521,12 +581,12 @@ export function AppShell() {
         return;
       }
       const note = await runQuickAction(today.id);
-      tabsApi.openNote(note.id);
+      setSelectedNoteId(note.id);
       void qc.invalidateQueries({ queryKey: QK.tree });
     } catch (err) {
       console.error("daily-note action run failed", err);
     }
-  }, [qc, tabsApi]);
+  }, [qc, setSelectedNoteId]);
 
   // Phase 3 Stage 4 — B1: 今日反思. Open (or create) today's daily note
   // AND open the discussion pane on it in one gesture, so the daily
@@ -545,8 +605,7 @@ export function AppShell() {
     };
     const openTrash = () => setTrashOpen(true);
     const closeActiveTab = () => {
-      const id = tabsApi.activeId;
-      if (id) tabsApi.closeTab(id);
+      if (selectedNoteId) closeTabById(selectedNoteId);
     };
     const openWikilink = (e: Event) => {
       const detail = (e as CustomEvent<{ title: string; hash: string }>).detail;
@@ -684,12 +743,21 @@ export function AppShell() {
     // detected URL as initial value if present. navigator.clipboard
     // can reject (permission denied / non-secure context); fall back
     // to opening empty.
+    // The read can stay pending for seconds (permission prompt, WebKit's
+    // paste callout) while the box is already open; CaptureBox resets its
+    // input whenever initialUrl changes, so a late result is only applied
+    // if this is still the same open session and the user hasn't started
+    // working in the box.
     const openCapture = () => {
+      const session = ++captureSessionRef.current;
+      captureTouchedRef.current = false;
       setCaptureInitialUrl(undefined);
       const cb = navigator.clipboard;
       if (cb && typeof cb.readText === "function") {
         cb.readText().then(
           (text) => {
+            if (captureSessionRef.current !== session) return;
+            if (captureTouchedRef.current) return;
             const t = (text ?? "").trim();
             if (t.startsWith("http://") || t.startsWith("https://")) {
               setCaptureInitialUrl(t);
@@ -739,7 +807,7 @@ export function AppShell() {
     openNewDocDialog,
     openTodayDaily,
     setSelectedNoteId,
-    tabsApi,
+    closeTabById,
   ]);
 
   // Phase 3 Stage 4 P3/P4 — apply an accepted AI edit through the
@@ -749,16 +817,27 @@ export function AppShell() {
   const acceptEdit = useCallback(
     async (finalBody: string) => {
       if (!proposedEdit) return;
-      const { noteId } = proposedEdit;
+      const proposal = proposedEdit;
+      const { noteId, oldBody } = proposal;
       setSavingEdit(true);
+      setApplyEditError(null);
+      let stale = false;
       try {
-        const current =
-          qc.getQueryData<NoteFull>(QK.note(noteId)) ?? (await getNote(noteId));
-        const updated = await updateNote(noteId, {
-          title: current.title,
-          tags: current.tags,
-          body: finalBody,
-          aliases: current.aliases,
+        // Compare against the file as it is now, inside the same per-note
+        // write lock as the PUT: if anything rewrote the body since the
+        // proposal (autosave, CLI, another window), applying would
+        // silently drop that change.
+        const updated = await updateNoteFromLatest(noteId, (latest) => {
+          if (latest.body !== oldBody) {
+            stale = true;
+            throw new Error("note changed since the proposal");
+          }
+          return {
+            title: latest.title,
+            tags: latest.tags,
+            body: finalBody,
+            aliases: latest.aliases ?? [],
+          };
         });
         qc.setQueryData(QK.note(noteId), updated);
         void qc.invalidateQueries({ queryKey: QK.note(noteId) });
@@ -766,6 +845,15 @@ export function AppShell() {
         setProposedEdit(null);
       } catch (err) {
         console.error("apply AI edit failed", err);
+        const detail =
+          (err as ApiError)?.detail ??
+          (err instanceof Error ? err.message : String(err));
+        setApplyEditError({
+          proposal,
+          message: stale
+            ? "笔记在生成提案后已被修改，未应用。请拒绝后重新生成提案。"
+            : `应用失败，笔记未改动：${detail}`,
+        });
       } finally {
         setSavingEdit(false);
       }
@@ -789,13 +877,27 @@ export function AppShell() {
     proposedEdit !== null && proposedEdit.noteId === selectedNoteId;
   const noteOrDiff =
     reviewing && proposedEdit ? (
-      <DiffReview
-        oldBody={proposedEdit.oldBody}
-        newBody={proposedEdit.newBody}
-        saving={savingEdit}
-        onAccept={acceptEdit}
-        onReject={() => setProposedEdit(null)}
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        {applyEditError?.proposal === proposedEdit && (
+          <div
+            role="alert"
+            data-testid="diff-apply-error"
+            className="shrink-0 border-b px-3 py-2 text-sm text-destructive"
+            style={{ borderColor: "var(--line)", background: "var(--panel)" }}
+          >
+            {applyEditError.message}
+          </div>
+        )}
+        <div className="min-h-0 flex-1">
+          <DiffReview
+            oldBody={proposedEdit.oldBody}
+            newBody={proposedEdit.newBody}
+            saving={savingEdit}
+            onAccept={acceptEdit}
+            onReject={() => setProposedEdit(null)}
+          />
+        </div>
+      </div>
     ) : (
       <NoteView
         noteId={selectedNoteId}
@@ -1219,7 +1321,10 @@ export function AppShell() {
       />
       <CaptureBox
         open={captureOpen}
-        onClose={() => setCaptureOpen(false)}
+        onClose={() => {
+          captureSessionRef.current += 1;
+          setCaptureOpen(false);
+        }}
         initialUrl={captureInitialUrl}
       />
       <NewDocDialog

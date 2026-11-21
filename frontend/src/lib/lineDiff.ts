@@ -6,9 +6,12 @@
  * differing. The merge UI iterates over hunks and lets the user
  * pick a side per differing hunk.
  *
- * Performance bounds: O(n × m) time and memory. Notes are typically
- * <2 000 lines so this is fine; the editor caps at 5 000 lines per
- * side and falls back to a "whole file" 2-pane choice past that
+ * Performance bounds: the common prefix / suffix is matched in linear
+ * time, so only the changed middle is diffed. That middle costs O(n × m)
+ * time; memory stays bounded — a full LCS table is used only up to
+ * ``TABLE_CELL_LIMIT`` cells (8 MB), larger middles are split with
+ * Hirschberg's linear-space recursion. The editor caps at 5 000 lines
+ * per side and falls back to a "whole file" 2-pane choice past that
  * (see ``MAX_DIFFABLE_LINES``).
  */
 
@@ -61,22 +64,158 @@ type Op =
   | { kind: "mine"; line: string }
   | { kind: "theirs"; line: string };
 
-/** Standard LCS-table backtrack. Produces ops in source order.
+/** Largest LCS table (n × m cells) built in one piece: 8 MB as Uint16. */
+const TABLE_CELL_LIMIT = 4_000_000;
+
+/** Line ops in source order: shared prefix + diff of the middle + shared
+ * suffix.
  *
  * Uses non-null assertions liberally because the loop bounds make
  * every indexed read in-range; the TS compiler under
  * ``noUncheckedIndexedAccess`` can't prove that. */
 function computeOps(a: string[], b: string[]): Op[] {
-  const n = a.length;
-  const m = b.length;
-  // Flat row-major Int32Array — small constant factor vs nested
-  // arrays at this scale, and avoids the GC pressure of N+1 arrays.
-  const w = m + 1;
-  const lcs = new Int32Array((n + 1) * w);
-  for (let i = 1; i <= n; i++) {
-    const ai = a[i - 1]!;
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) {
+    start++;
+  }
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--;
+    endB--;
+  }
+  const ops: Op[] = [];
+  for (let i = 0; i < start; i++) ops.push({ kind: "equal", line: a[i]! });
+  diffRange(a, start, endA, b, start, endB, ops);
+  for (let i = endA; i < a.length; i++) {
+    ops.push({ kind: "equal", line: a[i]! });
+  }
+  return ops;
+}
+
+/** Append the ops turning a[aLo, aHi) into b[bLo, bHi). */
+function diffRange(
+  a: string[],
+  aLo: number,
+  aHi: number,
+  b: string[],
+  bLo: number,
+  bHi: number,
+  out: Op[],
+): void {
+  const n = aHi - aLo;
+  const m = bHi - bLo;
+  if (n === 0) {
+    for (let j = bLo; j < bHi; j++) out.push({ kind: "theirs", line: b[j]! });
+    return;
+  }
+  if (m === 0) {
+    for (let i = aLo; i < aHi; i++) out.push({ kind: "mine", line: a[i]! });
+    return;
+  }
+  if (n * m <= TABLE_CELL_LIMIT || n === 1) {
+    tableOps(a, aLo, aHi, b, bLo, bHi, out);
+    return;
+  }
+  // Hirschberg: split a in half, find where an optimal alignment crosses
+  // that row using two O(m) LCS-length rows, recurse on both quadrants.
+  const aMid = aLo + (n >> 1);
+  const fwd = forwardLcsRow(a, aLo, aMid, b, bLo, bHi);
+  const bwd = backwardLcsRow(a, aMid, aHi, b, bLo, bHi);
+  let best = -1;
+  let split = 0;
+  for (let j = 0; j <= m; j++) {
+    const v = fwd[j]! + bwd[j]!;
+    if (v > best) {
+      best = v;
+      split = j;
+    }
+  }
+  diffRange(a, aLo, aMid, b, bLo, bLo + split, out);
+  diffRange(a, aMid, aHi, b, bLo + split, bHi, out);
+}
+
+/** row[j] = LCS length of a[aLo, aHi) and b[bLo, bLo + j). */
+function forwardLcsRow(
+  a: string[],
+  aLo: number,
+  aHi: number,
+  b: string[],
+  bLo: number,
+  bHi: number,
+): Int32Array {
+  const m = bHi - bLo;
+  let prev = new Int32Array(m + 1);
+  let cur = new Int32Array(m + 1);
+  for (let i = aLo; i < aHi; i++) {
+    const ai = a[i]!;
+    cur[0] = 0;
     for (let j = 1; j <= m; j++) {
-      const bj = b[j - 1]!;
+      if (ai === b[bLo + j - 1]) cur[j] = prev[j - 1]! + 1;
+      else {
+        const up = prev[j]!;
+        const left = cur[j - 1]!;
+        cur[j] = up >= left ? up : left;
+      }
+    }
+    [prev, cur] = [cur, prev];
+  }
+  return prev;
+}
+
+/** row[j] = LCS length of a[aLo, aHi) and b[bLo + j, bHi). */
+function backwardLcsRow(
+  a: string[],
+  aLo: number,
+  aHi: number,
+  b: string[],
+  bLo: number,
+  bHi: number,
+): Int32Array {
+  const m = bHi - bLo;
+  let prev = new Int32Array(m + 1);
+  let cur = new Int32Array(m + 1);
+  for (let i = aHi - 1; i >= aLo; i--) {
+    const ai = a[i]!;
+    cur[m] = 0;
+    for (let j = m - 1; j >= 0; j--) {
+      if (ai === b[bLo + j]) cur[j] = prev[j + 1]! + 1;
+      else {
+        const down = prev[j]!;
+        const right = cur[j + 1]!;
+        cur[j] = down >= right ? down : right;
+      }
+    }
+    [prev, cur] = [cur, prev];
+  }
+  return prev;
+}
+
+/** Standard LCS-table backtrack over a[aLo, aHi) × b[bLo, bHi); appends
+ * ops in source order. */
+function tableOps(
+  a: string[],
+  aLo: number,
+  aHi: number,
+  b: string[],
+  bLo: number,
+  bHi: number,
+  out: Op[],
+): void {
+  const n = aHi - aLo;
+  const m = bHi - bLo;
+  // Flat row-major typed array — small constant factor vs nested arrays
+  // and no GC pressure from N+1 arrays. LCS values never exceed
+  // min(n, m), so 16 bits suffice below 65 536 lines.
+  const w = m + 1;
+  const lcs =
+    Math.min(n, m) < 0xffff
+      ? new Uint16Array((n + 1) * w)
+      : new Int32Array((n + 1) * w);
+  for (let i = 1; i <= n; i++) {
+    const ai = a[aLo + i - 1]!;
+    for (let j = 1; j <= m; j++) {
+      const bj = b[bLo + j - 1]!;
       if (ai === bj) {
         lcs[i * w + j] = lcs[(i - 1) * w + (j - 1)]! + 1;
       } else {
@@ -90,8 +229,8 @@ function computeOps(a: string[], b: string[]): Op[] {
   let i = n;
   let j = m;
   while (i > 0 && j > 0) {
-    const ai = a[i - 1]!;
-    const bj = b[j - 1]!;
+    const ai = a[aLo + i - 1]!;
+    const bj = b[bLo + j - 1]!;
     if (ai === bj) {
       ops.push({ kind: "equal", line: ai });
       i--;
@@ -105,15 +244,14 @@ function computeOps(a: string[], b: string[]): Op[] {
     }
   }
   while (i > 0) {
-    ops.push({ kind: "mine", line: a[i - 1]! });
+    ops.push({ kind: "mine", line: a[aLo + i - 1]! });
     i--;
   }
   while (j > 0) {
-    ops.push({ kind: "theirs", line: b[j - 1]! });
+    ops.push({ kind: "theirs", line: b[bLo + j - 1]! });
     j--;
   }
-  ops.reverse();
-  return ops;
+  for (let k = ops.length - 1; k >= 0; k--) out.push(ops[k]!);
 }
 
 /** Coalesce a sequence of ops into hunks. Equal lines collapse into

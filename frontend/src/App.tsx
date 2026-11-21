@@ -58,7 +58,9 @@ export default function App() {
       // event then AppShell reads the clipboard from inside its
       // user-gesture handler (browsers gate navigator.clipboard.readText
       // on user activation; the keypress IS user activation).
-      if (meta && e.shiftKey && key === "v") {
+      // Inside a text field ⌘⇧V stays the OS "paste as plain text" — the
+      // editor's only way around its HTML→Markdown paste conversion.
+      if (meta && e.shiftKey && key === "v" && !isTextEditingTarget(e.target)) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("knowlet:open-capture"));
       }

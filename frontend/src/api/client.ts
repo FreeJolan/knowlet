@@ -20,18 +20,41 @@ import type {
   TrashListResponse,
   TreeFolder,
 } from "./types";
+import { runExclusive } from "@/lib/noteWrites";
+
+const noteWriteKey = (id: string) => `note:${id}`;
 
 async function request<T>(
   method: string,
   url: string,
   body?: unknown,
+  { timeoutMs }: { timeoutMs?: number } = {},
 ): Promise<T> {
   const init: RequestInit = {
     method,
     headers: { "Content-Type": "application/json" },
   };
   if (body !== undefined) init.body = JSON.stringify(body);
-  const r = await fetch(url, init);
+  let r: Response;
+  if (timeoutMs === undefined) {
+    r = await fetch(url, init);
+  } else {
+    // Gives up waiting on the response; the server may still finish.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      r = await fetch(url, { ...init, signal: ctrl.signal });
+    } catch (e) {
+      if (!ctrl.signal.aborted) throw e;
+      const err: ApiError = {
+        status: 0,
+        detail: `no response after ${Math.round(timeoutMs / 1000)} s`,
+      };
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   if (!r.ok) {
     let detail = r.statusText;
     try {
@@ -46,6 +69,19 @@ async function request<T>(
   if (r.status === 204) return undefined as T;
   return (await r.json()) as T;
 }
+
+// ---------- health ----------
+
+export interface HealthInfo {
+  status: string;
+  version: string;
+  /** Absolute path of the vault this backend serves. */
+  vault: string;
+  language: string;
+  ready: boolean;
+}
+
+export const getHealth = (): Promise<HealthInfo> => request("GET", "/api/health");
 
 // ---------- tree / folders ----------
 
@@ -240,11 +276,46 @@ export const deleteNote = (
 ): Promise<{ trashed_to: string; already_missing?: boolean }> =>
   request("DELETE", `/api/notes/${encodeURIComponent(id)}`);
 
+export interface NoteWritePayload {
+  title: string;
+  tags: string[];
+  body: string;
+  aliases?: string[];
+}
+
+const putNote = (id: string, payload: NoteWritePayload): Promise<NoteFull> =>
+  request("PUT", `/api/notes/${encodeURIComponent(id)}`, payload);
+
+// All note PUTs from this page are serialized per note id (see
+// lib/noteWrites.ts): the endpoint replaces the whole note, so an
+// overlapping read-modify-write would otherwise clobber a concurrent save.
 export const updateNote = (
   id: string,
-  payload: { title: string; tags: string[]; body: string; aliases?: string[] },
+  payload: NoteWritePayload,
+): Promise<NoteFull> => runExclusive(noteWriteKey(id), () => putNote(id, payload));
+
+/** Read-modify-write against the latest server copy. The GET and the PUT
+ *  run inside the same per-note critical section as `updateNote`, so a
+ *  save that was already in flight lands first and its body is what
+ *  `build` sees. `build` may throw to abort without writing. */
+export const updateNoteFromLatest = (
+  id: string,
+  build: (latest: NoteFull) => NoteWritePayload,
 ): Promise<NoteFull> =>
-  request("PUT", `/api/notes/${encodeURIComponent(id)}`, payload);
+  runExclusive(noteWriteKey(id), async () => putNote(id, build(await getNote(id))));
+
+/** Change only the title. The PUT endpoint has no partial-update form, so
+ *  tags / body / aliases are echoed from the latest server copy (never
+ *  from a possibly stale cache). */
+export const renameNote = (id: string, title: string): Promise<NoteFull> =>
+  updateNoteFromLatest(id, (cur) => ({
+    title,
+    tags: cur.tags,
+    body: cur.body,
+    // aliases is tri-state on the backend (None=preserve / []=clear);
+    // echo the current list so a rename never wipes it.
+    aliases: cur.aliases ?? [],
+  }));
 
 export interface ProposedEdit {
   note_id: string;
@@ -337,8 +408,14 @@ export const getBacklinks = (noteId: string): Promise<BacklinkRow[]> =>
 export const listTags = (): Promise<TagSummary[]> =>
   request("GET", "/api/tags");
 
+// Nested tags (`project/knowlet`) contain `/`. A `%2F` is decoded before
+// routing, so encode per segment and keep the slashes literal; the route
+// must accept a multi-segment tag (`{tag:path}`).
 export const listNotesByTag = (tag: string): Promise<NoteSummary[]> =>
-  request("GET", `/api/tags/${encodeURIComponent(tag)}/notes`);
+  request(
+    "GET",
+    `/api/tags/${tag.split("/").map(encodeURIComponent).join("/")}/notes`,
+  );
 
 export const listTagsWithNotes = (): Promise<TagWithNotes[]> =>
   request("GET", "/api/tags/all-with-notes");
@@ -366,8 +443,17 @@ export const updateQuickAction = (
 export const deleteQuickAction = (id: string): Promise<{ ok: boolean }> =>
   request("DELETE", `/api/quick-actions/${encodeURIComponent(id)}`);
 
+// Running an action only creates / opens a note; a run that hasn't answered
+// in this long is treated as failed so callers stop showing it as pending.
+const QUICK_ACTION_TIMEOUT_MS = 30_000;
+
 export const runQuickAction = (id: string): Promise<NoteFull> =>
-  request("POST", `/api/quick-actions/${encodeURIComponent(id)}/run`);
+  request(
+    "POST",
+    `/api/quick-actions/${encodeURIComponent(id)}/run`,
+    undefined,
+    { timeoutMs: QUICK_ACTION_TIMEOUT_MS },
+  );
 
 // ---------- sync (Slice S1, ADR-0027 redesign) ----------
 
@@ -952,7 +1038,7 @@ export const pullDigestSource = (id: string): Promise<DigestPullReport> =>
 export const approveDraft = (id: string): Promise<{ note_id: string }> =>
   request("POST", `/api/drafts/${id}/approve`);
 
-export const rejectDraft = (id: string): Promise<{ archived: boolean }> =>
+export const rejectDraft = (id: string): Promise<{ ok: boolean }> =>
   request("POST", `/api/drafts/${id}/reject`);
 
 /** PUT /api/drafts/{id} — pre-approve edit. Per ADR-0029 §4 原则 1,

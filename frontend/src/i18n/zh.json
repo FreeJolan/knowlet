@@ -533,6 +533,7 @@
     "switchToFiles": "返回文件搜索 (Backspace)",
     "backspaceHint": "(⌫ 退出)",
     "footerFiles": "Esc 关闭",
+    "actionFailed": "操作失败：{{detail}}",
     "footerCommands": "Esc 关闭",
     "noMatches": "没有匹配。",
     "notesCount_one": "1 篇笔记",
